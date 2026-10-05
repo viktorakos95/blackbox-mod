@@ -7,6 +7,9 @@ An unofficial feature mod for the **original 1010music Blackbox** (not the Black
 > tested on one unit, it may misbehave on yours, and running modified firmware may affect your warranty. Don't ask
 > 1010music for support on a modded unit; flash stock first.
 
+**Get new builds by email:** sign up at <https://justinjoe.com/blackbox-mod> and I'll send a note when a new build is
+out (new FX, fixes). That's all the list is for.
+
 ## What it adds (build 3.1.n)
 
 - **Solo** in the mixer: MIX cycles Mixer → Mute → Solo. Tap pads to solo them (yellow).
