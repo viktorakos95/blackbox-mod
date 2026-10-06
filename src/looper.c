@@ -1,14 +1,14 @@
 /*
- * Live looper engine: four stereo tracks of up to 20 s from the audio input. Original 1010music Blackbox, 3.1.9.
+ * Live looper engine: four stereo tracks of up to 16 s from the audio input. Original 1010music Blackbox, 3.1.9.
  * The controls are the Looper page of the Mixer screen (src/solo.c); this file is the audio side.
  *
  * Recording (all timed here, against the audio clock, from the page's touch events):
  *   - hold a track's box: records while held (300 ms or more), keeps it on release;
  *   - double tap: the first tap starts recording, the second (within 400 ms) latches it; one more tap keeps it;
  *   - a lone short tap records nothing (the blip is taken back).
- * The first take sets the loop length (20 s at most); later takes overdub onto that length, onto silence for an
+ * The first take sets the loop length (16 s at most); later takes overdub onto that length, onto silence for an
  * empty track. Every overdub pass can be undone: before a pass writes a frame, the frame's old value goes to the
- * undo track (one more 20 s track of memory), so the pass comes off exactly. Undo covers the last pass only.
+ * undo track (one more track of memory), so the pass comes off exactly. Undo covers the last pass only.
  * MUTE: tap toggles (with a fade); hold 2 s = undo the last pass of that track, keep holding to 4 s = erase it.
  * REVERSE plays (and overdubs) the track backwards. Each track has a level and a pan.
  *
@@ -19,11 +19,13 @@
  *            whether the compressor is on or off): the compressor and the Out 1 / Headphone levels apply.
  * Both run in the audio task, input first, 256 frames a block.
  *
- * Memory: 295 of the 615 blocks of the stock sample pool (the last ones: 4 tracks + the undo track, 59 each),
+ * Memory: 235 of the 615 blocks of the stock sample pool (the last ones: 4 tracks + the undo track, 47 each),
  * claimed once at boot right after the pool is built (FUN_08070bf4, @0x0804c20e) and before any sample is loaded.
  * A block is the pool's own entry (engine + 0x1c * i): +4 / +8 two 32 KB buffers, +0x18 owner, +0x1f state
  * (0 free, 3 claimed, as the stock claim at 0x080730ce writes it). We write state 3 and our own owner tag, so the
- * stock code treats them as taken. Each block pair holds 16384 frames of 16-bit stereo; 59 blocks = 20.1 s.
+ * stock code treats them as taken. Each block pair holds 16384 frames of 16-bit stereo; 47 blocks = 16.0 s.
+ * (Step 3 claimed 295 = 5 x 59 for 20 s tracks and the looper never came on: blocks below 379 are not all free at
+ * that point. Step 2's 236 from 379 up worked, so the five areas now share that range.)
  * Every audio block re-checks two of our blocks; if the firmware ever hands one to something else, the looper
  * stops touching its memory at once (all tracks go silent) instead of writing over a sample.
  *
@@ -56,11 +58,11 @@ void looper_ui_poke(void);
 
 #define HALF_FRAMES    8192             /* frames in one 32 KB buffer (16-bit stereo) */
 #define ENTRY_FRAMES   (2 * HALF_FRAMES)
-#define TRACK_ENTRIES  59
+#define TRACK_ENTRIES  47               /* 47 x 16384 frames = 16.04 s */
 #define AREAS          (LOOPER_TRACKS + 1)        /* the four tracks, then the undo track */
 #define UNDO_AREA      LOOPER_TRACKS
-#define FIRST_ENTRY    (POOL_ENTRIES - AREAS * TRACK_ENTRIES)
-#define MAX_FRAMES     (20 * 48000)
+#define FIRST_ENTRY    (POOL_ENTRIES - AREAS * TRACK_ENTRIES)      /* 380: inside the range step 2 used on hardware */
+#define MAX_FRAMES     (16 * 48000)
 #define SEAM           96               /* 2 ms fades where the first take closes on itself */
 #define GAIN_EPS       1e-4f
 
@@ -96,6 +98,7 @@ struct looper_state {
     uint32_t in_frames;
     uint32_t ticks;              /* audio blocks since boot */
     int32_t undo_track;          /* track whose last pass the undo track holds, -1 = none */
+    uint16_t why, where;         /* why the looper is off (WHY_*) and at which pool block */
     uint32_t undo_start, undo_count;             /* pass start frame, frames saved */
     struct track t[LOOPER_TRACKS];
 };
@@ -105,6 +108,8 @@ struct looper_state {
 _Static_assert(sizeof(struct looper_state) <= 0x300, "looper state must fit below the page's state at 0x38800f00");
 
 typedef volatile struct track vtrack;
+
+enum { WHY_OK, WHY_BUSY_AT_BOOT, WHY_TAKEN_BACK };
 
 static inline uint8_t *entry(int i)
 {
@@ -168,10 +173,15 @@ void looper_boot(void *engine)
         k->gain_l = k->gain_r = 0.f;
     }
     int free = 1;
-    for (int i = FIRST_ENTRY; i < POOL_ENTRIES; i++) {
+    S->why = WHY_OK;
+    S->where = 0;
+    for (int i = POOL_ENTRIES - 1; i >= FIRST_ENTRY; i--) {
         uint8_t *e = entry(i);
-        if (e[ENTRY_STATE] != 0 || !*(void **)(e + ENTRY_LEFT) || !*(void **)(e + ENTRY_RIGHT))
+        if (e[ENTRY_STATE] != 0 || !*(void **)(e + ENTRY_LEFT) || !*(void **)(e + ENTRY_RIGHT)) {
             free = 0;
+            S->why = WHY_BUSY_AT_BOOT;
+            S->where = (uint16_t)i;               /* the lowest busy one */
+        }
     }
     if (free) {
         for (int i = FIRST_ENTRY; i < POOL_ENTRIES; i++) {
@@ -403,8 +413,11 @@ static void verify(void)
 {
     uint32_t c = S->check;
     for (int k = 0; k < 2; k++) {
-        if (!ours(FIRST_ENTRY + (int)c))
+        if (!ours(FIRST_ENTRY + (int)c)) {
             S->ok = 0;
+            S->why = WHY_TAKEN_BACK;
+            S->where = (uint16_t)(FIRST_ENTRY + (int)c);
+        }
         c = (c + 1) % (AREAS * TRACK_ENTRIES);
     }
     S->check = c;
@@ -578,7 +591,34 @@ void looper_track(int t, struct looper_info *out)
     out->pan = k->pan;
 }
 
-/* Loop progress 0..1 (0 when no loop), or, while the first take records, how much of the 20 s is used. */
+/* For the version label: "Lok", or why the looper is off ("Lb380": a pool block busy at boot, "Lt400": one taken
+ * back later), or "L-" when the looper never ran this boot. Writes at most 8 characters. */
+char *looper_status(char *p)
+{
+    *p++ = 'L';
+    if (S->magic != MAGIC) {
+        *p++ = '-';
+        return p;
+    }
+    if (S->ok) {
+        *p++ = 'o';
+        *p++ = 'k';
+        return p;
+    }
+    *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';
+    unsigned v = S->where;
+    char tmp[5];
+    int n = 0;
+    do {
+        tmp[n++] = (char)('0' + v % 10);
+        v /= 10;
+    } while (v && n < 5);
+    while (n)
+        *p++ = tmp[--n];
+    return p;
+}
+
+/* Loop progress 0..1 (0 when no loop), or, while the first take records, how much of the 16 s is used. */
 float looper_progress(void)
 {
     if (S->magic != MAGIC)

@@ -22,6 +22,8 @@ typedef int (*receive_fn)(void *queue, void *item, uint32_t ticks, int peek);
 typedef int (*text_fn)(uint8_t *text, const char *s);
 typedef void (*label_fn)(uint8_t *label, const char *s);
 typedef uint32_t (*ext_free_fn)(void);
+char *looper_status(char *p);
+void bkp_enable(void);
 
 #define fw_receive  ((receive_fn)FN(0x08088756))     /* FreeRTOS queue receive */
 #define fw_text_set ((text_fn)FN(0x080c3b98))        /* text object: copy string (<= 31 chars), mark dirty */
@@ -82,7 +84,7 @@ static char *put_uint(char *p, unsigned v)
     return p;
 }
 
-/* "3.1.x 34/71% 41M", "3.1.x --% 41M", or "3.1.x 41M" before the first second. Writes at most 24 bytes. */
+/* "3.1.x 34/71% 41M Lok", "3.1.x --% 41M Lok", or "3.1.x 41M Lok" before the first second. At most 30 bytes. */
 static void compose(char *buf)
 {
     char *p = buf;
@@ -103,12 +105,15 @@ static void compose(char *buf)
     *p++ = ' ';                  /* always, so it shows even where the load never does */
     p = put_uint(p, fw_ext_free() >> 20);
     *p++ = 'M';
+    *p++ = ' ';
+    bkp_enable();
+    p = looper_status(p);        /* the live looper: Lok, or why it is off */
     *p = 0;
 }
 
 static void report(void)
 {
-    char buf[32];
+    char buf[40];
     compose(buf);
     for (int i = 0; i < LABELS; i++) {
         uint8_t *t = M->text[i];
@@ -180,7 +185,7 @@ static void remember(int slot, uint8_t *text)
  * so a label the meter never reaches still shows the free memory as of the moment its screen was built. */
 void cpu_label_a(uint8_t *label, const char *s)            /* FUN_080c5450: a label, text at +0x34 */
 {
-    char buf[32];
+    char buf[40];
     remember(0, label + LABEL_TEXT);
     compose(buf);
     fw_label_set(label, s == VERSION ? buf : s);
@@ -188,7 +193,7 @@ void cpu_label_a(uint8_t *label, const char *s)            /* FUN_080c5450: a la
 
 int cpu_text_b(uint8_t *text, const char *s)               /* FUN_080ae8f0 */
 {
-    char buf[32];
+    char buf[40];
     remember(1, text);
     compose(buf);
     return fw_text_set(text, s == VERSION ? buf : s);
@@ -196,7 +201,7 @@ int cpu_text_b(uint8_t *text, const char *s)               /* FUN_080ae8f0 */
 
 int cpu_text_c(uint8_t *text, const char *s)               /* FUN_080c70b8 */
 {
-    char buf[32];
+    char buf[40];
     remember(2, text);
     compose(buf);
     return fw_text_set(text, s == VERSION ? buf : s);

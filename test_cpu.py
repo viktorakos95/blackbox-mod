@@ -12,13 +12,15 @@ from emu import Emu
 e = Emu("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+cave/BLACKBOX.bin", "out/cave.elf")
 V = e.cstr(0x080CF290)                          # "3.1.x" of this build
 e.uc.mem_map(0xE0000000, 0x100000)
+e.uc.mem_map(0x38800000, 0x1000)               # backup SRAM: the looper's state (its status joins the label)
+e.uc.mem_map(0x58024000, 0x1000)               # RCC / PWR
 CYC, STATE = 0xE0001004, 0x2405FFD0
 TEXT = [0x24060000, 0x24061000, 0x24062000]
 clock = {"busy": 0, "idle": 0, "got": 1}
 EXT_TOP, EXT_FLOOR = 0x24000088, 0x2400008C     # SDRAM allocator: free = top - floor (stock FUN_080443f0)
 e.w32(EXT_TOP, 0xC4000000)
 e.w32(EXT_FLOOR, 0xC4000000 - 41 * 1024 * 1024 - 5000)
-MB = " 41M"
+MB = " 41M L-"                                  # free SDRAM, then the looper status (never ran here)
 
 
 def cyc():
@@ -143,10 +145,10 @@ e.w32(CYC, 777)
 for i in range(376):
     e.call("cpu_wait", 0x24001F00, 0x24001F80, 2000, 0)
 e.call(0x0809AD74, APP, ADDR, INFO)
-check("free SDRAM is read live from the stock allocator (3M after an allocation)", e.cstr(INFO) == V + " --% 3M", e.cstr(INFO))
+check("free SDRAM is read live from the stock allocator (3M after an allocation)", e.cstr(INFO) == V + " --% 3M L-", e.cstr(INFO))
 e.uc.mem_write(STATE, b"\xa5" * 36)
 e.call(0x0809AD74, APP, ADDR, INFO)
-check("before anything is measured: version + free SDRAM", e.cstr(INFO) == V + " 3M", e.cstr(INFO))
+check("before anything is measured: version + free SDRAM + looper status", e.cstr(INFO) == V + " 3M L-", e.cstr(INFO))
 
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

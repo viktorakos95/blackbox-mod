@@ -23,9 +23,9 @@ INL, INR, PTRS = 0x30010000, 0x30011000, 0x30012000
 BUSL, BUSR = 0x30020000, 0x30021000
 N = 256
 STATE = 0x38800C00
-ENTRIES, PER, AREAS = 615, 59, 5
+ENTRIES, PER, AREAS = 615, 47, 5
 FIRST = ENTRIES - AREAS * PER
-T0, TSIZE = 0x38, 0x30                                # engine state: tracks, track size
+T0, TSIZE = 0x3C, 0x30                                # engine state: tracks, track size
 LEN, POS, RECN, OK, UNDO_T = 12, 16, 20, 8, 0x2C
 REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE = range(5)
 EMPTY, RECM, PLAY, DUB, CLEARING, UNDOING = range(6)
@@ -123,10 +123,12 @@ def ramp(k0, n=N):
 # --- boot
 boot()
 check("boot: the stock pool init still runs, with the engine", ("pool", ENGINE) in log, log)
-check("boot: the last 295 pool blocks claimed (4 tracks + undo), the others untouched",
+check("boot: the last 235 pool blocks claimed (4 tracks + undo), the others untouched",
       all(e.r8(ENGINE + 0x1C * i + 0x1F) == 3 and e.r32(ENGINE + 0x1C * i + 0x18) == 0x4C4F4F50 for i in range(FIRST, ENTRIES))
       and all(e.r8(ENGINE + 0x1C * i + 0x1F) == 0 for i in range(FIRST)))
 check("boot: track memory wiped", bytes(e.uc.mem_read(0xC0000000, 0x100)) == bytes(0x100))
+e.call("looper_status", 0x2403F000)
+check("status: Lok", bytes(e.uc.mem_read(0x2403F000, 3)) == b"Lok")
 check("boot: ready, every track empty, no loop, no undo", st(OK) == 1 and all(mode(t) == EMPTY for t in range(4)) and st(LEN) == 0 and e.r32(STATE + UNDO_T) == -1)
 tail, outs = block([0.5] * N)
 check("input stage tail call is made with the same arguments", tail == [("tail", 0x24005555, PTRS, N)], tail)
@@ -246,10 +248,10 @@ ev(0, MUTE_UP)
 blocks(70)
 check("M held 4 s: track 1 erased, loop length free again", mode(0) == EMPTY and st(LEN) == 0, (mode(0), st(LEN)))
 
-# --- 20 s limit
+# --- 16 s limit
 ev(3, REC_DOWN)
-blocks(20 * 48000 // N + 2, 0.01)
-check("a first take stops itself at 20 s and plays", st(LEN) == 20 * 48000 and mode(3) == PLAY, (st(LEN), mode(3)))
+blocks(16 * 48000 // N + 2, 0.01)
+check("a first take stops itself at 16 s and plays", st(LEN) == 16 * 48000 and mode(3) == PLAY, (st(LEN), mode(3)))
 ev(3, REC_UP)
 block([0.0] * N)
 check("...and the late release does nothing more", mode(3) == PLAY)
@@ -287,11 +289,24 @@ e.uc.mem_write(ENGINE + 0x1C * (FIRST + 3) + 0x1F, b"\x01")
 for _ in range(300):
     tail, outs = block([0.3] * N)
 check("a claimed block changing hands: looper off, Out 1 untouched", st(OK) == 0 and all(v == 0 for o in outs for v in o))
+STATUS = 0x2403F000
+e.call("looper_status", STATUS)
+st_txt = bytes(e.uc.mem_read(STATUS, e.uc.reg_read(A.UC_ARM_REG_R0) - STATUS)).decode()
+check("status names the block taken back", st_txt == f"Lt{FIRST + 3}", st_txt)
 check("...and the input path still runs", tail == [("tail", 0x24005555, PTRS, N)])
 lay_pool()
 e.uc.mem_write(ENGINE + 0x1C * (ENTRIES - 1) + 0x1F, b"\x03")
 e.call("looper_boot", ENGINE, count=200_000_000)
 check("pool blocks not free at boot: nothing claimed, looper off", st(OK) == 0 and e.r8(ENGINE + 0x1C * FIRST + 0x1F) == 0)
+STATUS = 0x2403F000
+
+
+def status():
+    e.call("looper_status", STATUS)
+    return bytes(e.uc.mem_read(STATUS, e.uc.reg_read(A.UC_ARM_REG_R0) - STATUS)).decode()
+
+
+check("status for the version label names the busy block", status() == f"Lb{ENTRIES - 1}", status())
 e.call("looper_ready")
 check("looper_ready reports it (the page is then not offered)", e.uc.reg_read(A.UC_ARM_REG_R0) == 0)
 

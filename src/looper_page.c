@@ -173,10 +173,8 @@ static void draw_box(void *fb, const int *r, int t, const struct looper_info *k)
     label(fb, r[0], r[1] + r[3] / 2 - 4, r[2], r[3] / 2, mode_name(k), ink);
     if (k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB || k->mode == LOOPER_REC)
         box(fb, r[0], r[1] + r[3] - 4, (int)(looper_progress() * (float)r[2]), 4, C_CYAN);
-    if (k->latched) {
-        frame(fb, r[0], r[1], r[2], r[3], C_WHITE);
+    if (k->latched)
         frame(fb, r[0] + 1, r[1] + 1, r[2] - 2, r[3] - 2, C_WHITE);
-    }
 }
 
 static void draw_buttons(void *fb, const int *r, int t, const struct looper_info *k)

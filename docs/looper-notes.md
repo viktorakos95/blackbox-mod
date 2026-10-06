@@ -83,6 +83,14 @@ All good: loop on Out 1 and the headphones, follows the Tools levels and the com
   +0xc (0..7; 5 = MIX). The page shows the last one ("bf9:N") to find INFO, and whether a release is reported.
 - Code cave enlarged to the end of flash bank 1 (0x08100000, 57 KB): nothing in the stock image refers to that range.
 
+## Step 3 on hardware
+
+The Looper page never came up: MIX did not reach it, so looper_ready() was false. The likely cause is the larger
+claim (295 blocks from 320): blocks below 379 are not all free right after the pool init. Step 3b puts the five
+areas (4 tracks + undo, 47 blocks = 16 s each) back inside step 2's proven range (from 380), and the version label
+now ends with the looper's status: "Lok", "Lb<block>" (busy at boot), "Lt<block>" (taken back later), "L-".
+Step 3b stays under 32 KB of cave, so it does not yet test the enlarged cave.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,
