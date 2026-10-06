@@ -33,17 +33,28 @@ on the Mixer screen (MIX cycles Mixer -> Mute -> Solo -> Looper).
   three per call (@0x0804cf62: the lefts, @0x0804cf7c: the rights; full scale +-1.0). Both run in the audio task
   (`FUN_08041470`), input first. Engine init is `FUN_0804c1a4`, called once from main (`0x08044260`).
 
-## Step 1 hardware test
+## Step 1 on hardware (done)
 
-Build: `python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper cave`.
-At boot it waits for input above about -30 dBFS, records 2 s, then loops it on every output pair. Report: does it
-record, is the level right, is the stereo right, which outputs carry it, any clicks or glitches, does normal use
-(loading projects, playing pads) still work.
+Recorded and looped. Level a little lower than the input; stereo right; samples play on top; everything else
+normal. The loop came out of Out 1, Out 3 and the headphones (all three channels of each packer call), not Out 2.
 
-## Next
+## Step 2: the looper (this build)
 
-1. Work out the block-entry fields (owner, state values, eviction/streaming use) so claimed blocks are never
-   reused by the sample loader.
-2. Find the audio-input buffer in the audio task (`FUN_08041470`) / recorder path.
-3. Looper engine (record / overdub / play / mute / clear / level, first track sets the length) + Unicorn tests.
-4. Looper mode on the Mixer screen, following `src/solo.c`.
+`python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper cave`
+
+- Engine (`src/looper.c`): 4 tracks x 20 s in 236 claimed pool blocks (59 per track, 16-bit stereo), first take
+  sets the length, REC / DUB / PLAY, MUTE with a one-block fade, CLEAR (one block of memory per audio block),
+  per-track level, 2 ms seam fades on the first take, playhead shared by all tracks. Every audio block re-checks
+  two claimed blocks; any change of hands turns the looper off without touching memory.
+- Output: first channel of each packer call only (to find which jack that is).
+- UI (`src/solo.c`): MIX cycles Mixer -> Mute -> Solo -> Looper. Columns = tracks; row 0 REC/PLAY/DUB with a
+  playhead line, row 1 MUTE, row 2 CLEAR, row 3 fader (drag). Own cell drawing through the mixer cell vtable draw
+  (0x080effc8); redraws poked from the audio task about 19 times a second.
+- Touch points are `int x, y`; widget rects are `int x, y, w, h` at +4 (from the stock contains test 0x080ad50e).
+- Palette (table at 0x080f1d80, ARGB): 0x06 red, 0x0b green, 0x0c dark red, 0x0f white, 0x10 dark grey,
+  0x14 yellow, 0x16 light grey, 0x19 near black, 0x1a teal, 0x1b cyan.
+
+## Later
+
+- Track names / labels on the cells (needs text drawing), pan, a master looper level, tempo-synced length,
+  undo, choosing the output.
