@@ -68,7 +68,11 @@ def check(label, cond, detail=""):
 e.uc.mem_write(STATE, b"\xa5" * 36)            # patch RAM is not zeroed at boot
 e.w32(CYC, 123456)
 labels()
-check("labels built at boot are remembered (all three) and keep the version text", all(e.r32(STATE + 24 + 4 * i) == TEXT[i] for i in range(3)) and text(1) == V, [hex(e.r32(STATE + 24 + 4 * i)) for i in range(3)])
+check("labels built at boot are remembered (all three) and keep the version text", all(e.r32(STATE + 24 + 4 * i) == TEXT[i] for i in range(3)) and text(1) == V + MB, [hex(e.r32(STATE + 24 + 4 * i)) for i in range(3)])
+e.uc.mem_write(0x24063000, b"other\0")
+e.call("cpu_text_b", TEXT[1], 0x24063000)
+check("a constructor call with some other string passes it through untouched", text(1) == "other", text(1))
+labels()
 check("cycle counter switched on (TRCENA, unlock, CYCCNTENA)", e.r32(0xE000EDFC) & (1 << 24) and e.r32(0xE0001FB0) & 0xFFFFFFFF == 0xC5ACCE55 and e.r32(0xE0001000) & 1)
 
 PERIOD = 2_560_000                              # 5.33 ms at 480 MHz
@@ -76,7 +80,7 @@ c = block(0, PERIOD)
 check("the wait itself is passed through unchanged", c[0] == ("wait", 0x24001F00, 2000))
 for i in range(187):
     block(PERIOD * 30 // 100, PERIOD * 70 // 100)
-check("before a full second: labels untouched", text(0) == V)
+check("before a full second: labels keep what they were built with (version + free SDRAM)", text(1) == V + MB, text(1))
 block(PERIOD * 30 // 100, PERIOD * 70 // 100)
 check("after 188 blocks at 30% busy: '3.1.x 30/30%' on every label", [text(i) for i in range(3)] == [V + " 30/30%" + MB] * 3, [text(i) for i in range(3)])
 check("the label's own dirty flag is set by the stock setter", e.r8(TEXT[1] + 0x55) == 1 or e.r8(TEXT[1] + 0x56) == 1)
@@ -142,7 +146,7 @@ e.call(0x0809AD74, APP, ADDR, INFO)
 check("free SDRAM is read live from the stock allocator (3M after an allocation)", e.cstr(INFO) == V + " --% 3M", e.cstr(INFO))
 e.uc.mem_write(STATE, b"\xa5" * 36)
 e.call(0x0809AD74, APP, ADDR, INFO)
-check("before anything is measured: just the version", e.cstr(INFO) == V, e.cstr(INFO))
+check("before anything is measured: version + free SDRAM", e.cstr(INFO) == V + " 3M", e.cstr(INFO))
 
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

@@ -7,7 +7,8 @@
  * that show "3.1.x" get " avg/peak%" appended, the average and the worst 5.33 ms block of the last second, and so
  * does the global cell's name (FUN_0809ad74, address 0x40), which is where the version actually shows on screen.
  * If the cycle counter never moves, the text reads " --%" instead, so a dead counter is visible, not silent.
- * After the load comes the free external (SDRAM) memory in MB, " 41M": the number the stock boot log prints as
+ * After the load (or right after the version, before there is one) comes the free external (SDRAM) memory in MB,
+ * " 41M": the number the stock boot log prints as
  * "External = %dKB" (FUN_080443f0, allocation top minus floor). It sizes the looper's track buffers.
  * The labels are filled in when their screens are built; the meter rewrites their text from the audio task (a plain
  * character copy plus the label's own dirty flag), and only when the label still starts with "3.1.", so a stale
@@ -81,7 +82,7 @@ static char *put_uint(char *p, unsigned v)
     return p;
 }
 
-/* "3.1.x 34/71% 41M", "3.1.x --% 41M", or just the version before the first second. Writes at most 24 bytes. */
+/* "3.1.x 34/71% 41M", "3.1.x --% 41M", or "3.1.x 41M" before the first second. Writes at most 24 bytes. */
 static void compose(char *buf)
 {
     char *p = buf;
@@ -99,11 +100,9 @@ static void compose(char *buf)
         *p++ = '-';
         *p++ = '%';
     }
-    if (M->magic == MAGIC && M->status != STATUS_NONE) {
-        *p++ = ' ';
-        p = put_uint(p, fw_ext_free() >> 20);
-        *p++ = 'M';
-    }
+    *p++ = ' ';                  /* always, so it shows even where the load never does */
+    p = put_uint(p, fw_ext_free() >> 20);
+    *p++ = 'M';
     *p = 0;
 }
 
@@ -177,21 +176,28 @@ static void remember(int slot, uint8_t *text)
     M->text[slot] = text;
 }
 
-/* The three places that build a version label (screen constructors at boot). */
+/* The three places that build a version label (screen constructors at boot). They get the composed text right away,
+ * so a label the meter never reaches still shows the free memory as of the moment its screen was built. */
 void cpu_label_a(uint8_t *label, const char *s)            /* FUN_080c5450: a label, text at +0x34 */
 {
+    char buf[32];
     remember(0, label + LABEL_TEXT);
-    fw_label_set(label, s);
+    compose(buf);
+    fw_label_set(label, s == VERSION ? buf : s);
 }
 
 int cpu_text_b(uint8_t *text, const char *s)               /* FUN_080ae8f0 */
 {
+    char buf[32];
     remember(1, text);
-    return fw_text_set(text, s);
+    compose(buf);
+    return fw_text_set(text, s == VERSION ? buf : s);
 }
 
 int cpu_text_c(uint8_t *text, const char *s)               /* FUN_080c70b8 */
 {
+    char buf[32];
     remember(2, text);
-    return fw_text_set(text, s);
+    compose(buf);
+    return fw_text_set(text, s == VERSION ? buf : s);
 }
