@@ -27,6 +27,19 @@ on the Mixer screen (MIX cycles Mixer -> Mute -> Solo -> Looper).
 - Recorder settings exist as params (`recinput`, `recmonmode`, `recquant`, ...): the recorder's input path is the
   place to look for the audio-input tap.
 
+- **Audio hooks (step 1, `src/looper.c`, `patches/looper.py`).** Input: the input stage `FUN_0804caa4` ends in
+  `b.w FUN_080518f0(obj, engine+0x8fb0, frames)`; `engine+0x8fb0` holds the input L / R float pointers (full scale
+  +-1.0). Output: the render `FUN_0804cb1c` packs six float channels into 20-bit codec slots with `FUN_0806002c`,
+  three per call (@0x0804cf62: the lefts, @0x0804cf7c: the rights; full scale +-1.0). Both run in the audio task
+  (`FUN_08041470`), input first. Engine init is `FUN_0804c1a4`, called once from main (`0x08044260`).
+
+## Step 1 hardware test
+
+Build: `python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper cave`.
+At boot it waits for input above about -30 dBFS, records 2 s, then loops it on every output pair. Report: does it
+record, is the level right, is the stereo right, which outputs carry it, any clicks or glitches, does normal use
+(loading projects, playing pads) still work.
+
 ## Next
 
 1. Work out the block-entry fields (owner, state values, eviction/streaming use) so claimed blocks are never
