@@ -10,16 +10,8 @@
  * merely READ muted at the next tap, then re-captured the solo's own mutes as the state to return to: un-solo left
  * everything muted. His report on 3.1.l.)
  *
- * Looper mode (the live looper, engine in looper.c) turns the 16 mixer cells into its controls, one column per track:
- *   row 0  REC / PLAY / DUB: dark = empty, red = recording, yellow = overdubbing, green = playing, white = clearing.
- *          A cyan line along its bottom is the loop's playhead (or, while the first take records, how much of the
- *          20 s it has used).
- *   row 1  MUTE: green = playing, red = muted, dark = empty track.
- *   row 2  CLEAR: tap to wipe the track.
- *   row 3  LEVEL: a fader; touch it and drag up / down. The cyan bar is the level.
- * The stock cell drawing is skipped for these cells while Looper mode shows (mixer cell vtable +0x20 draw), so pad
- * names do not show there. The GUI redraws the cells when the looper marks them dirty (from the audio task, about
- * 20 times a second while the mode shows: a plain byte write, as the CPU meter does for its label).
+ * Looper mode is the live looper's page (looper_page.c draws it and handles its touches and knobs; the engine is
+ * looper.c). This file only routes the mixer view's hooks to it while the mode shows.
  *
  * Linked into the free space after the stock image; every firmware call goes through an
  * absolute function pointer, so the object has no relocations against the stock code.
@@ -27,6 +19,11 @@
 #include <stdint.h>
 
 #include "looper.h"
+
+int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx);
+void looper_page_down(uint8_t *view, const int *pt);
+void looper_page_move(uint8_t *view, const int *pt);
+void looper_page_up(uint8_t *view, const int *pt);
 
 #define FN(addr) ((addr) | 1u)
 
@@ -46,6 +43,7 @@ typedef void (*draw_fn)(uint8_t *cell, uint8_t *ctx);
 #define fw_hit         ((hit_fn)FN(0x080b5e78))
 #define fw_touch_down  ((touch_fn)FN(0x080b5f44))
 #define fw_touch_move  ((touch_fn)FN(0x080b5ebc))
+#define fw_touch_up    ((touch_fn)FN(0x080b5aec))
 #define fw_set_mode    ((set_mode_fn)FN(0x080b5e44))
 #define fw_set_screen  ((set_screen_fn)FN(0x0809eaec))
 #define fw_cell_draw   ((draw_fn)FN(0x080a43b8))
@@ -61,19 +59,6 @@ typedef void (*draw_fn)(uint8_t *cell, uint8_t *ctx);
 #define CELL_UNMUTED 0x189
 #define COLOR_SOLO_FILL 0x1c     /* palette: rgb(119,113,0) */
 #define COLOR_SOLO_EDGE 0x14     /* palette: rgb(255,255,0) */
-#define CELL_RECT    0x04        /* int x, y, w, h */
-#define CTX_FB       0x04        /* draw context: frame buffer handed to fill / outline */
-#define COLOR_DARK   0x19        /* palette: rgb(43,43,43) */
-#define COLOR_GREY   0x09        /* rgb(102,102,102) */
-#define COLOR_MID    0x10        /* rgb(68,68,68) */
-#define COLOR_LIGHT  0x16        /* rgb(170,170,170) */
-#define COLOR_WHITE  0x0f
-#define COLOR_GREEN  0x0b        /* rgb(34,187,34): the stock "unmuted" */
-#define COLOR_RED    0x0c        /* rgb(187,34,34): the stock "muted" */
-#define COLOR_REC    0x06        /* rgb(255,0,0) */
-#define COLOR_YELLOW 0x14        /* rgb(255,255,0) */
-#define COLOR_CYAN   0x1b        /* rgb(9,215,245) */
-#define COLOR_TEAL   0x1a        /* rgb(4,107,122) */
 #define MSG_PAD_MUTE 0x44
 #define MSG_TAG      0x080cfba4u
 
@@ -190,120 +175,46 @@ static void toggle(uint8_t *view, uint8_t *cell)
     apply(view);
 }
 
-/* --- Looper mode */
+/* --- Looper mode: the page itself is looper_page.c; this routes the mixer view's hooks to it. */
 
-/* Fader drag, in the looper's backup SRAM page (after its engine state). */
-struct looper_drag {
-    int32_t track;               /* -1 = no drag */
-    int32_t y0;
-    float level0, span;          /* level at touch down, pixels for the full range */
-};
-#define DRAG ((volatile struct looper_drag *)0x38800f00u)
-
-static int cell_row(uint8_t *cell)
-{
-    return (*(uint16_t *)(cell + CELL_PAD) >> 4) & 0xf;
-}
-
-static int cell_col(uint8_t *cell)
-{
-    return *(uint16_t *)(cell + CELL_PAD) & 0xf;
-}
-
-static void looper_touch(uint8_t *view, const int *pt)
-{
-    uint8_t *cell = 0;
-    DRAG->track = -1;
-    if (!fw_hit(view, (void *)pt, &cell) || !cell || cell_index(view, cell) < 0)
-        return;
-    int t = cell_col(cell), row = cell_row(cell);
-    if (t >= LOOPER_TRACKS)
-        return;
-    if (row == 0) {
-        looper_command(t, LOOPER_CMD_REC);
-    } else if (row == 1) {
-        looper_command(t, LOOPER_CMD_MUTE);
-    } else if (row == 2) {
-        looper_command(t, LOOPER_CMD_CLEAR);
-    } else if (row == 3) {
-        struct looper_info k;
-        looper_track(t, &k);
-        int h = ((int *)(cell + CELL_RECT))[3];
-        DRAG->level0 = k.level;
-        DRAG->y0 = pt[1];
-        DRAG->span = (float)(h > 8 ? 2 * h : 100);
-        DRAG->track = t;
-    }
-    mark_dirty(view);
-}
-
-static void looper_drag(uint8_t *view, const int *pt)
-{
-    int t = DRAG->track;
-    if (t < 0 || t >= LOOPER_TRACKS)
-        return;
-    looper_set_level(t, DRAG->level0 + (float)(DRAG->y0 - pt[1]) / DRAG->span);
-    mark_dirty(view);
-}
-
-static void fill(const int *r, int x, int y, int w, int h, int color, void *fb)
-{
-    int q[4] = {r[0] + x, r[1] + y, w, h};
-    if (w > 0 && h > 0)
-        fw_fill(q, color, fb);
-}
-
-static void looper_draw(uint8_t *cell, uint8_t *ctx)
-{
-    const int *r = (const int *)(cell + CELL_RECT);
-    void *fb = *(void **)(ctx + CTX_FB);
-    int t = cell_col(cell), row = cell_row(cell), w = r[2], h = r[3];
-    struct looper_info k;
-    looper_track(t, &k);
-    int has = k.mode == LOOPER_PLAY || k.mode == LOOPER_DUB;
-    int color = COLOR_DARK;
-    if (row == 0) {
-        color = k.mode == LOOPER_REC ? COLOR_REC : k.mode == LOOPER_DUB ? COLOR_YELLOW
-              : k.mode == LOOPER_PLAY ? COLOR_GREEN : k.mode == LOOPER_CLEARING ? COLOR_WHITE : COLOR_DARK;
-    } else if (row == 1) {
-        color = !has ? COLOR_DARK : k.muted ? COLOR_RED : COLOR_GREEN;
-    } else if (row == 2) {
-        color = k.mode == LOOPER_CLEARING ? COLOR_WHITE : COLOR_MID;
-    }
-    fill(r, 0, 0, w, h, color, fb);
-    if (row == 0 && (has || k.mode == LOOPER_REC)) {
-        float p = looper_progress();
-        fill(r, 0, h - 5, (int)(p * (float)w), 5, COLOR_CYAN, fb);
-    } else if (row == 2) {
-        fill(r, w / 4, h / 2 - 2, w / 2, 4, COLOR_LIGHT, fb);     /* a dash: "wipe" */
-    } else if (row == 3) {
-        int bar = (int)(k.level * (float)(h - 4));
-        fill(r, 4, h - 2 - bar, w - 8, bar, k.muted ? COLOR_TEAL : COLOR_CYAN, fb);
-    }
-    fw_outline((void *)r, COLOR_GREY, fb);
-}
-
-/* Mixer cell vtable draw (0x080effc8): Looper mode draws its own cells, everything else is stock. */
-void looper_cell_draw(uint8_t *cell, uint8_t *ctx)
+/* The mixer view while it shows the Looper page, else 0. */
+uint8_t *solo_looper_view(void)
 {
     ensure();
-    if (S->looper && S->view && ctx[0] && cell_index(S->view, cell) >= 0 && cell_col(cell) < LOOPER_TRACKS &&
-        cell_row(cell) < 4) {
-        looper_draw(cell, ctx);
+    uint8_t *view = S->view;
+    if (!S->looper || (uint32_t)view < 0x24000000u || (uint32_t)view >= 0x24080000u || !view[VIEW_MUTE])
+        return 0;
+    return view;
+}
+
+/* Mixer cell vtable draw (0x080effc8): the Looper page draws its own cells, everything else is stock. */
+void looper_cell_draw(uint8_t *cell, uint8_t *ctx)
+{
+    uint8_t *view = solo_looper_view();
+    if (view && ctx[0] && cell_index(view, cell) >= 0 && looper_page_draw(view, cell, ctx))
         return;
-    }
     fw_cell_draw(cell, ctx);
 }
 
-/* From the audio task, about 20 times a second: have the GUI redraw the looper cells (playhead, state changes). */
+/* From the audio task, about 19 times a second: have the GUI redraw the page (playhead, state changes). */
 void looper_ui_poke(void)
 {
-    if (S->magic != MAGIC || !S->looper)
+    if (S->magic != MAGIC)
         return;
-    uint8_t *view = S->view;
-    if ((uint32_t)view < 0x24000000u || (uint32_t)view >= 0x24080000u || !view[VIEW_MUTE])
+    uint8_t *view = solo_looper_view();
+    if (view)
+        mark_dirty(view);
+}
+
+/* Mixer view vtable +0x18 (0x080f0f28): touch up. */
+void solo_touch_up(uint8_t *view, void *pt, void *arg)
+{
+    ensure();
+    if (S->looper && view[VIEW_MUTE]) {
+        looper_page_up(view, (const int *)pt);
         return;
-    mark_dirty(view);
+    }
+    fw_touch_up(view, pt, arg);
 }
 
 /* Replaces the set-screen call in the MIX button handler. */
@@ -358,7 +269,7 @@ void solo_touch_down(uint8_t *view, void *pt, void *arg)
 {
     ensure();
     if (S->looper && view[VIEW_MUTE]) {
-        looper_touch(view, (const int *)pt);
+        looper_page_down(view, (const int *)pt);
         return;
     }
     if (S->active && view[VIEW_MUTE]) {
@@ -376,7 +287,7 @@ void solo_touch_move(uint8_t *view, void *pt, void *arg)
 {
     ensure();
     if (S->looper && view[VIEW_MUTE]) {
-        looper_drag(view, (const int *)pt);
+        looper_page_move(view, (const int *)pt);
         return;
     }
     if (S->active && view[VIEW_MUTE])

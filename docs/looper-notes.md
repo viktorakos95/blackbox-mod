@@ -65,6 +65,24 @@ The loop now joins the Out 1 bus before the compressor stage: `looper_thunk.S` r
 (`ldrb.w r3, [r5, #0xd60]` @0x08053528) that guards the stage call (@0x08053ca0, obj = fp + 0xfc40, buffers =
 [sp]); the stage is skipped entirely when the compressor is off, so its own hook (comp_process) is not enough.
 
+## Step 2b on hardware
+
+All good: loop on Out 1 and the headphones, follows the Tools levels and the compressor.
+
+## Step 3: the page redesign (this build)
+
+- Engine v3 (`src/looper.c`): gestures timed on the audio clock (hold >= 300 ms records while held; a second tap
+  within 400 ms latches; a tap ends a latched take; a lone tap is taken back), one-pass undo through an undo track
+  (one more 59-block area: 295 pool blocks claimed now, about 55 s left for samples), reverse, pan, M hold 2 s undo /
+  4 s erase.
+- Page (`src/looper_page.c`): strips per track (box, PAN / REV / M, two-cell fader), text through the stock string
+  renderer `FUN_0808ee54(str, rect, colour, fb)` (width `FUN_0808ed28`), knobs through the mixer view's message
+  handler (vtable +0x34 @0x080f0f44, message 0x32: +0xc knob 0..3, +0x10 counts), touch up through vtable +0x18
+  (@0x080f0f28).
+- App message dispatch is `bl FUN_080a2e60` @0x080a23cc; hardware buttons arrive as message 0xf9 with the button at
+  +0xc (0..7; 5 = MIX). The page shows the last one ("bf9:N") to find INFO, and whether a release is reported.
+- Code cave enlarged to the end of flash bank 1 (0x08100000, 57 KB): nothing in the stock image refers to that range.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,
