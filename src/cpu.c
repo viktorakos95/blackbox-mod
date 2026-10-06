@@ -7,6 +7,8 @@
  * that show "3.1.x" get " avg/peak%" appended, the average and the worst 5.33 ms block of the last second, and so
  * does the global cell's name (FUN_0809ad74, address 0x40), which is where the version actually shows on screen.
  * If the cycle counter never moves, the text reads " --%" instead, so a dead counter is visible, not silent.
+ * After the load comes the free external (SDRAM) memory in MB, " 41M": the number the stock boot log prints as
+ * "External = %dKB" (FUN_080443f0, allocation top minus floor). It sizes the looper's track buffers.
  * The labels are filled in when their screens are built; the meter rewrites their text from the audio task (a plain
  * character copy plus the label's own dirty flag), and only when the label still starts with "3.1.", so a stale
  * pointer from an earlier boot is never written through.
@@ -18,10 +20,12 @@
 typedef int (*receive_fn)(void *queue, void *item, uint32_t ticks, int peek);
 typedef int (*text_fn)(uint8_t *text, const char *s);
 typedef void (*label_fn)(uint8_t *label, const char *s);
+typedef uint32_t (*ext_free_fn)(void);
 
 #define fw_receive  ((receive_fn)FN(0x08088756))     /* FreeRTOS queue receive */
 #define fw_text_set ((text_fn)FN(0x080c3b98))        /* text object: copy string (<= 31 chars), mark dirty */
 #define fw_label_set ((label_fn)FN(0x080a3dec))      /* label: text object at +0x34, then redraw */
+#define fw_ext_free ((ext_free_fn)FN(0x080443f0))    /* bytes left in the SDRAM allocator (two word reads) */
 
 #define VERSION     ((const char *)0x080cf290u)      /* "3.1.x" */
 #define TEXT_CHARS  0x31                             /* text object: characters */
@@ -77,7 +81,7 @@ static char *put_uint(char *p, unsigned v)
     return p;
 }
 
-/* "3.1.x 34/71%", "3.1.x --%", or just the version before the first second. Writes at most 16 bytes. */
+/* "3.1.x 34/71% 41M", "3.1.x --% 41M", or just the version before the first second. Writes at most 24 bytes. */
 static void compose(char *buf)
 {
     char *p = buf;
@@ -95,12 +99,17 @@ static void compose(char *buf)
         *p++ = '-';
         *p++ = '%';
     }
+    if (M->magic == MAGIC && M->status != STATUS_NONE) {
+        *p++ = ' ';
+        p = put_uint(p, fw_ext_free() >> 20);
+        *p++ = 'M';
+    }
     *p = 0;
 }
 
 static void report(void)
 {
-    char buf[24];
+    char buf[32];
     compose(buf);
     for (int i = 0; i < LABELS; i++) {
         uint8_t *t = M->text[i];

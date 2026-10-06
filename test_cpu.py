@@ -15,6 +15,10 @@ e.uc.mem_map(0xE0000000, 0x100000)
 CYC, STATE = 0xE0001004, 0x2405FFD0
 TEXT = [0x24060000, 0x24061000, 0x24062000]
 clock = {"busy": 0, "idle": 0, "got": 1}
+EXT_TOP, EXT_FLOOR = 0x24000088, 0x2400008C     # SDRAM allocator: free = top - floor (stock FUN_080443f0)
+e.w32(EXT_TOP, 0xC4000000)
+e.w32(EXT_FLOOR, 0xC4000000 - 41 * 1024 * 1024 - 5000)
+MB = " 41M"
 
 
 def cyc():
@@ -74,17 +78,17 @@ for i in range(187):
     block(PERIOD * 30 // 100, PERIOD * 70 // 100)
 check("before a full second: labels untouched", text(0) == V)
 block(PERIOD * 30 // 100, PERIOD * 70 // 100)
-check("after 188 blocks at 30% busy: '3.1.x 30/30%' on every label", [text(i) for i in range(3)] == [V + " 30/30%"] * 3, [text(i) for i in range(3)])
+check("after 188 blocks at 30% busy: '3.1.x 30/30%' on every label", [text(i) for i in range(3)] == [V + " 30/30%" + MB] * 3, [text(i) for i in range(3)])
 check("the label's own dirty flag is set by the stock setter", e.r8(TEXT[1] + 0x55) == 1 or e.r8(TEXT[1] + 0x56) == 1)
 
 for i in range(188):
     busy = 80 if i == 50 else 40
     block(PERIOD * busy // 100, PERIOD * (100 - busy) // 100)
-check("one heavy block in a second: average 40%, peak 80%", text(1) == V + " 40/80%", text(1))
+check("one heavy block in a second: average 40%, peak 80%", text(1) == V + " 40/80%" + MB, text(1))
 
 for i in range(188):
     block(PERIOD * 120 // 100, PERIOD * 5 // 100)
-check("overrun (work longer than a period): reads over 100%", text(1).endswith("/96%") or int(text(1).split()[1].split("/")[0]) > 90, text(1))
+check("overrun (work longer than a period): reads over 100%", text(1).endswith("/96%" + MB) or int(text(1).split()[1].split("/")[0]) > 90, text(1))
 
 clock["got"] = 0
 block(10_000, PERIOD * 400)                     # a 2 s timeout with no interrupt (audio stopped)
@@ -92,21 +96,21 @@ clock["got"] = 1
 block(0, PERIOD)
 for i in range(188):
     block(PERIOD // 10, PERIOD * 9 // 10)
-check("after a wait that timed out, the next second measures cleanly again (10/10%)", text(1) == V + " 10/10%", text(1))
+check("after a wait that timed out, the next second measures cleanly again (10/10%)", text(1) == V + " 10/10%" + MB, text(1))
 
 e.w32(CYC, 0xFFFFFFFF - PERIOD * (188 + 50))   # wraps during the second report; the jump itself is absorbed by the first
 for i in range(188 * 2):
     block(PERIOD // 4, PERIOD * 3 // 4)
-check("cycle counter wrapping past 2^32 does not disturb the reading (25/25%)", text(1) == V + " 25/25%", text(1))
+check("cycle counter wrapping past 2^32 does not disturb the reading (25/25%)", text(1) == V + " 25/25%" + MB, text(1))
 
 e.uc.mem_write(TEXT[2] + 0x31, b"\x13\x37garbage\0")
 for i in range(188):
     block(PERIOD // 2, PERIOD // 2)
-check("a remembered pointer whose text no longer says 3.1. is not written", text(2) == "\x13\x37garbage" and text(1) == V + " 50/50%", (text(2), text(1)))
+check("a remembered pointer whose text no longer says 3.1. is not written", text(2) == "\x13\x37garbage" and text(1) == V + " 50/50%" + MB, (text(2), text(1)))
 e.w32(STATE + 24, 0x08001234)
 for i in range(188):
     block(PERIOD // 2, PERIOD // 2)
-check("a pointer outside RAM is skipped, the others still update", text(1) == V + " 50/50%")
+check("a pointer outside RAM is skipped, the others still update", text(1) == V + " 50/50%" + MB)
 
 # --- the global cell's name: what the screens actually show
 APP, ADDR, INFO = 0x24020088, 0x24070000, 0x24071000
@@ -116,7 +120,7 @@ e.w32(APP + 0xE988, 12 * 1024 * 1024)           # memory figure the stock code f
 e.w32(APP + 0xE98C, 0)
 e.stub(0x080C89F4, lambda: e.calls.append(("fmt", e.arg(0))))
 c = e.call(0x0809AD74, APP, ADDR, INFO)
-check("global cell info (stock function, patched copy): name reads version + load", e.cstr(INFO) == V + " 50/50%", e.cstr(INFO))
+check("global cell info (stock function, patched copy): name reads version + load", e.cstr(INFO) == V + " 50/50%" + MB, e.cstr(INFO))
 check("...and the stock code still formats its size field after it (at +0x40)", ("fmt", INFO + 0x40) in c, c)
 check("name text stays well inside its 64 bytes", len(e.cstr(INFO)) < 20)
 
@@ -126,7 +130,16 @@ clock["idle"] = 0
 for i in range(376):
     e.call("cpu_wait", 0x24001F00, 0x24001F80, 2000, 0)  # cycle counter never moves
 e.call(0x0809AD74, APP, ADDR, INFO)
-check("cycle counter dead: shows '--%' instead of nothing", e.cstr(INFO) == V + " --%", e.cstr(INFO))
+check("cycle counter dead: shows '--%' instead of nothing", e.cstr(INFO) == V + " --%" + MB, e.cstr(INFO))
+e.uc.mem_write(STATE, b"\xa5" * 36)
+e.call(0x0809AD74, APP, ADDR, INFO)
+e.w32(EXT_FLOOR, 0xC4000000 - 3 * 1024 * 1024)
+e.uc.mem_write(STATE, b"\xa5" * 36)
+e.w32(CYC, 777)
+for i in range(376):
+    e.call("cpu_wait", 0x24001F00, 0x24001F80, 2000, 0)
+e.call(0x0809AD74, APP, ADDR, INFO)
+check("free SDRAM is read live from the stock allocator (3M after an allocation)", e.cstr(INFO) == V + " --% 3M", e.cstr(INFO))
 e.uc.mem_write(STATE, b"\xa5" * 36)
 e.call(0x0809AD74, APP, ADDR, INFO)
 check("before anything is measured: just the version", e.cstr(INFO) == V, e.cstr(INFO))
