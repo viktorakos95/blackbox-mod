@@ -10,9 +10,10 @@
  * Audio path (found for step 1, confirmed on hardware):
  *   input  - the input stage (FUN_0804caa4) ends in a tail call `b.w FUN_080518f0(obj, engine+0x8fb0, frames)`
  *            (@0x0804cb18); the two pointers at engine+0x8fb0 are the input L / R floats, full scale +-1.0.
- *   output - the render (FUN_0804cb1c) packs six float channels into the codec with FUN_0806002c, three per call:
- *            @0x0804cf62 the lefts, @0x0804cf7c the rights. Together they feed Out 1, Out 3 and the headphones
- *            (Out 2 is packed elsewhere). The loop goes into the first channel of each call only.
+ *   output - the Out 1 bus, just before the master compressor stage (looper_thunk.S @0x08053528, which runs
+ *            whether the compressor is on or off): the compressor, the Out 1 and Headphone levels apply to the loop. (Steps 1 and 2 added it
+ *            at the codec packer instead, FUN_0806002c: there it reached Out 1, Out 3 and the headphones, after every
+ *            level and the compressor.)
  * Both run in the audio task, input first, 256 frames a block.
  *
  * Memory: 236 of the 615 blocks of the stock sample pool (the last ones), claimed once at boot right after the pool
@@ -32,11 +33,9 @@
 #define FN(addr) ((addr) | 1u)
 
 typedef void (*in_tail_fn)(void *obj, float **bufs, int frames);
-typedef void (*pack_fn)(float *a, float *b, float *c, int frames, void *dst, int stride);
 typedef void (*pool_fn)(void *engine);
 
 #define fw_in_tail    ((in_tail_fn)FN(0x080518f0))
-#define fw_pack       ((pack_fn)FN(0x0806002c))
 #define fw_pool_init  ((pool_fn)FN(0x08070bf4))
 
 void bkp_enable(void);
@@ -315,9 +314,7 @@ static inline float target(int t)
     return S->t[t].muted ? 0.f : S->t[t].level;
 }
 
-/* Add the playing tracks' channel ch into a. The overdubbing track plays what it held before this pass.
- * Step 1 added the loop to a, b and c: on hardware that reached Out 1, Out 3 and the headphones (not Out 2).
- * Only a now; which jack that is gets confirmed on hardware. */
+/* Add the playing tracks' channel ch into a. The overdubbing track plays what it held before this pass. */
 static void mix(float *a, int frames, int ch, int commit)
 {
     if (S->magic != MAGIC || !S->ok || !S->len || frames <= 0)
@@ -363,17 +360,36 @@ static void mix(float *a, int frames, int ch, int commit)
         S->pos = (pos + (uint32_t)frames) % len;
 }
 
-/* Replace the two output packer calls (bl @0x0804cf62: lefts, bl @0x0804cf7c: rights). */
-void looper_out_l(float *a, float *b, float *c, int frames, void *dst, int stride)
+/* Add the loop into a stereo bus (Out 1). */
+void looper_bus(float *l, float *r, int frames)
 {
-    mix(a, frames, 0, 0);
-    fw_pack(a, b, c, frames, dst, stride);
+    mix(l, frames, 0, 0);
+    mix(r, frames, 1, 1);
 }
 
-void looper_out_r(float *a, float *b, float *c, int frames, void *dst, int stride)
+typedef void *(*buf_of_fn)(void *bufs, unsigned idx);
+typedef int (*frames_fn)(void *buf);
+typedef void (*chans_fn)(void *buf, float **l, float **r);
+typedef unsigned (*index_fn)(void *obj);
+#define fw_buf_of  ((buf_of_fn)FN(0x0805f37c))
+#define fw_frames  ((frames_fn)FN(0x0804d8e8))
+#define fw_stereo  ((chans_fn)FN(0x0804d9c0))
+#define DEFAULT_INDEX_FN 0x08046a15u            /* stock "output index" method: reads obj +0x1e */
+
+/* Out 1 bus, once per audio block, before the master compressor and the output levels (looper_thunk.S).
+ * obj is the compressor stage object; its output index names the Out 1 bus, as in comp_process (comp.c). */
+void looper_stage(uint8_t *obj, void *bufs)
 {
-    mix(a, frames, 1, 1);
-    fw_pack(a, b, c, frames, dst, stride);
+    if (S->magic != MAGIC || !S->ok || !S->len)
+        return;
+    index_fn index = *(index_fn *)(*(uint8_t **)obj + 0x54);
+    unsigned out = (uint32_t)index == DEFAULT_INDEX_FN ? *(uint16_t *)(obj + 0x1e) : index(obj);
+    void *buf = fw_buf_of(bufs, out);
+    int n = fw_frames(buf);
+    float *l = 0, *r = 0;
+    fw_stereo(buf, &l, &r);
+    if (l && r && n > 0)
+        looper_bus(l, r, n);
 }
 
 /* --- for the UI (GUI task) */

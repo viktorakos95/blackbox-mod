@@ -54,6 +54,29 @@ normal. The loop came out of Out 1, Out 3 and the headphones (all three channels
 - Palette (table at 0x080f1d80, ARGB): 0x06 red, 0x0b green, 0x0c dark red, 0x0f white, 0x10 dark grey,
   0x14 yellow, 0x16 light grey, 0x19 near black, 0x1a teal, 0x1b cyan.
 
+## Step 2 on hardware
+
+Everything worked (taps, colours, faders, overdub, clear). The loop came out of the headphones only; the Tools
+output levels and the master compressor did not affect it (it was mixed in after them, at the codec packer).
+
+## Step 2b: loop on the Out 1 bus
+
+The loop now joins the Out 1 bus before the compressor stage: `looper_thunk.S` replaces the "compressor on?" load
+(`ldrb.w r3, [r5, #0xd60]` @0x08053528) that guards the stage call (@0x08053ca0, obj = fp + 0xfc40, buffers =
+[sp]); the stage is skipped entirely when the compressor is off, so its own hook (comp_process) is not enough.
+
+## Redesign (asked for)
+
+- 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,
+  sends, effects): tap one to select it, then the encoder moves it instead of the fader.
+- Hold a strip to record while held; double-tap latches recording; a single tap stops and keeps it.
+- INFO + encoder = pan (small L/R bar), INFO + tap = mute, INFO + hold 2 s = undo the last layer, 4 s = erase.
+- On-screen REV button: arm, tap tracks to reverse / un-reverse.
+- Track length: follow the first loop, a multiple of it, or free.
+- Clock sync (option): loop length to bars, record start/stop quantised to 1/8 or 1/16, restart with transport.
+- Effects: per-track sends to the stock delay / reverb, record source (input, input + FX, whole mix), per-track
+  filter / half speed / crunch. Needs a bigger code cave first.
+
 ## Later
 
 - Track names / labels on the cells (needs text drawing), pan, a master looper level, tempo-synced length,

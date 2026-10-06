@@ -1,12 +1,15 @@
 """Live looper engine under Unicorn (src/looper.c), plus the Looper mode controls in src/solo.c.
 
-Stubbed: the sample pool init (a fake pool is laid out instead), the input stage's tail call and the output packer
-(both record what they were handed), the GUI hit test and fill / outline.
-NOT checked: the real pool's behaviour around claimed blocks, which jack channel a is, how the cells look on the
+Stubbed: the sample pool init (a fake pool is laid out instead), the input stage's tail call (records what it was
+handed), the GUI hit test and fill / outline. The Out 1 bus is two fake buffers handed to looper_bus, as comp_process
+does (test_comp.py covers that call).
+NOT checked: the real pool's behaviour around claimed blocks, how the cells look on the
 screen, CPU on the real chip (hardware).
 """
 import struct
 import sys
+
+import unicorn.arm_const as A
 
 from emu import STACK, Emu
 
@@ -47,7 +50,6 @@ def lay_pool():
 log = []
 e.stub(0x08070BF4, lambda: log.append(("pool", e.arg(0))))
 e.stub(0x080518F0, lambda: log.append(("tail", e.arg(0), e.arg(1), e.arg(2))))
-e.stub(0x0806002C, lambda: log.append(("pack", e.arg(0), e.arg(1), e.arg(2), e.arg(3), e.r32(STACK), e.r32(STACK + 4))))
 
 
 def boot():
@@ -68,11 +70,7 @@ def block(l, r=None, base=0.25):
     tail = [x for x in log if x[0] == "tail"]
     for o in OUT:
         e.uc.mem_write(o, struct.pack(f"<{N}f", *([base] * N)))
-    e.w32(STACK, 0x24070000)
-    e.w32(STACK + 4, 4)
-    e.call("looper_out_l", OUT[0], OUT[1], OUT[2], N, count=20_000_000)
-    e.w32(STACK, 0x24070008)
-    e.call("looper_out_r", OUT[3], OUT[4], OUT[5], N, count=20_000_000)
+    e.call("looper_bus", OUT[0], OUT[3], N, count=20_000_000)
     outs = [[v - base for v in struct.unpack(f"<{N}f", e.uc.mem_read(o, 4 * N))] for o in OUT]
     return tail, outs
 
@@ -125,14 +123,45 @@ check("REC again closes the loop: length = what was recorded, playing", st(LEN) 
 # first block after closing: gain ramps up from 0; second block is full level from frame N
 _, outs = block([0.0] * N)
 exp = ramp(N)
-check("loop plays back on channel a (left = +, right = -)", all(abs(outs[0][i] - exp[i]) < 2e-4 for i in range(N)) and all(abs(outs[3][i] + exp[i]) < 2e-4 for i in range(N)),
+check("loop plays back on the Out 1 bus (left = +, right = -)", all(abs(outs[0][i] - exp[i]) < 2e-4 for i in range(N)) and all(abs(outs[3][i] + exp[i]) < 2e-4 for i in range(N)),
       (outs[0][:3], exp[:3]))
-check("channels b and c are left alone", all(v == 0 for c in (1, 2, 4, 5) for v in outs[c]))
-check("packer still gets its stack arguments", log[-1][5:] == (0x24070008, 4), log[-1])
 check("seam: the first frames of the take are faded in", e.r16(0xC0000000) == 0)
 
+# the real mix point: the thunk at the "compressor on?" test finds Out 1 like the compressor stage does
+FP, OBJ, VT, BUFSET, R5 = 0x30030000, 0x30030000 + 0xFC40, 0x30038000, 0x30038100, 0x30038200
+e.w32(OBJ, VT)
+e.w32(VT + 0x54, 0x08046A15)
+e.uc.mem_write(OBJ + 0x1E, struct.pack("<H", 3))
+e.uc.mem_write(R5 + 0xD60, b"\x00")
+seen = []
+e.stub(0x0805F37C, lambda: seen.append(("bus", e.arg(0), e.arg(1))), value=0x30038300)
+e.stub(0x0804D8E8, value=N)
+def stereo():
+    e.w32(e.arg(1), OUT[1])
+    e.w32(e.arg(2), OUT[4])
+e.stub(0x0804D9C0, stereo)
+for o in (OUT[1], OUT[4]):
+    e.uc.mem_write(o, bytes(4 * N))
+e.uc.reg_write(A.UC_ARM_REG_R11, FP)
+e.uc.reg_write(A.UC_ARM_REG_R5, R5)
+e.w32(STACK, BUFSET)
+p = st(POS)
+e.uc.reg_write(A.UC_ARM_REG_R5, R5)
+e.uc.reg_write(A.UC_ARM_REG_R11, FP)
+e.call("looper_stage_thunk", 0x1111, 0x2222, 0x3333)
+l1 = struct.unpack(f"<{N}f", e.uc.mem_read(OUT[1], 4 * N))
+check("thunk: asks for the compressor object's output bus (index 3) of the caller's buffer set", seen == [("bus", BUFSET, 3)], seen)
+check("thunk: the loop lands in that bus", all(abs(l1[i] - ramp(p)[i]) < 2e-4 for i in range(N)), (l1[:2], ramp(p)[:2]))
+check("thunk: returns the compressor flag in r3 and keeps r0-r2", e.uc.reg_read(A.UC_ARM_REG_R3) == 0 and
+      (e.uc.reg_read(A.UC_ARM_REG_R0), e.uc.reg_read(A.UC_ARM_REG_R1), e.uc.reg_read(A.UC_ARM_REG_R2)) == (0x1111, 0x2222, 0x3333))
+e.uc.mem_write(R5 + 0xD60, b"\x01")
+e.uc.reg_write(A.UC_ARM_REG_R5, R5)
+e.uc.reg_write(A.UC_ARM_REG_R11, FP)
+e.call("looper_stage_thunk")
+check("thunk: compressor on reads back as 1", e.uc.reg_read(A.UC_ARM_REG_R3) == 1)
+
 # wrap: run to the end of the loop and check continuity
-for _ in range(38):
+for _ in range((st(LEN) - st(POS)) // N):
     block([0.0] * N)
 check("playhead wraps at the loop length", st(POS) == 0, st(POS))
 
@@ -159,9 +188,6 @@ check("MUTE: track 1 fades out over one block", abs(outs[0][-1] - ramp(p)[-1]) <
 p = st(POS)
 _, outs = block([0.0] * N)
 check("...and stays out", all(abs(outs[0][i] - ramp(p)[i]) < 2e-4 for i in range(N)))
-import unicorn.arm_const as A
-
-
 def level(t, v):
     e.uc.reg_write(A.UC_ARM_REG_S0, struct.unpack("<I", struct.pack("<f", v))[0])
     e.call("looper_set_level", t)
