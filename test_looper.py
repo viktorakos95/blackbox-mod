@@ -368,12 +368,12 @@ check("only the first cell draws the page; the others draw nothing and skip the 
 f = draw(0)
 # page: 224 high (cells y 0..224), top edge 224, y up, 314 wide from x 3 (320 screen, 3 px margins); 75 px columns.
 # Column 0 title bar: x 5, 71 wide, top at d = 3+16+2 = 21
-title0 = [x for x in f if x[2] == 71 and x[3] == 16]
+title0 = [x for x in f if x[2] == 71 and x[3] == 18]
 check("page painted: background first, then top bar, columns, footer", f[0][:4] == (3, 0, 314, 224) and f[0][4] == 0x02, f[:1])
-check("track 1's title bar (empty = grey) sits under the top bar: x 5, y = 224 - 21 - 16 = 187",
-      any(x[:4] == (5, 187, 71, 16) and x[4] == 0x10 for x in f), title0[:3])
+check("track 1's title bar (empty = grey) sits under the top bar: x 5, y = 224 - 21 - 18 = 185",
+      any(x[:4] == (5, 185, 71, 18) and x[4] == 0x10 for x in f), title0[:3])
 check("four columns of 79 px pitch across the whole width (x 5, 84, 163, 242)",
-      sorted({x[0] for x in f if x[2] == 71 and x[3] == 16}) == [5, 84, 163, 242], sorted({x[0] for x in f if x[2] == 71 and x[3] == 16}))
+      sorted({x[0] for x in f if x[2] == 71 and x[3] == 18}) == [5, 84, 163, 242], sorted({x[0] for x in f if x[2] == 71 and x[3] == 18}))
 check("everything is drawn into the page's own frame buffer", all(x[5] == FBP for x in f))
 check("all fills lie inside the screen (x 3..317, y 0..224)", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f), [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
 check("text is plotted pixel by pixel, inside the screen", pixels and all(3 <= px < 317 and 0 <= py < 224 for px, py, _ in pixels), pixels[:3])
@@ -392,14 +392,14 @@ blocks(60, 0.2)
 ev(0, REC_UP)
 blocks(3, 0.0)
 f = draw(0)
-check("a playing track: title bar in its colour (cyan), black text", any(x[:4] == (5, 187, 71, 16) and x[4] == 0x1B for x in f) and any(c == 0xE for _, _, c in pixels))
+check("a playing track: title bar in its colour (cyan), black text", any(x[:4] == (5, 185, 71, 18) and x[4] == 0x1B for x in f) and any(c == 0xE for _, _, c in pixels))
 check("its two bars: a white fader line across them", any(x[4] == 0x0F and x[3] == 2 for x in f))
 # levels: bar height follows level
 level(0, 0.5)
 blocks(2)
 f = draw(0)
 bars = [x for x in f if x[2] == 16 and x[4] == 0x1B]
-check("level 50 %: both bars filled to half of their 100 px (a pair of equal 16 px wide fills)", len(bars) == 2 and bars[0][3] == bars[1][3] == 50, bars)
+check("level 50 %: both bars filled to half of their 82 px (a pair of equal 16 px wide fills)", len(bars) == 2 and bars[0][3] == bars[1][3] == 41, bars)
 pan(0, 0.5)
 blocks(2)
 f = draw(0)
@@ -411,7 +411,7 @@ level(0, 1.0)
 # orientation: the same cells with y running downwards, row 3 at the top (smaller y)
 cells(y_up=False)
 f = draw(0)
-check("cells with y down: the page flips to match (title bar at y = 0 + 21)", any(x[:4] == (5, 21, 71, 16) for x in f), [x for x in f if x[2] == 71][:2])
+check("cells with y down: the page flips to match (title bar at y = 0 + 21)", any(x[:4] == (5, 21, 71, 18) for x in f), [x for x in f if x[2] == 71][:2])
 cells()
 f = draw(0)
 
@@ -430,9 +430,9 @@ def hit(x, d):
 check("title / icon area of column 2 is its record box", hit(100, 30)[:2] == (1, 1) and hit(100, 60)[:2] == (1, 1), (hit(100, 30), hit(100, 60)))
 z, t, v = hit(190, 100)
 check("bars area of column 3 is its fader", z == 2 and t == 2 and 0.0 <= v <= 1.0, (z, t, v))
-check("fader value runs 0 at the bottom of the bars to 1 at the top", hit(190, 67)[2] > 0.99 and hit(190, 166)[2] < 0.05, (hit(190, 67)[2], hit(190, 166)[2]))
-btn_d = 19 + (224 - 16 - 12 - 2 * 3) - 2 - 18 + 5
-check("button row: PAN, REV, MUTE by thirds", [hit(237 + dx, btn_d)[0] for dx in (5, 30, 60)] == [3, 4, 5], [hit(237 + dx, btn_d) for dx in (5, 30, 60)])
+check("fader value runs 0 at the bottom of the bars to 1 at the top", hit(190, 69)[2] > 0.99 and hit(190, 150)[2] < 0.05, (hit(190, 69)[2], hit(190, 150)[2]))
+btn_y = 19 + (224 - 16 - 12 - 2 * 3) - 2 - 34
+check("bottom row: the pan dial on the left, REV above MUTE on the right", [hit(237 + 10, btn_y + 10)[0], hit(287, btn_y + 4)[0], hit(287, btn_y + 25)[0]] == [3, 4, 5], [hit(247, btn_y + 10), hit(287, btn_y + 4), hit(287, btn_y + 25)])
 check("the top bar, the gaps between columns and the footer are not controls", hit(100, 8)[0] == 0 and hit(77, 100)[0] == 0 and hit(100, 215)[0] == 0)
 
 stock_clear = len(stock)
@@ -451,20 +451,22 @@ def evs(t):
 touch("down", 100, 30)
 touch("up", 100, 30)
 check("touching a record box sends REC_DOWN then REC_UP for that track", evs(1)[:2] == [1, 1], evs(1))
-touch("down", 242, btn_d)
-touch("up", 242, btn_d)
+touch("down", 247, btn_y + 10)
+touch("up", 247, btn_y + 10)
 check("PAN: selects track 4's knob for the pan", e.r8(PAGE + 6) == 0b1000, e.r8(PAGE + 6))
-touch("down", 267, btn_d)
-touch("up", 267, btn_d)
+f = draw(0)
+check("a selected pan dial gets the stock pink frame; its pointer is drawn in cyan", any(x[4] == 0x20 for x in f) and sum(1 for x in f if x[4] == 0x1B and x[2] == 2 and x[3] == 2) >= 8, [x[4] for x in f if x[2] == 2][:5])
+touch("down", 287, btn_y + 4)
+touch("up", 287, btn_y + 4)
 check("REV: reverse event", evs(3)[4] == 1, evs(3))
-touch("down", 297, btn_d)
-touch("up", 297, btn_d)
+touch("down", 287, btn_y + 25)
+touch("up", 287, btn_y + 25)
 check("MUTE: down and up", evs(3)[2:4] == [1, 1], evs(3))
-touch("down", 190, 165)
+touch("down", 190, 149)
 check("fader: touching near the bottom of the bars sets a low level", tr(2, 0x20, "f") < 0.1, tr(2, 0x20, "f"))
-touch("move", 190, 68)
+touch("move", 190, 70)
 check("fader: dragging to the top sets level 1", abs(tr(2, 0x20, "f") - 1.0) < 0.02, tr(2, 0x20, "f"))
-touch("up", 190, 67)
+touch("up", 190, 69)
 check("the page's touches never reach the stock mixer handlers", len(stock) == stock_clear, stock)
 
 # knobs: message 0x32 to the view

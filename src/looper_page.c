@@ -9,8 +9,9 @@
  *   two bars    the left and right output of the track (level and pan together); the white line is the fader.
  *               Touch or drag anywhere in the bars to set the level; the track's knob does the same.
  *   level       "74%" at 2x.
- *   buttons     PAN (tap: the knob now turns the pan, tap again for the level) | REV (play backwards) |
- *               MUTE (tap: mute; hold 2 s: undo the last pass, 4 s: erase).
+ *   pan dial    drawn like the pad config's knobs (label, arc, pointer); tap it (pink frame) and the track's knob
+ *               turns the pan instead of the level; tap again to give the knob back.
+ *   buttons     REV (play backwards) | MUTE (tap: mute; hold 2 s: undo the last pass, 4 s: erase).
  * and a footer with the loop length / position.
  * INFO is a modifier: press it (tap: stays on; held 0.45 s or more: only while held) and the knobs turn the pan, a
  * tap on a record box mutes, holding it undoes / erases (2 s / 4 s). The first press of any button other than MIX is
@@ -76,7 +77,10 @@ struct font {
 #define C_REC    0x06
 #define C_YELLOW 0x14
 #define C_TEAL   0x1a
-static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x20};   /* cyan, yellow, aqua, pink */
+#define C_PINK   0x20            /* the stock selection frame (the active knob bank in the pad config) */
+#define C_TAB    0x01            /* 56565a: the stock tab buttons, which are textured on the real screen */
+#define C_CYAN   0x1b            /* the selected tab */
+static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /* cyan, yellow, aqua, purple */
 
 /* layout, in pixels, top-down. The page width and origin come from the screen (geometry()): about 314 px on the
  * 320 px wide display, the 64 px cells being centred with 32 px of margin on each side. */
@@ -85,9 +89,10 @@ static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x20};   /
 #define TOPBAR    16
 #define FOOT      12
 #define VGAP      3
-#define TITLE     16
+#define TITLE     18
 #define ICON      26
-#define BTN       18
+#define BTN       34             /* the bottom row: the pan dial and the REV / MUTE buttons */
+#define DIAL      34             /* width of the pan dial's box */
 #define LEVEL     18
 
 #define INFO_TIMEOUT 1875        /* audio blocks (10 s) */
@@ -223,8 +228,9 @@ int looper_page_hit(int x, int d, int *track, float *val)
         return Z_FADER;
     }
     if (d >= L.btn_y && d < L.btn_y + BTN) {
-        int third = (x - L.cx - 2) * 3 / (cw - 4 > 0 ? cw - 4 : 1);
-        return third <= 0 ? Z_PAN : third == 1 ? Z_REV : Z_MUTE;
+        if (x - L.cx - 2 < DIAL)
+            return Z_PAN;
+        return d < L.btn_y + BTN / 2 ? Z_REV : Z_MUTE;
     }
     return Z_NONE;
 }
@@ -341,11 +347,32 @@ static void icon(const struct lay *L, const struct looper_info *k)
     }
 }
 
+/* The dial's arc: 28 points, 270 degrees from bottom left over the top to bottom right, radius 11. */
+static const int8_t arc[28][2] = {
+    {-8, 8}, {-9, 6}, {-10, 5}, {-11, 3}, {-11, 1}, {-11, -1}, {-11, -3}, {-10, -5}, {-9, -6}, {-8, -8},
+    {-6, -9}, {-5, -10}, {-3, -11}, {-1, -11}, {1, -11}, {3, -11}, {5, -10}, {6, -9}, {8, -8}, {9, -6},
+    {10, -5}, {11, -3}, {11, -1}, {11, 1}, {11, 3}, {10, 5}, {9, 6}, {8, 8}};
+
+/* A knob like the pad config's: label, arc, pointer at v (0..1). The box is DIAL wide and BTN high. */
+static void dial(int x, int d, const char *name, float v, int selected)
+{
+    box(x, d, DIAL, BTN, C_BG);
+    frame(x, d, DIAL, BTN, selected ? C_PINK : C_RAIL, selected ? 2 : 1);
+    text_c(x, d + 3, DIAL, name, C_WHITE, 1);
+    int cx = x + DIAL / 2, cy = d + 22;
+    for (int i = 0; i < 28; i++)
+        box(cx + arc[i][0] - 1, cy + arc[i][1] - 1, 2, 2, C_WHITE);
+    int i = (int)(v * 27.f + .5f);
+    i = i < 0 ? 0 : i > 27 ? 27 : i;
+    for (int k = 1; k <= 8; k++)                                  /* the pointer, from the centre */
+        box(cx + arc[i][0] * k / 11 - 1, cy + arc[i][1] * k / 11 - 1, 2, 2, C_CYAN);
+}
+
 static void draw_top(int t, const struct lay *L, const struct looper_info *k)
 {
     int x = L->cx, w = L->cw, on_pan = ((P->pan_sel >> t) & 1) || P->info_on;
-    box(x, 0, w, TOPBAR, C_DARK);
-    frame(x, 0, w, TOPBAR, P->info_on ? C_YELLOW : C_GREY, 1);
+    box(x, 0, w, TOPBAR, P->info_on ? C_RAIL : C_TAB);
+    frame(x, 0, w, TOPBAR, P->info_on ? C_PINK : C_GREY, P->info_on ? 2 : 1);
     if (on_pan) {
         int half = (w - 28) / 2, mid = x + w / 2;
         text(x + 4, 4, "L", C_LIGHT, 1);
@@ -371,13 +398,10 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
     /* title bar */
     int tcol = k->mode == LOOPER_EMPTY ? C_RAIL : k->mode == LOOPER_REC ? C_REC : colour;
     box(x + 2, L->title_y, w - 4, TITLE, tcol);
-    char title[12] = {(char)('1' + t), ' ', 0};
-    const char *sn = state_name(k);
-    char *p = title + 2;
-    while (*sn)
-        *p++ = *sn++;
-    *p = 0;
-    text_c(x + 2, L->title_y + 4, w - 4, title, tcol == C_REC || tcol == C_RAIL ? C_WHITE : C_BLACK, 1);
+    int ink = tcol == C_REC || tcol == C_RAIL ? C_WHITE : C_BLACK;
+    char num[2] = {(char)('1' + t), 0};
+    text(x + 6, L->title_y + 1, num, ink, 2);                     /* the track number at 2x like a tab, its state at 1x */
+    text(x + 22, L->title_y + 5, state_name(k), ink, 1);
     if (L->icon_h)
         icon(L, k);
     /* the loop position along the bottom of the record box */
@@ -406,19 +430,17 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
     *q++ = '%';
     *q = 0;
     text_c(x + 2, L->lvl_y + 1, w - 4, lv, k->muted ? C_GREY : C_WHITE, 2);
-    /* buttons */
-    int bwid = (w - 4) / 3, by = L->btn_y, mw = w - 4 - 2 * bwid;
+    /* the pan dial and the buttons */
+    int by = L->btn_y, dx = x + 2, rw = w - 4 - DIAL - 1, rx = dx + DIAL + 1, hh = BTN / 2;
     int pan_on = ((P->pan_sel >> t) & 1) != 0;
-    box(x + 2, by, bwid, BTN, pan_on ? C_TEAL : C_DARK);
-    text_c(x + 2, by + 5, bwid, "PAN", C_WHITE, 1);
-    box(x + 2 + bwid, by, bwid, BTN, k->reversed ? C_YELLOW : C_DARK);
-    text_c(x + 2 + bwid, by + 5, bwid, "REV", k->reversed ? C_BLACK : C_WHITE, 1);
+    dial(dx, by, "PAN", (k->pan + 1.f) * .5f, pan_on);
+    box(rx, by, rw, hh, k->reversed ? C_YELLOW : C_DARK);
+    text_c(rx, by + 5, rw, "REV", k->reversed ? C_BLACK : C_WHITE, 1);
     int mcol = !live ? C_DARK : k->muted ? C_RED : C_GREEN;
-    box(x + 2 + 2 * bwid, by, w - 4 - 2 * bwid, BTN, mcol);
-    text_c(x + 2 + 2 * bwid, by + 5, mw, mw >= text_w("MUTE", 1) + 2 ? "MUTE" : "M", C_WHITE, 1);
-    frame(x + 2, by, w - 4, BTN, C_GREY, 1);
-    box(x + 2 + bwid, by, 1, BTN, C_GREY);
-    box(x + 2 + 2 * bwid, by, 1, BTN, C_GREY);
+    box(rx, by + hh, rw, BTN - hh, mcol);
+    text_c(rx, by + hh + 5, rw, "MUTE", C_WHITE, 1);
+    frame(rx, by, rw, hh, C_GREY, 1);
+    frame(rx, by + hh, rw, BTN - hh, C_GREY, 1);
 }
 
 static void draw_footer(const struct lay *L)

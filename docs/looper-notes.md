@@ -131,6 +131,17 @@ The page now takes its width from the cells (x_lo + x_hi, as they are centred), 
 (fb + 4), and falls back to the cells' own span when that makes no sense. Rule: never size anything from a guess.
 Pixel scale in that photo: a 2x text character is about 3.4 photo px per screen px.
 
+## The stock look (photos of the pad config and the sequencer edit screens)
+
+320 x 240. A 16 px header (black, "1:1" left, title centred, 2x text), a 24 px row of tab buttons (lavender, textured;
+2x white text; the selected one cyan), the content, and on some screens a bottom row of four tabs. The pad config's
+content is two groups of 2 x 2 knobs: each knob is a label on top (1x), an arc dial with a pointer, the value below
+(1x) and a three-segment meter on the right; the group the encoders are on has a pink frame (2 px). Encoder order on
+screen: 0 top left, 1 bottom left, 2 top right, 3 bottom right. Labels and values are 6x8 (1x); only titles and tabs
+are 2x. Step 5 restyles the page that way: pan as a dial (pink frame when selected), the track number at 2x in the
+title bar, tab-style top bar (pink frame while INFO is on), track colours cyan / yellow / aqua / purple (pink is
+the selection colour).
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,
