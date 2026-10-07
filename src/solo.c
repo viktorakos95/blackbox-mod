@@ -177,14 +177,25 @@ static void toggle(uint8_t *view, uint8_t *cell)
 
 /* --- Looper mode: the page itself is looper_page.c; this routes the mixer view's hooks to it. */
 
-/* The mixer view while it shows the Looper page, else 0. */
+/* The mixer view while it shows the Looper page, else 0. (Step 3 also required the view to sit in 0x24000000..
+ * 0x24080000, an unchecked guess: the page never drew on hardware. The view pointer is only ever the one the GUI
+ * handed solo_set_mode, and looper_boot clears the mode at every boot, so a pointer from an earlier boot is not
+ * used either.) */
 uint8_t *solo_looper_view(void)
 {
     ensure();
     uint8_t *view = S->view;
-    if (!S->looper || (uint32_t)view < 0x24000000u || (uint32_t)view >= 0x24080000u || !view[VIEW_MUTE])
+    if (!S->looper || !view || ((uint32_t)view & 3) || !view[VIEW_MUTE])
         return 0;
     return view;
+}
+
+/* From looper_boot, once per boot: no Looper page until the GUI shows the mixer again. */
+void solo_boot_reset(void)
+{
+    ensure();
+    S->looper = 0;
+    S->looper_pending = 0;
 }
 
 /* Mixer cell vtable draw (0x080effc8): the Looper page draws its own cells, everything else is stock. */

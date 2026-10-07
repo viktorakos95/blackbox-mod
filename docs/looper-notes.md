@@ -91,6 +91,14 @@ areas (4 tracks + undo, 47 blocks = 16 s each) back inside step 2's proven range
 now ends with the looper's status: "Lok", "Lb<block>" (busy at boot), "Lt<block>" (taken back later), "L-".
 Step 3b stays under 32 KB of cave, so it does not yet test the enlarged cave.
 
+## Step 3b on hardware
+
+Version label read "3M Lok" (the looper was running), but MIX still did not show the Looper page. So the memory
+claim was not the problem. Suspect: `solo_looper_view()` required the mixer view pointer to lie in
+0x24000000..0x24080000 (copied from the CPU meter, never checked), and every draw / touch / poke is gated by it.
+Step 3c drops the range test (null and alignment only) and clears the Looper mode flag in `looper_boot` instead.
+Not yet confirmed on hardware.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,

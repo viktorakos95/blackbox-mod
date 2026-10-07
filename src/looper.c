@@ -45,6 +45,7 @@ typedef void (*pool_fn)(void *engine);
 
 void bkp_enable(void);
 void looper_ui_poke(void);
+void solo_boot_reset(void);
 
 #define POOL_ENTRIES   615
 #define ENTRY_SIZE     0x1c
@@ -195,7 +196,8 @@ void looper_boot(void *engine)
                 clear_block(a, k);
         S->ok = 1;
     }
-    *(volatile int32_t *)0x38800f00u = -1;        /* solo.c's fader drag: none (backup SRAM is not cleared) */
+    *(volatile int32_t *)0x38800f00u = -1;        /* the page's state (backup SRAM is not cleared) */
+    solo_boot_reset();                            /* and the mixer's Looper mode flag, in patch RAM */
     S->magic = MAGIC;
 }
 

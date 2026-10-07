@@ -311,8 +311,10 @@ e.call("looper_ready")
 check("looper_ready reports it (the page is then not offered)", e.uc.reg_read(A.UC_ARM_REG_R0) == 0)
 
 # --- the page
+e.uc.mem_write(0x2405FF60, struct.pack("<IBBBB", 0x534F4C4F, 0, 0, 1, 1))   # a Looper mode left over from before
 boot()
-SOLO, VIEW, APP, PTA, CTX = 0x2405FF60, 0x24040000, 0x24030000, 0x24038000, 0x24039000
+check("boot clears a leftover Looper mode flag", e.r8(0x2405FF60 + 6) == 0 and e.r8(0x2405FF60 + 7) == 0)
+SOLO, VIEW, APP, PTA, CTX = 0x2405FF60, 0x30024000, 0x24030000, 0x24038000, 0x24039000   # view outside AXI SRAM, as it may be
 PAGE = 0x38800F00
 e.uc.mem_write(VIEW, bytes(0x2000))
 e.uc.mem_write(SOLO, struct.pack("<IBBBBIHH", 0x534F4C4F, 1, 0, 0, 0, VIEW, 0, 0))   # in Solo mode
