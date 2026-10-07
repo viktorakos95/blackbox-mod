@@ -277,6 +277,17 @@ area. REC button = message 0xf4 (shown "244:8"); INFO = 0xc.
   asked for a redraw when only our dirty flags change.
 - Changing an option repaints the whole background (the cyan boxes stayed after switching FULL SCREEN on).
 
+## Step 15
+
+- Full screen stopped updating because the primitive guard (steps 12-14) dropped something the display needs (taps
+  and direct painting did nothing until the screen was left and re-entered). The primitive guard is no longer patched
+  in (stubs remain in looper_thunk.S, unused). Instead the text widget class (vtable 0x080f17a4, draw slot +4, stock
+  0x080c3d2c) is wrapped (looper_text_draw): the cells' child labels (cell + 0x70 / 0xc8 / 0x120, the cyan boxes) and,
+  on full screen, the top bar are not drawn while the page shows. Unverified that the boxes are that class.
+- FX tab has SELECT buttons again; INFO there steps only the selected track's dial. The UNDO button says what the next
+  undo / BACK does: UNDO PASS (yellow), DELETE LOOP (red), nothing (grey).
+- Version label ends "Lok15" (the build number), to tell builds apart.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,

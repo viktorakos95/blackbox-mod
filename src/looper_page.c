@@ -304,7 +304,7 @@ static int row_d(const struct lay *L, int r)
 /* FX tab: where the dial rows start (below the record box) */
 static int fx_top(const struct lay *L)
 {
-    return L->rec_y + L->rec_h + 4;
+    return L->sel_y + 16;                                         /* below the record box and its SELECT button */
 }
 
 /* FX tab: height of the two button rows (REV | HALF, MUTE | UNDO): they share what the dials leave. */
@@ -379,6 +379,8 @@ int looper_page_hit(int x, int d, int *track, float *val)
         return Z_REC;
     if (P->mode == M_FX) {
         int y0 = fx_top(&L), xx = x - L.cx - 2;
+        if (d >= L.sel_y && d < L.sel_y + 13)
+            return Z_SEL;
         if (d >= y0 && d < y0 + 3 * (BTN + 1) && xx >= 0 && xx < 2 * (DIAL + 1) && (d - y0) % (BTN + 1) < BTN &&
             xx % (DIAL + 1) < DIAL) {
             *val = (float)(((d - y0) / (BTN + 1)) * 2 + xx / (DIAL + 1));
@@ -732,9 +734,10 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
     int sc = P->sel == t ? C_PINK : C_RAIL;                       /* SELECT: the hardware REC button records this track */
     frame(x + 2, L->sel_y, w - 4, 13, sc, 1);
     text_c(x + 2, L->sel_y + 3, w - 4, P->sel == t ? "SELECTED" : "SELECT", P->sel == t ? C_PINK : C_GREY, 1);
-    int uc = k->undo ? C_YELLOW : C_RAIL;                         /* UNDO: take the last overdub pass back */
+    /* UNDO says what the next press (and the BACK button) will do: take the last pass off, or delete the loop */
+    int uc = k->undo_kind == 2 ? C_RED : k->undo_kind == 1 ? C_YELLOW : C_RAIL;
     frame(x + 2, L->undo_y, w - 4, 12, uc, 1);
-    text_c(x + 2, L->undo_y + 2, w - 4, "UNDO", k->undo ? C_YELLOW : C_GREY, 1);
+    text_c(x + 2, L->undo_y + 2, w - 4, k->undo_kind == 2 ? "DELETE LOOP" : k->undo_kind == 1 ? "UNDO PASS" : "UNDO", uc == C_RAIL ? C_GREY : uc, 1);
     /* the pan dial and the buttons */
     int by = L->btn_y, dx = x + 2, rbw = w - 4 - DIAL - 1, bx = dx + DIAL + 1, hh = BTN / 2;
     dial(dx, by, "PAN", (k->pan + 1.f) * .5f, (((P->pan_sel >> t) & 1) || P->info_on) != 0);
@@ -753,6 +756,9 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
     int live = k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB;
     box(x, L->col_y, w, L->col_h, C_BG);
     draw_rec(t, L, k);
+    int sc = P->sel == t ? C_PINK : C_RAIL;                       /* SELECT: INFO cycles this track's dial; BACK / REC act on it */
+    frame(x + 2, L->sel_y, w - 4, 13, sc, 1);
+    text_c(x + 2, L->sel_y + 3, w - 4, P->sel == t ? "SELECTED" : "SELECT", P->sel == t ? C_PINK : C_GREY, 1);
     int y0 = fx_top(L);
     for (int p = 0; p < 6; p++) {
         float v = fx_value(k, p);
@@ -768,8 +774,9 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
     int mc = !live ? C_RAIL : k->muted ? C_RED : C_GREEN;
     frame(x + 2, y1 + hb + 1, bw, hb, mc, 1);
     text_c(x + 2, y1 + hb + 1 + ty, bw, "MUTE", !live ? C_GREY : mc, 1);
-    frame(x + 3 + bw, y1 + hb + 1, bw, hb, k->undo ? C_YELLOW : C_RAIL, 1);
-    text_c(x + 3 + bw, y1 + hb + 1 + ty, bw, "UNDO", k->undo ? C_YELLOW : C_GREY, 1);
+    int uc = k->undo_kind == 2 ? C_RED : k->undo_kind == 1 ? C_YELLOW : C_RAIL;
+    frame(x + 3 + bw, y1 + hb + 1, bw, hb, uc, 1);
+    text_c(x + 3 + bw, y1 + hb + 1 + ty, bw, k->undo_kind == 2 ? "DEL" : "UNDO", uc == C_RAIL ? C_GREY : uc, 1);
 }
 
 /* SETUP and MORE tabs: the option rows, then a row of buttons. */
@@ -922,7 +929,7 @@ static uint32_t signature(void)
         v = (uint32_t)k.half | (uint32_t)(k.filt * 100.f + 100.5f) << 1 | (uint32_t)(k.crunch * 100.f + .5f) << 10 |
             (uint32_t)(k.send_d * 100.f + .5f) << 17 | (uint32_t)(k.send_r * 100.f + .5f) << 24;
         h = (h ^ v) * 16777619u;
-        h = (h ^ ((uint32_t)(k.res * 100.f + .5f) | (uint32_t)(k.drive * 100.f + .5f) << 8)) * 16777619u;
+        h = (h ^ ((uint32_t)(k.res * 100.f + .5f) | (uint32_t)(k.drive * 100.f + .5f) << 8 | (uint32_t)k.undo_kind << 16)) * 16777619u;
         h = (h ^ (uint32_t)(k.progress * 400.f)) * 16777619u;          /* each playhead, in 1/400ths of its loop */
     }
     h = (h ^ ((uint32_t)P->pan_sel | (uint32_t)P->info_on << 8 | (uint32_t)P->info_set << 16 | (uint32_t)P->info_id << 17)) * 16777619u;
@@ -1344,9 +1351,8 @@ static int info_button(unsigned id, unsigned idx)
     }
     if (id != P->info_id || (id == MSG_BUTTON && idx != P->info_idx))
         return 0;
-    if (P->mode == M_FX) {                                         /* FX tab: INFO steps every track's dial on by one */
-        for (int t = 0; t < LOOPER_TRACKS; t++)
-            P->fx_sel[t] = (uint8_t)((P->fx_sel[t] + 1) % 6);
+    if (P->mode == M_FX) {                                         /* FX tab: INFO steps the selected track's dial on by one */
+        P->fx_sel[P->sel & 3] = (uint8_t)((P->fx_sel[P->sel & 3] + 1) % 6);
         P->sig = 0;
         return 1;
     }

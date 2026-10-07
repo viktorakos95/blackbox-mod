@@ -572,7 +572,7 @@ check("FX tab: four dials per column (a 34 x 1 frame line each), no fader meters
 check("FX tab: the selected dial (FILT by default) has the pink frame", any(x[4] == 0x20 for x in f))
 check("FX tab: everything inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f), [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
 # hit zones: dial grid under the 40 px record box (top at 22..62): dials start at d = 19 + 3 + 40 + 4 = 66 + 16
-y0 = 16 + 3 + 40 + 4
+y0 = 16 + 3 + 22 + 3 + 16
 h1 = hit(1 + 78 * 1 + 2 + 10, y0 + 10)
 h2 = hit(1 + 78 * 1 + 2 + 10 + 35, y0 + 10)
 h3 = hit(1 + 78 * 1 + 2 + 10, y0 + 35 + 10)
@@ -869,7 +869,7 @@ e.uc.mem_write(PAGE + 77, bytes([0, 3, 3, 5]))
 blocks(30)
 button(0, msg_id=0xC)
 fx1 = list(e.uc.mem_read(PAGE + 77, 4))
-check("INFO on the FX tab steps every track's dial on by one (filter drive drive rvb -> res dly dly filter)", fx1 == [1, 4, 4, 0] and e.r8(PAGE + 7) == 0, fx1)
+check("INFO on the FX tab steps only the selected track's dial (track 3: drive -> dly)", fx1 == [0, 3, 4, 5] and e.r8(PAGE + 7) == 0, fx1)
 tab(0)
 
 # ---- live repaint: the audio task's poke posts a message, the GUI task paints
@@ -894,6 +894,27 @@ check("the paint message repaints the page in the GUI task and is not passed on"
 e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 0.0))
 e.call("looper_page_enter", VIEW)
 draw(0)
+
+# ---- the text widget class: cell children (the cyan boxes) and the top bar are not drawn while the page shows
+drawn = []
+e.stub(0x080C3D2C, lambda: drawn.append(e.arg(0)))
+e.uc.mem_write(SCR, b"\x2f")
+e.uc.mem_write(SOLO + 6, b"\x01")
+e.uc.mem_write(VIEW + 0x1E40, b"\x01")
+e.call("looper_guard", 0)
+e.call("looper_text_draw", VIEW + 0x3AC + 0x70, 0x30003000)
+check("page showing (not full screen): a text widget inside a mixer cell is not drawn", drawn == [])
+e.call("looper_text_draw", 0x30003800, 0x30003000)
+check("... a text widget elsewhere (the top bar) still is", drawn == [0x30003800], drawn)
+drawn.clear()
+e.call("looper_guard", 1)
+e.call("looper_text_draw", 0x30003800, 0x30003000)
+check("full screen: no text widget is drawn", drawn == [])
+e.uc.mem_write(SCR, b"\x25")
+e.call("looper_text_draw", VIEW + 0x3AC + 0x70, 0x30003000)
+check("on other screens every text widget is drawn", drawn == [VIEW + 0x3AC + 0x70], drawn)
+e.call("looper_guard", 0)
+e.uc.mem_write(SCR, b"\x2f")
 
 # leaving the page puts the child widgets back
 e.call("solo_set_mode", VIEW, 1)

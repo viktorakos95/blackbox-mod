@@ -385,6 +385,19 @@ ev(0, HALF)
 blocks(2)
 check("half speed off again: back at the master's position", tu(0, T_POS) == st(POS), (tu(0, T_POS), st(POS)))
 
+# what UNDO would do next
+def undo_kind(tt):
+    e.call("looper_track", tt, 0x3003D000)
+    return e.r32(0x3003D000 + 20)
+boot()
+check("UNDO kind: nothing on an empty track", undo_kind(0) == 0)
+hold(0, 60, tone)
+check("UNDO kind: a track with only its first loop: delete the loop (2)", undo_kind(0) == 2, undo_kind(0))
+ev(0, REC_DOWN); blocks(80, 0.05); ev(0, REC_UP); blocks(2)
+check("UNDO kind: after an overdub pass: take the pass off (1)", undo_kind(0) == 1, undo_kind(0))
+ev(0, UNDO); blocks(70)
+check("UNDO kind: after the pass is off: delete the loop (2)", undo_kind(0) == 2, undo_kind(0))
+
 # transport: PLAY / PAUSE and STOP
 def tcmd(c):
     e.call("looper_transport", c)

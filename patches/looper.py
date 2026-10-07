@@ -24,12 +24,9 @@ PATCHES = [
     (0x080D0820, word(0x08062FE9), word(sym["looper_reverb"] | 1)),
     # every widget's touch hit test: the Looper page answers for the whole screen while it shows (solo.c)
     (0x080AEB5E, bytes.fromhex("f8b590f8"), b_w(0x080AEB5E, sym["looper_basehit"])),
-    # low-level drawing primitives: the stock screen is dropped while the page owns it (looper_thunk.S)
-    (0x0808F920, bytes.fromhex("30b585b0"), b_w(0x0808F920, sym["guard_fill"])),
-    (0x0808F524, bytes.fromhex("70b50446"), b_w(0x0808F524, sym["guard_pixel"])),
-    (0x0808F624, bytes.fromhex("f0b51646"), b_w(0x0808F624, sym["guard_f624"])),
-    (0x0808F4A4, bytes.fromhex("08b50a46"), b_w(0x0808F4A4, sym["guard_f4a4"])),
-    (0x0808F740, bytes.fromhex("10b59df808e0"), b_w(0x0808F740, sym["guard_f740"]) + bytes.fromhex("00bf")),
+    # the text widget class (the cells' child labels, the screen's own top bar): its draw slot is dropped while the page
+    # shows (solo.c, looper_text_draw)
+    (0x080F17A8, word(0x080C3D2D), word(sym["looper_text_draw"] | 1)),
     # app message dispatch: note hardware button messages (finding INFO)
     hook(0x080A23CC, 0x080A2E60, "looper_app_msg"),
 ]

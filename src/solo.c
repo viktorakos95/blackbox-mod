@@ -376,3 +376,24 @@ int looper_basehit(uint8_t *w, const int *pt, uint8_t **out)
     *out = w;
     return r;
 }
+
+#define fw_text_draw ((draw_fn)FN(0x080c3d2c))
+
+/* The Looper page is showing (not just flagged): the mixer screen, mute mode, Looper mode. */
+static int page_visible(void)
+{
+    return S->magic == MAGIC && S->looper && S->view && APP_SCREEN_ADDR == SCREEN_MUTE && S->view[VIEW_MUTE];
+}
+
+/*
+ * Draw slot of the text widget class (vtable 0x080f17a4 + 4, stock 0x080c3d2c). The cyan boxes that stayed over the page
+ * are text widgets inside the mixer cells (three per cell, cell + 0x70 / 0xc8 / 0x120), drawn whatever their hidden flag
+ * says; and the screen's own top bar is text too. While the page shows, a text widget inside the mixer view is not drawn;
+ * on full screen no text widget is.
+ */
+void looper_text_draw(uint8_t *w, void *ctx)
+{
+    if (page_visible() && (GUARD_BLOCK == BLK1 || (uint32_t)(w - S->view) < 0x2000u))
+        return;
+    fw_text_draw(w, ctx);
+}

@@ -1435,6 +1435,8 @@ void looper_track(int t, struct looper_info *out)
     out->reversed = k->rev;
     out->latched = k->gesture == G_LATCHED;
     out->undo = k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB;       /* something to take back */
+    out->undo_kind = !out->undo ? 0 : (S->undo_track == t && S->undo_count && k->mode != LOOPER_DUB) ? 1 :
+                     k->mode == LOOPER_DUB && S->undo_track == t ? (S->undo_count ? 1 : 0) : 2;
     out->armed = k->pend != P_NONE && k->pend_when != W_TARGET;
     out->half = k->half;
     out->level = k->level;
@@ -1461,6 +1463,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
+        *p++ = '1';                                   /* the build: step 15 */
+        *p++ = '5';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';
