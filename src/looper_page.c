@@ -152,9 +152,9 @@ struct page {
     int16_t touch_x, touch_y;
     uint32_t clear_t;                               /* when CLEAR ALL was asked */
     int32_t vrect[4];                               /* the mixer view's own rectangle, while the page widens it */
-    uint32_t press_t;                               /* the last learned button press, and which slot (diagnostic) */
-    uint32_t press_slot;
-    uint32_t bev[BTNS];                             /* the first engine event after each button's press */
+    uint8_t scr_h[8];                               /* the last distinct screen ids the app showed (newest first) */
+    uint32_t h0[6];                                 /* the last distinct engine events, whole first word, newest first */
+    uint16_t h1[6];
 };
 #define P ((volatile struct page *)0x38800f00u)
 #define PMAGIC 0x50414732u
@@ -898,20 +898,26 @@ static void draw_setup(const struct lay *L)
         z = put_uint(z, (unsigned)(looper_rate() * 1000.f));
         *z = 0;
         text(6, d + 12, ev, C_GREY, 1);
-        char bv[64], *y = bv;                                     /* which engine event followed each button's press */
-        static const char *const nm[BTNS] = {"", "FX", "REC", "BACK", "STOP", "PLAY"};
-        for (int i = 1; i < BTNS; i++) {
-            for (const char *q = nm[i]; *q; q++)
-                *y++ = *q;
-            *y++ = '=';
-            if (P->bev[i])
-                y = put_hex(y, P->bev[i] & 0xffffff, 2);
-            else
-                *y++ = '-';
+        char bv[64], *y = bv;                                     /* the screens the app showed lately (newest first) */
+        *y++ = 'S';
+        *y++ = ':';
+        for (int i = 0; i < 8; i++) {
             *y++ = ' ';
+            y = put_hex(y, P->scr_h[i], 2);
         }
         *y = 0;
         text(6, d + 22, bv, C_GREY, 1);
+        for (int r = 0; r < 2; r++) {                             /* the last six engine events, whole */
+            char eb[64], *g = eb;
+            for (int i = r * 3; i < r * 3 + 3; i++) {
+                g = put_hex(g, P->h0[i], 8);
+                *g++ = '.';
+                g = put_hex(g, P->h1[i], 4);
+                *g++ = ' ';
+            }
+            *g = 0;
+            text(6, d + 32 + r * 10, eb, C_GREY, 1);
+        }
     }
 }
 
@@ -1392,6 +1398,14 @@ static int info_button(unsigned id, unsigned idx)
 void looper_app_msg(void *app, const uint16_t *msg)
 {
     looper_note_app(app);
+    if (P->magic == PMAGIC) {                                     /* screen history: the stock pages' ids, read later on MORE */
+        uint8_t sc = ((const uint8_t *)app)[0x8ca4];
+        if (P->scr_h[0] != sc) {
+            for (int i = 7; i > 0; i--)
+                P->scr_h[i] = P->scr_h[i - 1];
+            P->scr_h[0] = sc;
+        }
+    }
     if (msg && msg[0] == MSG_PAINT) {
         P->paint_req = 0;
         uint8_t *view = solo_looper_view();
@@ -1428,9 +1442,6 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     return;
                 }
                 P->btn_t = looper_ticks();
-                P->press_t = P->btn_t;
-                P->press_slot = (uint8_t)slot;
-                P->bev[slot] = 0;
                 switch (slot) {
                 case B_FX:
                     P->mode = P->mode == M_FX ? M_MAIN : M_FX;     /* the FX button: the looper's FX, and back */
@@ -1472,8 +1483,17 @@ void looper_page_dropped(void)
 /* From solo.c: an event was queued for the audio engine while the page shows. Newest first, distinct ones only. */
 void looper_page_event(uint32_t w0, uint32_t w1)
 {
-    if (P->press_slot && looper_ticks() - P->press_t <= 60 && !P->bev[P->press_slot])
-        P->bev[P->press_slot] = (w0 & 0xffffff) | 0x1000000;
+    int seen = 0;
+    for (int i = 0; i < 6; i++)
+        seen |= P->h0[i] == w0 && P->h1[i] == (uint16_t)w1;
+    if (!seen) {
+        for (int i = 5; i > 0; i--) {
+            P->h0[i] = P->h0[i - 1];
+            P->h1[i] = P->h1[i - 1];
+        }
+        P->h0[0] = w0;
+        P->h1[0] = (uint16_t)w1;
+    }
     for (int i = 0; i < 4; i++)
         if (P->ev0[i] == w0 && P->ev1[i] == w1)
             return;
