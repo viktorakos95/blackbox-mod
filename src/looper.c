@@ -1,33 +1,48 @@
 /*
- * Live looper engine: four stereo tracks of up to 16 s from the audio input. Original 1010music Blackbox, 3.1.9.
- * The controls are the Looper page of the Mixer screen (src/solo.c); this file is the audio side.
+ * Live looper engine v4: four stereo tracks of up to 15.4 s from the audio input or the mix. Original 1010music
+ * Blackbox, 3.1.9. The controls are the Looper page of the Mixer screen (src/solo.c, src/looper_page.c); this file is
+ * the audio side.
  *
  * Recording (all timed here, against the audio clock, from the page's touch events):
  *   - hold a track's box: records while held (300 ms or more), keeps it on release;
  *   - double tap: the first tap starts recording, the second (within 400 ms) latches it; one more tap keeps it;
  *   - a lone short tap records nothing (the blip is taken back).
- * The first take sets the loop length (16 s at most); later takes overdub onto that length, onto silence for an
- * empty track. Every overdub pass can be undone: before a pass writes a frame, the frame's old value goes to the
- * undo track (one more track of memory), so the pass comes off exactly. Undo covers the last pass only.
+ * The first take sets the master loop length. What a later take on an EMPTY track does is the LEN option:
+ *   FOLLOW  the track is the master's length and overdubs onto silence (the playhead is the master's);
+ *   MULT    the track records its own take from the next master loop start to a later master loop start, so its
+ *           length is a whole multiple of the master's, in step with it;
+ *   FREE    the track records its own length; its playhead runs on its own.
+ * Every overdub pass can be undone: before a pass writes a frame, the frame's old value goes to the undo track (one
+ * more track of memory), so the pass comes off exactly. Undo covers the last pass only.
  * MUTE: tap toggles (with a fade); hold 2 s = undo the last pass of that track, keep holding to 4 s = erase it.
- * REVERSE plays (and overdubs) the track backwards. Each track has a level and a pan.
+ * REVERSE plays (and overdubs) the track backwards; HALF plays it at half speed (an octave down; playback only: a
+ * half speed track cannot take or overdub). Each track has level, pan, a filter (low pass left of centre, high pass
+ * right), a crunch (bit and rate reduction) and two sends into the looper's own delay and reverb.
+ * SYNC: with it on, starts and stops wait for the next 1/8 or 1/16 of the Blackbox tempo (a "pending" action, fired
+ * at the exact frame inside the audio block), the first loop is rounded to whole bars (4/4), and every loop restarts
+ * when the Blackbox transport starts (seen through the sequencer's note player being called again after a pause).
+ * SRC picks what records: the audio input, or the Out 1 mix as the Blackbox makes it (pads, FX, input monitoring),
+ * taken before the looper adds its own tracks.
  *
  * Audio path (confirmed on hardware):
  *   input  - the input stage (FUN_0804caa4) ends in a tail call `b.w FUN_080518f0(obj, engine+0x8fb0, frames)`
  *            (@0x0804cb18); the two pointers at engine+0x8fb0 are the input L / R floats, full scale +-1.0.
  *   output - the Out 1 bus, just before the master compressor stage (looper_thunk.S @0x08053528, which runs
  *            whether the compressor is on or off): the compressor and the Out 1 / Headphone levels apply.
- * Both run in the audio task, input first, 256 frames a block.
+ * Both run in the audio task, input first, 256 frames a block. Everything that touches audio memory (recording,
+ * playing, overdubbing, effects) runs from the Out 1 stage, in one pass per block; the input hook only keeps time:
+ * events, timers, clearing and undo steps, and notes the input pointers.
  *
- * Memory: 235 of the 615 blocks of the stock sample pool (the last ones: 4 tracks + the undo track, 47 each),
- * claimed once at boot right after the pool is built (FUN_08070bf4, @0x0804c20e) and before any sample is loaded.
- * A block is the pool's own entry (engine + 0x1c * i): +4 / +8 two 32 KB buffers, +0x18 owner, +0x1f state
- * (0 free, 3 claimed, as the stock claim at 0x080730ce writes it). We write state 3 and our own owner tag, so the
- * stock code treats them as taken. Each block pair holds 16384 frames of 16-bit stereo; 47 blocks = 16.0 s.
- * (Step 3 claimed 295 = 5 x 59 for 20 s tracks and the looper never came on: blocks below 379 are not all free at
- * that point. Step 2's 236 from 379 up worked, so the five areas now share that range.)
- * Every audio block re-checks two of our blocks; if the firmware ever hands one to something else, the looper
- * stops touching its memory at once (all tracks go silent) instead of writing over a sample.
+ * Memory: 231 of the 615 blocks of the stock sample pool (the last ones), claimed once at boot right after the pool is
+ * built (FUN_08070bf4, @0x0804c20e) and before any sample is loaded: five areas of 45 blocks (the four tracks, then
+ * the undo track), then six blocks of effect memory. A block is the pool's own entry (engine + 0x1c * i): +4 / +8 two
+ * 32 KB buffers, +0x18 owner, +0x1f state (0 free, 3 claimed, as the stock claim at 0x080730ce writes it). We write
+ * state 3 and our own owner tag, so the stock code treats them as taken. Each block pair holds 16384 frames of 16-bit
+ * stereo; 45 blocks = 15.4 s. (Everything from block 380 up was claimed on hardware by step 2; this is 384 up.)
+ * Effect memory (12 buffers of 32 KB): 0 working state and send buses, 1-2 reverb (L, R), 3-5 delay L, 6-8 delay R
+ * (16-bit), 9-11 spare.
+ * Every audio block re-checks two of our blocks; if the firmware ever hands one to something else, the looper stops
+ * touching its memory at once (all tracks go silent) instead of writing over a sample.
  *
  * State: the backup SRAM at 0x38800c00 (0x300 bytes; the page's own state follows at 0x38800f00), rebuilt every boot.
  */
@@ -60,41 +75,52 @@ void looper_page_boot(void);
 
 #define HALF_FRAMES    8192             /* frames in one 32 KB buffer (16-bit stereo) */
 #define ENTRY_FRAMES   (2 * HALF_FRAMES)
-#define TRACK_ENTRIES  47               /* 47 x 16384 frames = 16.04 s */
+#define TRACK_ENTRIES  45               /* 45 x 16384 frames = 15.4 s */
 #define AREAS          (LOOPER_TRACKS + 1)        /* the four tracks, then the undo track */
 #define UNDO_AREA      LOOPER_TRACKS
-#define FIRST_ENTRY    (POOL_ENTRIES - AREAS * TRACK_ENTRIES)      /* 380: inside the range step 2 used on hardware */
-#define MAX_FRAMES     (16 * 48000)
+#define FX_ENTRIES     6
+#define TOTAL_ENTRIES  (AREAS * TRACK_ENTRIES + FX_ENTRIES)
+#define FIRST_ENTRY    (POOL_ENTRIES - TOTAL_ENTRIES)      /* 384: inside the range step 2 used on hardware */
+#define FX_ENTRY       (FIRST_ENTRY + AREAS * TRACK_ENTRIES)
+#define MAX_FRAMES     (TRACK_ENTRIES * ENTRY_FRAMES)
+#define MIN_TAKE       4800             /* 0.1 s: shorter takes are dropped */
 #define SEAM           96               /* 2 ms fades where the first take closes on itself */
 #define GAIN_EPS       1e-4f
+#define MAXN           256              /* frames in an audio block */
+#define SR             48000.f
 
 /* times in audio blocks (256 frames = 5.33 ms) */
 #define HOLD_MIN       56               /* 300 ms: a longer press records while held */
 #define DOUBLE_TAP     75               /* 400 ms for the second tap of a latch */
 #define UNDO_HOLD      375              /* 2 s on MUTE: undo */
 #define ERASE_HOLD     750              /* 4 s on MUTE: erase */
+#define TRANSPORT_GAP  60               /* no note player call for this long = the transport was stopped */
+#define TAIL_FRAMES    96000            /* keep the effects running this long after the last send */
 
 enum { G_IDLE, G_HOLD, G_WAIT2, G_LATCHED };
-#define EVENTS 5
+enum { P_NONE, P_START, P_STOP };                      /* a pending start / stop of a take ... */
+enum { W_NOW, W_GRID, W_MWRAP, W_TARGET };             /* ... and when it fires */
+enum { OWN_NO, OWN_FREE, OWN_MULT };
+#define EVENTS 6
 
 struct track {
     uint8_t mode, muted, rev, gesture;
-    uint8_t was_empty;           /* the overdub in progress started on an empty track */
-    uint8_t mute_held, mute_fired, area_at;      /* area_at: clear / undo progress, in blocks */
+    uint8_t was_empty, mute_held, mute_fired, area_at;      /* area_at: clear / undo progress, in blocks */
     uint8_t ev_seq[EVENTS], ev_done[EVENTS];
-    uint8_t _r[2];
+    uint8_t pend, pend_when, half, own;
     uint32_t t_down, deadline, t_mute;
-    float level, pan;            /* written by the page */
-    float gain_l, gain_r;        /* applied at the end of the last block */
+    uint32_t len, pos, rec, target;                          /* frames; pos = the next frame to play */
+    float frac;                                              /* half speed: position between frames */
+    float level, pan, filt, crunch, send_d, send_r;          /* written by the page */
+    float gain_l, gain_r;                                    /* applied at the end of the last block */
 };
 
 struct looper_state {
     uint32_t magic;
     uint8_t *engine;
     uint32_t ok;                 /* memory claimed and still ours */
-    uint32_t len;                /* loop length in frames, 0 = not set yet */
-    uint32_t pos;                /* playhead, 0..len-1 */
-    uint32_t rec;                /* frames recorded so far by the take that sets the length */
+    uint32_t mlen;               /* master loop length in frames, 0 = not set yet */
+    uint32_t mpos;               /* master playhead, 0..mlen-1 */
     uint32_t check;              /* next block to re-check */
     const float *in_l, *in_r;    /* this block's input, for the output side */
     uint32_t in_frames;
@@ -102,10 +128,18 @@ struct looper_state {
     int32_t undo_track;          /* track whose last pass the undo track holds, -1 = none */
     uint16_t why, where;         /* why the looper is off (WHY_*) and at which pool block */
     uint32_t undo_start, undo_count;             /* pass start frame, frames saved */
+    uint32_t seq_seen;           /* tick of the last note player call */
+    uint32_t restart;            /* the transport started: loops restart (if SYNC) */
+    uint32_t clear_req, clear_done;
+    uint32_t fx_tail;            /* frames the effects keep running */
+    uint32_t dw;                 /* delay write index */
+    float gphase;                /* frames since the last grid boundary */
+    float bpm;                   /* 0 = not read yet */
+    float opt[LOOPER_OPTS];
     struct track t[LOOPER_TRACKS];
 };
 #define S ((volatile struct looper_state *)0x38800c00u)
-#define MAGIC 0x4c4f4f33u        /* "LOO3": bumped with the layout */
+#define MAGIC 0x4c4f4f34u        /* "LOO4": bumped with the layout */
 
 _Static_assert(sizeof(struct looper_state) <= 0x300, "looper state must fit below the page's state at 0x38800f00");
 
@@ -134,6 +168,12 @@ static inline int16_t *frame_at(int a, uint32_t f)
     return half + 2 * (o % HALF_FRAMES);
 }
 
+/* Effect memory buffer i (0..11), 32 KB each. */
+static inline uint8_t *fxbuf(int i)
+{
+    return *(uint8_t **)(entry(FX_ENTRY + i / 2) + ((i & 1) ? ENTRY_RIGHT : ENTRY_LEFT));
+}
+
 static void zero_words(uint32_t *d, uint32_t words)
 {
     for (uint32_t i = 0; i < words; i++)
@@ -147,6 +187,30 @@ static void clear_block(int a, int k)
     zero_words(*(uint32_t **)(e + ENTRY_RIGHT), HALF_FRAMES);
 }
 
+/* Effect working memory (buffer 0). */
+#define RV_COMBS 4
+struct dsp {
+    float out[2][MAXN];                          /* the tracks' sum this block */
+    float acc[4][MAXN];                          /* sends: delay L, R, reverb L, R */
+    float f1[LOOPER_TRACKS][2], f2[LOOPER_TRACKS][2];      /* filter poles */
+    float hold[LOOPER_TRACKS][2];                /* crunch sample and hold */
+    uint32_t hcnt[LOOPER_TRACKS];
+    float dlp[2];                                /* delay feedback low pass */
+    uint32_t cidx[2][RV_COMBS], aidx[2][2];      /* reverb positions */
+    float cst[2][RV_COMBS];                      /* reverb comb damping */
+    float zero[MAXN];
+};
+_Static_assert(sizeof(struct dsp) <= 32768, "dsp state must fit in one 32 KB buffer");
+
+static const uint16_t comb_len[2][RV_COMBS] = {{1557, 1617, 1491, 1422}, {1580, 1640, 1514, 1445}};
+static const uint16_t ap_len[2][2] = {{556, 441}, {579, 464}};
+#define DSIZE 43200u                              /* delay line frames (0.9 s) */
+
+static inline struct dsp *DSP(void)
+{
+    return (struct dsp *)fxbuf(0);
+}
+
 /* Replaces the sample pool init call (bl @0x0804c20e): once per boot, after the pool has its memory. */
 void looper_boot(void *engine)
 {
@@ -155,12 +219,22 @@ void looper_boot(void *engine)
     S->magic = 0;
     S->engine = (uint8_t *)engine;
     S->ok = 0;
-    S->len = S->pos = S->rec = S->check = 0;
+    S->mlen = S->mpos = S->check = 0;
     S->in_l = S->in_r = 0;
     S->in_frames = 0;
     S->ticks = 0;
     S->undo_track = -1;
     S->undo_start = S->undo_count = 0;
+    S->seq_seen = 0;
+    S->restart = 0;
+    S->clear_req = S->clear_done = 0;
+    S->fx_tail = 0;
+    S->dw = 0;
+    S->gphase = 0.f;
+    S->bpm = 0.f;
+    static const float defaults[LOOPER_OPTS] = {0.f, 0.f, 1.f, 0.f, 1.f, .4f, .6f, .5f, .6f};
+    for (int i = 0; i < LOOPER_OPTS; i++)
+        S->opt[i] = defaults[i];
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
         k->mode = LOOPER_EMPTY;
@@ -169,9 +243,13 @@ void looper_boot(void *engine)
         k->was_empty = k->mute_held = k->mute_fired = k->area_at = 0;
         for (int i = 0; i < EVENTS; i++)
             k->ev_seq[i] = k->ev_done[i] = 0;
+        k->pend = k->pend_when = k->half = k->own = 0;
         k->t_down = k->deadline = k->t_mute = 0;
+        k->len = k->pos = k->rec = k->target = 0;
+        k->frac = 0.f;
         k->level = 1.f;
         k->pan = 0.f;
+        k->filt = k->crunch = k->send_d = k->send_r = 0.f;
         k->gain_l = k->gain_r = 0.f;
     }
     int free = 1;
@@ -195,6 +273,8 @@ void looper_boot(void *engine)
         for (int a = 0; a < AREAS; a++)
             for (int k = 0; k < TRACK_ENTRIES; k++)
                 clear_block(a, k);
+        for (int i = 0; i < 12; i++)
+            zero_words((uint32_t *)fxbuf(i), 8192);
         S->ok = 1;
     }
     looper_page_boot();                           /* the page's state (backup SRAM is not cleared) */
@@ -202,10 +282,54 @@ void looper_boot(void *engine)
     S->magic = MAGIC;
 }
 
+/* --- small math (no libm in the cave) */
+
+static inline float fclampf(float v, float lo, float hi)
+{
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+static float exp2_fast(float x)
+{
+    x = fclampf(x, -20.f, 20.f);
+    int i = (int)x;
+    if (x < 0.f && (float)i != x)
+        i--;
+    float f = x - (float)i;
+    float r = 1.f + f * (0.69606f + f * (0.22449f + f * 0.07944f));
+    union { uint32_t u; float f; } s = {(uint32_t)(i + 127) << 23};
+    return r * s.f;
+}
+
+static inline int16_t sat16(float x)
+{
+    return (int16_t)(int)(x > 32767.f ? 32767.f : x < -32767.f ? -32767.f : x);
+}
+
+static inline int opt_i(int o)
+{
+    return (int)(S->opt[o] + .5f);
+}
+
+/* --- clock */
+
+static inline float beat_frames(void)
+{
+    float bpm = S->bpm > 0.f ? S->bpm : 120.f;
+    return SR * 60.f / bpm;
+}
+
+static inline float grid_frames(void)
+{
+    return beat_frames() * (opt_i(LOOPER_O_QUANT) ? .25f : .5f);       /* 1/16 or 1/8 */
+}
+
+/* --- gestures */
+
 static int others_busy(int t)
 {
     for (int i = 0; i < LOOPER_TRACKS; i++)
-        if (i != t && S->t[i].mode != LOOPER_EMPTY)
+        if (i != t && (S->t[i].mode != LOOPER_EMPTY || S->t[i].pend == P_START))
             return 1;
     return 0;
 }
@@ -232,10 +356,9 @@ static void fade_seam(int t, uint32_t len)
 static void erase(int t)
 {
     vtrack *k = &S->t[t];
+    k->pend = P_NONE;
     if (k->mode == LOOPER_EMPTY || k->mode == LOOPER_CLEARING)
         return;
-    if (k->mode == LOOPER_REC)
-        S->rec = 0;
     if (S->undo_track == t)
         S->undo_track = -1;
     k->mode = LOOPER_CLEARING;
@@ -246,7 +369,8 @@ static void erase(int t)
 static void undo(int t)
 {
     vtrack *k = &S->t[t];
-    if (k->mode == LOOPER_REC) {                  /* the take that would set the length: just drop it */
+    k->pend = P_NONE;
+    if (k->mode == LOOPER_REC) {                  /* a take that would set a length: just drop it */
         erase(t);
         return;
     }
@@ -259,40 +383,47 @@ static void undo(int t)
         S->undo_track = -1;
 }
 
-static void start_take(int t)
+static void request_start(int t)
 {
     vtrack *k = &S->t[t];
-    if (!S->len) {
+    int when = opt_i(LOOPER_O_SYNC) ? W_GRID : W_NOW;
+    if (k->pend || k->half)
+        return;
+    if (!S->mlen) {
         if (k->mode != LOOPER_EMPTY || others_busy(t))
             return;                               /* another first take is running */
-        k->mode = LOOPER_REC;
-        S->rec = 0;
-    } else if (k->mode == LOOPER_EMPTY || k->mode == LOOPER_PLAY) {
-        k->was_empty = k->mode == LOOPER_EMPTY;
-        k->mode = LOOPER_DUB;
-        S->undo_track = t;
-        S->undo_start = S->pos;
-        S->undo_count = 0;
-    } else {
+    } else if (k->mode == LOOPER_EMPTY) {
+        if (opt_i(LOOPER_O_LEN) == LOOPER_LEN_MULT)
+            when = W_MWRAP;
+    } else if (k->mode != LOOPER_PLAY) {
         return;
     }
+    k->pend = P_START;
+    k->pend_when = (uint8_t)when;
     k->gesture = G_HOLD;
     k->t_down = S->ticks;
 }
 
-static void keep_take(int t)
+static void request_stop(int t)
 {
     vtrack *k = &S->t[t];
-    if (k->mode == LOOPER_REC && S->rec) {
-        S->len = S->rec;
-        S->pos = 0;
-        fade_seam(t, S->len);
-        k->mode = LOOPER_PLAY;
-    } else if (k->mode == LOOPER_REC) {
-        k->mode = LOOPER_EMPTY;
-    } else if (k->mode == LOOPER_DUB) {
-        k->mode = LOOPER_PLAY;
+    int when = opt_i(LOOPER_O_SYNC) ? W_GRID : W_NOW;
+    if (k->pend == P_START) {                     /* never began: nothing to keep */
+        k->pend = P_NONE;
+        k->gesture = G_IDLE;
+        return;
     }
+    if (k->pend == P_STOP)
+        return;
+    if (k->mode == LOOPER_REC) {
+        if (k->own == OWN_MULT)
+            when = W_MWRAP;
+    } else if (k->mode != LOOPER_DUB) {
+        k->gesture = G_IDLE;
+        return;
+    }
+    k->pend = P_STOP;
+    k->pend_when = (uint8_t)when;
     k->gesture = G_IDLE;
 }
 
@@ -304,15 +435,15 @@ static void event(int t, int ev)
         if (k->gesture == G_WAIT2)
             k->gesture = G_LATCHED;               /* second tap in time: keep recording */
         else if (k->gesture == G_LATCHED)
-            keep_take(t);                         /* one tap ends a latched take */
+            request_stop(t);                      /* one tap ends a latched take */
         else if (k->gesture == G_IDLE)
-            start_take(t);
+            request_start(t);
         break;
     case LOOPER_EV_REC_UP:
         if (k->gesture != G_HOLD)
             break;
         if (S->ticks - k->t_down >= HOLD_MIN) {
-            keep_take(t);
+            request_stop(t);
         } else {
             k->gesture = G_WAIT2;
             k->deadline = S->ticks + DOUBLE_TAP;
@@ -329,8 +460,16 @@ static void event(int t, int ev)
         k->mute_held = 0;
         break;
     case LOOPER_EV_REVERSE:
-        if (k->mode != LOOPER_REC && k->mode != LOOPER_DUB)
+        if (k->mode != LOOPER_REC && k->mode != LOOPER_DUB && !k->pend)
             k->rev = !k->rev;                     /* not mid-take: the pass would land in two directions */
+        break;
+    case LOOPER_EV_HALF:
+        if (k->mode == LOOPER_REC || k->mode == LOOPER_DUB || k->pend)
+            break;
+        k->half = !k->half;
+        k->frac = 0.f;
+        if (!k->half && k->len && k->own != OWN_FREE && S->mlen)      /* back in step with the master */
+            k->pos = S->mpos % k->len;
         break;
     }
 }
@@ -340,7 +479,9 @@ static void timers(int t)
     vtrack *k = &S->t[t];
     if (k->gesture == G_WAIT2 && (int32_t)(S->ticks - k->deadline) > 0) {
         k->gesture = G_IDLE;                      /* a lone short tap: take the blip back */
-        if (k->mode == LOOPER_REC)
+        if (k->pend == P_START)
+            k->pend = P_NONE;
+        else if (k->mode == LOOPER_REC)
             erase(t);
         else if (k->mode == LOOPER_DUB)
             undo(t);
@@ -357,50 +498,11 @@ static void timers(int t)
     }
 }
 
-static inline int16_t sat16(float x)
-{
-    return (int16_t)(int)(x > 32767.f ? 32767.f : x < -32767.f ? -32767.f : x);
-}
-
-/* The first take: write the input from frame rec on. */
-static void take(int t, const float *l, const float *r, int frames)
-{
-    for (int i = 0; i < frames; i++) {
-        int16_t *p = frame_at(t, S->rec + (uint32_t)i);
-        p[0] = sat16(l[i] * 32767.f);
-        p[1] = sat16(r[i] * 32767.f);
-    }
-}
-
-/* Overdub: add the input from the playhead on; each frame's old value goes to the undo track first, once a pass. */
-static void dub(int t, const float *l, const float *r, int frames)
-{
-    vtrack *k = &S->t[t];
-    uint32_t len = S->len, f = S->pos, saved = S->undo_count;
-    int save = S->undo_track == t;
-    for (int i = 0; i < frames; i++) {
-        uint32_t m = place(k, f, len);
-        int16_t *p = frame_at(t, m);
-        if (save && saved < len) {
-            int16_t *u = frame_at(UNDO_AREA, m);
-            u[0] = p[0];
-            u[1] = p[1];
-            saved++;
-        }
-        p[0] = sat16(p[0] + l[i] * 32767.f);
-        p[1] = sat16(p[1] + r[i] * 32767.f);
-        if (++f >= len)
-            f = 0;
-    }
-    if (save)
-        S->undo_count = saved;
-}
-
 /* Undo: copy the saved frames of the last pass back, one block of memory per audio block. */
 static int restore_step(int t)
 {
     vtrack *k = &S->t[t];
-    uint32_t len = S->len, count = S->undo_count < len ? S->undo_count : len;
+    uint32_t len = k->len, count = S->undo_count < len ? S->undo_count : len;
     uint32_t from = (uint32_t)k->area_at * ENTRY_FRAMES, to = from + ENTRY_FRAMES;
     if (to > count)
         to = count;
@@ -421,12 +523,12 @@ static void verify(void)
             S->why = WHY_TAKEN_BACK;
             S->where = (uint16_t)(FIRST_ENTRY + (int)c);
         }
-        c = (c + 1) % (AREAS * TRACK_ENTRIES);
+        c = (c + 1) % TOTAL_ENTRIES;
     }
     S->check = c;
 }
 
-/* Replaces the input stage's tail call (b.w @0x0804cb18). */
+/* Replaces the input stage's tail call (b.w @0x0804cb18): time keeping only; the audio is handled at the Out 1 stage. */
 void looper_in(void *obj, float **bufs, int frames)
 {
     S->in_frames = 0;
@@ -434,10 +536,14 @@ void looper_in(void *obj, float **bufs, int frames)
         S->ticks++;
         verify();
         if (S->ok) {
-            const float *l = bufs[0], *r = bufs[1];
-            S->in_l = l;
-            S->in_r = r;
+            S->in_l = bufs[0];
+            S->in_r = bufs[1];
             S->in_frames = (uint32_t)frames;
+            if (S->clear_done != S->clear_req) {
+                S->clear_done = S->clear_req;
+                for (int t = 0; t < LOOPER_TRACKS; t++)
+                    erase(t);
+            }
             for (int t = 0; t < LOOPER_TRACKS; t++) {
                 vtrack *k = &S->t[t];
                 for (int ev = 0; ev < EVENTS; ev++) {
@@ -453,26 +559,20 @@ void looper_in(void *obj, float **bufs, int frames)
                     clear_block(t, k->area_at);
                     if (++k->area_at >= TRACK_ENTRIES) {
                         k->mode = LOOPER_EMPTY;
-                        k->muted = k->rev = 0;
+                        k->muted = k->rev = k->half = 0;
                         k->gesture = G_IDLE;
+                        k->pend = P_NONE;
+                        k->len = k->pos = k->rec = 0;
+                        k->frac = 0.f;
+                        k->own = OWN_NO;
                         if (!others_busy(t))
-                            S->len = S->pos = S->rec = 0;
+                            S->mlen = S->mpos = 0;
                     }
                 } else if (k->mode == LOOPER_UNDOING) {
                     if (restore_step(t)) {
                         k->mode = LOOPER_PLAY;
                         S->undo_track = -1;
                     }
-                } else if (k->mode == LOOPER_REC && !S->len) {
-                    uint32_t n = (uint32_t)frames;
-                    if (S->rec + n > MAX_FRAMES)
-                        n = MAX_FRAMES - S->rec;
-                    take(t, l, r, (int)n);
-                    S->rec += n;
-                    if (S->rec >= MAX_FRAMES)
-                        keep_take(t);             /* full: close the loop */
-                } else if (k->mode == LOOPER_DUB && S->len) {
-                    dub(t, l, r, frames);
                 }
             }
         }
@@ -482,50 +582,499 @@ void looper_in(void *obj, float **bufs, int frames)
     fw_in_tail(obj, bufs, frames);
 }
 
-/* Add the playing tracks' channel ch into a. An overdubbing track plays what it held before this pass. */
-static void mix(float *a, int frames, int ch, int commit)
+/* Called by the sequencer's note player (seqfix.c): once a block, while the transport plays. */
+void looper_clock(void)
 {
-    if (S->magic != MAGIC || !S->ok || !S->len || frames <= 0)
+    if (S->magic != MAGIC)
         return;
-    uint32_t len = S->len, pos = S->pos;
-    const float *in = ch ? S->in_r : S->in_l;
-    int have_in = S->in_frames == (uint32_t)frames && in;
-    for (int t = 0; t < LOOPER_TRACKS; t++) {
-        vtrack *k = &S->t[t];
-        int mode = k->mode;
-        float g0 = ch ? k->gain_r : k->gain_l, g1 = 0.f;
-        if ((mode == LOOPER_PLAY || mode == LOOPER_DUB) && !k->muted) {
-            float pan = k->pan;
-            g1 = k->level * (ch ? (pan < 0.f ? 1.f + pan : 1.f) : (pan > 0.f ? 1.f - pan : 1.f));
-        }
-        if (ch)                                   /* each channel ramps from where its last block ended */
-            k->gain_r = g1;
-        else
-            k->gain_l = g1;
-        if (g0 < GAIN_EPS && g1 < GAIN_EPS)
-            continue;
-        float dg = (g1 - g0) / (float)frames, g = g0;
-        int dubbing = mode == LOOPER_DUB && have_in;
-        uint32_t f = pos;
-        for (int i = 0; i < frames; i++) {
-            float x = (float)frame_at(t, place(k, f, len))[ch] * (1.f / 32767.f);
-            if (dubbing)
-                x -= in[i];
-            g += dg;
-            a[i] += x * g;
-            if (++f >= len)
-                f = 0;
-        }
-    }
-    if (commit)
-        S->pos = (pos + (uint32_t)frames) % len;
+    uint32_t t = S->ticks;
+    if (t - S->seq_seen > TRANSPORT_GAP)
+        S->restart = 1;
+    S->seq_seen = t;
 }
 
-/* Add the loop into a stereo bus (Out 1). */
-void looper_bus(float *l, float *r, int frames)
+/* --- the block */
+
+struct pb {                                       /* one track, one block */
+    float g0[2], dg[2];
+    int base;                                     /* the gain ramp starts at this frame of the block */
+    int filt;                                     /* 0 off, 1 low pass, 2 high pass */
+    float c;
+    int crunch, hold_n;
+    float q, qi;
+    float sd, sr;
+};
+
+static inline float quant(float x, float q, float qi)
 {
-    mix(l, frames, 0, 0);
-    mix(r, frames, 1, 1);
+    float v = x * q + 65536.5f;                   /* floor(x * q + 0.5), without libm */
+    return ((float)(int)v - 65536.f) * qi;
+}
+
+/* The gain each channel is heading for, by what the track is doing now. */
+static void targets(vtrack *k, float *g1)
+{
+    int mode = k->mode;
+    int audible = (mode == LOOPER_PLAY || mode == LOOPER_DUB) && !k->muted;
+    float pan = k->pan;
+    g1[0] = g1[1] = 0.f;
+    if (audible) {
+        g1[0] = k->level * (pan > 0.f ? 1.f - pan : 1.f);
+        g1[1] = k->level * (pan < 0.f ? 1.f + pan : 1.f);
+    }
+}
+
+/* The track's mode changed at frame b of the block: carry on from the gain reached there toward the new target. */
+static void retarget(struct pb *p, vtrack *k, int b, int n)
+{
+    float g1[2];
+    targets(k, g1);
+    for (int c = 0; c < 2; c++) {
+        float cur = p->g0[c] + p->dg[c] * (float)b;
+        p->g0[c] = cur;
+        p->dg[c] = (g1[c] - cur) / (float)(n - b);
+    }
+    p->base = b;
+    k->gain_l = g1[0];
+    k->gain_r = g1[1];
+}
+
+static void setup(struct pb *p, vtrack *k, int n)
+{
+    float g1[2];
+    targets(k, g1);
+    float g0[2] = {k->gain_l, k->gain_r};
+    for (int c = 0; c < 2; c++) {
+        p->g0[c] = g0[c];
+        p->dg[c] = (g1[c] - g0[c]) / (float)n;
+    }
+    p->base = 0;
+    k->gain_l = g1[0];
+    k->gain_r = g1[1];
+    float f = k->filt;
+    p->filt = f < -.03f ? 1 : f > .03f ? 2 : 0;
+    p->c = 0.f;
+    if (p->filt) {
+        float fc = f < 0.f ? 18000.f * exp2_fast(f * 7.5f) : 30.f * exp2_fast(f * 8.f);
+        float w = 6.2831853f * fc / SR;
+        p->c = w / (1.f + w);
+    }
+    float cr = k->crunch;
+    p->crunch = cr > .02f;
+    p->q = p->qi = 0.f;
+    p->hold_n = 1;
+    if (p->crunch) {
+        p->q = exp2_fast(15.f - 11.f * cr);
+        p->qi = 1.f / p->q;
+        p->hold_n = 1 + (int)(cr * cr * 7.9f);
+    }
+    p->sd = k->send_d;
+    p->sr = k->send_r;
+}
+
+/* The first take, or an own take: write the source from frame rec on. */
+static void take(int t, const float *l, const float *r, int i0, int m)
+{
+    vtrack *k = &S->t[t];
+    for (int i = 0; i < m; i++) {
+        int16_t *p = frame_at(t, k->rec + (uint32_t)i);
+        p[0] = sat16(l[i0 + i] * 32767.f);
+        p[1] = sat16(r[i0 + i] * 32767.f);
+    }
+    k->rec += (uint32_t)m;
+}
+
+static void finalize(int t, uint32_t len, int b)
+{
+    vtrack *k = &S->t[t];
+    fade_seam(t, len);
+    k->len = len;
+    k->pos = 0;
+    k->frac = 0.f;
+    k->rec = 0;
+    k->mode = LOOPER_PLAY;
+    if (k->gesture == G_LATCHED)
+        k->gesture = G_IDLE;
+    if (!S->mlen) {
+        S->mlen = len;
+        S->mpos = (len - ((uint32_t)b % len)) % len;     /* the block's end advance leaves it at n - b */
+    }
+}
+
+static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, const float *sr, const struct pb *p)
+{
+    vtrack *k = &S->t[t];
+    uint32_t len = k->len, pos = k->pos;
+    float fr = k->frac;
+    int dubbing = k->mode == LOOPER_DUB;
+    int save = dubbing && S->undo_track == t;
+    uint32_t saved = S->undo_count;
+    int half = k->half;
+    const float s16 = 1.f / 32767.f;
+    for (int i = i0; i < i1; i++) {
+        uint32_t m = place(k, pos, len);
+        int16_t *a = frame_at(t, m);
+        float xl = (float)a[0] * s16, xr = (float)a[1] * s16;
+        if (half) {
+            int16_t *b = frame_at(t, place(k, pos + 1 >= len ? 0 : pos + 1, len));
+            xl += ((float)b[0] * s16 - xl) * fr;
+            xr += ((float)b[1] * s16 - xr) * fr;
+        }
+        if (dubbing) {
+            if (save && saved < len) {
+                int16_t *u = frame_at(UNDO_AREA, m);
+                u[0] = a[0];
+                u[1] = a[1];
+                saved++;
+            }
+            a[0] = sat16((float)a[0] + sl[i] * 32767.f);
+            a[1] = sat16((float)a[1] + sr[i] * 32767.f);
+        }
+        if (p->filt) {
+            float *s1 = d->f1[t], *s2 = d->f2[t];
+            s1[0] += p->c * (xl - s1[0]);
+            s2[0] += p->c * (s1[0] - s2[0]);
+            s1[1] += p->c * (xr - s1[1]);
+            s2[1] += p->c * (s1[1] - s2[1]);
+            xl = p->filt == 1 ? s2[0] : xl - s2[0];
+            xr = p->filt == 1 ? s2[1] : xr - s2[1];
+        }
+        if (p->crunch) {
+            if (d->hcnt[t] == 0) {
+                d->hold[t][0] = quant(xl, p->q, p->qi);
+                d->hold[t][1] = quant(xr, p->q, p->qi);
+                d->hcnt[t] = (uint32_t)p->hold_n;
+            }
+            d->hcnt[t]--;
+            xl = d->hold[t][0];
+            xr = d->hold[t][1];
+        }
+        float ol = xl * (p->g0[0] + p->dg[0] * (float)(i - p->base + 1)), orr = xr * (p->g0[1] + p->dg[1] * (float)(i - p->base + 1));
+        d->out[0][i] += ol;
+        d->out[1][i] += orr;
+        d->acc[0][i] += ol * p->sd;
+        d->acc[1][i] += orr * p->sd;
+        d->acc[2][i] += ol * p->sr;
+        d->acc[3][i] += orr * p->sr;
+        if (half) {
+            fr += .5f;
+            if (fr >= 1.f) {
+                fr -= 1.f;
+                pos++;
+            }
+        } else {
+            pos++;
+        }
+        if (pos >= len)
+            pos = 0;
+    }
+    k->pos = pos;
+    k->frac = fr;
+    if (save)
+        S->undo_count = saved;
+}
+
+/* Advance a track that nothing is playing out of (silent, or not audible): positions only. */
+static void skip_seg(int t, int n)
+{
+    vtrack *k = &S->t[t];
+    if (!k->len)
+        return;
+    if (k->half) {
+        float tot = k->frac + .5f * (float)n;
+        uint32_t whole = (uint32_t)tot;
+        k->frac = tot - (float)whole;
+        k->pos = (k->pos + whole) % k->len;
+    } else {
+        k->pos = (k->pos + (uint32_t)n) % k->len;
+    }
+}
+
+static void seg(struct dsp *d, int t, int i0, int i1, const float *sl, const float *sr, const struct pb *p)
+{
+    vtrack *k = &S->t[t];
+    if (i1 <= i0)
+        return;
+    if (k->mode == LOOPER_REC) {
+        uint32_t room = MAX_FRAMES - k->rec;
+        int m = i1 - i0;
+        if ((uint32_t)m > room)
+            m = (int)room;
+        take(t, sl, sr, i0, m);
+        if (k->rec >= MAX_FRAMES) {               /* full: close the loop */
+            k->pend = P_NONE;
+            finalize(t, MAX_FRAMES, i0 + m);
+            seg(d, t, i0 + m, i1, sl, sr, p);
+        }
+        return;
+    }
+    if (!k->len || k->mode == LOOPER_EMPTY)
+        return;
+    int writes = k->mode == LOOPER_DUB;
+    int silent = p->g0[0] < GAIN_EPS && p->g0[1] < GAIN_EPS && p->dg[0] == 0.f && p->dg[1] == 0.f;
+    if (!writes && silent)
+        skip_seg(t, i1 - i0);
+    else
+        play_seg(d, t, i0, i1, sl, sr, p);
+}
+
+/* The index in this block (0..n-1) at which track k's pending action fires, or -1. */
+static int fire_at(vtrack *k, int n, int gb, int wb)
+{
+    switch (k->pend_when) {
+    case W_NOW:
+        return 0;
+    case W_GRID:
+        return gb;
+    case W_MWRAP:
+        return S->mlen ? wb : -1;
+    case W_TARGET: {
+        if (k->mode != LOOPER_REC)
+            return -1;
+        uint32_t d = k->target > k->rec ? k->target - k->rec : 0;
+        return d < (uint32_t)n ? (int)d : -1;
+    }
+    }
+    return -1;
+}
+
+static uint32_t bars_len(uint32_t rec)
+{
+    float bar = beat_frames() * 4.f;
+    uint32_t n = (uint32_t)((float)rec / bar + .5f);
+    if (n < 1)
+        n = 1;
+    while (n > 1 && (float)n * bar > (float)MAX_FRAMES)
+        n--;
+    uint32_t len = (uint32_t)((float)n * bar);
+    return len > MAX_FRAMES ? MAX_FRAMES : len;
+}
+
+/* The pending action of track t fires at index b of this block. */
+static void apply(int t, int b)
+{
+    vtrack *k = &S->t[t];
+    int when = k->pend_when;
+    if (k->pend == P_START) {
+        k->pend = P_NONE;
+        if (!S->mlen) {
+            if (k->mode != LOOPER_EMPTY || others_busy(t))
+                return;
+            k->mode = LOOPER_REC;
+            k->rec = 0;
+            k->own = OWN_NO;
+        } else if (k->mode == LOOPER_EMPTY) {
+            if (opt_i(LOOPER_O_LEN) == LOOPER_LEN_FOLLOW) {
+                k->was_empty = 1;
+                k->mode = LOOPER_DUB;
+                k->len = S->mlen;
+                k->pos = (S->mpos + (uint32_t)b) % S->mlen;
+                k->frac = 0.f;
+                k->own = OWN_NO;
+                S->undo_track = t;
+                S->undo_start = k->pos;
+                S->undo_count = 0;
+            } else {
+                k->mode = LOOPER_REC;
+                k->rec = 0;
+                k->own = opt_i(LOOPER_O_LEN) == LOOPER_LEN_MULT ? OWN_MULT : OWN_FREE;
+            }
+        } else if (k->mode == LOOPER_PLAY) {
+            k->was_empty = 0;
+            k->mode = LOOPER_DUB;
+            S->undo_track = t;
+            S->undo_start = k->pos;
+            S->undo_count = 0;
+        }
+        return;
+    }
+    if (k->pend != P_STOP)
+        return;
+    if (k->mode == LOOPER_DUB) {
+        k->pend = P_NONE;
+        k->mode = LOOPER_PLAY;
+        return;
+    }
+    if (k->mode != LOOPER_REC) {
+        k->pend = P_NONE;
+        return;
+    }
+    uint32_t rec = k->rec;
+    if (rec < MIN_TAKE) {                         /* too short to be a loop */
+        erase(t);
+        return;
+    }
+    if (!S->mlen) {                               /* the first take: sets the master */
+        uint32_t len = rec;
+        if (opt_i(LOOPER_O_SYNC)) {
+            if (when == W_TARGET) {
+                len = k->target;
+            } else {
+                len = bars_len(rec);
+                if (len > rec) {                  /* round up: keep recording to the bar line */
+                    k->pend_when = W_TARGET;
+                    k->target = len;
+                    return;
+                }
+            }
+        }
+        k->pend = P_NONE;
+        finalize(t, len, b);
+    } else if (k->own == OWN_MULT) {
+        uint32_t ml = S->mlen, n = (rec + ml / 2) / ml;
+        if (n < 1) {
+            erase(t);
+            return;
+        }
+        while (n > 1 && n * ml > MAX_FRAMES)
+            n--;
+        k->pend = P_NONE;
+        finalize(t, n * ml, b);
+    } else {
+        k->pend = P_NONE;
+        finalize(t, rec, b);
+    }
+}
+
+/* --- effects: a tempo delay (ping-pong) and a reverb (four combs, two all-passes), fed by the tracks' sends */
+
+static inline int16_t *dline(int ch, uint32_t i)
+{
+    return (int16_t *)fxbuf(3 + ch * 3 + (int)(i >> 14)) + (i & 16383u);
+}
+
+static inline float *rvbuf(int ch, int c, int ap)
+{
+    static const uint16_t off[2][RV_COMBS + 2] = {{0, 1557, 3174, 4665, 6087, 6643}, {0, 1580, 3220, 4734, 6179, 6758}};
+    return (float *)fxbuf(1 + ch) + off[ch][ap ? RV_COMBS + c : c];
+}
+
+static void run_fx(struct dsp *d, float *bl, float *br, int n)
+{
+    float beat = beat_frames();
+    static const float mult[4] = {.5f, 1.f, .75f, 1.5f};
+    float dtime = beat * mult[opt_i(LOOPER_O_DTIME) & 3];
+    uint32_t dd = (uint32_t)fclampf(dtime, 2000.f, (float)(DSIZE - 1));
+    float fb = fclampf(S->opt[LOOPER_O_DFB], 0.f, .9f), dret = S->opt[LOOPER_O_DRET];
+    float size = fclampf(S->opt[LOOPER_O_RSIZE], 0.f, 1.f), rret = S->opt[LOOPER_O_RRET];
+    float cfb = .70f + .28f * size, damp = .35f;
+    uint32_t dw = S->dw;
+    for (int i = 0; i < n; i++) {
+        uint32_t rd = dw >= dd ? dw - dd : dw + DSIZE - dd;
+        float rl = (float)*dline(0, rd) * (1.f / 32767.f), rr = (float)*dline(1, rd) * (1.f / 32767.f);
+        d->dlp[0] += .45f * (rl - d->dlp[0]);
+        d->dlp[1] += .45f * (rr - d->dlp[1]);
+        *dline(0, dw) = sat16((d->acc[0][i] + fb * d->dlp[1]) * 32767.f);       /* ping-pong */
+        *dline(1, dw) = sat16((d->acc[1][i] + fb * d->dlp[0]) * 32767.f);
+        if (++dw >= DSIZE)
+            dw = 0;
+        float x = (d->acc[2][i] + d->acc[3][i]) * .125f;
+        float o[2];
+        for (int ch = 0; ch < 2; ch++) {
+            float sum = 0.f;
+            for (int c = 0; c < RV_COMBS; c++) {
+                float *b = rvbuf(ch, c, 0);
+                uint32_t ix = d->cidx[ch][c];
+                float y = b[ix];
+                d->cst[ch][c] = y * (1.f - damp) + d->cst[ch][c] * damp;
+                b[ix] = x + d->cst[ch][c] * cfb;
+                if (++ix >= comb_len[ch][c])
+                    ix = 0;
+                d->cidx[ch][c] = ix;
+                sum += y;
+            }
+            for (int a = 0; a < 2; a++) {
+                float *b = rvbuf(ch, a, 1);
+                uint32_t ix = d->aidx[ch][a];
+                float bo = b[ix];
+                b[ix] = sum + bo * .5f;
+                sum = bo - sum;
+                if (++ix >= ap_len[ch][a])
+                    ix = 0;
+                d->aidx[ch][a] = ix;
+            }
+            o[ch] = sum;
+        }
+        bl[i] += rl * dret + o[0] * rret;
+        br[i] += rr * dret + o[1] * rret;
+    }
+    S->dw = dw;
+}
+
+/* One block of the whole looper: bl / br = the Out 1 bus (read as the "mix" source, then the loop is added to it). */
+static void run(float *bl, float *br, int n)
+{
+    struct dsp *d = DSP();
+    if (n > MAXN || n <= 0)
+        return;
+    int sync = opt_i(LOOPER_O_SYNC);
+    float gf = grid_frames();
+    if (S->restart) {
+        S->restart = 0;
+        if (sync) {
+            S->mpos = 0;
+            for (int t = 0; t < LOOPER_TRACKS; t++) {
+                vtrack *k = &S->t[t];
+                if (k->len && k->mode != LOOPER_REC) {
+                    k->pos = 0;
+                    k->frac = 0.f;
+                }
+            }
+            S->gphase = gf;
+        }
+    }
+    int gb = -1, wb = -1;
+    if (S->gphase + (float)n >= gf) {
+        gb = (int)(gf - S->gphase);
+        gb = gb < 0 ? 0 : gb >= n ? n - 1 : gb;
+    }
+    if (S->mlen)
+        wb = S->mpos == 0 ? 0 : S->mpos + (uint32_t)n > S->mlen ? (int)(S->mlen - S->mpos) : -1;
+
+    const float *sl = d->zero, *sr = d->zero;
+    if (opt_i(LOOPER_O_SRC) == LOOPER_SRC_MIX) {
+        sl = bl;
+        sr = br;
+    } else if (S->in_frames == (uint32_t)n && S->in_l && S->in_r) {
+        sl = S->in_l;
+        sr = S->in_r;
+    }
+    for (int i = 0; i < n; i++) {
+        d->out[0][i] = d->out[1][i] = 0.f;
+        d->acc[0][i] = d->acc[1][i] = d->acc[2][i] = d->acc[3][i] = 0.f;
+    }
+    int sends = 0;
+    for (int t = 0; t < LOOPER_TRACKS; t++) {
+        vtrack *k = &S->t[t];
+        struct pb p;
+        setup(&p, k, n);
+        if (p.sd > 0.f || p.sr > 0.f)
+            sends = 1;
+        int b = k->pend ? fire_at(k, n, gb, wb) : -1;
+        if (b >= 0) {
+            seg(d, t, 0, b, sl, sr, &p);
+            apply(t, b);
+            retarget(&p, k, b, n);
+            seg(d, t, b, n, sl, sr, &p);
+        } else {
+            seg(d, t, 0, n, sl, sr, &p);
+        }
+    }
+    for (int i = 0; i < n; i++) {
+        bl[i] += d->out[0][i];
+        br[i] += d->out[1][i];
+    }
+    if (sends)
+        S->fx_tail = TAIL_FRAMES;
+    if (S->fx_tail) {
+        run_fx(d, bl, br, n);
+        S->fx_tail = S->fx_tail > (uint32_t)n ? S->fx_tail - (uint32_t)n : 0;
+    }
+    if (S->mlen)
+        S->mpos = (S->mpos + (uint32_t)n) % S->mlen;
+    S->gphase += (float)n;
+    while (S->gphase >= gf)
+        S->gphase -= gf;
 }
 
 typedef void *(*buf_of_fn)(void *bufs, unsigned idx);
@@ -537,11 +1086,21 @@ typedef unsigned (*index_fn)(void *obj);
 #define fw_stereo  ((chans_fn)FN(0x0804d9c0))
 #define DEFAULT_INDEX_FN 0x08046a15u            /* stock "output index" method: reads obj +0x1e */
 
+static void read_bpm(void *bufs)
+{
+    uint32_t ctx = ((uint32_t *)bufs)[0];
+    if (ctx >= 0x20000000u && ctx < 0x40000000u && !(ctx & 3)) {
+        float b = *(float *)(ctx + 0x18);
+        if (b >= 20.f && b <= 400.f)
+            S->bpm = b;
+    }
+}
+
 /* Out 1 bus, once per audio block, before the master compressor and the output levels (looper_thunk.S).
  * obj is the compressor stage object; its output index names the Out 1 bus, as in comp_process (comp.c). */
 void looper_stage(uint8_t *obj, void *bufs)
 {
-    if (S->magic != MAGIC || !S->ok || !S->len)
+    if (S->magic != MAGIC || !S->ok)
         return;
     index_fn index = *(index_fn *)(*(uint8_t **)obj + 0x54);
     unsigned out = (uint32_t)index == DEFAULT_INDEX_FN ? *(uint16_t *)(obj + 0x1e) : index(obj);
@@ -549,8 +1108,10 @@ void looper_stage(uint8_t *obj, void *bufs)
     int n = fw_frames(buf);
     float *l = 0, *r = 0;
     fw_stereo(buf, &l, &r);
-    if (l && r && n > 0)
-        looper_bus(l, r, n);
+    if (l && r && n > 0) {
+        read_bpm(bufs);
+        run(l, r, n);
+    }
 }
 
 /* --- for the page (GUI task) */
@@ -572,14 +1133,62 @@ void looper_set_level(int t, float v)                 /* the track's gain: 1.0 =
 {
     if (t < 0 || t >= LOOPER_TRACKS || S->magic != MAGIC)
         return;
-    S->t[t].level = v < 0.f ? 0.f : v > 2.f ? 2.f : v;
+    S->t[t].level = fclampf(v, 0.f, 2.f);
 }
 
 void looper_set_pan(int t, float v)
 {
     if (t < 0 || t >= LOOPER_TRACKS || S->magic != MAGIC)
         return;
-    S->t[t].pan = v < -1.f ? -1.f : v > 1.f ? 1.f : v;
+    S->t[t].pan = fclampf(v, -1.f, 1.f);
+}
+
+void looper_set_param(int t, int p, float v)
+{
+    if (t < 0 || t >= LOOPER_TRACKS || p < 0 || p >= LOOPER_PARAMS || S->magic != MAGIC)
+        return;
+    vtrack *k = &S->t[t];
+    switch (p) {
+    case LOOPER_P_FILT:
+        k->filt = fclampf(v, -1.f, 1.f);
+        break;
+    case LOOPER_P_CRUNCH:
+        k->crunch = fclampf(v, 0.f, 1.f);
+        break;
+    case LOOPER_P_SEND_D:
+        k->send_d = fclampf(v, 0.f, 1.f);
+        break;
+    case LOOPER_P_SEND_R:
+        k->send_r = fclampf(v, 0.f, 1.f);
+        break;
+    }
+}
+
+float looper_get_param(int t, int p)
+{
+    if (t < 0 || t >= LOOPER_TRACKS || S->magic != MAGIC)
+        return 0.f;
+    vtrack *k = &S->t[t];
+    return p == LOOPER_P_FILT ? k->filt : p == LOOPER_P_CRUNCH ? k->crunch : p == LOOPER_P_SEND_D ? k->send_d :
+           p == LOOPER_P_SEND_R ? k->send_r : 0.f;
+}
+
+void looper_set_opt(int o, float v)
+{
+    if (o < 0 || o >= LOOPER_OPTS || S->magic != MAGIC)
+        return;
+    S->opt[o] = o <= LOOPER_O_DTIME ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
+}
+
+float looper_get_opt(int o)
+{
+    return o < 0 || o >= LOOPER_OPTS || S->magic != MAGIC ? 0.f : S->opt[o];
+}
+
+void looper_clear_all(void)
+{
+    if (S->magic == MAGIC)
+        S->clear_req++;
 }
 
 void looper_track(int t, struct looper_info *out)
@@ -590,11 +1199,19 @@ void looper_track(int t, struct looper_info *out)
     out->reversed = k->rev;
     out->latched = k->gesture == G_LATCHED;
     out->undo = S->undo_track == t && S->undo_count;
+    out->armed = k->pend != P_NONE && k->pend_when != W_TARGET;
+    out->half = k->half;
     out->level = k->level;
     out->pan = k->pan;
+    out->filt = k->filt;
+    out->crunch = k->crunch;
+    out->send_d = k->send_d;
+    out->send_r = k->send_r;
+    out->progress = k->mode == LOOPER_REC ? (float)k->rec / (float)MAX_FRAMES :
+                    k->len ? (float)k->pos / (float)k->len : 0.f;
 }
 
-/* For the version label: "Lok", or why the looper is off ("Lb380": a pool block busy at boot, "Lt400": one taken
+/* For the version label: "Lok", or why the looper is off ("Lb384": a pool block busy at boot, "Lt400": one taken
  * back later), or "L-" when the looper never ran this boot. Writes at most 8 characters. */
 char *looper_status(char *p)
 {
@@ -623,7 +1240,7 @@ char *looper_status(char *p)
 
 unsigned looper_len(void)
 {
-    return S->magic == MAGIC ? S->len : 0;
+    return S->magic == MAGIC ? S->mlen : 0;
 }
 
 unsigned looper_ticks(void)
@@ -631,12 +1248,25 @@ unsigned looper_ticks(void)
     return S->ticks;
 }
 
-/* Loop progress 0..1 (0 when no loop), or, while the first take records, how much of the 16 s is used. */
+unsigned looper_running(void)
+{
+    return S->magic == MAGIC && S->seq_seen && S->ticks - S->seq_seen <= TRANSPORT_GAP;
+}
+
+float looper_bpm(void)
+{
+    return S->magic == MAGIC ? S->bpm : 0.f;
+}
+
+/* Master loop progress 0..1 (0 when no loop), or, while a first take records, how much of the memory is used. */
 float looper_progress(void)
 {
     if (S->magic != MAGIC)
         return 0.f;
-    if (S->len)
-        return (float)S->pos / (float)S->len;
-    return (float)S->rec / (float)MAX_FRAMES;
+    if (S->mlen)
+        return (float)S->mpos / (float)S->mlen;
+    for (int t = 0; t < LOOPER_TRACKS; t++)
+        if (S->t[t].mode == LOOPER_REC)
+            return (float)S->t[t].rec / (float)MAX_FRAMES;
+    return 0.f;
 }

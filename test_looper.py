@@ -23,11 +23,15 @@ INL, INR, PTRS = 0x30010000, 0x30011000, 0x30012000
 BUSL, BUSR = 0x30020000, 0x30021000
 N = 256
 STATE = 0x38800C00
-ENTRIES, PER, AREAS = 615, 47, 5
-FIRST = ENTRIES - AREAS * PER
-T0, TSIZE = 0x3C, 0x30                                # engine state: tracks, track size
-LEN, POS, RECN, OK, UNDO_T = 12, 16, 20, 8, 0x2C
-REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE = range(5)
+ENTRIES, PER, AREAS = 615, 45, 5
+FXE = 6
+FIRST = ENTRIES - AREAS * PER - FXE
+T0, TSIZE = 124, 88                                   # engine state: tracks, track size
+LEN, POS, OK, UNDO_T = 12, 16, 8, 40                 # master length, master playhead
+O_FILT, O_CRUNCH, O_SD, O_SR, O_LEVEL, O_PAN = 64, 68, 72, 76, 56, 60
+T_LEN, T_POS, T_REC, T_PEND, T_HALF = 36, 40, 44, 20, 22
+REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE, HALF = range(6)
+MAXF = PER * 16384
 EMPTY, RECM, PLAY, DUB, CLEARING, UNDOING = range(6)
 
 fails = 0
@@ -54,6 +58,24 @@ def lay_pool():
 log = []
 e.stub(0x08070BF4, lambda: log.append(("pool", e.arg(0))))
 e.stub(0x080518F0, lambda: log.append(("tail", e.arg(0), e.arg(1), e.arg(2))))
+FP, OBJ, VT, BUFSET, R5 = 0x30030000, 0x30030000 + 0xFC40, 0x30038000, 0x30038100, 0x30038200
+CTXB = 0x30039000
+e.w32(OBJ, VT)
+e.w32(VT + 0x54, 0x08046A15)
+e.uc.mem_write(OBJ + 0x1E, struct.pack("<H", 3))
+e.w32(BUFSET, CTXB)
+e.uc.mem_write(CTXB + 0x18, struct.pack("<f", 120.0))
+seen = []
+e.stub(0x0805F37C, lambda: seen.append(("bus", e.arg(0), e.arg(1))), value=0x30038300)
+e.stub(0x0804D8E8, value=N)
+
+
+def stereo():
+    e.w32(e.arg(1), BUSL)
+    e.w32(e.arg(2), BUSR)
+
+
+e.stub(0x0804D9C0, stereo)
 
 
 def st(off):
@@ -86,7 +108,7 @@ def block(l, r=None, base=0.0):
     tail = [x for x in log if x[0] == "tail"]
     e.uc.mem_write(BUSL, struct.pack(f"<{N}f", *([base] * N)))
     e.uc.mem_write(BUSR, struct.pack(f"<{N}f", *([base] * N)))
-    e.call("looper_bus", BUSL, BUSR, N, count=20_000_000)
+    e.call("looper_stage", OBJ, BUFSET, count=50_000_000)
     outs = [[v - base for v in struct.unpack(f"<{N}f", e.uc.mem_read(b, 4 * N))] for b in (BUSL, BUSR)]
     return tail, outs
 
@@ -123,7 +145,7 @@ def ramp(k0, n=N):
 # --- boot
 boot()
 check("boot: the stock pool init still runs, with the engine", ("pool", ENGINE) in log, log)
-check("boot: the last 235 pool blocks claimed (4 tracks + undo), the others untouched",
+check("boot: the last 231 pool blocks claimed (4 tracks + undo + effects), the others untouched",
       all(e.r8(ENGINE + 0x1C * i + 0x1F) == 3 and e.r32(ENGINE + 0x1C * i + 0x18) == 0x4C4F4F50 for i in range(FIRST, ENTRIES))
       and all(e.r8(ENGINE + 0x1C * i + 0x1F) == 0 for i in range(FIRST)))
 check("boot: track memory wiped", bytes(e.uc.mem_read(0xC0000000, 0x100)) == bytes(0x100))
@@ -238,7 +260,7 @@ _, outs = block([0.0] * N)
 check("level 0.5, pan half right: left at 0.25, right at 0.5", all(abs(outs[0][i] - 0.25 * ramp(p)[i]) < 2e-4 and abs(outs[1][i] + 0.5 * ramp(p)[i]) < 2e-4 for i in range(N)), (outs[0][:1], outs[1][:1], ramp(p)[:1]))
 pan(0, -3.0)
 level(0, 3.0)
-check("pan is clamped to -1, the gain to 2 (+6 dB)", abs(tr(0, 0x24, "f") + 1.0) < 1e-6 and tr(0, 0x20, "f") == 2.0, (tr(0, 0x24, "f"), tr(0, 0x20, "f")))
+check("pan is clamped to -1, the gain to 2 (+6 dB)", abs(tr(0, O_PAN, "f") + 1.0) < 1e-6 and tr(0, O_LEVEL, "f") == 2.0, (tr(0, O_PAN, "f"), tr(0, O_LEVEL, "f")))
 pan(0, 0.0)
 
 # --- erase with a 4 s hold
@@ -250,28 +272,14 @@ check("M held 4 s: track 1 erased, loop length free again", mode(0) == EMPTY and
 
 # --- 16 s limit
 ev(3, REC_DOWN)
-blocks(16 * 48000 // N + 2, 0.01)
-check("a first take stops itself at 16 s and plays", st(LEN) == 16 * 48000 and mode(3) == PLAY, (st(LEN), mode(3)))
+blocks(MAXF // N + 2, 0.01)
+check("a first take stops itself at 15.4 s and plays", st(LEN) == MAXF and mode(3) == PLAY, (st(LEN), mode(3)))
 ev(3, REC_UP)
 block([0.0] * N)
 check("...and the late release does nothing more", mode(3) == PLAY)
 
 # --- the Out 1 mix point (looper_thunk.S)
-FP, OBJ, VT, BUFSET, R5 = 0x30030000, 0x30030000 + 0xFC40, 0x30038000, 0x30038100, 0x30038200
-e.w32(OBJ, VT)
-e.w32(VT + 0x54, 0x08046A15)
-e.uc.mem_write(OBJ + 0x1E, struct.pack("<H", 3))
-seen = []
-e.stub(0x0805F37C, lambda: seen.append(("bus", e.arg(0), e.arg(1))), value=0x30038300)
-e.stub(0x0804D8E8, value=N)
-
-
-def stereo():
-    e.w32(e.arg(1), BUSL)
-    e.w32(e.arg(2), BUSR)
-
-
-e.stub(0x0804D9C0, stereo)
+seen.clear()
 e.uc.mem_write(BUSL, bytes(4 * N))
 for flag in (0, 1):
     e.uc.mem_write(R5 + 0xD60, bytes([flag]))
@@ -470,9 +478,9 @@ touch("down", 285, btn_y + 25)
 touch("up", 285, btn_y + 25)
 check("MUTE: down and up", evs(3)[2:4] == [1, 1], evs(3))
 touch("down", 190, 156)
-check("fader: touching near the bottom of the bars sets a low level", tr(2, 0x20, "f") < 0.1, tr(2, 0x20, "f"))
+check("fader: touching near the bottom of the bars sets a low level", tr(2, O_LEVEL, "f") < 0.1, tr(2, O_LEVEL, "f"))
 touch("move", 190, 66)
-check("fader: dragging to the top sets about +6 dB", abs(tr(2, 0x20, "f") - 2.0) < 0.08, tr(2, 0x20, "f"))
+check("fader: dragging to the top sets about +6 dB", abs(tr(2, O_LEVEL, "f") - 2.0) < 0.08, tr(2, O_LEVEL, "f"))
 touch("up", 190, 65)
 check("the page's touches never reach the stock mixer handlers", len(stock) == stock_clear, stock)
 
@@ -489,9 +497,9 @@ def knob(i, counts, msg_id=0x32):
 
 level(0, 0.5)
 knob(0, -800)
-check("knob 1 turns track 1's fader (800 counts = 10 % of the travel: gain 0.5 -> 0.367)", abs(tr(0, 0x20, "f") - 0.36667) < 1e-4, tr(0, 0x20, "f"))
+check("knob 1 turns track 1's fader (800 counts = 10 % of the travel: gain 0.5 -> 0.367)", abs(tr(0, O_LEVEL, "f") - 0.36667) < 1e-4, tr(0, O_LEVEL, "f"))
 knob(3, 1600)
-check("knob 4 turns track 4's pan while PAN is selected", abs(tr(3, 0x24, "f") - 0.4) < 1e-5, tr(3, 0x24, "f"))
+check("knob 4 turns track 4's pan while PAN is selected", abs(tr(3, O_PAN, "f") - 0.4) < 1e-5, tr(3, O_PAN, "f"))
 knob(0, 100, msg_id=0x63)
 check("other view messages go to the stock handler", viewmsg == [0x63], viewmsg)
 
@@ -513,7 +521,7 @@ check("the first other button is learned as INFO (message 0xf9, button 4) and sw
 button(2)
 check("other buttons pass through once INFO is known", appmsg[-1] == (0xF9, 2), appmsg)
 knob(1, 800)
-check("INFO on: knob 2 turns the pan, not the level", abs(tr(1, 0x24, "f") - 0.2) < 1e-5 and tr(1, 0x20, "f") == 1.0, (tr(1, 0x24, "f"), tr(1, 0x20, "f")))
+check("INFO on: knob 2 turns the pan, not the level", abs(tr(1, O_PAN, "f") - 0.2) < 1e-5 and tr(1, O_LEVEL, "f") == 1.0, (tr(1, O_PAN, "f"), tr(1, O_LEVEL, "f")))
 touch("down", 100, 30)
 touch("up", 100, 30)
 check("INFO on: a record box tap is a MUTE press, not a REC press", evs(1)[2:4] == [1, 1] and evs(1)[:2] == [1, 1], evs(1))
