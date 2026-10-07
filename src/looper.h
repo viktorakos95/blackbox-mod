@@ -12,15 +12,17 @@ enum { LOOPER_EV_REC_DOWN, LOOPER_EV_REC_UP, LOOPER_EV_MUTE_DOWN, LOOPER_EV_MUTE
 /* Per-track parameters (looper_set_param). */
 /* The Blooper-style controls: STAB wow / flutter / noise / dull, RPT how much of the old loop is kept per overdub pass
  * (1 = all), SPEED -1..1 (0 = normal, up to 2x, down through stopped to backwards), DROP random dropouts, TRIM the
- * play head loops 1/2, 1/4, 1/8, 1/16 of the loop (steps), STOP fade (< .5) or tape stop (>= .5). */
+ * play head loops 1/2 ... 1/64 of the loop (steps), STUT repeats a slice of a beat (left: what just played, right: what
+ * comes next; -1..1), SCRM jumps between slices of the loop (left: random, right: a repeating sequence; -1..1), SWAP
+ * mutes the old loop while overdubbing (the size is the fade time). */
 enum { LOOPER_P_FILT, LOOPER_P_RES, LOOPER_P_CRUNCH, LOOPER_P_DRIVE, LOOPER_P_SEND_D, LOOPER_P_SEND_R,
-       LOOPER_P_STAB, LOOPER_P_RPT, LOOPER_P_SPEED, LOOPER_P_DROP, LOOPER_P_TRIM, LOOPER_P_STOP, LOOPER_PARAMS };
+       LOOPER_P_STAB, LOOPER_P_RPT, LOOPER_P_SPEED, LOOPER_P_DROP, LOOPER_P_TRIM, LOOPER_P_STUT, LOOPER_P_SCRM, LOOPER_P_SWAP, LOOPER_PARAMS };
 
 /* Global options (looper_set_opt): the first five and LOOPER_O_ROUTE are choices (whole numbers), the rest amounts 0..1.
  * QUANT: 0 = 1/4, 1 = 1/8, 2 = 1/16, 3 = 1 bar. ROUTE: 0 = the Blackbox's own delay and reverb, 1 = the looper's own.
  * GAIN: the loop's make-up gain, 1 + 3 x amount (0 .. +12 dB). */
 enum { LOOPER_O_LEN, LOOPER_O_SYNC, LOOPER_O_QUANT, LOOPER_O_SRC, LOOPER_O_DTIME,
-       LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET, LOOPER_O_GAIN, LOOPER_O_ROUTE, LOOPER_O_FULL, LOOPER_O_HWBTN, LOOPER_OPTS };      /* HWBTN: STOP / PLAY: 0 = the looper only, 1 = the sequencer too (REC is always the looper's) */
+       LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET, LOOPER_O_GAIN, LOOPER_O_ROUTE, LOOPER_O_FULL, LOOPER_O_HWBTN, LOOPER_O_MON, LOOPER_O_PITCH, LOOPER_OPTS };      /* HWBTN: STOP / PLAY: 0 = the looper only, 1 = the sequencer too (REC is always the looper's); MON: the input is monitored through the looper (0 = off); PITCH: 0 = tape (speed changes pitch), 1 = keep the pitch (granular) for SPEED and HALF */
 enum { LOOPER_ROUTE_STOCK, LOOPER_ROUTE_OWN };
 enum { LOOPER_LEN_FOLLOW, LOOPER_LEN_MULT, LOOPER_LEN_FREE };      /* LOOPER_O_LEN */
 enum { LOOPER_SRC_INPUT, LOOPER_SRC_MIX };                         /* LOOPER_O_SRC */
@@ -30,7 +32,7 @@ enum { LOOPER_T_PLAY, LOOPER_T_STOP };
 struct looper_info {
     int mode, muted, reversed, latched, undo, undo_kind, armed, half;       /* undo_kind: what UNDO would do next: 0 nothing, 1 take the last pass off, 2 delete the loop */
     float level, pan, filt, res, crunch, drive, send_d, send_r;
-    float stab, rpt, speed, drop, trim, stop;
+    float stab, rpt, speed, drop, trim, stut, scrm, swap;
     float progress;                               /* playhead 0..1; while a first take records: fraction of the memory */
 };
 

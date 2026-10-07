@@ -110,7 +110,7 @@ static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /
 #define TOPBAR    14             /* the row of values; its line is at d = TOPBAR + 1 */
 #define FOOT      14             /* the footer; its line is at d = hg - FOOT - 1 */
 #define REC_H     40             /* the record box */
-#define FX_N 13                                                   /* the FX tab's controls, two pages of eight: six dials, REV, HALF; STAB RPT SPEED DROP TRIM */
+#define FX_N 16                                                   /* the FX tab's controls, two pages of eight: six dials, REV, HALF; STAB RPT SPEED DROP TRIM STUT SCRM SWAP */
 #define FX_PAGE(c) ((c) >> 3)
 /* The square's tiles (0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right) lie like the encoders on the panel: left top is
  * track 2's (knob 1), left bottom track 1's (knob 0), right top track 3's, right bottom track 4's. */
@@ -311,13 +311,15 @@ static const struct optrow rows_more[] = {
     {"OWN DLY RET K2", LOOPER_O_DRET, 0, {0, 0, 0, 0}},
     {"OWN RVB SIZE K3", LOOPER_O_RSIZE, 0, {0, 0, 0, 0}},
     {"OWN RVB RET K4", LOOPER_O_RRET, 0, {0, 0, 0, 0}},
+    {"MONITOR INPUT", LOOPER_O_MON, 0, {0, 0, 0, 0}},
+    {"SPEED PITCH", LOOPER_O_PITCH, 2, {"TAPE", "KEEP", 0, 0}},
 };
 #define OPT_ROWS opt_rows()                                       /* rows above the buttons row: 7 on SETUP, 6 on MORE */
 static int opt_rows(void);
 
 static int opt_rows(void)
 {
-    return P->mode == M_MORE ? 6 : 7;
+    return P->mode == M_MORE ? 8 : 7;
 }
 
 static const struct optrow *page_rows(void)
@@ -664,7 +666,7 @@ static char *put_pct(char *p, float v)
 
 static int fx_bipolar(int q)                                       /* engine parameters that go -1..1 */
 {
-    return q == LOOPER_P_FILT || q == LOOPER_P_SPEED || q == LOOPER_P_DROP || q == LOOPER_P_STOP;
+    return q == LOOPER_P_FILT || q == LOOPER_P_SPEED || q == LOOPER_P_DROP || q == LOOPER_P_STUT || q == LOOPER_P_SCRM;
 }
 
 static float fx_default(int q)
@@ -683,13 +685,13 @@ static float fx_value(const struct looper_info *k, int param)
         return (param == 6 ? k->reversed : k->half) ? 1.f : 0.f;
     if (param >= 8)
         return param == 8 ? k->stab : param == 9 ? k->rpt : param == 10 ? k->speed : param == 11 ? k->drop :
-               param == 12 ? k->trim : k->stop;
+               param == 12 ? k->trim : param == 13 ? k->stut : param == 14 ? k->scrm : k->swap;
     return param == LOOPER_P_FILT ? k->filt : param == LOOPER_P_RES ? k->res : param == LOOPER_P_CRUNCH ? k->crunch :
            param == LOOPER_P_DRIVE ? k->drive : param == LOOPER_P_SEND_D ? k->send_d : k->send_r;
 }
 
 static const char *const fx_name[FX_N] = {"FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB", "REV", "HALF",
-                                          "STAB", "RPT", "SPEED", "DROP", "TRIM"};
+                                          "STAB", "RPT", "SPEED", "DROP", "TRIM", "STUT", "SCRM", "SWAP"};
 
 /* The text a knob shows on top: "LVL 0.0dB" / the pan line / the selected FX parameter's value. */
 static void fx_text(char *b, int param, float v)
@@ -716,17 +718,29 @@ static void fx_text(char *b, int param, float v)
         const char *o = n <= 0 ? "OFF" : n == 1 ? "1/2" : n == 2 ? "1/4" : n == 3 ? "1/8" : n == 4 ? "1/16" : n == 5 ? "1/32" : "1/64";
         for (; *o; o++)
             *p++ = *o;
-    } else if (param == 11 || param == 13) {                      /* DROP: random (left) / pattern (right); STOP: fade (left) / tape (right) */
+    } else if (param == 11 || param == 14) {                      /* DROP / SCRM: random (left) / pattern (right) */
         float a = v < 0.f ? -v : v;
         if (a < .02f) {
             *p++ = 'O';
             *p++ = 'F';
             *p++ = 'F';
         } else {
-            const char *o = param == 11 ? (v < 0.f ? "RND " : "PAT ") : (v < 0.f ? "FADE " : "TAPE ");
+            const char *o = v < 0.f ? "RND " : "SEQ ";
             for (; *o; o++)
                 *p++ = *o;
             p = put_pct(p, a);
+        }
+    } else if (param == 13) {                                     /* STUT: "<1/4" repeats what just played, ">1/4" what comes next */
+        float a = v < 0.f ? -v : v;
+        if (a < .02f) {
+            *p++ = 'O';
+            *p++ = 'F';
+            *p++ = 'F';
+        } else {
+            static const char *const fr[6] = {"1", "1/2", "1/4", "1/8", "1/16", "1/32"};
+            *p++ = v < 0.f ? '<' : '>';
+            for (const char *o = fr[(int)(a * 5.99f)]; *o; o++)
+                *p++ = *o;
         }
     } else if (param == LOOPER_P_FILT) {
         if (v > -.03f && v < .03f) {
@@ -889,7 +903,7 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
             break;
         float v = fx_value(k, p);
         dial_h(x + 2 + (j & 1) * (DIAL + 1), y0 + (j >> 1) * (th + 1), th, fx_name[p],
-               p == LOOPER_P_FILT || p == 10 || p == 11 || p == 13 ? (v + 1.f) * .5f : v, 0, (p == 6 || p == 7) && v > .5f);
+               p == LOOPER_P_FILT || p == 10 || p == 11 || p == 13 || p == 14 ? (v + 1.f) * .5f : v, 0, (p == 6 || p == 7) && v > .5f);
     }
     if (P->sel == t) {                                            /* the one pink square: this column's block of four = knobs 1-4 */
         int by = y0 + (FX_GROUP & 1) * 2 * (th + 1) - 2;
@@ -962,82 +976,26 @@ static void draw_setup(const struct lay *L)
         *p = 0;
         text(OPT_X + 120, d + 5, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
     } else {
-        /* the last button message the page saw, the frame buffer's size and the touch probe, on one line */
+        /* one diagnostic line: the last button message, the sequencer clock's position and rate, the screens visited */
         for (const char *q = "LAST "; *q; q++)
             *p++ = *q;
         p = put_uint(p, P->btn_id);
         *p++ = ':';
         p = put_uint(p, P->btn_index);
-        for (const char *q = " FB "; *q; q++)
+        for (const char *q = " CLK "; *q; q++)
             *p++ = *q;
-        p = put_uint(p, *(const uint16_t *)((const uint8_t *)FB + 4));
-        *p++ = 'x';
-        p = put_uint(p, *(const uint16_t *)((const uint8_t *)FB + 6));
-        for (const char *q = " DROP "; *q; q++)
+        p = put_uint(p, looper_clk_pos());
+        for (const char *q = " R "; *q; q++)
             *p++ = *q;
-        p = put_uint(p, P->dropped);
-        for (const char *q = " T "; *q; q++)
+        p = put_uint(p, (unsigned)(looper_rate() * 1000.f));
+        for (const char *q = " S"; *q; q++)
             *p++ = *q;
-        p = put_uint(p, P->touches);
-        for (const char *q = " X "; *q; q++)
-            *p++ = *q;
-        p = put_uint(p, (unsigned)(P->touch_x < 0 ? 0 : P->touch_x));
-        for (const char *q = " Y "; *q; q++)
-            *p++ = *q;
-        p = put_uint(p, (unsigned)(P->touch_y < 0 ? 0 : P->touch_y));
+        for (int i = 0; i < 4; i++) {
+            *p++ = ' ';
+            p = put_hex(p, P->scr_h[i], 2);
+        }
         *p = 0;
         text(6, d + 2, b, C_GREY, 1);
-        char ev[80], *z = ev;                                     /* the last engine events: which one is PLAY / STOP / REC? */
-        *z++ = 'E';
-        *z++ = 'V';
-        for (int i = 0; i < 2; i++) {
-            *z++ = ' ';
-            z = put_hex(z, P->ev0[i] & 0xffffff, 2);
-        }
-        *z++ = ' ';
-        *z++ = 'S';
-        *z++ = 'C';
-        *z++ = 'R';
-        *z++ = ' ';
-        z = put_hex(z, looper_screen_id(), 2);
-        for (const char *q = " CLK "; *q; q++)
-            *z++ = *q;
-        z = put_uint(z, looper_clk_pos());
-        for (const char *q = " R "; *q; q++)
-            *z++ = *q;
-        z = put_uint(z, (unsigned)(looper_rate() * 1000.f));
-        *z = 0;
-        text(6, d + 12, ev, C_GREY, 1);
-        char bv[64], *y = bv;                                     /* the screens the app showed lately (newest first) */
-        *y++ = 'S';
-        *y++ = ':';
-        for (int i = 0; i < 8; i++) {
-            *y++ = ' ';
-            y = put_hex(y, P->scr_h[i], 2);
-        }
-        *y = 0;
-        *y++ = ' ';
-        *y++ = 'S';
-        *y++ = 'W';
-        *y++ = ' ';
-        y = put_uint(y, P->sw_n);
-        for (int i = 0; i < 3; i++) {
-            *y++ = ' ';
-            y = put_hex(y, P->sw_id[i], 2);
-        }
-        *y = 0;
-        text(6, d + 22, bv, C_GREY, 1);
-        for (int r = 0; r < 2; r++) {                             /* the last six engine events, whole */
-            char eb[64], *g = eb;
-            for (int i = r * 3; i < r * 3 + 3; i++) {
-                g = put_hex(g, P->h0[i], 8);
-                *g++ = '.';
-                g = put_hex(g, P->h1[i], 4);
-                *g++ = ' ';
-            }
-            *g = 0;
-            text(6, d + 32 + r * 10, eb, C_GREY, 1);
-        }
     }
 }
 

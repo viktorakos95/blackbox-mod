@@ -442,3 +442,21 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
   pattern: steps of 16ths / 32nds / 64ths plus now and then a cut over four steps. RPT checked on a 4 s loop in the
   emulator (one overdub pass keeps exp(-4 / tau)). The pad page already keeps recording when it is left: nothing to do.
   Label Lok34.
+
+## Step 35: Blooper phase 2
+- STOP is gone from the engine; its slot is STUT. New FX2 controls (16 in all, two pages of eight): STUT (-1..1: left
+  loops the beat slice that just played, right the slice that comes next; 1, 1/2 ... 1/32 beat by the size), SCRM
+  (-1..1: the loop is cut in 16 slices; at each slice start the play head jumps to another one with the knob's
+  probability; left random, right a sequence that repeats every pass), SWAP (0..1: the old loop is muted while
+  overdubbing; the size is the fade time, 2-300 ms). TSIZE 136 (state 760 of 768 bytes). Label Lok35.
+
+## Step 35: Blooper phase 2, monitor, keep pitch
+- STOP is gone from the engine; its slot is STUT. FX2 has 8 controls: STAB RPT SPEED DROP TRIM STUT SCRM SWAP. STUT (-1..1:
+  left loops the beat slice that just played, right the slice that comes next; 1, 1/2 ... 1/32 beat by the size), SCRM
+  (-1..1: the loop is cut in 16 slices; at each slice start the play head jumps to another one with the knob's
+  probability; left random, right a sequence that repeats every pass), SWAP (0..1: the old loop is muted while
+  overdubbing; the size is the fade time, 2-300 ms). TSIZE 136; two more options (MON, PITCH) so the state is 768 of 768 bytes.
+- MORE: MONITOR INPUT slider (the input through the looper's output, x1.5 at 100 %, only with SOURCE = INPUT; the stock
+  monitor lives on the pads) and SPEED PITCH TAPE / KEEP (granular: 2048 frame grains every 1024, read at normal speed,
+  for SPEED and HALF). The MORE diagnostics shrank to one line.
+- STAB wow / flutter back to the earlier size (+-4 % / 1.2 % at full, coming in slightly early). Label Lok35.

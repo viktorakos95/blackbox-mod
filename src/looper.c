@@ -119,7 +119,7 @@ struct track {
     uint32_t len, pos, rec, target;                          /* frames; pos = the next frame to play */
     float frac;                                              /* half speed: position between frames */
     float level, pan, filt, res, crunch, drive, send_d, send_r;       /* written by the page */
-    float stab, rpt, speed, drop, trim, stop;                         /* the Blooper-style controls (looper.h) */
+    float stab, rpt, speed, drop, trim, stut, scrm, swap;             /* the Blooper-style controls (looper.h) */
     float gain_l, gain_r;                                    /* applied at the end of the last block */
     uint32_t phase;                                          /* MULT: master timeline frame at which the loop's frame 0 was recorded */
 };
@@ -227,7 +227,13 @@ struct dsp {
     uint32_t cidx[2][RV_COMBS], aidx[2][2];      /* reverb positions */
     float cst[2][RV_COMBS];                      /* reverb comb damping */
     float rp[LOOPER_TRACKS];                     /* the play head (frames, fractional) while the Blooper controls act */
-    float stopp[LOOPER_TRACKS];                  /* STOP progress 0..1 */
+    float wb[LOOPER_TRACKS], wl[LOOPER_TRACKS];  /* the stutter's window: where it starts (may be < 0) and how long */
+    float swg[LOOPER_TRACKS];                    /* SWAP gain */
+    uint32_t scr_n[LOOPER_TRACKS];               /* the slice the scrambler last decided on */
+    uint8_t stut_on[LOOPER_TRACKS], gv[LOOPER_TRACKS];
+    uint32_t gst[LOOPER_TRACKS][2];              /* the keep-pitch grains: start, age (-1 = idle), direction */
+    int32_t gag[LOOPER_TRACKS][2], ghc[LOOPER_TRACKS];
+    int8_t gdir[LOOPER_TRACKS][2];
     float ph1[LOOPER_TRACKS], ph2[LOOPER_TRACKS];    /* wow and flutter phases */
     float dgn[LOOPER_TRACKS];                    /* DROP gain */
     float lpst[LOOPER_TRACKS][2];                /* STAB dulling low pass */
@@ -272,7 +278,7 @@ void looper_boot(void *engine)
     S->dw = 0;
     S->gphase = 0.f;
     S->bpm = 0.f;
-    static const float defaults[LOOPER_OPTS] = {0.f, 0.f, 2.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f};
+    static const float defaults[LOOPER_OPTS] = {0.f, 0.f, 2.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 0.f};
     for (int i = 0; i < LOOPER_OPTS; i++)
         S->opt[i] = defaults[i];
     for (int t = 0; t < LOOPER_TRACKS; t++) {
@@ -290,7 +296,7 @@ void looper_boot(void *engine)
         k->level = 1.f;
         k->pan = 0.f;
         k->filt = k->crunch = k->drive = k->send_d = k->send_r = 0.f;
-        k->stab = k->speed = k->drop = k->trim = k->stop = 0.f;
+        k->stab = k->speed = k->drop = k->trim = k->stut = k->scrm = k->swap = 0.f;
         k->rpt = 1.f;
         k->res = .5f;
         k->gain_l = k->gain_r = 0.f;
@@ -352,6 +358,11 @@ static inline int16_t sat16(float x)
 static inline int opt_i(int o)
 {
     return (int)(S->opt[o] + .5f);
+}
+
+static inline float opt_get_f(int o)
+{
+    return S->opt[o];
 }
 
 /* --- clock: positions are held as hi / lo words and handled as doubles (no libgcc here: no 64-bit divide or conversions) */
@@ -725,8 +736,9 @@ struct pb {                                       /* one track, one block */
     int mod;                                      /* the play head is modified (speed / trim / stop / drop / stability) */
     float spd, wow, flut, nz, lpa, rptm;
     int win;                                      /* the play window: 0 = the whole loop, else a power of two to divide it by */
-    float stop_rate;
-    int stop_mode;                                /* 0 off, 1 fade, 2 tape */
+    float stut_len, scr_p, swc;
+    int keep;                                     /* SPEED / HALF keep the pitch (granular) */
+    int stut_mode, scr_mode, swap_on;             /* stutter 0 off 1 back 2 forward; scrambler 0 off 1 random 2 sequence */
     float drop_p, dstep;
     int drop_mode;                                /* 0 off, 1 random stream, 2 repeating pattern */
 };
@@ -863,9 +875,9 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
     float sp = k->speed;
     float sf = sp >= 0.f ? 1.f + sp : 1.f + 2.f * sp;                 /* -1 backwards, -.5 stopped, 0 normal, 1 twice */
     p->spd = sf * (k->half ? .5f : 1.f);
-    float sq = k->stab * (2.f - k->stab);                             /* comes in early: the first third is already audible */
-    p->wow = sq * .05f;                                               /* up to +-5 % of speed, slowly: a worn tape */
-    p->flut = sq * .018f;                                             /* and a quicker wobble on top */
+    float sq = k->stab * (1.5f - .5f * k->stab);                      /* comes in a little early */
+    p->wow = sq * .04f;                                               /* up to +-4 % of speed, slowly: a worn tape */
+    p->flut = sq * .012f;                                             /* and a quicker wobble on top */
     p->nz = k->stab * k->stab * .004f;                                /* only a hint of hiss */
     p->lpa = 1.f - .8f * k->stab;
     /* RPT: what an overdub pass keeps of the old loop; a fade of the same speed per second whatever the loop length */
@@ -874,14 +886,22 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
     p->rptm = k->rpt >= .995f ? 1.f : exp2_fast(-1.4427f * lsec / tau);
     int tw = (int)(k->trim * 6.f + .5f);
     p->win = tw <= 0 ? 0 : tw;                                        /* 1: 1/2 of the loop ... 6: 1/64 */
-    float sv = k->stop < 0.f ? -k->stop : k->stop;
-    p->stop_mode = sv < .02f ? 0 : k->stop < 0.f ? 1 : 2;             /* left: fade, right: tape stop; the size is the time */
-    p->stop_rate = 1.f / (SR * (.2f + 2.8f * sv));
+    float sv = k->stut < 0.f ? -k->stut : k->stut;
+    p->stut_mode = sv < .02f ? 0 : k->stut < 0.f ? 1 : 2;             /* the slice: a beat, halving up to 1/32 */
+    p->stut_len = beat_frames() / (float)(1 << (int)(sv * 5.99f));
+    if (p->stut_len < 64.f)
+        p->stut_len = 64.f;
+    float cv = k->scrm < 0.f ? -k->scrm : k->scrm;
+    p->scr_p = cv;
+    p->scr_mode = cv < .02f ? 0 : k->scrm < 0.f ? 1 : 2;
+    p->keep = opt_i(LOOPER_O_PITCH) == 1;
+    p->swap_on = k->swap > .02f;
+    p->swc = 1.f / (96.f + 14400.f * k->swap);                        /* 2 ms ... 300 ms */
     float dpv = k->drop < 0.f ? -k->drop : k->drop;
     p->drop_p = dpv;
     p->drop_mode = dpv < .02f ? 0 : k->drop < 0.f ? 1 : 2;             /* left: random stream, right: a repeating pattern */
     p->dstep = beat_frames() * (dpv < .8f ? .25f : dpv < .95f ? .125f : .0625f);
-    p->mod = (sp > .01f || sp < -.01f) || k->stab > .01f || tw > 0 || p->stop_mode || p->drop_mode || d->stopp[t] > 0.f;
+    p->mod = (sp > .01f || sp < -.01f) || k->stab > .01f || tw > 0 || p->drop_mode || p->stut_mode || p->scr_mode || p->swap_on || (p->keep && k->half);
 }
 
 /* One trapezoidal state-variable stage (stmlib Svf), low pass or high pass; the limit soft-limits the resonant loop. */
@@ -934,6 +954,8 @@ static void finalize(int t, uint32_t len, int b)
     }
 }
 
+#define GG 2048                                   /* keep-pitch grain length and hop (frames) */
+#define GH 1024
 #define XF 128                                    /* cross fade frames when the Blooper controls go off */
 
 static inline float tri01(float ph)               /* -1..1 triangle of a 0..1 phase */
@@ -948,26 +970,93 @@ static inline float rnd01(uint32_t *s)
     return (float)(*s >> 8) * (1.f / 16777216.f);
 }
 
-/* The play head's sample for this frame (the Blooper controls), replacing x: speed, trim window, wow / flutter, the
- * tape dulling and noise, dropouts and the fade / tape stop. During the cross fade back to the plain read it is mixed in. */
-static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32_t len, uint32_t wlen, int on, int *xfade,
-                     float *xl, float *xr)
+/* The play head's sample for this frame (the Blooper controls), replacing x: speed, trim window, stutter slice, scrambler
+ * jumps, wow / flutter, the tape dulling and noise, dropouts, swap muting. During the cross fade back to the plain read it
+ * is mixed in. pos is the transport's place in the loop (what the scrambler's slices and sequence are counted on). */
+static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32_t len, uint32_t wlen, uint32_t pos, int on,
+                     int *xfade, float *xl, float *xr)
 {
     const float s16 = 1.f / 32767.f;
     float rp = d->rp[t];
-    uint32_t i0 = (uint32_t)rp;
-    float f = rp - (float)i0;
-    if (i0 >= wlen) {
+    if (on) {
+        if (p->stut_mode && !d->stut_on[t]) {         /* the stutter just came on: a slice before or after the play head */
+            d->stut_on[t] = 1;
+            d->wl[t] = p->stut_len < (float)len ? p->stut_len : (float)len;
+            d->wb[t] = p->stut_mode == 1 ? rp - d->wl[t] : rp;
+            rp = d->wb[t];
+        } else if (!p->stut_mode && d->stut_on[t]) {  /* ... and off: back to where the transport is */
+            d->stut_on[t] = 0;
+            rp = (float)pos;
+        }
+        if (p->scr_mode && !d->stut_on[t] && len >= 16u * 64u) {      /* the scrambler: at each slice start, jump or follow */
+            uint32_t slice = len >> 4, n = pos / slice;
+            if (n != d->scr_n[t]) {
+                d->scr_n[t] = n;
+                uint32_t h = (n + 3u) * 2654435761u;
+                h ^= h >> 15;
+                h *= 2246822519u;
+                h ^= h >> 13;
+                float u;
+                uint32_t j;
+                if (p->scr_mode == 1) {               /* random: any slice, now and then */
+                    u = rnd01(&d->rnd[t]);
+                    j = (uint32_t)(rnd01(&d->rnd[t]) * 16.f) & 15u;
+                } else {                              /* a sequence that repeats every pass */
+                    u = (float)(h >> 24) * (1.f / 256.f);
+                    j = (h >> 4) & 15u;
+                }
+                rp = (float)((u < p->scr_p ? j : n) * slice);
+            }
+        }
+    }
+    float wb0 = d->stut_on[t] && on ? d->wb[t] : 0.f, wl0 = d->stut_on[t] && on ? d->wl[t] : (float)wlen;
+    float rpi = rp < 0.f ? rp + (float)len : rp;                  /* where to read (the stutter's window can reach back past 0) */
+    if (rpi >= (float)len)
+        rpi -= (float)len;
+    uint32_t i0 = (uint32_t)rpi;
+    float f = rpi - (float)i0;
+    if (i0 >= len) {
         i0 = 0;
         f = 0.f;
-        rp = 0.f;
     }
-    uint32_t i1 = i0 + 1 >= wlen ? 0 : i0 + 1;
+    uint32_t i1 = i0 + 1;
+    if (d->stut_on[t] && on) {
+        if (i1 >= len)
+            i1 = 0;
+    } else if (i1 >= wlen) {
+        i1 = 0;
+    }
     int16_t *a = frame_at(t, place(k, i0, len)), *b = frame_at(t, place(k, i1, len));
     float ml = (float)a[0] * s16, mr = (float)a[1] * s16;
     ml += ((float)b[0] * s16 - ml) * f;
     mr += ((float)b[1] * s16 - mr) * f;
     float spd = on ? p->spd : (k->half ? .5f : 1.f);
+    if (on && p->keep && (p->spd < .98f || p->spd > 1.02f)) {   /* keep the pitch: 2048 frame grains, a new one every 1024, read at normal speed */
+        if (d->ghc[t] <= 0) {
+            int v = d->gv[t] & 1;
+            d->gv[t] ^= 1;
+            d->gst[t][v] = i0;
+            d->gag[t][v] = 0;
+            d->gdir[t][v] = p->spd < 0.f ? -1 : 1;
+            d->ghc[t] = GH;
+        }
+        d->ghc[t]--;
+        ml = mr = 0.f;
+        for (int v = 0; v < 2; v++) {
+            int32_t ag = d->gag[t][v];
+            if (ag < 0)
+                continue;
+            float x = (float)ag * (1.f / (float)GG);
+            float q = x < .5f ? 2.f * x : 2.f * x - 1.f;
+            float sm = q * q * (3.f - 2.f * q);
+            float w = x < .5f ? sm : 1.f - sm;
+            uint32_t ix = d->gdir[t][v] > 0 ? (d->gst[t][v] + (uint32_t)ag) % len : (d->gst[t][v] + len - ((uint32_t)ag % len)) % len;
+            int16_t *g = frame_at(t, place(k, ix, len));
+            ml += w * (float)g[0] * s16;
+            mr += w * (float)g[1] * s16;
+            d->gag[t][v] = ag + 1 >= GG ? -1 : ag + 1;
+        }
+    }
     if (on) {
         float w = 1.f + p->wow * tri01(d->ph1[t]) + p->flut * tri01(d->ph2[t]);
         spd *= w;
@@ -977,16 +1066,6 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
             d->ph1[t] -= 1.f;
         if (d->ph2[t] >= 1.f)
             d->ph2[t] -= 1.f;
-        /* STOP: engaged moves its progress to 1 (a fade, or a slowing down), released moves it back */
-        float sp = d->stopp[t];
-        sp += p->stop_mode ? p->stop_rate : -2.f * p->stop_rate - .00005f;
-        d->stopp[t] = sp < 0.f ? 0.f : sp > 1.f ? 1.f : sp;
-        if (p->stop_mode == 2) {                      /* a tape slowing down: the pitch glides to a halt */
-            float r = 1.f - d->stopp[t];
-            spd *= r * r;
-        } else if (p->stop_mode == 1 || d->stopp[t] > 0.f) {
-            ml *= 1.f - d->stopp[t], mr *= 1.f - d->stopp[t];
-        }
         if (p->nz > 0.f) {
             ml += (rnd01(&d->rnd[t]) - .5f) * p->nz * 2.f;
             mr += (rnd01(&d->rnd[t]) - .5f) * p->nz * 2.f;
@@ -1004,10 +1083,10 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
                 float v = p->drop_p;
                 if (!d->dmute[t]) {                   /* a gap has ended: a cut starts */
                     d->dmute[t] = 1;
-                    float len = r < .3f + .25f * (1.f - v) ? .18f + .45f * r2 : .012f + .09f * r2;     /* seconds: long or short */
+                    float cl = r < .3f + .25f * (1.f - v) ? .18f + .45f * r2 : .012f + .09f * r2;     /* seconds: long or short */
                     if (v > .9f)
-                        len *= .35f;                  /* the far end: crumbs */
-                    d->dseg[t] = (int32_t)(len * SR);
+                        cl *= .35f;                   /* the far end: crumbs */
+                    d->dseg[t] = (int32_t)(cl * SR);
                     d->dtarget[t] = rnd01(&d->rnd[t]) < .7f ? 0.f : .1f + .3f * r2;
                 } else {                              /* a cut has ended: a gap starts, shorter the further the knob */
                     d->dmute[t] = 0;
@@ -1018,7 +1097,7 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
             d->dseg[t]--;
             dt = d->dmute[t] ? d->dtarget[t] : 1.f;
         } else if (p->drop_mode == 2) {               /* a repeating pattern locked to the loop's position and the tempo */
-            uint32_t idx = (uint32_t)(d->rp[t] / p->dstep);
+            uint32_t idx = (uint32_t)(rpi / p->dstep);
             uint32_t h = (idx + 1u) * 2654435761u;
             h ^= h >> 15;
             h *= 2246822519u;
@@ -1030,16 +1109,23 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
         d->dgn[t] += (dt - d->dgn[t]) * (p->drop_mode == 2 ? .01f : .006f);
         ml *= d->dgn[t];
         mr *= d->dgn[t];
+        if (p->swap_on) {                             /* SWAP: the old loop is muted while overdubbing */
+            d->swg[t] += ((k->mode == LOOPER_DUB ? 0.f : 1.f) - d->swg[t]) * p->swc;
+            ml *= d->swg[t];
+            mr *= d->swg[t];
+        } else {
+            d->swg[t] = 1.f;
+        }
     }
     rp += spd;
-    float W = (float)wlen;
+    float we = wb0 + wl0;
     int guard = 0;
-    while (rp >= W && guard++ < 8)
-        rp -= W;
-    while (rp < 0.f && guard++ < 16)
-        rp += W;
-    if (rp >= W || rp < 0.f)
-        rp = 0.f;
+    while (rp >= we && guard++ < 8)
+        rp -= wl0;
+    while (rp < wb0 && guard++ < 16)
+        rp += wl0;
+    if (rp >= we || rp < wb0)
+        rp = wb0;
     d->rp[t] = rp;
     if (on) {
         *xl = ml;
@@ -1071,6 +1157,12 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
         d->dseg[t] = 1;
         d->dmute[t] = 1;                              /* DROP starts in a gap */
         d->dtarget[t] = 1.f;
+        d->stut_on[t] = 0;
+        d->swg[t] = 1.f;
+        d->scr_n[t] = 0xffffffffu;
+        d->gag[t][0] = d->gag[t][1] = -1;
+        d->ghc[t] = 0;
+        d->gv[t] = 0;
         if (!d->rnd[t])
             d->rnd[t] = 0x9e3779b9u * (uint32_t)(t + 1);
     } else if (!use_mod && d->mact[t]) {              /* ... and off: back to the transport's place, with a short cross fade */
@@ -1092,7 +1184,7 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
             xr += ((float)b[1] * s16 - xr) * fr;
         }
         if (use_mod || xfade > 0)
-            mod_read(d, t, k, p, len, wlen, use_mod, &xfade, &xl, &xr);
+            mod_read(d, t, k, p, len, wlen, pos, use_mod, &xfade, &xl, &xr);
         if (dubbing) {
             if (save && saved < len) {
                 int16_t *u = frame_at(UNDO_AREA, m);
@@ -1330,7 +1422,7 @@ static void apply(int t, int b)
         uint32_t ml = S->mlen, len;
         if (when == W_TARGET) {
             len = k->target;                      /* kept recording up to the length chosen */
-        } else if (rec >= ml - ml / 8 || k->tap) {
+        } else if (rec >= ml - ml / 4 || k->tap) {                    /* nearly a whole master loop or more: whole master loops */
             uint32_t n = (rec + ml / 2) / ml;     /* whole master loops; a tap is at least one */
             if (n < 1)
                 n = 1;
@@ -1338,8 +1430,8 @@ static void apply(int t, int b)
                 n--;
             len = n * ml;
         } else {                                  /* shorter than the master: 1/2, 1/4 or 1/8 of it, the nearest */
-            len = ml / 2;
-            for (int i = 0; i < 2 && len > rec + len / 2; i++)
+            len = ml / 2;                                                 /* 1/2 up to .72 of it, 1/4 up to .36, else 1/8 */
+            for (int i = 0; i < 2 && rec * 3 < len * 2; i++)
                 len /= 2;
             if (len < MIN_TAKE)
                 len = MIN_TAKE;
@@ -1439,6 +1531,13 @@ static void run(float *bl, float *br, int n)
                 k->pos = k->len ? lpos(k, 0) : 0;
                 k->frac = 0.f;
             }
+        }
+    }
+    if (opt_get_f(LOOPER_O_MON) > .01f && opt_i(LOOPER_O_SRC) == LOOPER_SRC_INPUT && S->in_frames == (uint32_t)n && S->in_l && S->in_r) {
+        float mg = opt_get_f(LOOPER_O_MON) * 1.5f;                /* monitoring through the looper (the stock monitor is on the pads) */
+        for (int i = 0; i < n; i++) {
+            bl[i] += S->in_l[i] * mg;
+            br[i] += S->in_r[i] * mg;
         }
     }
     if (S->paused) {
@@ -1724,8 +1823,14 @@ void looper_set_param(int t, int p, float v)
     case LOOPER_P_TRIM:
         k->trim = fclampf(v, 0.f, 1.f);
         break;
-    case LOOPER_P_STOP:
-        k->stop = fclampf(v, -1.f, 1.f);
+    case LOOPER_P_STUT:
+        k->stut = fclampf(v, -1.f, 1.f);
+        break;
+    case LOOPER_P_SCRM:
+        k->scrm = fclampf(v, -1.f, 1.f);
+        break;
+    case LOOPER_P_SWAP:
+        k->swap = fclampf(v, 0.f, 1.f);
         break;
     }
 }
@@ -1738,14 +1843,15 @@ float looper_get_param(int t, int p)
     return p == LOOPER_P_FILT ? k->filt : p == LOOPER_P_RES ? k->res : p == LOOPER_P_CRUNCH ? k->crunch :
            p == LOOPER_P_DRIVE ? k->drive : p == LOOPER_P_SEND_D ? k->send_d : p == LOOPER_P_SEND_R ? k->send_r :
            p == LOOPER_P_STAB ? k->stab : p == LOOPER_P_RPT ? k->rpt : p == LOOPER_P_SPEED ? k->speed :
-           p == LOOPER_P_DROP ? k->drop : p == LOOPER_P_TRIM ? k->trim : p == LOOPER_P_STOP ? k->stop : 0.f;
+           p == LOOPER_P_DROP ? k->drop : p == LOOPER_P_TRIM ? k->trim : p == LOOPER_P_STUT ? k->stut :
+           p == LOOPER_P_SCRM ? k->scrm : p == LOOPER_P_SWAP ? k->swap : 0.f;
 }
 
 void looper_set_opt(int o, float v)
 {
     if (o < 0 || o >= LOOPER_OPTS || S->magic != MAGIC)
         return;
-    S->opt[o] = o <= LOOPER_O_DTIME || o == LOOPER_O_ROUTE || o == LOOPER_O_HWBTN ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
+    S->opt[o] = o <= LOOPER_O_DTIME || o == LOOPER_O_ROUTE || o == LOOPER_O_HWBTN || o == LOOPER_O_PITCH ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
 }
 
 float looper_get_opt(int o)
@@ -1784,7 +1890,9 @@ void looper_track(int t, struct looper_info *out)
     out->speed = k->speed;
     out->drop = k->drop;
     out->trim = k->trim;
-    out->stop = k->stop;
+    out->stut = k->stut;
+    out->scrm = k->scrm;
+    out->swap = k->swap;
     out->progress = k->mode == LOOPER_REC ? (float)k->rec / (float)MAX_FRAMES :
                     k->len ? (float)k->pos / (float)k->len : 0.f;
 }
@@ -1801,8 +1909,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '3';                                   /* the build: step 34 */
-        *p++ = '4';
+        *p++ = '3';                                   /* the build: step 35 */
+        *p++ = '5';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';

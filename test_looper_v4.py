@@ -25,11 +25,11 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 216, 128                                   # engine state: tracks, track size
+T0, TSIZE = 224, 136                                   # engine state: tracks, track size
 LEN, POS, OK, UNDO_T = 12, 16, 8, 44                 # master length, master playhead
 O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
 T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
-T_PHASE, T_DOWN = 124, 28
+T_PHASE, T_DOWN = 132, 28
 REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE, HALF, UNDO = range(7)
 MAXF = PER * 16384
 EMPTY, RECM, PLAY, DUB, CLEARING, UNDOING = range(6)
@@ -193,12 +193,20 @@ def opt_get(o):
     return struct.unpack("<f", struct.pack("<I", e.uc.reg_read(A.UC_ARM_REG_S0)))[0]
 
 
+def flat2(n):
+    out = []
+    for _ in range(n):
+        _, o = block([0.0] * N)
+        out += o[0]
+    return out
+
+
 def tone(k):                                   # a signal that is easy to follow
     return ((k % 500) + 1) / 1000.0
 
 
-O_LEN, O_SYNC, O_QUANT, O_SRC, O_DTIME, O_DFB, O_DRET, O_RSIZE, O_RRET, O_GAIN, O_ROUTE, O_FULL = range(12)
-P_FILT, P_RES, P_CRUNCH, P_DRIVE, P_SD, P_SR, P_STAB, P_RPT, P_SPEED, P_DROP, P_TRIM, P_STOP = range(12)
+O_LEN, O_SYNC, O_QUANT, O_SRC, O_DTIME, O_DFB, O_DRET, O_RSIZE, O_RRET, O_GAIN, O_ROUTE, O_FULL, O_HW, O_MON, O_PITCH = range(15)
+P_FILT, P_RES, P_CRUNCH, P_DRIVE, P_SD, P_SR, P_STAB, P_RPT, P_SPEED, P_DROP, P_TRIM, P_STUT, P_SCRM, P_SWAP = range(14)
 
 # ---------------------------------------------------------------- length modes
 boot()
@@ -252,6 +260,35 @@ blocks(40)
 check("MULT: a held half-length take becomes 1/2 of the master", mode(2) == PLAY and tu(2, T_LEN) == 30 * N, (mode(2), tu(2, T_LEN) / N))
 ev(2, MUTE_DOWN); blocks(760); ev(2, MUTE_UP); blocks(70)
 opt(O_LEN, 0)
+
+# ---------------------------------------------------------------- monitoring and keep-pitch half speed
+boot()
+opt(O_MON, 0.5)
+blocks(3)
+_, o = block([0.2] * N)
+check("MONITOR 50 %: the input is added to the output (0.2 x 0.75)", abs(sum(o[0]) / N - 0.15) < 0.01, sum(o[0]) / N)
+opt(O_MON, 0.0)
+blocks(2)
+_, o = block([0.2] * N)
+check("MONITOR off: nothing", abs(sum(o[0]) / N) < 0.001, sum(o[0]) / N)
+boot()
+hold(0, 60, tone)
+level(0, 1.0)
+blocks(5)
+def med(v):
+    d = sorted(abs(y - x) for x, y in zip(v, v[1:]) if abs(y - x) < 0.1)
+    return d[len(d) // 2]
+ev(0, HALF)
+blocks(5)
+tape = med(flat2(20))
+opt(O_PITCH, 1)
+blocks(30)
+keep = med(flat2(20))
+check("half speed, tape: the saw climbs at half the slope (pitch an octave down)", 0.0004 < tape < 0.0006, tape)
+check("half speed, KEEP PITCH: the saw keeps its slope (the pitch stays)", 0.0009 < keep < 0.0012, keep)
+opt(O_PITCH, 0)
+ev(0, HALF)
+blocks(10)
 
 # ---------------------------------------------------------------- RPT on a long loop (4 s): one overdub pass keeps exp(-4 / tau)
 boot()
@@ -654,19 +691,48 @@ per = sum(abs(v[i] - v[i + half_len]) for i in range(200, 4000)) / 3800
 check("TRIM 1/2: the play head repeats every half loop", per < 0.01, per)
 param(0, P_TRIM, 0.0)
 blocks(3)
-param(0, P_STOP, 1.0)                            # tape stop (3 s)
-blocks(800)
-v = flat(2)
-check("STOP (tape): the play head comes to a halt", max(v) - min(v) < 0.02, max(v) - min(v))
-param(0, P_STOP, 0.0)
-blocks(600)
+param(0, P_STUT, 0.9)                            # forward, 1/32 beat = 750 frames (1.5 saw periods: it cannot look like the plain loop)
+blocks(4)
+v = flat(40)
+per = sum(abs(v[i] - v[i + 750]) for i in range(300, 3000)) / 2700
+plain = sum(abs(tone(i) - tone(i + 750)) for i in range(300, 3000)) / 2700
+check("STUT: the play head loops a 1/32 beat slice (period 750 frames)", per < 0.02 and plain > 0.1, (per, plain))
+param(0, P_STUT, -0.9)                           # backwards in time: the slice before
+blocks(4)
+v = flat(40)
+per = sum(abs(v[i] - v[i + 750]) for i in range(300, 3000)) / 2700
+check("STUT (left): a slice that just played, also periodic", per < 0.02, per)
+param(0, P_STUT, 0.0)
+blocks(10)
 sa, ss = slope(flat(4))
-check("STOP released: plays again", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
-param(0, P_STOP, -0.3)                           # fade
-blocks(500)
+check("STUT off: back to the loop", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
+param(0, P_SCRM, 1.0)                            # a repeating sequence of slices
+blocks(10)
+v1 = flat(60)
+v2 = flat(60)
+same = sum(abs(a - b) for a, b in zip(v1, v2)) / len(v1)
+dif = sum(abs(a - b) for a, b in zip(v1, [tone(i) for i in range(len(v1))])) / len(v1)
+check("SCRM (sequence): the same order of slices every pass", same < 0.02 and all(x == x and abs(x) < 2 for x in v1), (same, dif))
+param(0, P_SCRM, -1.0)
+blocks(10)
+v3 = flat(60)
+v4 = flat(60)
+same_r = sum(abs(a - b) for a, b in zip(v3, v4)) / len(v3)
+check("SCRM (random): finite, and not the same every pass", all(x == x and abs(x) < 2 for x in v3) and same_r > 0.02, same_r)
+param(0, P_SCRM, 0.0)
+blocks(10)
+sa, ss = slope(flat(4))
+check("SCRM off: back to the loop", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
+param(0, P_SWAP, 0.2)
+if mode(0) == DUB:
+    ev(0, REC_DOWN); blocks(5)
+ev(0, REC_DOWN); blocks(150)
 v = flat(2)
-check("STOP (fade): silent", max(abs(x) for x in v) < 0.01, max(abs(x) for x in v))
-param(0, P_STOP, 0.0)
+check("SWAP: the old loop is muted while overdubbing", mode(0) == DUB and max(abs(x) for x in v) < 0.03, (mode(0), max(abs(x) for x in v)))
+ev(0, REC_UP); blocks(150)
+sa, ss = slope(flat(4))
+check("SWAP: back when the overdub ends", mode(0) == PLAY and abs(sa / base_abs - 1.0) < 0.1, (mode(0), sa))
+param(0, P_SWAP, 0.0)
 blocks(400)
 param(0, P_DROP, -0.6)
 quiet = 0
