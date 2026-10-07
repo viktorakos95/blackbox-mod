@@ -418,3 +418,15 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
   RVB REV HALF / STAB RPT SPEED DROP / TRIM STOP. INFO steps through the blocks, then on to the next track's; a tap on
   a tile puts the square on its block and selects the track (a tap inside the square on REV / HALF switches it; dragging
   a dial still works). The top row shows the four controls' values. Label Lok31.
+
+## Step 32
+- Tabs: MAIN FX FX2 SETUP MORE. The FX button cycles MAIN -> FX -> FX2 -> MAIN (FX2 = the FX tab on groups 2, 3);
+  INFO moves the pink square within the page (two blocks, then the next track).
+- STAB much stronger (wow up to +-4 %, flutter 1.2 %, noise, dulling to ~1 kHz). RPT is time based: the old loop is
+  kept with exp(-loop seconds / tau), tau = 0.3 s + 20 s x RPT^2 (same fade per second whatever the loop length; still
+  only while overdubbing, as on the pedal). DROP and STOP are bipolar: DROP left = random stream (short / long, some
+  shallow), right = a repeating pattern locked to the play head position and the tempo (16ths, 32nds, 64ths towards the
+  end); STOP left = fade, right = tape stop (the pitch glides down), the size is the time (0.2-3 s), release spins up.
+  TRIM has six steps: 1/2 ... 1/64 of the loop. Fast double tap (340 ms) on a dial = default (REV / HALF excluded).
+- Without a selected sequence the stock transport never runs (seq_play is not called), so there is no clock: the looper
+  falls back to its own grid at the stock BPM.  Label Lok32.

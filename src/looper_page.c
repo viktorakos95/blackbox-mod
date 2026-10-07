@@ -122,6 +122,7 @@ static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
 enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
 enum { M_MAIN, M_FX, M_SETUP, M_MORE, MODES };
+#define NTABS 5                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
 /* hardware buttons the page can take over: slot numbers */
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
 
@@ -130,6 +131,7 @@ enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
 #define OPT_X      84                      /* SETUP: where the choices start */
 #define CHOICE_W   52
 #define SLIDER_W   150
+#define DTAP 64                                                   /* audio blocks (340 ms): two taps this close are a double tap */
 #define CLEAR_SHOW 375                     /* audio blocks (2 s) to show CLEARED! */
 #define CLEAR_WAIT 563                     /* audio blocks (3 s) to confirm CLEAR ALL */
 
@@ -155,6 +157,8 @@ struct page {
     uint8_t paint_req, _r6[3];
     int16_t touch_x, touch_y;
     uint32_t clear_t;                               /* when CLEAR ALL was asked */
+    uint32_t dtap_t;                                /* the last tap on an FX tile: when, and which (control + 1, track) */
+    uint8_t dtap_c, dtap_trk, _r7[2];
     int32_t vrect[4];                               /* the mixer view's own rectangle, while the page widens it */
     uint8_t scr_h[8];                               /* the last distinct screen ids the app showed (newest first) */
     uint32_t h0[6];                                 /* the last distinct engine events, whole first word, newest first */
@@ -353,7 +357,7 @@ int looper_page_hit(int x, int d, int *track, float *val)
     layout(0, &L);
     if (d > L.foot_y) {                                           /* the footer: the tabs */
         int i = (x - 3) / (TAB_W + 2);
-        if (x >= 3 && i < MODES && (x - 3) % (TAB_W + 2) < TAB_W) {
+        if (x >= 3 && i < NTABS && (x - 3) % (TAB_W + 2) < TAB_W) {
             *track = i;
             return Z_TAB;
         }
@@ -654,6 +658,16 @@ static char *put_pct(char *p, float v)
     return put_uint(p, (unsigned)(n < 0 ? 0 : n > 100 ? 100 : n));
 }
 
+static int fx_bipolar(int q)                                       /* engine parameters that go -1..1 */
+{
+    return q == LOOPER_P_FILT || q == LOOPER_P_SPEED || q == LOOPER_P_DROP || q == LOOPER_P_STOP;
+}
+
+static float fx_default(int q)
+{
+    return q == LOOPER_P_RES ? .5f : q == LOOPER_P_RPT ? 1.f : 0.f;
+}
+
 static int fxp(int c)                                             /* control -> engine parameter (6 and 7 are the REV / HALF switches) */
 {
     return c >= 8 ? c - 2 : c;
@@ -694,14 +708,22 @@ static void fx_text(char *b, int param, float v)
         p = put_uint(p, (unsigned)(n % 10));
         *p++ = 'x';
     } else if (param == 12) {                                     /* TRIM: the part of the loop that plays */
-        int n = (int)(v * 4.f + .5f);
-        const char *o = n <= 0 ? "OFF" : n == 1 ? "1/2" : n == 2 ? "1/4" : n == 3 ? "1/8" : "1/16";
+        int n = (int)(v * 6.f + .5f);
+        const char *o = n <= 0 ? "OFF" : n == 1 ? "1/2" : n == 2 ? "1/4" : n == 3 ? "1/8" : n == 4 ? "1/16" : n == 5 ? "1/32" : "1/64";
         for (; *o; o++)
             *p++ = *o;
-    } else if (param == 13) {
-        const char *o = v < .02f ? "OFF" : v < .5f ? "FADE" : "TAPE";
-        for (; *o; o++)
-            *p++ = *o;
+    } else if (param == 11 || param == 13) {                      /* DROP: random (left) / pattern (right); STOP: fade (left) / tape (right) */
+        float a = v < 0.f ? -v : v;
+        if (a < .02f) {
+            *p++ = 'O';
+            *p++ = 'F';
+            *p++ = 'F';
+        } else {
+            const char *o = param == 11 ? (v < 0.f ? "RND " : "PAT ") : (v < 0.f ? "FADE " : "TAPE ");
+            for (; *o; o++)
+                *p++ = *o;
+            p = put_pct(p, a);
+        }
     } else if (param == LOOPER_P_FILT) {
         if (v > -.03f && v < .03f) {
             *p++ = 'O';
@@ -836,6 +858,16 @@ static void set_fx_sel(int p)
         P->fx_sel[t] = (uint8_t)p;
 }
 
+/* A tab of the footer (0 MAIN, 1 FX, 2 FX2, 3 SETUP, 4 MORE). FX / FX2 keep the square where it is when it is on that page. */
+static void tab_select(int i)
+{
+    P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : M_MORE);
+    if (i == 1 && FX_GROUP >= 2)
+        set_fx_sel(0);
+    else if (i == 2 && FX_GROUP < 2)
+        set_fx_sel(2);
+}
+
 static void draw_column_fx(int t, const struct lay *L, const struct looper_info *k)
 {
     int x = L->cx, w = L->cw;
@@ -853,7 +885,7 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
             break;
         float v = fx_value(k, p);
         dial_h(x + 2 + (j & 1) * (DIAL + 1), y0 + (j >> 1) * (th + 1), th, fx_name[p],
-               p == LOOPER_P_FILT || p == 10 ? (v + 1.f) * .5f : v, 0, (p == 6 || p == 7) && v > .5f);
+               p == LOOPER_P_FILT || p == 10 || p == 11 || p == 13 ? (v + 1.f) * .5f : v, 0, (p == 6 || p == 7) && v > .5f);
     }
     if (P->sel == t) {                                            /* the one pink square: this column's block of four = knobs 1-4 */
         int by = y0 + (FX_GROUP & 1) * 2 * (th + 1) - 2;
@@ -1008,13 +1040,14 @@ static void draw_setup(const struct lay *L)
 static void draw_footer(const struct lay *L)
 {
     box(1, L->foot_y + 1, P->w - 2, FOOT - 1, C_BG);
-    static const char *const tab[MODES] = {"MAIN", "FX", "SETUP", "MORE"};
-    for (int i = 0; i < MODES; i++) {
-        int on = P->mode == i;
+    static const char *const tab[NTABS] = {"MAIN", "FX", "FX2", "SETUP", "MORE"};
+    for (int i = 0; i < NTABS; i++) {
+        int on = i == 0 ? P->mode == M_MAIN : i == 1 ? P->mode == M_FX && FX_GROUP < 2 : i == 2 ? P->mode == M_FX && FX_GROUP >= 2 :
+                 i == 3 ? P->mode == M_SETUP : P->mode == M_MORE;
         frame(3 + i * (TAB_W + 2), L->foot_y + 2, TAB_W, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
         text_c(3 + i * (TAB_W + 2), L->foot_y + 4, TAB_W, tab[i], on ? C_CYAN : C_GREY, 1);
     }
-    int x0 = 3 + MODES * (TAB_W + 2) + 4;
+    int x0 = 3 + NTABS * (TAB_W + 2) + 4;
     if (looper_paused())
         text(x0, L->foot_y + 4, "PAUSED", C_RED, 1);
     if (!P->info_set)
@@ -1313,7 +1346,7 @@ void looper_page_down(uint8_t *view, const int *pt)
     if (P->info_on)
         info_touch();
     if (zone == Z_TAB) {
-        P->mode = (uint8_t)t;
+        tab_select(t);
         P->info_on = 0;
         P->entered = 0;                                           /* repaint the whole page for the new tab */
         P->sig = 0;
@@ -1349,10 +1382,23 @@ void looper_page_down(uint8_t *view, const int *pt)
         }
     } else if (zone == Z_FX) {
         int p = (int)(v + .5f);
+        int dbl = p != 6 && p != 7 && P->dtap_c == p + 1 && P->dtap_trk == t && looper_ticks() - P->dtap_t < DTAP;
+        P->dtap_c = dbl ? 0 : (uint8_t)(p + 1);
+        P->dtap_trk = (uint8_t)t;
+        P->dtap_t = looper_ticks();
         int was = P->sel == t && FX_GROUP == (p >> 2);
         P->sel = (uint8_t)t;                                      /* a tap moves the one pink square to that block of four */
         set_fx_sel(p >> 2);
-        if (p == 6 || p == 7) {
+        if (dbl) {                                                /* a fast double tap: back to the default */
+            if (p == 6 || p == 7) {
+                struct looper_info ki;
+                looper_track(t, &ki);
+                if (fx_value(&ki, p) > .5f)
+                    looper_event(t, p == 6 ? LOOPER_EV_REVERSE : LOOPER_EV_HALF);
+            } else {
+                set_fx(t, fxp(p), fx_default(fxp(p)));
+            }
+        } else if (p == 6 || p == 7) {
             if (was)                                              /* REV / HALF: a tap on the selected one switches it */
                 looper_event(t, p == 6 ? LOOPER_EV_REVERSE : LOOPER_EV_HALF);
         } else {
@@ -1401,7 +1447,7 @@ void looper_page_move(uint8_t *view, const int *pt)
     if (P->pressed == P_FADER) {
         looper_set_level(P->track, gain_of((float)(L.bars_y + L.bars_h - d) / (float)L.bars_h));
     } else if (P->pressed == P_DIAL) {                            /* 80 px of travel for the full range */
-        float span = P->drag_param == LOOPER_P_FILT || P->drag_param == LOOPER_P_SPEED ? 2.f : 1.f;
+        float span = fx_bipolar(P->drag_param) ? 2.f : 1.f;
         set_fx(P->track, P->drag_param, (float)P->drag_v0 * .001f + (float)(P->drag_y - d) * span / 80.f);
     } else {
         float v = (float)(x - OPT_X) / (float)SLIDER_W;
@@ -1451,7 +1497,7 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
                         looper_event(tk, p == 6 ? LOOPER_EV_REVERSE : LOOPER_EV_HALF);
                 } else {
                     int q = fxp(p);
-                    set_fx(tk, q, fx_of(tk, q) + step * (q == LOOPER_P_FILT || q == LOOPER_P_SPEED ? 2.f : 1.f));
+                    set_fx(tk, q, fx_of(tk, q) + step * (fx_bipolar(q) ? 2.f : 1.f));
                 }
             } else if (P->mode == M_MAIN && (((P->pan_sel >> knob) & 1) || P->info_on)) {
                 looper_set_pan(knob, k.pan + step * 2.f);
@@ -1489,9 +1535,9 @@ static int info_button(unsigned id, unsigned idx)
     if (id != P->info_id || (id == MSG_BUTTON && idx != P->info_idx))
         return 0;
     if (P->mode == M_FX) {                                         /* FX tab: INFO moves the pink box on by one (all four tracks) */
-        if (FX_GROUP == 3) {                                      /* INFO moves the square on: its blocks, then the next track's */
+        if (FX_GROUP & 1) {                                       /* INFO moves the square on: this page's two blocks, then the next track's */
             P->sel = (uint8_t)((P->sel + 1) & 3);
-            set_fx_sel(0);
+            set_fx_sel(FX_GROUP & 2);
         } else {
             set_fx_sel(FX_GROUP + 1);
         }
@@ -1560,7 +1606,12 @@ void looper_app_msg(void *app, const uint16_t *msg)
                 P->btn_t = looper_ticks();
                 switch (slot) {
                 case B_FX:
-                    P->mode = P->mode == M_FX ? M_MAIN : M_FX;     /* the FX button: the looper's FX, and back */
+                    if (P->mode != M_FX)                           /* the FX button: MAIN -> FX -> FX2 -> MAIN */
+                        tab_select(1);
+                    else if (FX_GROUP < 2)
+                        tab_select(2);
+                    else
+                        tab_select(0);
                     P->info_on = 0;
                     P->entered = 0;
                     break;

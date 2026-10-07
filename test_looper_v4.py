@@ -627,7 +627,7 @@ param(0, P_SPEED, 0.0)
 blocks(3)
 sa, ss = slope(flat(4))
 check("SPEED 0: normal speed again", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
-param(0, P_TRIM, 0.25)                           # 1/2 of the loop
+param(0, P_TRIM, 1 / 6)                          # 1/2 of the loop
 blocks(3)
 v = flat(70)
 half_len = 30 * N
@@ -635,27 +635,34 @@ per = sum(abs(v[i] - v[i + half_len]) for i in range(200, 4000)) / 3800
 check("TRIM 1/2: the play head repeats every half loop", per < 0.01, per)
 param(0, P_TRIM, 0.0)
 blocks(3)
-param(0, P_STOP, 1.0)                            # tape stop
-blocks(420)
+param(0, P_STOP, 1.0)                            # tape stop (3 s)
+blocks(800)
 v = flat(2)
 check("STOP (tape): the play head comes to a halt", max(v) - min(v) < 0.02, max(v) - min(v))
 param(0, P_STOP, 0.0)
-blocks(300)
+blocks(600)
 sa, ss = slope(flat(4))
 check("STOP released: plays again", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
-param(0, P_STOP, 0.3)                            # fade
-blocks(400)
+param(0, P_STOP, -0.3)                           # fade
+blocks(500)
 v = flat(2)
 check("STOP (fade): silent", max(abs(x) for x in v) < 0.01, max(abs(x) for x in v))
 param(0, P_STOP, 0.0)
 blocks(400)
-param(0, P_DROP, 1.0)
+param(0, P_DROP, -0.6)
 quiet = 0
 for _ in range(300):
     _, o = block([0.0] * N)
     if max(abs(x) for x in o[0]) < 0.02:
         quiet += 1
-check("DROP: some blocks are silent, not all", 20 < quiet < 280, quiet)
+check("DROP (random): some blocks are silent, not all", 10 < quiet < 280, quiet)
+param(0, P_DROP, 0.8)
+quiet = 0
+for _ in range(300):
+    _, o = block([0.0] * N)
+    if max(abs(x) for x in o[0]) < 0.02:
+        quiet += 1
+check("DROP (pattern): some blocks are silent, not all", 10 < quiet < 290, quiet)
 param(0, P_DROP, 0.0)
 blocks(60)
 param(0, P_STAB, 1.0)
@@ -670,12 +677,12 @@ if mode(0) == DUB:
     ev(0, REC_DOWN); blocks(5)
 ev(0, REC_UP); blocks(5)
 v0 = flat(60); peak0 = sum(abs(x) for x in v0) / len(v0)
-param(0, P_RPT, 0.5)
+param(0, P_RPT, 0.1)
 ev(0, REC_DOWN); blocks(61)                       # one pass of overdub (silence): the old loop is kept at 0.2 + 0.8 * 0.5
 ev(0, REC_UP); blocks(70)
 param(0, P_RPT, 1.0)
 v1 = flat(60); peak1 = sum(abs(x) for x in v1) / len(v1)
-check("RPT 50 %: an overdub pass fades the old loop to about 60 %", 0.5 < peak1 / peak0 < 0.75, (peak0, peak1))
+check("RPT 10 %: an overdub pass fades the old loop to about half (time based)", 0.4 < peak1 / peak0 < 0.7, (peak0, peak1))
 # ---------------------------------------------------------------- sends
 param(0, P_SD, 1.0)
 param(0, P_SR, 0.0)

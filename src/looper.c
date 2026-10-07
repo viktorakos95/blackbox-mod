@@ -234,6 +234,7 @@ struct dsp {
     uint32_t rnd[LOOPER_TRACKS];
     int32_t dseg[LOOPER_TRACKS], xf[LOOPER_TRACKS];
     uint8_t mact[LOOPER_TRACKS], dmute[LOOPER_TRACKS];
+    float dtarget[LOOPER_TRACKS];
     float zero[MAXN];
 };
 _Static_assert(sizeof(struct dsp) <= 32768, "dsp state must fit in one 32 KB buffer");
@@ -726,7 +727,8 @@ struct pb {                                       /* one track, one block */
     int win;                                      /* the play window: 0 = the whole loop, else a power of two to divide it by */
     float stop_rate;
     int stop_mode;                                /* 0 off, 1 fade, 2 tape */
-    float drop_p;
+    float drop_p, dstep;
+    int drop_mode;                                /* 0 off, 1 random stream, 2 repeating pattern */
 };
 
 static inline float quant(float x, float q, float qi)
@@ -861,17 +863,24 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
     float sp = k->speed;
     float sf = sp >= 0.f ? 1.f + sp : 1.f + 2.f * sp;                 /* -1 backwards, -.5 stopped, 0 normal, 1 twice */
     p->spd = sf * (k->half ? .5f : 1.f);
-    p->wow = k->stab * .012f;
-    p->flut = k->stab * .003f;
-    p->nz = k->stab * k->stab * .012f;
-    p->lpa = 1.f - .72f * k->stab;
-    p->rptm = k->rpt >= .995f ? 1.f : .2f + .8f * k->rpt;
-    int tw = (int)(k->trim * 4.f + .5f);
-    p->win = tw <= 0 ? 0 : tw;                                        /* 1: 1/2, 2: 1/4, 3: 1/8, 4: 1/16 */
-    p->stop_mode = k->stop < .02f ? 0 : k->stop < .5f ? 1 : 2;
-    p->stop_rate = 1.f / (SR * (.15f + 1.2f * (p->stop_mode == 1 ? k->stop * 2.f : (k->stop - .5f) * 2.f)));
-    p->drop_p = k->drop;
-    p->mod = (sp > .01f || sp < -.01f) || k->stab > .01f || tw > 0 || p->stop_mode || k->drop > .01f || d->stopp[t] > 0.f;
+    p->wow = k->stab * .04f;                                          /* up to +-4 % of speed, slowly: a worn tape */
+    p->flut = k->stab * .012f;
+    p->nz = k->stab * k->stab * .03f;
+    p->lpa = 1.f - .85f * k->stab;
+    /* RPT: what an overdub pass keeps of the old loop; a fade of the same speed per second whatever the loop length */
+    float tau = .3f + 20.f * k->rpt * k->rpt;
+    float lsec = k->len ? (float)k->len / SR : 1.f;
+    p->rptm = k->rpt >= .995f ? 1.f : exp2_fast(-1.4427f * lsec / tau);
+    int tw = (int)(k->trim * 6.f + .5f);
+    p->win = tw <= 0 ? 0 : tw;                                        /* 1: 1/2 of the loop ... 6: 1/64 */
+    float sv = k->stop < 0.f ? -k->stop : k->stop;
+    p->stop_mode = sv < .02f ? 0 : k->stop < 0.f ? 1 : 2;             /* left: fade, right: tape stop; the size is the time */
+    p->stop_rate = 1.f / (SR * (.2f + 2.8f * sv));
+    float dpv = k->drop < 0.f ? -k->drop : k->drop;
+    p->drop_p = dpv;
+    p->drop_mode = dpv < .02f ? 0 : k->drop < 0.f ? 1 : 2;             /* left: random stream, right: a repeating pattern */
+    p->dstep = beat_frames() * (dpv < .8f ? .25f : dpv < .95f ? .125f : .0625f);
+    p->mod = (sp > .01f || sp < -.01f) || k->stab > .01f || tw > 0 || p->stop_mode || p->drop_mode || d->stopp[t] > 0.f;
 }
 
 /* One trapezoidal state-variable stage (stmlib Svf), low pass or high pass; the limit soft-limits the resonant loop. */
@@ -969,12 +978,14 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
             d->ph2[t] -= 1.f;
         /* STOP: engaged moves its progress to 1 (a fade, or a slowing down), released moves it back */
         float sp = d->stopp[t];
-        sp += p->stop_mode ? p->stop_rate : -4.f * p->stop_rate - .0004f;
+        sp += p->stop_mode ? p->stop_rate : -2.f * p->stop_rate - .00005f;
         d->stopp[t] = sp < 0.f ? 0.f : sp > 1.f ? 1.f : sp;
-        if (p->stop_mode == 2)
-            spd *= 1.f - d->stopp[t];
-        else if (p->stop_mode == 1 || d->stopp[t] > 0.f)
+        if (p->stop_mode == 2) {                      /* a tape slowing down: the pitch glides to a halt */
+            float r = 1.f - d->stopp[t];
+            spd *= r * r;
+        } else if (p->stop_mode == 1 || d->stopp[t] > 0.f) {
             ml *= 1.f - d->stopp[t], mr *= 1.f - d->stopp[t];
+        }
         if (p->nz > 0.f) {
             ml += (rnd01(&d->rnd[t]) - .5f) * p->nz * 2.f;
             mr += (rnd01(&d->rnd[t]) - .5f) * p->nz * 2.f;
@@ -985,18 +996,25 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
             ml = d->lpst[t][0];
             mr = d->lpst[t][1];
         }
-        if (p->drop_p > .01f) {                       /* dropouts: segments of 40..160 ms, a share of them silent */
+        float dt = 1.f;
+        if (p->drop_mode == 1) {                      /* a random stream of dropouts: short or long, some shallow */
             if (d->dseg[t] <= 0) {
                 float r = rnd01(&d->rnd[t]);
-                d->dmute[t] = rnd01(&d->rnd[t]) < p->drop_p * .8f;
-                d->dseg[t] = (int32_t)((1.f - .7f * p->drop_p) * (1900.f + 5800.f * r));
+                float depth = rnd01(&d->rnd[t]);
+                d->dmute[t] = rnd01(&d->rnd[t]) < .12f + .6f * p->drop_p;
+                d->dseg[t] = (int32_t)((1.f - .8f * p->drop_p) * (1200.f + 7000.f * r));
+                d->dtarget[t] = depth < .6f ? 0.f : .15f * depth;
             }
             d->dseg[t]--;
-        } else {
-            d->dmute[t] = 0;
+            dt = d->dmute[t] ? d->dtarget[t] : 1.f;
+        } else if (p->drop_mode == 2) {               /* a repeating pattern locked to the loop's position and the tempo */
+            uint32_t idx = (uint32_t)(d->rp[t] / p->dstep);
+            uint32_t h = (idx + 1u) * 2654435761u;
+            h ^= h >> 15;
+            h *= 2246822519u;
+            dt = (float)(h >> 24) < p->drop_p * 190.f ? 0.f : 1.f;
         }
-        float dt = d->dmute[t] ? 0.f : 1.f;
-        d->dgn[t] += (dt - d->dgn[t]) * .02f;
+        d->dgn[t] += (dt - d->dgn[t]) * (p->drop_mode == 2 ? .01f : .006f);
         ml *= d->dgn[t];
         mr *= d->dgn[t];
     }
@@ -1687,13 +1705,13 @@ void looper_set_param(int t, int p, float v)
         k->speed = fclampf(v, -1.f, 1.f);
         break;
     case LOOPER_P_DROP:
-        k->drop = fclampf(v, 0.f, 1.f);
+        k->drop = fclampf(v, -1.f, 1.f);
         break;
     case LOOPER_P_TRIM:
         k->trim = fclampf(v, 0.f, 1.f);
         break;
     case LOOPER_P_STOP:
-        k->stop = fclampf(v, 0.f, 1.f);
+        k->stop = fclampf(v, -1.f, 1.f);
         break;
     }
 }
@@ -1769,8 +1787,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '3';                                   /* the build: step 31 */
-        *p++ = '1';
+        *p++ = '3';                                   /* the build: step 32 */
+        *p++ = '2';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';
