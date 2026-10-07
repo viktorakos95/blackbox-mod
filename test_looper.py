@@ -412,12 +412,12 @@ level(0, 0.5)
 blocks(2)
 f = draw(0)
 bars = [x for x in f if x[2] == 2 and x[3] > 5 and x[4] == 0x1B]
-meters = [x for x in f if x[2] == 1 and x[3] > 5 and x[4] == 0x1B]
-check("gain 0.5 sits at 0.375 of the travel (35 of 93 px): the 2 px line and both thin meters", len(bars) == 1 and bars[0][3] == 35 and len(meters) == 2 and meters[0][3] == meters[1][3] == 35, (bars, meters))
+meters = [x for x in f if x[2] == 1 and x[3] > 5 and x[4] == 0x1B and x[1] > 20]
+check("gain 0.5 sits at 0.375 of the travel (34 of 89 px): the 2 px line and both thin meters", len(bars) == 1 and bars[0][3] == 34 and len(meters) == 2 and meters[0][3] == meters[1][3] == 34, (bars, meters))
 pan(0, 0.5)
 blocks(2)
 f = draw(0)
-meters = sorted([x for x in f if x[2] == 1 and x[3] > 5 and x[4] == 0x1B], key=lambda x: x[0])
+meters = sorted([x for x in f if x[2] == 1 and x[3] > 5 and x[4] == 0x1B and x[1] > 20], key=lambda x: x[0])
 check("pan half right: the left meter is half as tall as the right", len(meters) == 2 and abs(meters[0][3] * 2 - meters[1][3]) <= 2, meters)
 pan(0, 0.0)
 level(0, 1.0)
@@ -446,9 +446,9 @@ z, t, v = hit(190, 100)
 check("bars area of column 3 is its fader", z == 2 and t == 2 and 0.0 <= v <= 1.0, (z, t, v))
 check("fader: silence at the bottom of its travel, +6 dB (gain 2) at the top, unity three quarters up",
       hit(190, 65)[2] > 1.99 and hit(190, 157)[2] < 0.05 and abs(hit(190, 88)[2] - 1.0) < 0.05, (hit(190, 65)[2], hit(190, 157)[2], hit(190, 88)[2]))
-btn_y = 16 + (224 - 16 - 12 - 2) - 2 - 34
+btn_y = 16 + (224 - 16 - 14 - 2) - 2 - 34
 check("bottom row: the pan dial on the left, REV above MUTE on the right", [hit(245, btn_y + 10)[0], hit(285, btn_y + 4)[0], hit(285, btn_y + 25)[0]] == [3, 4, 5], [hit(245, btn_y + 10), hit(285, btn_y + 4), hit(285, btn_y + 25)])
-check("the top row, the hairlines between columns and the footer are not controls", hit(100, 8)[0] == 0 and hit(78, 100)[0] == 0 and hit(100, 215)[0] == 0)
+check("the top row, the hairlines between columns and the footer are not controls", hit(100, 8)[0] == 0 and hit(78, 100)[0] == 0 and hit(200, 215)[0] == 0)
 
 stock_clear = len(stock)
 
@@ -557,6 +557,84 @@ button(0xC, msg_id=0xC)
 check("a different special message afterwards passes through to the stock handler", appmsg[-1] == (0xC, 0xC), appmsg)
 button(7, msg_id=7)
 check("message 7 again: INFO off", e.r8(PAGE + 7) == 0)
+
+# ---- tabs: FX and SETUP
+def tab(i):
+    touch("down", 3 + i * 40 + 10, 224 - 5)
+    touch("up", 3 + i * 40 + 10, 224 - 5)
+
+
+f = draw(0)
+check("the footer has three tab buttons (MAIN is the cyan one)", sum(1 for x in f if x[2] == 38 and x[3] == 1 and x[4] == 0x1B) == 2 and sum(1 for x in f if x[2] == 38 and x[3] == 1 and x[4] == 0x10) >= 4)
+tab(1)
+check("tapping the FX tab switches the page to FX", e.r8(PAGE + 76) == 1, e.r8(PAGE + 76))
+f = draw(0)
+check("FX tab: four dials per column (a 34 x 1 frame line each), no fader meters", sum(1 for x in f if x[2] == 34 and x[3] == 1 and x[4] in (0x10, 0x20)) >= 16 * 2 - 8 and not [x for x in f if x[2] == 2 and x[3] > 20 and x[4] == 0x1B])
+check("FX tab: the selected dial (FILT by default) has the pink frame", any(x[4] == 0x20 for x in f))
+check("FX tab: everything inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f), [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
+# hit zones: dial grid under the 40 px record box (top at 22..62): dials start at d = 19 + 3 + 40 + 4 = 66 + 16
+y0 = 16 + 3 + 40 + 4
+h1 = hit(1 + 78 * 1 + 2 + 10, y0 + 10)
+h2 = hit(1 + 78 * 1 + 2 + 10 + 35, y0 + 10)
+h3 = hit(1 + 78 * 1 + 2 + 10, y0 + 36 + 10)
+h4 = hit(1 + 78 * 1 + 2 + 10 + 35, y0 + 36 + 10)
+check("FX tab: the four dials are zone 7 with parameters 0 1 2 3 (track 2)", [(h[0], h[1], int(h[2])) for h in (h1, h2, h3, h4)] == [(7, 1, 0), (7, 1, 1), (7, 1, 2), (7, 1, 3)], (h1, h2, h3, h4))
+y1 = y0 + 72
+check("FX tab: REV / HALF row and MUTE below", [hit(1 + 78 + 8, y1 + 5)[0], hit(1 + 78 + 60, y1 + 5)[0], hit(1 + 78 + 20, y1 + 28)[0]] == [4, 8, 5], [hit(1 + 78 + 8, y1 + 5), hit(1 + 78 + 60, y1 + 5), hit(1 + 78 + 20, y1 + 28)])
+# touch: select the CRSH dial of track 2 and drag it
+touch("down", 78 + 2 + 10 + 35, y0 + 10)
+check("tap a dial: it becomes the track's selected FX parameter", e.r8(PAGE + 77 + 1) == 1, e.r8(PAGE + 78))
+touch("move", 78 + 2 + 10 + 35, y0 + 10 - 40)
+touch("up", 78 + 2 + 10 + 35, y0 + 10 - 40)
+check("dragging a dial up by 40 px of 80 turns it half way", abs(tr(1, O_CRUNCH, "f") - 0.5) < 0.02, tr(1, O_CRUNCH, "f"))
+knob(1, 800)
+check("FX tab: the track's knob turns the selected parameter (CRSH +10 %)", abs(tr(1, O_CRUNCH, "f") - 0.6) < 0.02, tr(1, O_CRUNCH, "f"))
+knob(0, 800)
+check("FX tab: track 1's knob turns its FILT by +20 % of the range (a range of 2)", abs(tr(0, O_FILT, "f") - 0.2) < 0.02, tr(0, O_FILT, "f"))
+f = draw(0)
+check("FX tab top row shows the selected parameter's value", pixels and any(c == 0x0F for _, _, c in pixels))
+touch("down", 78 + 2 + 10 + 35, y1 + 5)
+touch("up", 78 + 2 + 10 + 35, y1 + 5)
+check("HALF button sends the half speed event", e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 6)[5] == 1, list(e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 6)))
+f = draw(0)
+check("a half speed track shows its 1/2 badge and a yellow HALF frame", any(x[4] == 0x14 for x in f))
+tab(2)
+f = draw(0)
+check("SETUP tab drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f), [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
+ROW0 = 16 + 3                                                  # first row, from the top
+def row(r):
+    return ROW0 + r * 18 + 6
+check("SETUP: LENGTH row choices (FOLLOW / MULT / FREE) and the SYNC row", [hit(84 + 10, row(0))[:2], hit(84 + 52 + 10, row(0))[:2], hit(84 + 104 + 10, row(0))[:2], hit(84 + 10, row(1))[:2]] == [(9, 0), (9, 0), (9, 0), (9, 1)], [hit(84 + 10, row(0)), hit(84 + 62, row(0)), hit(84 + 114, row(0)), hit(94, row(1))])
+check("SETUP: the choice index is the value", [hit(94, row(0))[2], hit(146, row(0))[2], hit(198, row(0))[2]] == [0, 1, 2])
+touch("down", 84 + 52 + 10, row(0))
+touch("up", 84 + 52 + 10, row(0))
+check("SETUP: tapping MULT sets the length option to 1", struct.unpack("<f", e.uc.mem_read(STATE + 88, 4))[0] == 1.0, struct.unpack("<f", e.uc.mem_read(STATE + 88, 4))[0])
+touch("down", 84 + 52 + 10, row(1))
+touch("up", 84 + 52 + 10, row(1))
+touch("down", 84 + 52 + 10, row(3))
+touch("up", 84 + 52 + 10, row(3))
+check("SETUP: SYNC on, SOURCE mix", struct.unpack("<f", e.uc.mem_read(STATE + 92, 4))[0] == 1.0 and struct.unpack("<f", e.uc.mem_read(STATE + 100, 4))[0] == 1.0)
+touch("down", 84 + 100, row(5))
+touch("move", 84 + 150, row(5))
+touch("up", 84 + 150, row(5))
+check("SETUP: dragging the DLY FB slider to 150 / 200 px = 75 %", abs(struct.unpack("<f", e.uc.mem_read(STATE + 108, 4))[0] - 0.75) < 0.01, struct.unpack("<f", e.uc.mem_read(STATE + 108, 4))[0])
+knob(3, -800)
+check("SETUP: knob 4 turns the reverb return (60 % - 10 %)", abs(struct.unpack("<f", e.uc.mem_read(STATE + 120, 4))[0] - 0.5) < 0.01, struct.unpack("<f", e.uc.mem_read(STATE + 120, 4))[0])
+f = draw(0)
+check("SETUP: three more choice boxes lit and a slider drawn", any(x[2] == 200 and x[3] == 1 for x in f) and any(x[4] == 0x1B and x[2] == 49 for x in f))
+touch("down", 84 + 10, ROW0 + 9 * 18 + 6)
+touch("up", 84 + 10, ROW0 + 9 * 18 + 6)
+blocks(2)
+check("SETUP: CLEAR ALL erases the tracks (track 1 was playing)", mode(0) in (CLEARING, EMPTY), mode(0))
+blocks(70)
+check("...and they end up empty", all(mode(t) == EMPTY for t in range(4)))
+opt_sync_off = struct.pack("<f", 0.0)
+for off in (88, 92, 100):
+    e.uc.mem_write(STATE + off, opt_sync_off)
+tab(0)
+f = draw(0)
+check("back to MAIN: the fader meters are back", [x for x in f if x[2] == 2 and x[3] > 20])
+check("back on the MAIN tab", e.r8(PAGE + 76) == 0)
 
 # leaving the page puts the child widgets back
 e.call("solo_set_mode", VIEW, 1)

@@ -177,6 +177,40 @@ monitor.
   gain range is 0..2. The loop joins Out 1 before the Out 1 level and the compressor while the live monitor does
   not, which is the likely reason it sounded softer; the +6 dB of headroom compensates.
 
+## Step 8: everything (engine v4 + FX and SETUP tabs)
+
+Asked for: "implement everything and I will test all together". All of it is in this build; none of the new parts
+has run on hardware yet (Unicorn tests only: test_looper.py for the page and engine basics, test_looper_v4.py for
+the new engine).
+
+- **Memory**: 231 pool blocks from 384 up (inside the range step 2 claimed on hardware): five areas of 45 blocks
+  (4 tracks + undo, 15.4 s each), then six blocks of effect memory (working state and send buses, the reverb, the
+  delay line). Tracks are 15.4 s, no longer 16 s.
+- **Audio structure**: the input hook only keeps time (events, timers, clear / undo steps). Recording, playing and
+  overdubbing all run in the Out 1 stage, one pass per block; the source is the input pointers saved by the input
+  hook, or the Out 1 bus itself (SOURCE: MIX, taken before the loop is added, so no feedback).
+- **Per-track length and playhead**: master loop = the first take. LENGTH option: FOLLOW (later tracks take the
+  master length and overdub onto silence), MULT (the track waits for the master loop start, records, and stops on a
+  later master loop start: whole multiple, in step), FREE (own length and playhead).
+- **Pending actions**: a start / stop is a pending action with a "when": NOW, GRID, MWRAP (next master wrap) or
+  TARGET (a frame count). Each is fired at the exact frame inside the 256-frame block: the block is run in two
+  segments (before and after the boundary) and the gain ramp carries on across them.
+- **SYNC**: grid = 1/8 or 1/16 of the BPM (BPM read as a float at (bufs[0] + 0x18), the same place Munchi's clock
+  reads it; shown on the SETUP tab, "-" until read); the first take is rounded to whole 4/4 bars (a release short of
+  the bar line keeps recording to it); the transport restart is detected as the sequencer note player (seq_play)
+  being called again after a pause of more than 60 blocks, then all playheads go to 0 and the grid phase restarts.
+  Unverified on hardware: whether seq_play is called every block while stopped / playing, whether the BPM float is
+  where Munchi finds it, and whether the Blackbox tempo is the sequencer's tempo.
+- **Track FX**: filter (two one-pole stages; left of centre low pass 18 kHz to 100 Hz, right of centre high pass 30
+  Hz to 7.7 kHz), crunch (bit depth 15 down to 4 bits and sample and hold up to 8x), half speed (playback only,
+  linear interpolation; a half speed track cannot take or overdub), reverse as before.
+- **Sends**: the looper's OWN delay (ping-pong, 1/8, 1/4, dotted 1/8, dotted 1/4 of the BPM, up to 0.9 s, 16-bit)
+  and reverb (Freeverb style: four combs and two all-passes per side), added to Out 1 with the loop. Not the stock
+  FX nodes: hooking those could not be checked without hardware (whether they run when no pad sends to them).
+- **Page**: three tabs in the footer (MAIN, FX, SETUP). FX: per track the record box, FILT / CRSH / DLY / RVB dials
+  (tap = select, the knob turns it, drag up and down on it), REV, HALF, MUTE. SETUP: option rows, four sliders
+  (knobs 1-4 = DLY FB, DLY RET, RVB SIZE, RVB RET), CLEAR ALL, BPM and transport status.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,
