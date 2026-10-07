@@ -25,10 +25,11 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 216, 100                                   # engine state: tracks, track size
+T0, TSIZE = 216, 104                                   # engine state: tracks, track size
 LEN, POS, OK, UNDO_T = 12, 16, 8, 44                 # master length, master playhead
 O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
 T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
+T_PHASE, T_DOWN = 100, 28
 REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE, HALF, UNDO = range(7)
 MAXF = PER * 16384
 EMPTY, RECM, PLAY, DUB, CLEARING, UNDOING = range(6)
@@ -231,12 +232,12 @@ for _ in range(100):
     if mode(2) == RECM:
         break
 check("MULT: recording after the master wrapped", mode(2) == RECM, mode(2))
-blocks(70)                                       # a bit more than one master loop
+blocks(112)                                      # a bit less than two master loops: becomes two
 ev(2, REC_UP)
 blocks(80)
 L = tu(2, T_LEN)
 check("MULT: stopped on a master loop start, length a whole multiple of the master (2 x 60 blocks)", mode(2) == PLAY and L == 120 * N, (mode(2), L, L / N))
-check("MULT: the track's playhead is the master's", tu(2, T_POS) % (60 * N) == st(POS), (tu(2, T_POS), st(POS)))
+check("MULT: the track's playhead is the master's (shifted by where it was recorded)", (tu(2, T_POS) + tu(2, T_PHASE)) % (60 * N) == st(POS), (tu(2, T_POS), tu(2, T_PHASE), st(POS)))
 ev(2, MUTE_DOWN); blocks(760); ev(2, MUTE_UP); blocks(70)
 # MULT, a held take shorter than the master: a division of it (1/2 here: 30 of 60 blocks)
 ev(2, REC_DOWN)
@@ -245,6 +246,7 @@ for _ in range(120):
     if mode(2) == RECM:
         break
 blocks(28)
+e.uc.mem_write(STATE + T0 + TSIZE * 2 + T_DOWN, struct.pack("<I", tu(2, T_DOWN) - 100))   # held long enough to count as a hold
 ev(2, REC_UP)
 blocks(40)
 check("MULT: a held half-length take becomes 1/2 of the master", mode(2) == PLAY and tu(2, T_LEN) == 30 * N, (mode(2), tu(2, T_LEN) / N))
@@ -348,7 +350,7 @@ blocks(2)
 ml = st(LEN)
 ev(1, REC_DOWN)
 blocks(3200, 0.1)
-check("MULT track hitting the memory limit: length is a whole number of master loops and in step", mode(1) == PLAY and tu(1, T_LEN) % ml == 0 and tu(1, T_LEN) <= 737280 and tu(1, T_POS) % ml == st(POS), (mode(1), tu(1, T_LEN), ml, tu(1, T_POS), st(POS)))
+check("MULT track hitting the memory limit: length is a whole number of master loops and in step", mode(1) == PLAY and tu(1, T_LEN) % ml == 0 and tu(1, T_LEN) <= 737280 and (tu(1, T_POS) + tu(1, T_PHASE)) % ml == st(POS), (mode(1), tu(1, T_LEN), ml, tu(1, T_POS), st(POS)))
 ev(1, REC_UP)
 blocks(5)
 opt(O_LEN, 0)

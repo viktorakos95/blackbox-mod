@@ -127,6 +127,7 @@ enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
 #define OPT_X      84                      /* SETUP: where the choices start */
 #define CHOICE_W   52
 #define SLIDER_W   150
+#define CLEAR_SHOW 375                     /* audio blocks (2 s) to show CLEARED! */
 #define CLEAR_WAIT 563                     /* audio blocks (3 s) to confirm CLEAR ALL */
 
 struct page {
@@ -839,9 +840,10 @@ static void draw_setup(const struct lay *L)
     int d = row_d(L, OPT_ROWS);
     char b[64], *p = b;
     if (P->mode == M_SETUP) {
-        int armed = P->clear_arm && looper_ticks() - P->clear_t < CLEAR_WAIT;
-        frame(OPT_X, d, 110, ROW_H - 4, C_RED, 1);
-        text_c(OPT_X, d + 5, 110, armed ? "PRESS AGAIN" : "CLEAR ALL", armed ? C_WHITE : C_RED, 1);
+        int armed = P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT;
+        int done = P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW;
+        frame(OPT_X, d, 110, ROW_H - 4, done ? C_GREEN : C_RED, 1);
+        text_c(OPT_X, d + 5, 110, done ? "CLEARED!" : armed ? "TAP AGAIN" : "CLEAR ALL", done ? C_GREEN : armed ? C_WHITE : C_RED, 1);
         float bpm = looper_bpm();
         for (const char *q = "BPM "; *q; q++)
             *p++ = *q;
@@ -971,7 +973,7 @@ static uint32_t signature(void)
     h = (h ^ (uint32_t)(looper_progress() * 400.f)) * 16777619u;     /* the master playhead */
     h = (h ^ ((uint32_t)P->mode | (uint32_t)P->fx_sel[0] << 4 | (uint32_t)P->fx_sel[1] << 8 | (uint32_t)P->fx_sel[2] << 12 |
               (uint32_t)P->fx_sel[3] << 16 | (uint32_t)looper_running() << 20 | (uint32_t)looper_bpm() << 21 | (uint32_t)P->learn << 27 | (uint32_t)looper_paused() << 30 | (uint32_t)P->bset[1] << 26 | (uint32_t)P->bset[2] << 25 | (uint32_t)P->bset[3] << 24 | (uint32_t)P->bset[4] << 23 | (uint32_t)P->bset[5] << 22 |
-              (uint32_t)(P->clear_arm && looper_ticks() - P->clear_t < CLEAR_WAIT) << 30)) * 16777619u;
+              (uint32_t)(P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) << 29 | (uint32_t)(P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW) << 28)) * 16777619u;
     for (int o = 0; o < LOOPER_OPTS; o++)
         h = (h ^ (uint32_t)(looper_get_opt(o) * 1000.f + .5f)) * 16777619u;
     return h ^ looper_len();
@@ -1260,8 +1262,9 @@ void looper_page_down(uint8_t *view, const int *pt)
         P->drag_opt = (uint8_t)t;
         P->pressed = P_SLIDER;
     } else if (zone == Z_CLEAR) {
-        if (P->clear_arm && looper_ticks() - P->clear_t < CLEAR_WAIT) {
-            P->clear_arm = 0;                                     /* asked twice within 3 s */
+        if (P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) {
+            P->clear_arm = 2;                                     /* asked twice within 3 s: CLEARED! for a while */
+            P->clear_t = looper_ticks();
             looper_clear_all();
         } else {
             P->clear_arm = 1;

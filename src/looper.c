@@ -120,6 +120,7 @@ struct track {
     float frac;                                              /* half speed: position between frames */
     float level, pan, filt, res, crunch, drive, send_d, send_r;       /* written by the page */
     float gain_l, gain_r;                                    /* applied at the end of the last block */
+    uint32_t phase;                                          /* MULT: master timeline frame at which the loop's frame 0 was recorded */
 };
 
 struct looper_state {
@@ -159,6 +160,13 @@ struct looper_state {
 _Static_assert(sizeof(struct looper_state) <= 0x300, "looper state must fit below the page's state at 0x38800f00");
 
 typedef volatile struct track vtrack;
+
+/* Where track k's playhead is at master timeline frame T (frame 0 of a MULT loop was recorded at k->phase). */
+static inline uint32_t lpos(vtrack *k, uint32_t T)
+{
+    uint32_t o = k->phase % k->len, p = T % k->len;
+    return p >= o ? p - o : p + k->len - o;
+}
 
 enum { WHY_OK, WHY_BUSY_AT_BOOT, WHY_TAKEN_BACK };
 
@@ -267,7 +275,7 @@ void looper_boot(void *engine)
             k->ev_seq[i] = k->ev_done[i] = 0;
         k->pend = k->pend_when = k->half = k->own = 0;
         k->t_down = k->deadline = k->t_mute = 0;
-        k->len = k->pos = k->rec = k->target = 0;
+        k->len = k->pos = k->rec = k->target = k->phase = 0;
         k->frac = 0.f;
         k->level = 1.f;
         k->pan = 0.f;
@@ -452,8 +460,7 @@ static void request_start(int t)
         if (k->mode != LOOPER_EMPTY || others_busy(t))
             return;                               /* another first take is running */
     } else if (k->mode == LOOPER_EMPTY) {
-        if (opt_i(LOOPER_O_LEN) == LOOPER_LEN_MULT)
-            when = W_MWRAP;
+        ;
     } else if (k->mode != LOOPER_PLAY) {
         return;
     }
@@ -476,8 +483,7 @@ static void request_stop(int t)
     if (k->pend == P_STOP)
         return;
     if (k->mode == LOOPER_REC) {
-        if (k->own == OWN_MULT)
-            when = !k->tap && k->rec + k->rec / 8 < S->mlen ? W_NOW : W_MWRAP;   /* a short held take: a 1/2, 1/4, 1/8 */
+        ;
     } else if (k->mode != LOOPER_DUB) {
         k->gesture = G_IDLE;
         return;
@@ -532,10 +538,10 @@ static void event(int t, int ev)
         if (k->len && k->own != OWN_FREE && S->mlen) {                /* stay in step with the master's timeline */
             uint32_t T = S->mcount * S->mlen + S->mpos;               /* frames since the start */
             if (k->half) {                                            /* half speed: the loop is read at T / 2 */
-                k->pos = (T / 2) % k->len;
+                k->pos = lpos(k, T / 2);
                 k->frac = (T & 1) ? .5f : 0.f;
             } else {
-                k->pos = T % k->len;
+                k->pos = lpos(k, T);
             }
         }
         break;
@@ -655,7 +661,7 @@ void looper_in(void *obj, float **bufs, int frames)
                         k->muted = k->rev = k->half = 0;
                         k->gesture = G_IDLE;
                         k->pend = P_NONE;
-                        k->len = k->pos = k->rec = 0;
+                        k->len = k->pos = k->rec = k->phase = 0;
                         k->frac = 0.f;
                         k->own = OWN_NO;
                         if (!others_busy(t))
@@ -1015,6 +1021,7 @@ static void seg(struct dsp *d, int t, int i0, int i1, const float *sl, const flo
         if (k->rec >= max) {                      /* full: close the loop (MULT: on a master loop boundary) */
             k->pend = P_NONE;
             finalize(t, max, i0 + m);
+            k->phase %= max;
             seg(d, t, i0 + m, i1, sl, sr, p);
         }
         return;
@@ -1089,6 +1096,7 @@ static void apply(int t, int b)
                 k->mode = LOOPER_REC;
                 k->rec = 0;
                 k->own = opt_i(LOOPER_O_LEN) == LOOPER_LEN_MULT ? OWN_MULT : OWN_FREE;
+                k->phase = S->mcount * S->mlen + S->mpos + (uint32_t)b;
             }
         } else if (k->mode == LOOPER_PLAY) {
             k->was_empty = 0;
@@ -1134,9 +1142,9 @@ static void apply(int t, int b)
     } else if (k->own == OWN_MULT) {
         uint32_t ml = S->mlen, len;
         if (when == W_TARGET) {
-            len = k->target;                      /* kept recording up to a division of the master loop */
+            len = k->target;                      /* kept recording up to the length chosen */
         } else if (rec >= ml - ml / 8 || k->tap) {
-            uint32_t n = (rec + ml / 2) / ml;     /* whole master loops; a tap is exactly one */
+            uint32_t n = (rec + ml / 2) / ml;     /* whole master loops; a tap is at least one */
             if (n < 1)
                 n = 1;
             while (n > 1 && n * ml > MAX_FRAMES)
@@ -1148,14 +1156,16 @@ static void apply(int t, int b)
                 len /= 2;
             if (len < MIN_TAKE)
                 len = MIN_TAKE;
-            if (len > rec) {                      /* keep recording to the division's end */
-                k->pend_when = W_TARGET;
-                k->target = len;
-                return;
-            }
+        }
+        if (len > rec && when != W_TARGET) {      /* keep recording to the end of that length */
+            k->pend_when = W_TARGET;
+            k->target = len;
+            return;
         }
         k->pend = P_NONE;
         finalize(t, len, b);
+        k->pos = rec % len;                       /* the frame that was just recorded is where the playhead is */
+        k->phase %= len;
     } else {
         k->pend = P_NONE;
         finalize(t, rec, b);
@@ -1239,7 +1249,7 @@ static void run(float *bl, float *br, int n)
         for (int t = 0; t < LOOPER_TRACKS; t++) {
             vtrack *k = &S->t[t];
             if (k->mode != LOOPER_REC) {
-                k->pos = 0;
+                k->pos = k->len ? lpos(k, 0) : 0;
                 k->frac = 0.f;
             }
         }
@@ -1282,7 +1292,7 @@ static void run(float *bl, float *br, int n)
                 for (int t = 0; t < LOOPER_TRACKS; t++) {
                     vtrack *k = &S->t[t];
                     if (k->len && k->mode != LOOPER_REC) {
-                        k->pos = 0;
+                        k->pos = lpos(k, 0);
                         k->frac = 0.f;
                     }
                 }
@@ -1301,13 +1311,12 @@ static void run(float *bl, float *br, int n)
             vtrack *k = &S->t[t];
             if (!k->len || k->mode == LOOPER_REC || k->own == OWN_FREE)
                 continue;
-            int32_t L = (int32_t)k->len;
             if (k->half) {
                 int32_t h = Ti >> 1;
-                k->pos = (uint32_t)(((h % L) + L) % L);
+                k->pos = lpos(k, (uint32_t)(h < 0 ? 0 : h));
                 k->frac = (Ti & 1) ? .5f : 0.f;
             } else {
-                k->pos = (uint32_t)(((Ti % L) + L) % L);
+                k->pos = lpos(k, (uint32_t)(Ti < 0 ? 0 : Ti));
                 k->frac = 0.f;
             }
         }

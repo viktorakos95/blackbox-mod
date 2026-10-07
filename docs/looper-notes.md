@@ -384,3 +384,11 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
   0xf4..0xf8 and index 8 (REC) / 9 (STOP) / 10 (PLAY) are dropped (STOP / PLAY only with HW STOP PLAY = LOOPER); the
   GUI queue still feeds the page. Button ids drift (REC 244 down / 245 up): other ids of a learned button are taken.
 - Screen history on MORE (`S:`), whole-word event ring, QUANT 1 BAR, MULT divisions. Label Lok26.
+
+## Step 27
+- MULT takes start at once (like the others) instead of waiting for the master wrap; `track.phase` remembers the
+  master timeline frame at which the loop's frame 0 was recorded, so playheads stay in step with the master after a
+  transport restart / half speed (`lpos`). Stop: a held take shorter than the master becomes 1/2, 1/4 or 1/8 of it, a
+  longer one the nearest whole number of masters (recording on to the exact length); a tap-started take is at least one
+  master. TSIZE is 104 now.
+- SETUP: CLEAR ALL -> "TAP AGAIN" -> "CLEARED!" (2 s). Label Lok27.
