@@ -55,7 +55,8 @@ typedef void (*msg_fn)(void *obj, const uint16_t *msg);
 #define fw_post     ((msg_fn)FN(0x080b5758))               /* queue a message for the GUI task (app + 0x30) */
 
 uint8_t *solo_looper_view(void);
-void looper_guard(int on);
+void looper_guard(int mode);
+void looper_note_app(void *app);
 void looper_guard_drawing(int on);
 static void rehide(uint8_t *view);
 static void paint(uint8_t *view);
@@ -965,7 +966,7 @@ static void paint(uint8_t *view)
     geometry(view);
     rehide(view);
     widen(view);
-    looper_guard(looper_get_opt(LOOPER_O_FULL) > .5f);          /* from now on the stock screen's own drawing is dropped */
+    looper_guard(looper_get_opt(LOOPER_O_FULL) > .5f ? 1 : 2);   /* from now on the stock line / text drawing is dropped */
     looper_guard_drawing(1);
     if (!P->entered) {
         P->entered = 1;
@@ -1370,6 +1371,7 @@ static int info_button(unsigned id, unsigned idx)
 /* Replaces the app's message dispatch call (bl @0x080a23cc). */
 void looper_app_msg(void *app, const uint16_t *msg)
 {
+    looper_note_app(app);
     if (msg && msg[0] == MSG_PAINT) {
         P->paint_req = 0;
         uint8_t *view = solo_looper_view();

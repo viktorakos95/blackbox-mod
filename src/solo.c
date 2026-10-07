@@ -180,6 +180,25 @@ static void toggle(uint8_t *view, uint8_t *cell)
 
 /* --- Looper mode: the page itself is looper_page.c; this routes the mixer view's hooks to it. */
 
+#define BLK2        0x424c4b32u                            /* the page is up, not full screen */
+#define APP_PTR     (*(volatile uint32_t *)0x2405ff54u)    /* the app object, as the message hook last saw it, xor'd (patch RAM is not cleared) */
+#define APP_XOR     0x5a5a5a5au
+
+/* The app's current screen id, from the app pointer the message hook saw; 0 until it has been seen. */
+static unsigned app_screen(void)
+{
+    uint32_t p = APP_PTR ^ APP_XOR;
+    if (p < 0x24000000u || p >= 0x24100000u || (p & 3))
+        return 0;
+    return *(volatile uint8_t *)(p + 0x8ca4u);
+}
+
+void looper_note_app(void *app)
+{
+    APP_PTR = (uint32_t)app ^ APP_XOR;
+}
+
+
 /* The mixer view while it shows the Looper page, else 0. (Step 3 also required the view to sit in 0x24000000..
  * 0x24080000, an unchecked guess: the page never drew on hardware. The view pointer is only ever the one the GUI
  * handed solo_set_mode, and looper_boot clears the mode at every boot, so a pointer from an earlier boot is not
@@ -189,6 +208,9 @@ uint8_t *solo_looper_view(void)
     ensure();
     uint8_t *view = S->view;
     if (!S->looper || !view || ((uint32_t)view & 3) || !view[VIEW_MUTE])
+        return 0;
+    unsigned sc = app_screen();                      /* another screen is up: the Looper page is not showing, whatever the flag says */
+    if (sc && sc != SCREEN_MUTE)
         return 0;
     return view;
 }
@@ -322,11 +344,9 @@ void solo_touch_move(uint8_t *view, void *pt, void *arg)
 #define GUARD_DRAW  (*(volatile uint32_t *)0x2405ff5cu)    /* exactly DRW1 = the page itself is drawing */
 #define BLK1        0x424c4b31u
 #define DRW1        0x44525731u
-#define APP_SCREEN_ADDR (*(volatile uint8_t *)(0x24020088u + 0x8ca4u))
-
-void looper_guard(int on)
+void looper_guard(int mode)                                /* 0 off, 1 page up on full screen, 2 page up */
 {
-    GUARD_BLOCK = on ? BLK1 : 0;
+    GUARD_BLOCK = mode == 1 ? BLK1 : mode == 2 ? BLK2 : 0;
 }
 
 void looper_guard_drawing(int on)
@@ -337,7 +357,7 @@ void looper_guard_drawing(int on)
 /* The page owns the screen right now (it is showing, full screen, on the mixer screen). */
 static int page_owns_screen(void)
 {
-    return GUARD_BLOCK == BLK1 && S->magic == MAGIC && S->looper && S->view && APP_SCREEN_ADDR == SCREEN_MUTE;
+    return GUARD_BLOCK == BLK1 && S->magic == MAGIC && S->looper && S->view && app_screen() == SCREEN_MUTE;
 }
 
 /* From the drawing primitive stubs (looper_thunk.S): 1 = drop this stock draw. Must stay tiny: it runs per pixel. */
@@ -384,7 +404,8 @@ int looper_basehit(uint8_t *w, const int *pt, uint8_t **out)
 /* The Looper page is showing (not just flagged): the mixer screen, mute mode, Looper mode. */
 static int page_visible(void)
 {
-    return S->magic == MAGIC && S->looper && S->view && APP_SCREEN_ADDR == SCREEN_MUTE && S->view[VIEW_MUTE];
+    return (GUARD_BLOCK == BLK1 || GUARD_BLOCK == BLK2) && S->magic == MAGIC && S->looper && S->view && app_screen() == SCREEN_MUTE &&
+           S->view[VIEW_MUTE];
 }
 
 /*

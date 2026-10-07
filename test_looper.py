@@ -730,7 +730,7 @@ e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 0.0))
 e.call("looper_page_enter", VIEW)
 draw(0)
 # ---- the drawing guard and the touch hit test
-GB, GD, SCR = 0x2405FF58, 0x2405FF5C, 0x24028D2C
+GB, GD, SCR = 0x2405FF58, 0x2405FF5C, 0x24030000 + 0x8CA4
 def blocked():
     e.call("looper_draw_blocked")
     return e.uc.reg_read(A.UC_ARM_REG_R0)
@@ -901,7 +901,9 @@ e.stub(0x080C3D2C, lambda: drawn.append(e.arg(0)))
 e.uc.mem_write(SCR, b"\x2f")
 e.uc.mem_write(SOLO + 6, b"\x01")
 e.uc.mem_write(VIEW + 0x1E40, b"\x01")
-e.call("looper_guard", 0)
+e.uc.mem_write(APP + 0x8CA4, b"\x2f")
+e.call("looper_note_app", APP)
+e.call("looper_guard", 2)
 e.call("looper_text_draw", VIEW + 0x3AC + 0x70, 0x30003000)
 check("page showing (not full screen): a text widget inside a mixer cell is not drawn", drawn == [])
 e.call("looper_text_draw", 0x30003800, 0x30003000)
@@ -913,11 +915,13 @@ check("full screen: no text widget is drawn", drawn == [])
 e.uc.mem_write(SCR, b"\x25")
 e.call("looper_text_draw", VIEW + 0x3AC + 0x70, 0x30003000)
 check("on other screens every text widget is drawn", drawn == [VIEW + 0x3AC + 0x70], drawn)
-e.call("looper_guard", 0)
+e.call("looper_guard", 2)
 e.uc.mem_write(SCR, b"\x2f")
 
 # ---- stock line / text drawing and other views' cells are dropped while the page shows
 e.uc.mem_write(SCR, b"\x2f"); e.uc.mem_write(SOLO + 6, b"\x01"); e.uc.mem_write(VIEW + 0x1E40, b"\x01")
+e.call("looper_note_app", APP)
+e.call("looper_guard", 2)
 def stock_blocked():
     e.call("looper_stock_blocked")
     return e.uc.reg_read(A.UC_ARM_REG_R0)
@@ -933,6 +937,11 @@ OTHER = 0x30026000
 e.uc.mem_write(OTHER, bytes(0x400))
 e.call("looper_cell_draw", OTHER, CTX, count=5_000_000)
 check("a cell of any other view is not drawn while the page shows", celldraw == [], celldraw)
+e.uc.mem_write(SCR, b"\x25")
+celldraw.clear()
+e.call("looper_cell_draw", OTHER, CTX, count=5_000_000)
+check("on another screen (the pads page uses the same cells) the stock cell draw runs although the Looper flag is stale", celldraw == [OTHER], celldraw)
+e.uc.mem_write(SCR, b"\x2f")
 
 # leaving the page puts the child widgets back
 e.call("solo_set_mode", VIEW, 1)

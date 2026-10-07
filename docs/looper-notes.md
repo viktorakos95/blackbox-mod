@@ -298,6 +298,15 @@ is not drawn. Fills and pixels (the page's own drawing, and what the display nee
 steps 12-14 stopped full screen from updating. MORE shows "DROP n", how many stock draws were dropped (0 with boxes
 still showing would mean the hooks are not on the path). Build number on the version label: Lok16.
 
+## Step 17
+
+Step 16 removed the cyan boxes and kept full screen live, but also dropped the pads on the pads page and outlines on the
+seq page: the stock line / text hooks and the "cells of any other view are not drawn" rule stayed active after leaving
+the mixer (the Looper flag outlives a trip to other screens; the pads page uses the same cell class). Fix: the screen test
+now uses the real app object (the pointer the message hook last saw, kept xor'd in patch RAM 0x2405ff54; the app is not
+reliably at 0x24020088), solo_looper_view() itself says "not showing" on any other screen, and the drop only applies while
+the guard word says the page has been painted (BLK1 full / BLK2 normal, cleared on leaving). Label: Lok17.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,
