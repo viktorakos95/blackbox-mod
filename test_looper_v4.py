@@ -354,6 +354,21 @@ check("the UNDO event takes the last pass back (track 2 empty again)", mode(1) =
 ev(2, REC_DOWN); blocks(80, 0.1); ev(2, REC_UP); block([0.0] * N)
 check("holding: recorded while held, kept on release", mode(2) == PLAY and tr(2, 3) == 0, (mode(2), tr(2, 3)))
 
+# undo reaches the first loop of a track too
+boot()
+hold(0, 60, tone)
+hold(1, 70)                                      # FOLLOW: onto the master
+ev(1, UNDO)
+blocks(70)
+check("UNDO on a track whose only recording is its first take: removes the loop", mode(1) == EMPTY, mode(1))
+hold(2, 60)
+ev(2, REC_DOWN); blocks(80, 0.1); ev(2, REC_UP); block([0.0] * N)
+ev(2, UNDO); blocks(70)
+check("UNDO twice: the overdub pass comes off, then the first take", mode(2) in (PLAY, EMPTY), mode(2))
+ev(2, UNDO); blocks(70)
+check("... and the loop is gone", mode(2) == EMPTY, mode(2))
+hold(0, 60, tone) if False else None
+
 # stock route: sends are handed to the FX nodes' buses instead of the looper's own effects
 boot()
 hold(0, 60, tone)

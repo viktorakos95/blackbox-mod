@@ -108,11 +108,11 @@ static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /
 #define INFO_HOLD    84          /* 0.45 s */
 
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
-enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO };
-enum { M_MAIN, M_FX, M_SETUP, MODES };
+enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
+enum { M_MAIN, M_FX, M_SETUP, M_MORE, MODES };
 
 #define TAB_W      38
-#define ROW_H      14                      /* SETUP: one option per row */
+#define ROW_H      22                      /* SETUP: one option per row */
 #define OPT_X      84                      /* SETUP: where the choices start */
 #define CHOICE_W   52
 #define SLIDER_W   200
@@ -133,6 +133,8 @@ struct page {
     int16_t drag_y, drag_v0;                        /* dial drag: start y, start value x 1000 */
     uint8_t fx_set, fx_idx, learn_fx, clear_arm;    /* the learned FX button; waiting for it; CLEAR ALL asked once */
     uint16_t fx_id, rect_on;
+    uint8_t sel, rec_set, rec_idx, learn_rec;       /* the selected track; the learned hardware REC button */
+    uint16_t rec_id, _r3;
     uint32_t clear_t;                               /* when CLEAR ALL was asked */
     int32_t vrect[4];                               /* the mixer view's own rectangle, while the page widens it */
 };
@@ -230,7 +232,7 @@ struct lay {
     int col_y, col_h;
     int rec_y, rec_h;            /* the record box */
     int bars_y, bars_h;          /* the fader's travel */
-    int lvl_y, btn_y, undo_y;
+    int lvl_y, btn_y, undo_y, sel_y;
     int foot_y;                  /* the footer's line */
 };
 
@@ -246,34 +248,42 @@ static void layout(int t, struct lay *L)
     L->btn_y = L->col_y + L->col_h - 2 - BTN;
     L->undo_y = L->btn_y - 15;
     L->lvl_y = L->undo_y - 12;
-    L->bars_y = L->rec_y + L->rec_h + 6;
+    L->sel_y = L->rec_y + L->rec_h + 3;
+    L->bars_y = L->sel_y + 16;
     L->bars_h = L->lvl_y - 4 - L->bars_y;
     if (L->bars_h < 20)
         L->bars_h = 20;
     L->foot_y = hg - FOOT - 1;
 }
 
-/* SETUP rows: a name, the option, and either its choices or (n = 0) a slider. The last row is CLEAR ALL + the clock. */
+/* SETUP / MORE rows: a name, the option, and either its choices or (n = 0) a slider; a last row of buttons follows. */
 struct optrow {
     const char *name;
     uint8_t opt, n;
     const char *c[4];
 };
-static const struct optrow rows[] = {
+static const struct optrow rows_setup[] = {
     {"LENGTH", LOOPER_O_LEN, 3, {"FOLLOW", "MULT", "FREE", 0}},
     {"SYNC", LOOPER_O_SYNC, 2, {"OFF", "ON", 0, 0}},
     {"QUANT", LOOPER_O_QUANT, 3, {"1/4", "1/8", "1/16", 0}},
     {"SOURCE", LOOPER_O_SRC, 2, {"INPUT", "MIX", 0, 0}},
-    {"FX ROUTE", LOOPER_O_ROUTE, 2, {"STOCK", "OWN", 0, 0}},
-    {"LOOP GAIN K1", LOOPER_O_GAIN, 0, {0, 0, 0, 0}},
-    {"OWN DLY TIME", LOOPER_O_DTIME, 4, {"1/8", "1/4", "D.1/8", "D.1/4"}},
-    {"OWN DLY FB K2", LOOPER_O_DFB, 0, {0, 0, 0, 0}},
-    {"OWN DLY RET K3", LOOPER_O_DRET, 0, {0, 0, 0, 0}},
-    {"OWN RVB SIZE", LOOPER_O_RSIZE, 0, {0, 0, 0, 0}},
-    {"OWN RVB RET K4", LOOPER_O_RRET, 0, {0, 0, 0, 0}},
     {"FULL SCREEN", LOOPER_O_FULL, 2, {"OFF", "ON", 0, 0}},
+    {"LOOP GAIN K1", LOOPER_O_GAIN, 0, {0, 0, 0, 0}},
 };
-#define OPT_ROWS ((int)(sizeof rows / sizeof rows[0]))           /* the CLEAR ALL row follows */
+static const struct optrow rows_more[] = {
+    {"FX ROUTE", LOOPER_O_ROUTE, 2, {"STOCK", "OWN", 0, 0}},
+    {"OWN DLY TIME", LOOPER_O_DTIME, 4, {"1/8", "1/4", "D.1/8", "D.1/4"}},
+    {"OWN DLY FB K1", LOOPER_O_DFB, 0, {0, 0, 0, 0}},
+    {"OWN DLY RET K2", LOOPER_O_DRET, 0, {0, 0, 0, 0}},
+    {"OWN RVB SIZE K3", LOOPER_O_RSIZE, 0, {0, 0, 0, 0}},
+    {"OWN RVB RET K4", LOOPER_O_RRET, 0, {0, 0, 0, 0}},
+};
+#define OPT_ROWS 6                                                /* rows above the buttons row, on both pages */
+
+static const struct optrow *page_rows(void)
+{
+    return P->mode == M_MORE ? rows_more : rows_setup;
+}
 
 static int row_d(const struct lay *L, int r)
 {
@@ -304,22 +314,22 @@ int looper_page_hit(int x, int d, int *track, float *val)
         }
         return Z_NONE;
     }
-    if (P->mode == M_SETUP) {
+    if (P->mode == M_SETUP || P->mode == M_MORE) {
         if (d < L.col_y)
             return Z_NONE;
         int r = (d - row_d(&L, 0)) / ROW_H;
-        if (d < row_d(&L, 0) || r > OPT_ROWS || (d - row_d(&L, 0)) % ROW_H >= ROW_H - 2)
+        if (d < row_d(&L, 0) || r > OPT_ROWS || (d - row_d(&L, 0)) % ROW_H >= ROW_H - 3)
             return Z_NONE;
         if (r == OPT_ROWS) {
-            if (x >= OPT_X && x < OPT_X + 90)
-                return Z_CLEAR;
-            if (x >= OPT_X + 96 && x < OPT_X + 96 + 90) {
-                *track = 99;
-                return Z_OPTC;                                    /* LEARN FX BUTTON */
+            if (x >= OPT_X && x < OPT_X + 110)
+                return P->mode == M_SETUP ? Z_CLEAR : (*track = 99, Z_OPTC);          /* CLEAR ALL / LEARN FX */
+            if (P->mode == M_MORE && x >= OPT_X + 116 && x < OPT_X + 226) {
+                *track = 98;
+                return Z_OPTC;                                    /* LEARN REC */
             }
             return Z_NONE;
         }
-        const struct optrow *R = &rows[r];
+        const struct optrow *R = &page_rows()[r];
         *track = R->opt;
         if (R->n) {
             int c = (x - OPT_X) / CHOICE_W;
@@ -355,9 +365,11 @@ int looper_page_hit(int x, int d, int *track, float *val)
             return xx < (L.cw - 4) / 2 ? Z_MUTE : Z_UNDO;
         return Z_NONE;
     }
+    if (d >= L.sel_y && d < L.sel_y + 13)
+        return Z_SEL;
     if (d >= L.undo_y && d < L.undo_y + 12)
         return Z_UNDO;
-    if (d >= L.rec_y + L.rec_h + 3 && d < L.undo_y - 12) {
+    if (d >= L.sel_y + 16 && d < L.undo_y - 12) {
         float v = (float)(L.bars_y + L.bars_h - d) / (float)L.bars_h;
         *val = gain_of(v);                                        /* the gain at that height */
         return Z_FADER;
@@ -615,12 +627,16 @@ static void draw_top(int t, const struct lay *L, const struct looper_info *k)
     int x = L->cx, w = L->cw;
     box(x, 1, w, TOPBAR, C_BG);
     char b[24], *p = b;
-    if (P->mode == M_SETUP) {                                     /* what the four knobs turn */
-        static const char *const nm[4] = {"GAIN ", "FB ", "RET ", "RET "};
-        static const uint8_t op[4] = {LOOPER_O_GAIN, LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RRET};
-        for (const char *s = nm[t]; *s; s++)
-            *p++ = *s;
-        p = put_pct(p, opt_get(op[t]));
+    if (P->mode == M_SETUP || P->mode == M_MORE) {                /* what the knobs turn */
+        static const char *const nm_s[4] = {"GAIN ", "", "", ""};
+        static const char *const nm_m[4] = {"FB ", "RET ", "SIZE ", "RET "};
+        static const uint8_t op_s[4] = {LOOPER_O_GAIN, 0, 0, 0};
+        static const uint8_t op_m[4] = {LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET};
+        const char *nm = P->mode == M_SETUP ? nm_s[t] : nm_m[t];
+        for (const char *q = nm; *q; q++)
+            *p++ = *q;
+        if (*nm)
+            p = put_pct(p, opt_get(P->mode == M_SETUP ? op_s[t] : op_m[t]));
     } else if (P->mode == M_FX && !P->info_on) {
         fx_text(b, P->fx_sel[t], fx_value(k, P->fx_sel[t]));
         p = b;
@@ -685,6 +701,9 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
     char lv[12], *q = put_db(lv, k->level);
     *q = 0;
     text_c(x, L->lvl_y, w, lv, k->muted ? C_GREY : C_LIGHT, 1);
+    int sc = P->sel == t ? C_PINK : C_RAIL;                       /* SELECT: the hardware REC button records this track */
+    frame(x + 2, L->sel_y, w - 4, 13, sc, 1);
+    text_c(x + 2, L->sel_y + 3, w - 4, P->sel == t ? "SELECTED" : "SELECT", P->sel == t ? C_PINK : C_GREY, 1);
     int uc = k->undo ? C_YELLOW : C_RAIL;                         /* UNDO: take the last overdub pass back */
     frame(x + 2, L->undo_y, w - 4, 12, uc, 1);
     text_c(x + 2, L->undo_y + 2, w - 4, "UNDO", k->undo ? C_YELLOW : C_GREY, 1);
@@ -725,24 +744,25 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
     text_c(x + 3 + bw, y1 + 22, bw, "UNDO", k->undo ? C_YELLOW : C_GREY, 1);
 }
 
-/* SETUP tab: the option rows. */
+/* SETUP and MORE tabs: the option rows, then a row of buttons. */
 static void draw_setup(const struct lay *L)
 {
     box(1, L->col_y, P->w - 2, L->col_h, C_BG);
+    const struct optrow *rows = page_rows();
     for (int r = 0; r < OPT_ROWS; r++) {
         const struct optrow *R = &rows[r];
         int d = row_d(L, r);
-        text(6, d + 3, R->name, C_LIGHT, 1);
+        text(6, d + 5, R->name, C_LIGHT, 1);
         if (R->n) {
             int cur = (int)(opt_get(R->opt) + .5f);
             for (int c = 0; c < R->n; c++) {
                 int on = c == cur;
-                frame(OPT_X + c * CHOICE_W, d, CHOICE_W - 3, ROW_H - 3, on ? C_CYAN : C_RAIL, 1);
-                text_c(OPT_X + c * CHOICE_W, d + 2, CHOICE_W - 3, R->c[c], on ? C_WHITE : C_GREY, 1);
+                frame(OPT_X + c * CHOICE_W, d, CHOICE_W - 3, ROW_H - 4, on ? C_CYAN : C_RAIL, 1);
+                text_c(OPT_X + c * CHOICE_W, d + 5, CHOICE_W - 3, R->c[c], on ? C_WHITE : C_GREY, 1);
             }
         } else {
             float v = opt_get(R->opt);
-            int len = (int)(v * (float)SLIDER_W + .5f), my = d + (ROW_H - 3) / 2;
+            int len = (int)(v * (float)SLIDER_W + .5f), my = d + (ROW_H - 4) / 2;
             hline(OPT_X, my, SLIDER_W, C_RAIL);
             for (int q = 0; q <= 4; q++)
                 vline(OPT_X + q * (SLIDER_W - 1) / 4, my - 3, 7, C_GREY);
@@ -754,33 +774,50 @@ static void draw_setup(const struct lay *L)
             else
                 p = put_pct(p, v);
             *p = 0;
-            text(OPT_X + SLIDER_W + 8, d + 2, b, C_LIGHT, 1);
+            text(OPT_X + SLIDER_W + 8, d + 5, b, C_LIGHT, 1);
         }
     }
     int d = row_d(L, OPT_ROWS);
-    int armed = P->clear_arm && looper_ticks() - P->clear_t < CLEAR_WAIT;
-    frame(OPT_X, d, 90, ROW_H - 3, C_RED, 1);
-    text_c(OPT_X, d + 2, 90, armed ? "PRESS AGAIN" : "CLEAR ALL", armed ? C_WHITE : C_RED, 1);
-    frame(OPT_X + 96, d, 90, ROW_H - 3, P->learn_fx ? C_PINK : C_RAIL, 1);
-    text_c(OPT_X + 96, d + 2, 90, P->learn_fx ? "PRESS FX BTN" : P->fx_set ? "RELEARN FX" : "LEARN FX BTN", P->learn_fx ? C_PINK : C_LIGHT, 1);
-    char b[24], *p = b;
-    float bpm = looper_bpm();
-    for (const char *s = "BPM "; *s; s++)
-        *p++ = *s;
-    if (bpm > 0.f)
-        p = put_uint(p, (unsigned)(bpm + .5f));
-    else
-        *p++ = '-';
-    for (const char *s = looper_running() ? " RUN" : " STOP"; *s; s++)
-        *p++ = *s;
-    *p = 0;
-    text(6, d + 2, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
+    char b[40], *p = b;
+    if (P->mode == M_SETUP) {
+        int armed = P->clear_arm && looper_ticks() - P->clear_t < CLEAR_WAIT;
+        frame(OPT_X, d, 110, ROW_H - 4, C_RED, 1);
+        text_c(OPT_X, d + 5, 110, armed ? "PRESS AGAIN" : "CLEAR ALL", armed ? C_WHITE : C_RED, 1);
+        float bpm = looper_bpm();
+        for (const char *q = "BPM "; *q; q++)
+            *p++ = *q;
+        if (bpm > 0.f)
+            p = put_uint(p, (unsigned)(bpm + .5f));
+        else
+            *p++ = '-';
+        for (const char *q = looper_running() ? " RUN" : " STOP"; *q; q++)
+            *p++ = *q;
+        *p = 0;
+        text(OPT_X + 120, d + 5, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
+    } else {
+        frame(OPT_X, d, 110, ROW_H - 4, P->learn_fx ? C_PINK : C_RAIL, 1);
+        text_c(OPT_X, d + 5, 110, P->learn_fx ? "PRESS FX BTN" : P->fx_set ? "FX BTN LEARNT" : "LEARN FX BTN", P->learn_fx ? C_PINK : C_LIGHT, 1);
+        frame(OPT_X + 116, d, 110, ROW_H - 4, P->learn_rec ? C_PINK : C_RAIL, 1);
+        text_c(OPT_X + 116, d + 5, 110, P->learn_rec ? "PRESS REC BTN" : P->rec_set ? "REC BTN LEARNT" : "LEARN REC BTN", P->learn_rec ? C_PINK : C_LIGHT, 1);
+        /* the last button message the page saw, to help finding a button's code */
+        for (const char *q = "LAST BTN "; *q; q++)
+            *p++ = *q;
+        p = put_uint(p, P->btn_id);
+        *p++ = ':';
+        p = put_uint(p, P->btn_index);
+        *p++ = ' ';
+        p = put_uint(p, *(const uint16_t *)((const uint8_t *)FB + 4));         /* the frame buffer's size */
+        *p++ = 'x';
+        p = put_uint(p, *(const uint16_t *)((const uint8_t *)FB + 6));
+        *p = 0;
+        text(6, d + 5, b, C_GREY, 1);
+    }
 }
 
 static void draw_footer(const struct lay *L)
 {
     box(1, L->foot_y + 1, P->w - 2, FOOT - 1, C_BG);
-    static const char *const tab[MODES] = {"MAIN", "FX", "SETUP"};
+    static const char *const tab[MODES] = {"MAIN", "FX", "SETUP", "MORE"};
     for (int i = 0; i < MODES; i++) {
         int on = P->mode == i;
         frame(3 + i * (TAB_W + 2), L->foot_y + 2, TAB_W, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
@@ -790,20 +827,16 @@ static void draw_footer(const struct lay *L)
     char b[48], *p = b;
     if (looper_len()) {
         unsigned len = looper_len() * 10u / 48000u, pos = (unsigned)(looper_progress() * (float)looper_len()) * 10u / 48000u;
+        (void)pos;
         const char *s = "LOOP ";
         while (*s)
             *p++ = *s++;
         p = put_uint(p, len / 10);
         *p++ = '.';
         p = put_uint(p, len % 10);
-        s = " POS ";
-        while (*s)
-            *p++ = *s++;
-        p = put_uint(p, pos / 10);
-        *p++ = '.';
-        p = put_uint(p, pos % 10);
+        *p++ = 's';
     } else {
-        const char *s = "HOLD TO REC";
+        const char *s = "TAP TO REC";
         while (*s)
             *p++ = *s++;
     }
@@ -834,7 +867,7 @@ static uint32_t signature(void)
     h = (h ^ ((uint32_t)P->pan_sel | (uint32_t)P->info_on << 8 | (uint32_t)P->info_set << 16 | (uint32_t)P->info_id << 17)) * 16777619u;
     h = (h ^ (uint32_t)(looper_progress() * 400.f)) * 16777619u;     /* the master playhead */
     h = (h ^ ((uint32_t)P->mode | (uint32_t)P->fx_sel[0] << 4 | (uint32_t)P->fx_sel[1] << 8 | (uint32_t)P->fx_sel[2] << 12 |
-              (uint32_t)P->fx_sel[3] << 16 | (uint32_t)looper_running() << 20 | (uint32_t)looper_bpm() << 21 | (uint32_t)P->learn_fx << 29 |
+              (uint32_t)P->fx_sel[3] << 16 | (uint32_t)looper_running() << 20 | (uint32_t)looper_bpm() << 21 | (uint32_t)P->learn_fx << 29 | (uint32_t)P->sel << 27 | (uint32_t)P->learn_rec << 26 |
               (uint32_t)(P->clear_arm && looper_ticks() - P->clear_t < CLEAR_WAIT) << 30)) * 16777619u;
     for (int o = 0; o < LOOPER_OPTS; o++)
         h = (h ^ (uint32_t)(looper_get_opt(o) * 1000.f + .5f)) * 16777619u;
@@ -985,6 +1018,12 @@ void looper_page_boot(void)
         P->info_set = 0;
         P->fx_set = 0;
     }
+    P->info_set = 1;                                         /* INFO is message 0xc (seen as "INFO=12" on the unit);   */
+    P->info_id = 0xc;                                        /* the backup SRAM does not survive a power cycle, so  */
+    P->info_idx = 0;                                         /* nothing is learned by pressing any more              */
+    P->fx_set = P->rec_set = 0;
+    P->learn_rec = 0;
+    P->sel = 0;
     P->hid_on = 0;
     P->rect_on = 0;
     P->learn_fx = P->clear_arm = 0;
@@ -1038,6 +1077,8 @@ void looper_page_down(uint8_t *view, const int *pt)
     if (zone == Z_NONE)
         return;
     P->track = (uint8_t)t;
+    if (zone != Z_TAB && zone != Z_OPTC && zone != Z_SLIDER && zone != Z_CLEAR)
+        P->sel = (uint8_t)t;                                      /* touching a track's column selects it */
     if (P->info_on)
         info_touch();
     if (zone == Z_TAB) {
@@ -1045,9 +1086,13 @@ void looper_page_down(uint8_t *view, const int *pt)
         P->entered = 0;                                           /* repaint the whole page for the new tab */
         P->sig = 0;
     } else if (zone == Z_OPTC) {
-        if (t == 99)
+        if (t == 99) {
             P->learn_fx = !P->learn_fx;                           /* the next FX button press is remembered */
-        else
+            P->learn_rec = 0;
+        } else if (t == 98) {
+            P->learn_rec = !P->learn_rec;                         /* ... or the REC button */
+            P->learn_fx = 0;
+        } else
             looper_set_opt(t, v);
     } else if (zone == Z_SLIDER) {
         looper_set_opt(t, v);
@@ -1068,6 +1113,8 @@ void looper_page_down(uint8_t *view, const int *pt)
         P->drag_y = (int16_t)d;
         P->drag_v0 = (int16_t)(fx_of(t, p) * 1000.f);
         P->pressed = P_DIAL;
+    } else if (zone == Z_SEL) {
+        P->sel = (uint8_t)t;
     } else if (zone == Z_UNDO) {
         looper_event(t, LOOPER_EV_UNDO);
     } else if (zone == Z_HALF) {
@@ -1137,9 +1184,13 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             struct looper_info k;
             looper_track(knob, &k);
             float step = (float)counts * KNOB_SCALE;
-            if (P->mode == M_SETUP) {                                 /* the four knobs: delay and reverb amounts */
-                static const uint8_t op[4] = {LOOPER_O_GAIN, LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RRET};
-                looper_set_opt(op[knob], looper_get_opt(op[knob]) + step);
+            if (P->mode == M_SETUP || P->mode == M_MORE) {
+                static const uint8_t op_s[4] = {LOOPER_O_GAIN, 0, 0, 0};
+                static const uint8_t op_m[4] = {LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET};
+                if (P->mode == M_MORE)
+                    looper_set_opt(op_m[knob], looper_get_opt(op_m[knob]) + step);
+                else if (knob == 0)
+                    looper_set_opt(op_s[0], looper_get_opt(op_s[0]) + step);
             } else if (P->mode == M_FX && !P->info_on) {
                 int p = P->fx_sel[knob];
                 set_fx(knob, p, fx_of(knob, p) + step * (p == LOOPER_P_FILT ? 2.f : 1.f));
@@ -1192,23 +1243,37 @@ void looper_app_msg(void *app, const uint16_t *msg)
      * must stay the stock button there */
     if (msg && solo_looper_view() && ((const uint8_t *)app)[0x8ca4] == 0x2f) {
         unsigned id = msg[0], idx = *(const uint32_t *)((const uint8_t *)msg + 0xc);
-        if (button_msg(id)) {
+        int special = button_msg(id) || (id >= 0xf4 && id <= 0xf9);
+        if (special) {
             P->btn_id = (uint16_t)id;
             P->btn_index = (uint16_t)idx;
         }
-        if (button_msg(id) && !(id == MSG_BUTTON && (idx == BTN_MIX || idx > 7))) {
-            int is_info = P->info_set && id == P->info_id && (id != MSG_BUTTON || idx == P->info_idx);
-            if (P->learn_fx && !is_info) {                         /* SETUP: LEARN FX BTN, then press it */
-                P->learn_fx = 0;
-                P->fx_set = 1;
-                P->fx_id = (uint16_t)id;
-                P->fx_idx = (uint8_t)idx;
+        int is_mix = id == MSG_BUTTON && idx == BTN_MIX;
+        int is_info = id == P->info_id && (id != MSG_BUTTON || idx == P->info_idx);
+        if (special && !is_mix && !is_info) {
+            if (P->learn_fx || P->learn_rec) {                    /* MORE: LEARN FX / REC BTN, then press it */
+                if (P->learn_fx) {
+                    P->fx_set = 1;
+                    P->fx_id = (uint16_t)id;
+                    P->fx_idx = (uint8_t)idx;
+                } else {
+                    P->rec_set = 1;
+                    P->rec_id = (uint16_t)id;
+                    P->rec_idx = (uint8_t)idx;
+                }
+                P->learn_fx = P->learn_rec = 0;
                 P->sig = 0;
                 return;
             }
-            if (P->fx_set && !is_info && id == P->fx_id && (id != MSG_BUTTON || idx == P->fx_idx)) {
+            if (P->fx_set && id == P->fx_id && (id != MSG_BUTTON || idx == P->fx_idx)) {
                 P->mode = P->mode == M_FX ? M_MAIN : M_FX;         /* the FX button: the looper's FX, and back */
                 P->entered = 0;
+                P->sig = 0;
+                return;
+            }
+            if (P->rec_set && id == P->rec_id && (id != MSG_BUTTON || idx == P->rec_idx)) {
+                looper_event(P->sel, LOOPER_EV_REC_DOWN);          /* the REC button: the selected track (a tap) */
+                looper_event(P->sel, LOOPER_EV_REC_UP);
                 P->sig = 0;
                 return;
             }

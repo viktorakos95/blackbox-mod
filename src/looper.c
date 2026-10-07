@@ -387,8 +387,14 @@ static void undo(int t)
         erase(t);
         return;
     }
-    if (S->undo_track != t || !S->undo_count || (k->mode != LOOPER_PLAY && k->mode != LOOPER_DUB))
+    if (k->mode != LOOPER_PLAY && k->mode != LOOPER_DUB)
         return;
+    if (k->mode == LOOPER_DUB && S->undo_track == t && !S->undo_count)
+        return;                                   /* a pass that has not written a frame yet */
+    if (S->undo_track != t || !S->undo_count) {   /* no overdub pass left to take back: the loop itself goes */
+        erase(t);
+        return;
+    }
     k->mode = k->was_empty ? LOOPER_CLEARING : LOOPER_UNDOING;
     k->gesture = G_IDLE;
     k->area_at = 0;
@@ -1365,7 +1371,7 @@ void looper_track(int t, struct looper_info *out)
     out->muted = k->muted;
     out->reversed = k->rev;
     out->latched = k->gesture == G_LATCHED;
-    out->undo = S->undo_track == t && S->undo_count;
+    out->undo = k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB;       /* something to take back */
     out->armed = k->pend != P_NONE && k->pend_when != W_TARGET;
     out->half = k->half;
     out->level = k->level;
