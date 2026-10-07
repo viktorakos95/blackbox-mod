@@ -452,3 +452,13 @@ int looper_fill_blocked(void *fb, int color, const uint16_t *r)
     }
     return 0;
 }
+
+void looper_page_event(uint32_t w0, uint32_t w1);
+
+/* Diagnostic, from the engine event post stub: remember what is queued while the page shows. */
+void looper_note_event(void *list, const uint32_t *ev)
+{
+    (void)list;
+    if (page_visible())
+        looper_page_event(ev[0], ev[1]);
+}

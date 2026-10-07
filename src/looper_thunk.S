@@ -101,3 +101,20 @@ looper_stage_thunk:
 
     STOCKGUARD guard_line, 0x0808ea83
     STOCKGUARD guard_text, 0x0808ee59
+
+/*
+ * Diagnostic: the engine's event post (FUN_0804f504(list, event), 24-byte events queued for the audio task; the
+ * transport buttons must end up here). Calls looper_note_event(list, event) first, then runs the displaced
+ * `ldr.w r3, [r0, #0x600]` and continues at 0x0804f508.
+ */
+    .global guard_post
+    .thumb_func
+    .type guard_post, %function
+guard_post:
+    push    {r0, r1, r2, r3, r12, lr}
+    bl      looper_note_event
+    pop     {r0, r1, r2, r3, r12, lr}
+    ldr.w   r3, [r0, #0x600]
+    ldr     r12, =0x0804f509
+    bx      r12
+    .ltorg

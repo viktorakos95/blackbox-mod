@@ -144,6 +144,7 @@ struct page {
     uint8_t bset[BTNS], bidx[BTNS];                 /* learned hardware buttons: set, button index ... */
     uint16_t bid[BTNS];                             /* ... and message id, per slot */
     uint32_t rec_t, btn_t, paint_t, dropped;
+    uint32_t ev0[4], ev1[4];                         /* the last distinct engine events queued (diagnostic, shown on MORE) */
     uint8_t paint_req, _r6[3];
     int16_t touch_x, touch_y;
     uint32_t clear_t;                               /* when CLEAR ALL was asked */
@@ -488,6 +489,13 @@ static char *put_uint(char *p, unsigned v)
     } while (v && n < 6);
     while (n)
         *p++ = tmp[--n];
+    return p;
+}
+
+static char *put_hex(char *p, uint32_t v, int digits)
+{
+    for (int i = digits - 1; i >= 0; i--)
+        *p++ = "0123456789abcdef"[(v >> (4 * i)) & 15];
     return p;
 }
 
@@ -888,6 +896,17 @@ static void draw_setup(const struct lay *L)
         p = put_uint(p, (unsigned)(P->touch_y < 0 ? 0 : P->touch_y));
         *p = 0;
         text(6, d + ROW_H + 2, b, C_GREY, 1);
+        char ev[64], *z = ev;                                     /* the last engine events: which one is PLAY / STOP / REC? */
+        *z++ = 'E';
+        *z++ = 'V';
+        for (int i = 0; i < 3; i++) {
+            *z++ = ' ';
+            z = put_hex(z, P->ev0[i] & 0xffffff, 6);
+            *z++ = '.';
+            z = put_hex(z, P->ev1[i] & 0xffff, 4);
+        }
+        *z = 0;
+        text(6, d + ROW_H + 12, ev, C_GREY, 1);
     }
 }
 
@@ -1144,6 +1163,8 @@ void looper_page_boot(void)
     }
     P->paint_req = 0;
     P->dropped = 0;
+    for (int i = 0; i < 4; i++)
+        P->ev0[i] = P->ev1[i] = 0;
     P->learn = 0;
     P->touches = 0;
     P->sel = 0;
@@ -1456,4 +1477,18 @@ void looper_app_msg(void *app, const uint16_t *msg)
 void looper_page_dropped(void)
 {
     P->dropped++;
+}
+
+/* From solo.c: an event was queued for the audio engine while the page shows. Newest first, distinct ones only. */
+void looper_page_event(uint32_t w0, uint32_t w1)
+{
+    for (int i = 0; i < 4; i++)
+        if (P->ev0[i] == w0 && P->ev1[i] == w1)
+            return;
+    for (int i = 3; i > 0; i--) {
+        P->ev0[i] = P->ev0[i - 1];
+        P->ev1[i] = P->ev1[i - 1];
+    }
+    P->ev0[0] = w0;
+    P->ev1[0] = w1;
 }

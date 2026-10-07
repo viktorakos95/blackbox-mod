@@ -324,6 +324,16 @@ the guard word says the page has been painted (BLK1 full / BLK2 normal, cleared 
   guard_fill) only for those margins while the page shows (looper_fill_blocked); dropping every fill (steps 12-14)
   stopped full screen updating. Label: Lok19.
 
+## Step 20 (diagnostic)
+
+Hardware report on step 19: glitches gone, full screen updates, but the looper's REC / STOP / PLAY work while the stock
+transport still reacts too. The GUI dispatcher (FUN_080a2e60) does nothing for 0xf4 / 0xf6 / 0xf7 except clear its INFO
+state, so the transport reaches the sequencer by another route: the engine's event list (FUN_0804f504 posts a 24-byte
+event into a 64-entry list at the engine object + 0x600; the audio task pops them with FUN_0804f4d4). Step 20 hooks the
+post (guard_post -> looper_note_event) and shows the last three distinct events (words 0 and 1) on MORE as
+"EV aaaaaa.bbbb ..." while the page shows, so pressing PLAY / STOP / REC on the page reveals their event ids; the next
+step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok20.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,

@@ -970,6 +970,21 @@ e.uc.mem_write(SCR, b"\x25")
 check("... and not on other screens", fill_blocked(0, 30) == 0)
 e.uc.mem_write(SCR, b"\x2f")
 
+# ---- diagnostic: engine events queued while the page shows
+e.uc.mem_write(SCR, b"\x2f"); e.uc.mem_write(SOLO + 6, b"\x01"); e.uc.mem_write(VIEW + 0x1E40, b"\x01")
+e.call("looper_note_app", APP); e.call("looper_guard", 2)
+e.uc.mem_write(0x3003C100, struct.pack("<6I", 0x00123456, 0x00007777, 0, 0, 0, 0))
+e.call("looper_note_event", 0, 0x3003C100)
+e.call("looper_note_event", 0, 0x3003C100)
+e.uc.mem_write(0x3003C100, struct.pack("<6I", 0x00ABCDEF, 0x00001111, 0, 0, 0, 0))
+e.call("looper_note_event", 0, 0x3003C100)
+check("the event log keeps the newest distinct events first (and one repeat only once)", [e.r32(PAGE + 136), e.r32(PAGE + 140)] == [0x00ABCDEF, 0x00123456], [hex(e.r32(PAGE + 136)), hex(e.r32(PAGE + 140))])
+e.uc.mem_write(SCR, b"\x25")
+e.uc.mem_write(0x3003C100, struct.pack("<6I", 0x00999999, 0, 0, 0, 0, 0))
+e.call("looper_note_event", 0, 0x3003C100)
+check("... and nothing is logged on other screens", e.r32(PAGE + 136) == 0x00ABCDEF)
+e.uc.mem_write(SCR, b"\x2f")
+
 # leaving the page puts the child widgets back
 e.call("solo_set_mode", VIEW, 1)
 check("leaving the page: the children are restored (the one the firmware hid stays hidden)",
