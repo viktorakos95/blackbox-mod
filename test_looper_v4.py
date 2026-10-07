@@ -25,7 +25,7 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 140, 100                                   # engine state: tracks, track size
+T0, TSIZE = 156, 100                                   # engine state: tracks, track size
 LEN, POS, OK, UNDO_T = 12, 16, 8, 44                 # master length, master playhead
 O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
 T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
@@ -94,8 +94,8 @@ def boot():
     e.uc.mem_write(0xC0000000, b"\x11" * 0x100)
     log.clear()
     e.call("looper_boot", ENGINE, count=200_000_000)
-    e.uc.mem_write(STATE + 92 + 9 * 4, struct.pack("<f", 0.0))
-    e.uc.mem_write(STATE + 92 + 11 * 4, struct.pack("<f", 0.0))
+    e.uc.mem_write(STATE + 108 + 9 * 4, struct.pack("<f", 0.0))
+    e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 0.0))
 
 
 def block(l, r=None, base=0.0):
@@ -384,6 +384,32 @@ check("half speed: over 200 blocks (3 master loops) the track stays at T / 2 of 
 ev(0, HALF)
 blocks(2)
 check("half speed off again: back at the master's position", tu(0, T_POS) == st(POS), (tu(0, T_POS), st(POS)))
+
+# transport: PLAY / PAUSE and STOP
+def tcmd(c):
+    e.call("looper_transport", c)
+boot()
+hold(0, 60, tone)
+blocks(10)
+p1 = st(POS)
+tcmd(0)
+blocks(6)
+p2 = st(POS)
+_, o = block([0.0] * N)
+check("PAUSE: silent and the playhead frozen", all(v == 0 for v in o[0]) and st(POS) == p2, (st(POS), p2))
+tcmd(0)
+blocks(10)
+check("PLAY: resumes from where it stopped", st(POS) != p2)
+ev(1, REC_DOWN); blocks(70, 0.1); ev(1, REC_UP); blocks(2)
+tcmd(1)
+blocks(3)
+tcmd(1)
+blocks(6)
+blocks(1)
+check("STOP (nothing recording): paused and rewound to the start", st(POS) == 0 and st(20) == 0, (st(POS), st(20)))
+tcmd(0)
+blocks(3)
+check("PLAY after STOP: plays from the start", 0 < st(POS) <= 4 * N, st(POS))
 
 # stock route: sends are handed to the FX nodes' buses instead of the looper's own effects
 boot()

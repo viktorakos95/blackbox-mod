@@ -138,6 +138,7 @@ struct looper_state {
     uint32_t seq_seen;           /* tick of the last note player call */
     uint32_t restart;            /* the transport started: loops restart (if SYNC) */
     uint32_t clear_req, clear_done;
+    uint32_t tcmd, paused, rewind, pfade;      /* transport: a command waiting, paused, rewind on the next block, fade blocks left */
     uint32_t fx_tail;            /* frames the effects keep running */
     uint32_t dw;                 /* delay write index */
     float gphase;                /* frames since the last grid boundary */
@@ -239,6 +240,7 @@ void looper_boot(void *engine)
     S->seq_seen = 0;
     S->restart = 0;
     S->clear_req = S->clear_done = 0;
+    S->tcmd = S->paused = S->rewind = S->pfade = 0;
     S->fx_tail = 0;
     S->dw = 0;
     S->gphase = 0.f;
@@ -407,7 +409,7 @@ static void request_start(int t)
 {
     vtrack *k = &S->t[t];
     int when = opt_i(LOOPER_O_SYNC) ? W_GRID : W_NOW;
-    if (k->pend || k->half)
+    if (k->pend || k->half || S->paused)
         return;
     if (!S->mlen) {
         if (k->mode != LOOPER_EMPTY || others_busy(t))
@@ -565,6 +567,31 @@ void looper_in(void *obj, float **bufs, int frames)
             S->in_l = bufs[0];
             S->in_r = bufs[1];
             S->in_frames = (uint32_t)frames;
+            if (S->tcmd) {
+                uint32_t c = S->tcmd;
+                S->tcmd = 0;
+                if (c == 2) {                                     /* STOP: first a running take, then pause and rewind */
+                    int busy = 0;
+                    for (int t = 0; t < LOOPER_TRACKS; t++) {
+                        vtrack *k = &S->t[t];
+                        if (k->pend == P_START) {
+                            k->pend = P_NONE;
+                            busy = 1;
+                        } else if (k->pend == P_NONE && (k->mode == LOOPER_REC || k->mode == LOOPER_DUB)) {
+                            request_stop(t);
+                            busy = 1;
+                        }
+                    }
+                    if (!busy) {
+                        S->paused = 1;
+                        S->pfade = 2;
+                        S->rewind = 1;
+                    }
+                } else {                                          /* PLAY / PAUSE */
+                    S->paused = !S->paused;
+                    S->pfade = 2;
+                }
+            }
             if (S->clear_done != S->clear_req) {
                 S->clear_done = S->clear_req;
                 for (int t = 0; t < LOOPER_TRACKS; t++)
@@ -644,7 +671,7 @@ static inline float quant(float x, float q, float qi)
 static void targets(vtrack *k, float *g1)
 {
     int mode = k->mode;
-    int audible = (mode == LOOPER_PLAY || mode == LOOPER_DUB) && !k->muted;
+    int audible = (mode == LOOPER_PLAY || mode == LOOPER_DUB) && !k->muted && !S->paused;
     float pan = k->pan, master = 1.f + 3.f * S->opt[LOOPER_O_GAIN];
     g1[0] = g1[1] = 0.f;
     if (audible) {
@@ -1142,6 +1169,22 @@ static void run(float *bl, float *br, int n)
     struct dsp *d = DSP();
     if (n > MAXN || n <= 0)
         return;
+    if (S->rewind && S->pfade == 0) {                 /* STOP: everything back to the start */
+        S->rewind = 0;
+        S->mpos = S->mcount = 0;
+        for (int t = 0; t < LOOPER_TRACKS; t++) {
+            vtrack *k = &S->t[t];
+            if (k->mode != LOOPER_REC) {
+                k->pos = 0;
+                k->frac = 0.f;
+            }
+        }
+    }
+    if (S->paused) {
+        if (S->pfade == 0)
+            return;                                   /* frozen: the bus is left alone, the positions stand still */
+        S->pfade--;                                   /* a block or two of fade-out first */
+    }
     int sync = opt_i(LOOPER_O_SYNC);
     float gf = grid_frames();
     if (S->restart) {
@@ -1441,6 +1484,17 @@ unsigned looper_len(void)
 unsigned looper_ticks(void)
 {
     return S->ticks;
+}
+
+void looper_transport(int cmd)
+{
+    if (S->magic == MAGIC && !S->tcmd)
+        S->tcmd = cmd == LOOPER_T_STOP ? 2 : 1;
+}
+
+int looper_paused(void)
+{
+    return S->magic == MAGIC && S->paused;
 }
 
 unsigned looper_running(void)

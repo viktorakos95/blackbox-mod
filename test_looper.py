@@ -26,7 +26,7 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 140, 100                                   # engine state: tracks, track size
+T0, TSIZE = 156, 100                                   # engine state: tracks, track size
 LEN, POS, OK, UNDO_T = 12, 16, 8, 44                 # master length, master playhead
 O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
 T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
@@ -95,8 +95,8 @@ def boot():
     e.uc.mem_write(0xC0000000, b"\x11" * 0x100)
     log.clear()
     e.call("looper_boot", ENGINE, count=200_000_000)
-    e.uc.mem_write(STATE + 92 + 9 * 4, struct.pack("<f", 0.0))       # loop make-up gain off: unity, as the checks expect
-    e.uc.mem_write(STATE + 92 + 11 * 4, struct.pack("<f", 0.0))      # not full screen: the geometry the checks expect
+    e.uc.mem_write(STATE + 108 + 9 * 4, struct.pack("<f", 0.0))       # loop make-up gain off: unity, as the checks expect
+    e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 0.0))      # not full screen: the geometry the checks expect
 
 
 def block(l, r=None, base=0.0):
@@ -604,7 +604,7 @@ ROW0 = 16 + 3                                                  # first row, from
 def row(r):
     return ROW0 + r * 22 + 8
 def optv(i):
-    return struct.unpack("<f", e.uc.mem_read(STATE + 92 + 4 * i, 4))[0]
+    return struct.unpack("<f", e.uc.mem_read(STATE + 108 + 4 * i, 4))[0]
 check("SETUP: LENGTH row choices (FOLLOW / MULT / FREE) and the SYNC row", [hit(84 + 10, row(0))[:2], hit(84 + 52 + 10, row(0))[:2], hit(84 + 104 + 10, row(0))[:2], hit(84 + 10, row(1))[:2]] == [(9, 0), (9, 0), (9, 0), (9, 1)], [hit(84 + 10, row(0)), hit(84 + 62, row(0)), hit(84 + 114, row(0)), hit(94, row(1))])
 check("SETUP: the choice index is the value", [hit(94, row(0))[2], hit(146, row(0))[2], hit(198, row(0))[2]] == [0, 1, 2])
 touch("down", 84 + 52 + 10, row(0))
@@ -651,7 +651,7 @@ touch("up", 84 + 60, row(0))
 check("MORE: FX ROUTE choice OWN (1)", optv(10) == 1.0)
 
 opt_sync_off = struct.pack("<f", 0.0)
-for off in (92, 96, 104, 92 + 40):
+for off in (108, 112, 120, 108 + 40):
     e.uc.mem_write(STATE + off, opt_sync_off)
 tab(0)
 f = draw(0)
@@ -664,15 +664,15 @@ draw(0)
 check("SELECT button zone (under the record box)", hit(78 + 10, 19 + 40 + 3 + 5)[0] == 13, hit(78 + 10, 19 + 40 + 3 + 5))
 touch("down", 78 + 10, 19 + 40 + 3 + 5)
 touch("up", 78 + 10, 19 + 40 + 3 + 5)
-check("tapping SELECT selects track 2 without a record event", e.r8(PAGE + 96) == 1 and evs(1)[:2] == evs(1)[:2], e.r8(PAGE + 96))
+check("tapping SELECT selects track 2 without a record event", e.r8(PAGE + 89) == 1, e.r8(PAGE + 89))
 f = draw(0)
 check("the selected track's SELECT button is pink", any(x[4] == 0x20 and x[2] == 73 for x in f))
 tab(3)
-e.uc.mem_write(PAGE + 99, b"\x01")                                    # LEARN REC BTN tapped
+e.uc.mem_write(PAGE + 90, b"\x02")                                    # LEARN REC BTN tapped (slot 2)
 appmsg.clear()
 e.uc.mem_write(MSG, struct.pack("<H", 0xF5) + bytes(10) + struct.pack("<i", 0))
 e.call("looper_app_msg", APP, MSG)
-check("learning the REC button (message 0xf5): remembered and swallowed", e.r8(PAGE + 97) == 1 and e.r16(PAGE + 100) == 0xF5 and not appmsg, (e.r8(PAGE + 97), e.r16(PAGE + 100), appmsg))
+check("learning the REC button (message 0xf5): remembered and swallowed", e.r8(PAGE + 98) == 1 and e.r16(PAGE + 112) == 0xF5 and not appmsg, (e.r8(PAGE + 98), e.r16(PAGE + 112), appmsg))
 before = list(e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 2))
 e.call("looper_app_msg", APP, MSG)
 after = list(e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 2))
@@ -706,23 +706,27 @@ check("on another screen the INFO button goes to the stock handler (the Looper f
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
 # FX button learning and the tab toggle
 appmsg.clear()
-e.uc.mem_write(PAGE + 90, b"\x01")                                    # LEARN FX BTN was tapped
+blocks(30)
+e.uc.mem_write(PAGE + 90, b"\x01")                                    # LEARN FX BTN was tapped (slot 1)
 button(6)
-check("learning the FX button: swallowed, remembered (message 0xf9, button 6)", e.r8(PAGE + 88) == 1 and e.r8(PAGE + 89) == 6 and e.r16(PAGE + 92) == 0xF9 and e.r8(PAGE + 90) == 0 and not appmsg, (e.r8(PAGE + 88), e.r8(PAGE + 89), appmsg))
+check("learning the FX button: swallowed, remembered (message 0xf9, button 6)", e.r8(PAGE + 97) == 1 and e.r8(PAGE + 103) == 6 and e.r16(PAGE + 110) == 0xF9 and e.r8(PAGE + 90) == 0 and not appmsg, (e.r8(PAGE + 97), e.r8(PAGE + 103), appmsg))
+blocks(30)
 button(6)
 check("the FX button on the Looper page: the looper's FX tab, not the Blackbox's", e.r8(PAGE + 76) == 1 and not appmsg, (e.r8(PAGE + 76), appmsg))
+blocks(30)
 button(6)
 check("... and back to MAIN", e.r8(PAGE + 76) == 0 and not appmsg)
 e.uc.mem_write(APP + 0x8CA4, b"\x25")
+blocks(30)
 button(6)
 check("on other screens the FX button is the stock one", appmsg == [(0xF9, 6)], appmsg)
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
-e.uc.mem_write(STATE + 92 + 11 * 4, struct.pack("<f", 1.0))            # FULL SCREEN on
+e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 1.0))            # FULL SCREEN on
 e.call("looper_page_enter", VIEW)
 f = draw(0)
 check("full screen: the page grows upward over the screen's own top bar (240 high, same bottom edge)", f[0][:4] == (0, 0, 320, 240), f[0][:4])
 check("... and still draws inside the screen", all(x[1] >= 0 and x[1] + x[3] <= 240 for x in f))
-e.uc.mem_write(STATE + 92 + 11 * 4, struct.pack("<f", 0.0))
+e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 0.0))
 e.call("looper_page_enter", VIEW)
 draw(0)
 # ---- the drawing guard and the touch hit test
@@ -799,11 +803,73 @@ e.call("looper_page_enter", VIEW)
 appmsg.clear()
 before = list(e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 2))
 e.uc.mem_write(MSG, struct.pack("<H", 0xF4) + bytes(10) + struct.pack("<i", 8))
-e.uc.mem_write(PAGE + 97, b"\x01"); e.uc.mem_write(PAGE + 98, b"\x08"); e.uc.mem_write(PAGE + 100, struct.pack("<H", 0xF4))
+e.uc.mem_write(PAGE + 98, b"\x01"); e.uc.mem_write(PAGE + 104, b"\x08"); e.uc.mem_write(PAGE + 112, struct.pack("<H", 0xF4))
 e.call("looper_app_msg", APP, MSG)
 e.call("looper_app_msg", APP, MSG)
 after = list(e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 2))
 check("REC button (0xf4, 8) is preset: one tap on the selected track; the release right after is ignored", after[0] == before[0] + 1 and not appmsg, (before, after, appmsg))
+tab(0)
+
+# INFO + tap on each record box toggles that track's mute
+tab(0)
+for t in range(4):
+    e.uc.mem_write(STATE + T0 + TSIZE * t + 1, b"\x00")
+e.uc.mem_write(PAGE + 7, b"\x00")
+button(0, msg_id=0xC)
+check("INFO on (setup for the per-track mute check)", e.r8(PAGE + 7) == 1)
+for t in range(4):
+    x = 1 + 78 * t + 40
+    touch("down", x, 30)
+    touch("up", x, 30)
+    blocks(3)
+check("INFO + tap on each of the four record boxes mutes each track", [tr(t, 1) for t in range(4)] == [1, 1, 1, 1], [tr(t, 1) for t in range(4)])
+for t in range(4):
+    x = 1 + 78 * t + 40
+    touch("down", x, 30)
+    touch("up", x, 30)
+    blocks(3)
+check("... and a second round unmutes them", [tr(t, 1) for t in range(4)] == [0, 0, 0, 0], [tr(t, 1) for t in range(4)])
+button(0, msg_id=0xC)
+
+# ---- BACK / STOP / PLAY learning, INFO cycling on the FX tab
+def learn(slot, msg_id, idx):
+    blocks(30)
+    e.uc.mem_write(PAGE + 90, bytes([slot]))
+    e.uc.mem_write(MSG, struct.pack("<H", msg_id) + bytes(10) + struct.pack("<i", idx))
+    e.call("looper_app_msg", APP, MSG)
+def press(msg_id, idx):
+    blocks(30)
+    appmsg.clear()
+    e.uc.mem_write(MSG, struct.pack("<H", msg_id) + bytes(10) + struct.pack("<i", idx))
+    e.call("looper_app_msg", APP, MSG)
+learn(3, 0xF9, 0)                                # BACK
+learn(4, 0xF9, 1)                                # STOP
+learn(5, 0xF9, 2)                                # PLAY
+check("BACK, STOP and PLAY learnt (slots 3 4 5)", e.r8(PAGE + 99) == 1 and e.r8(PAGE + 100) == 1 and e.r8(PAGE + 101) == 1)
+e.uc.mem_write(PAGE + 89, b"\x02")                # select track 3
+before = list(e.uc.mem_read(STATE + T0 + TSIZE * 2 + 8, 7))
+press(0xF9, 0)
+after = list(e.uc.mem_read(STATE + T0 + TSIZE * 2 + 8, 7))
+check("BACK: an undo event for the selected track (3), swallowed", after[6] == before[6] + 1 and not appmsg, (before, after, appmsg))
+press(0xF9, 2)
+blocks(2)
+check("PLAY / PAUSE swallowed", not appmsg)
+press(0xF9, 2)
+blocks(2)
+press(0xF9, 1)
+blocks(2)
+check("STOP / PLAY / BACK are swallowed on the page", not appmsg)
+e.uc.mem_write(APP + 0x8CA4, b"\x25")
+press(0xF9, 1)
+check("on other screens they are the stock buttons", appmsg == [(0xF9, 1)], appmsg)
+e.uc.mem_write(APP + 0x8CA4, b"\x2f")
+tab(1)
+fx0 = list(e.uc.mem_read(PAGE + 77, 4))
+e.uc.mem_write(PAGE + 77, bytes([0, 3, 3, 5]))
+blocks(30)
+button(0, msg_id=0xC)
+fx1 = list(e.uc.mem_read(PAGE + 77, 4))
+check("INFO on the FX tab steps every track's dial on by one (filter drive drive rvb -> res dly dly filter)", fx1 == [1, 4, 4, 0] and e.r8(PAGE + 7) == 0, fx1)
 tab(0)
 
 # leaving the page puts the child widgets back
