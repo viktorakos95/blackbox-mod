@@ -860,12 +860,12 @@ after = list(e.uc.mem_read(STATE + T0 + TSIZE * 2 + 8, 7))
 check("BACK: an undo event for the selected track (3), swallowed", after[6] == before[6] + 1 and not appmsg, (before, after, appmsg))
 press(0xF9, 2)
 blocks(2)
-check("PLAY / PAUSE: the looper acts; the stock handler runs with its engine posts dropped (HW STOP PLAY = LOOPER)", appmsg == [(0xF9, 2)], appmsg)
+check("PLAY / PAUSE: the looper only (HW STOP PLAY = LOOPER)", appmsg == [], appmsg)
 press(0xF9, 2)
 blocks(2)
 press(0xF9, 1)
 blocks(2)
-check("STOP: the looper acts; the stock handler runs with its posts dropped", appmsg == [(0xF9, 1)], appmsg)
+check("STOP: the looper only", appmsg == [], appmsg)
 e.uc.mem_write(STATE + 164 + 12 * 4, struct.pack("<f", 1.0))              # HW STOP PLAY: +STOCK
 press(0xF9, 1)
 check("with +STOCK the sequencer gets STOP too", appmsg == [(0xF9, 1)], appmsg)
@@ -983,6 +983,27 @@ e.uc.mem_write(SCR, b"\x25")
 e.uc.mem_write(0x3003C100, struct.pack("<6I", 0x00999999, 0, 0, 0, 0, 0))
 e.call("looper_note_event", 0, 0x3003C100)
 check("... and nothing is logged on other screens", e.r32(PAGE + 136) == 0x00ABCDEF)
+e.uc.mem_write(SCR, b"\x2f")
+
+# the key events' second ring (audio task): PLAY / STOP / REC are dropped while the page shows
+KO = 0x3003C200
+def ring_b(entries):
+    e.uc.mem_write(KO + 0xC08, struct.pack("<II", 0, len(entries)))
+    for i, (kid, kidx) in enumerate(entries):
+        e.uc.mem_write(KO + 0x608 + 24 * i, struct.pack("<H", kid))
+        e.uc.mem_write(KO + 0x610 + 24 * i, struct.pack("<H", 0))
+        e.uc.mem_write(KO + 0x614 + 24 * i, struct.pack("<I", kidx))
+def key_pop():
+    e.call("looper_key_pop", KO, 0x3003F000)
+    return e.uc.reg_read(A.UC_ARM_REG_R0), e.r16(0x3003F000), e.r32(0x3003F000 + 0xC)
+ring_b([(0xF7, 10), (0xF6, 9), (0xF4, 8), (0xF9, 4)])
+check("key ring: PLAY, STOP and REC are dropped, FX is delivered", key_pop() == (1, 0xF9, 4), key_pop())
+ring_b([(0xF7, 10)])
+e.uc.mem_write(OPTS + 4 * 12, struct.pack("<f", 1.0)) if False else None
+check("key ring: empty after the drops", key_pop()[0] == 0)
+e.uc.mem_write(SCR, b"\x25")
+ring_b([(0xF7, 10)])
+check("key ring: on other screens PLAY is delivered", key_pop() == (1, 0xF7, 10))
 e.uc.mem_write(SCR, b"\x2f")
 
 # leaving the page puts the child widgets back

@@ -34,4 +34,7 @@ PATCHES = [
     (0x0804F504, bytes.fromhex("d0f80036"), b_w(0x0804F504, sym["guard_post"])),
     # app message dispatch: note hardware button messages (finding INFO)
     hook(0x080A23CC, 0x080A2E60, "looper_app_msg"),
+    # the key events' second ring (audio task): PLAY / STOP / REC dropped while the page shows (solo.c looper_key_pop)
+    hook(0x0804CCC8, 0x08043A2C, "looper_key_pop"),
+    hook(0x0804CE30, 0x08043A2C, "looper_key_pop"),
 ]

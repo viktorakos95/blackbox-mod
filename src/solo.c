@@ -478,6 +478,26 @@ int looper_note_event(void *list, const uint32_t *ev)
     return 0;
 }
 
+/* The key scanner posts every key event twice: to the GUI queue (looper_app_msg sees it) and to a second ring the audio
+ * task pops with FUN_08043a2c (callers 0x0804ccc8 / 0x0804ce30), which is where PLAY / STOP / REC reach the sequencer.
+ * Wrapped here: while the page shows, those three keys (index 8 REC, 9 STOP, 10 PLAY) are dropped from that ring
+ * (STOP / PLAY only with HW STOP PLAY = LOOPER). The GUI queue still delivers them to the page. */
+typedef int (*keypop_fn)(void *obj, uint8_t *ev);
+int looper_key_pop(void *obj, uint8_t *ev)
+{
+    for (;;) {
+        int r = ((keypop_fn)0x08043a2du)(obj, ev);
+        if (!r || !page_visible())
+            return r;
+        unsigned id = *(const uint16_t *)ev, idx = *(const uint32_t *)(ev + 0xc);
+        if (id < 0xf4 || id > 0xf8 || idx < 8 || idx > 10)
+            return r;
+        if (idx != 8 && looper_get_opt(LOOPER_O_HWBTN) > .5f)
+            return r;
+        looper_page_dropped();
+    }
+}
+
 unsigned looper_screen_id(void)
 {
     return app_screen();

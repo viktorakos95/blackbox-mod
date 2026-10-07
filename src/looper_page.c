@@ -1482,11 +1482,6 @@ void looper_app_msg(void *app, const uint16_t *msg)
                 P->sig = 0;
                 if ((slot == B_STOP || slot == B_PLAY) && looper_get_opt(LOOPER_O_HWBTN) > .5f)
                     break;                                         /* HW STOP PLAY +STOCK: the sequencer / clock gets them too */
-                if (slot == B_STOP || slot == B_PLAY) {
-                    P->swallow = 1;                                /* the stock handler runs, but what it posts to the engine is dropped */
-                    fw_app_msg(app, msg);
-                    P->swallow = 0;
-                }
                 return;
             }
         }

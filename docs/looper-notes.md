@@ -374,3 +374,13 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
   0x49/0x4f/0x70 to buttons).
 - MULT: a held take shorter than the master becomes 1/2, 1/4 or 1/8 of it (starts at the master wrap, stops at once and
   records on to the division's end); a tap-started take is still whole master loops. Build label "Lok22".
+
+## Steps 23-26 (transport buttons)
+- The engine event log and the stock-handler-with-dropped-posts idea (step 25, `SW` stayed 0) were dead ends.
+- Found it: the key scanner (FUN around 0x08043880, reads GPIO) writes each key event to TWO rings: the GUI queue
+  (ring at +0x600, popped by FUN_08043a84 in the GUI task = what looper_app_msg sees) and a second one (+0x608, indexes
+  +0xc08 / 0xc0c, popped by FUN_08043a2c in the audio task at 0x0804ccc8 and 0x0804ce30). The second is how PLAY / STOP /
+  REC reach the sequencer. Step 26 wraps that pop (`looper_key_pop`, solo.c): while the page shows, entries with id
+  0xf4..0xf8 and index 8 (REC) / 9 (STOP) / 10 (PLAY) are dropped (STOP / PLAY only with HW STOP PLAY = LOOPER); the
+  GUI queue still feeds the page. Button ids drift (REC 244 down / 245 up): other ids of a learned button are taken.
+- Screen history on MORE (`S:`), whole-word event ring, QUANT 1 BAR, MULT divisions. Label Lok26.
