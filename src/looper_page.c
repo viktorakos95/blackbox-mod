@@ -110,7 +110,7 @@ static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /
 #define TOPBAR    14             /* the row of values; its line is at d = TOPBAR + 1 */
 #define FOOT      14             /* the footer; its line is at d = hg - FOOT - 1 */
 #define REC_H     40             /* the record box */
-#define FX_N 16                                                   /* the FX tab's controls, two pages of eight: six dials, REV, HALF; STAB RPT SPEED DROP TRIM STUT SCRM SWAP */
+#define FX_N 16                                                   /* the FX tab's controls, two pages of eight: six dials, REV, HALF; STAB RPT SPEED DROP TRIM STUT SCRM PTCH */
 #define FX_PAGE(c) ((c) >> 3)
 /* The square's tiles (0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right) lie like the encoders on the panel: left top is
  * track 2's (knob 1), left bottom track 1's (knob 0), right top track 3's, right bottom track 4's. */
@@ -666,7 +666,7 @@ static char *put_pct(char *p, float v)
 
 static int fx_bipolar(int q)                                       /* engine parameters that go -1..1 */
 {
-    return q == LOOPER_P_FILT || q == LOOPER_P_SPEED || q == LOOPER_P_DROP || q == LOOPER_P_STUT || q == LOOPER_P_SCRM;
+    return q == LOOPER_P_FILT || q == LOOPER_P_SPEED || q == LOOPER_P_DROP || q == LOOPER_P_STUT || q == LOOPER_P_SCRM || q == LOOPER_P_PTCH;
 }
 
 static float fx_default(int q)
@@ -685,13 +685,13 @@ static float fx_value(const struct looper_info *k, int param)
         return (param == 6 ? k->reversed : k->half) ? 1.f : 0.f;
     if (param >= 8)
         return param == 8 ? k->stab : param == 9 ? k->rpt : param == 10 ? k->speed : param == 11 ? k->drop :
-               param == 12 ? k->trim : param == 13 ? k->stut : param == 14 ? k->scrm : k->swap;
+               param == 12 ? k->trim : param == 13 ? k->stut : param == 14 ? k->scrm : k->ptch;
     return param == LOOPER_P_FILT ? k->filt : param == LOOPER_P_RES ? k->res : param == LOOPER_P_CRUNCH ? k->crunch :
            param == LOOPER_P_DRIVE ? k->drive : param == LOOPER_P_SEND_D ? k->send_d : k->send_r;
 }
 
 static const char *const fx_name[FX_N] = {"FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB", "REV", "HALF",
-                                          "STAB", "RPT", "SPEED", "DROP", "TRIM", "STUT", "SCRM", "SWAP"};
+                                          "STAB", "RPT", "SPEED", "DROP", "TRIM", "STUT", "SCRM", "PTCH"};
 
 /* The text a knob shows on top: "LVL 0.0dB" / the pan line / the selected FX parameter's value. */
 static void fx_text(char *b, int param, float v)
@@ -729,6 +729,16 @@ static void fx_text(char *b, int param, float v)
             for (; *o; o++)
                 *p++ = *o;
             p = put_pct(p, a);
+        }
+    } else if (param == 15) {                                     /* PTCH: semitones */
+        int semi = (int)(v * 24.f + (v >= 0.f ? .5f : -.5f));
+        if (semi == 0) {
+            *p++ = 'O';
+            *p++ = 'F';
+            *p++ = 'F';
+        } else {
+            *p++ = semi < 0 ? '-' : '+';
+            p = put_uint(p, (unsigned)(semi < 0 ? -semi : semi));
         }
     } else if (param == 13) {                                     /* STUT: "<1/4" repeats what just played, ">1/4" what comes next */
         float a = v < 0.f ? -v : v;
@@ -903,7 +913,7 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
             break;
         float v = fx_value(k, p);
         dial_h(x + 2 + (j & 1) * (DIAL + 1), y0 + (j >> 1) * (th + 1), th, fx_name[p],
-               p == LOOPER_P_FILT || p == 10 || p == 11 || p == 13 || p == 14 ? (v + 1.f) * .5f : v, 0, (p == 6 || p == 7) && v > .5f);
+               p == LOOPER_P_FILT || p == 10 || p == 11 || p == 13 || p == 14 || p == 15 ? (v + 1.f) * .5f : v, 0, (p == 6 || p == 7) && v > .5f);
     }
     if (P->sel == t) {                                            /* the one pink square: this column's block of four = knobs 1-4 */
         int by = y0 + (FX_GROUP & 1) * 2 * (th + 1) - 2;

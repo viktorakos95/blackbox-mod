@@ -206,7 +206,7 @@ def tone(k):                                   # a signal that is easy to follow
 
 
 O_LEN, O_SYNC, O_QUANT, O_SRC, O_DTIME, O_DFB, O_DRET, O_RSIZE, O_RRET, O_GAIN, O_ROUTE, O_FULL, O_HW, O_MON, O_PITCH = range(15)
-P_FILT, P_RES, P_CRUNCH, P_DRIVE, P_SD, P_SR, P_STAB, P_RPT, P_SPEED, P_DROP, P_TRIM, P_STUT, P_SCRM, P_SWAP = range(14)
+P_FILT, P_RES, P_CRUNCH, P_DRIVE, P_SD, P_SR, P_STAB, P_RPT, P_SPEED, P_DROP, P_TRIM, P_STUT, P_SCRM, P_PTCH = range(14)
 
 # ---------------------------------------------------------------- length modes
 boot()
@@ -258,6 +258,23 @@ e.uc.mem_write(STATE + T0 + TSIZE * 2 + T_DOWN, struct.pack("<I", tu(2, T_DOWN) 
 ev(2, REC_UP)
 blocks(40)
 check("MULT: a held half-length take becomes 1/2 of the master", mode(2) == PLAY and tu(2, T_LEN) == 30 * N, (mode(2), tu(2, T_LEN) / N))
+ev(2, MUTE_DOWN); blocks(760); ev(2, MUTE_UP); blocks(70)
+# MULT: the take begins with the master loop, even when REC is let go before that (it is latched then), and the loop starts with the master's
+blocks(7)
+ev(2, REC_DOWN); blocks(3)
+check("MULT: armed, waiting for the master loop to begin", mode(2) == EMPTY and tr(2, T_PEND) == 1, (mode(2), tr(2, T_PEND)))
+e.uc.mem_write(STATE + T0 + TSIZE * 2 + T_DOWN, struct.pack("<I", tu(2, T_DOWN) - 100))   # held long enough to count as a hold
+ev(2, REC_UP)
+check("MULT: let go before the wrap: the take stays armed (latched)", mode(2) == EMPTY and tr(2, T_PEND) == 1, (mode(2), tr(2, T_PEND)))
+for _ in range(100):
+    block([0.05] * N)
+    if mode(2) == RECM:
+        break
+check("MULT: recording began on the master's first frame", mode(2) == RECM and st(POS) < 2 * N, (mode(2), st(POS)))
+blocks(40)
+ev(2, REC_DOWN); blocks(2); ev(2, REC_UP)
+blocks(80)
+check("MULT: a latched take ends on a whole master loop and its playhead starts with the master's", mode(2) == PLAY and tu(2, T_LEN) == 60 * N and tu(2, T_POS) == st(POS) and tu(2, T_PHASE) == 0, (mode(2), tu(2, T_LEN) / N, tu(2, T_POS), st(POS), tu(2, T_PHASE)))
 ev(2, MUTE_DOWN); blocks(760); ev(2, MUTE_UP); blocks(70)
 opt(O_LEN, 0)
 
@@ -723,17 +740,21 @@ param(0, P_SCRM, 0.0)
 blocks(10)
 sa, ss = slope(flat(4))
 check("SCRM off: back to the loop", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
-param(0, P_SWAP, 0.2)
-if mode(0) == DUB:
-    ev(0, REC_DOWN); blocks(5)
-ev(0, REC_DOWN); blocks(150)
-v = flat(2)
-check("SWAP: the old loop is muted while overdubbing", mode(0) == DUB and max(abs(x) for x in v) < 0.03, (mode(0), max(abs(x) for x in v)))
-ev(0, REC_UP); blocks(150)
+param(0, P_PTCH, 0.5)                            # +12 semitones: an octave up, same speed
+blocks(30)
+p0 = st(POS)
+v = flat(20)
+sl_up = slope(v)[0]
+check("PTCH +12: the saw climbs twice as fast (an octave up)", 1.7 < sl_up / base_abs < 2.3, (sl_up, base_abs))
+check("PTCH: the loop's position is untouched (the playhead moved 20 blocks)", (st(POS) - p0) % (60 * N) == 20 * N, (st(POS), p0))
+param(0, P_PTCH, -0.5)                           # an octave down
+blocks(30)
+sl_dn = slope(flat(20))[0]
+check("PTCH -12: half the slope (an octave down)", 0.4 < sl_dn / base_abs < 0.6, (sl_dn, base_abs))
+param(0, P_PTCH, 0.0)
+blocks(30)
 sa, ss = slope(flat(4))
-check("SWAP: back when the overdub ends", mode(0) == PLAY and abs(sa / base_abs - 1.0) < 0.1, (mode(0), sa))
-param(0, P_SWAP, 0.0)
-blocks(400)
+check("PTCH off: back to the loop", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
 param(0, P_DROP, -0.6)
 quiet = 0
 for _ in range(1200):

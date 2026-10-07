@@ -460,3 +460,10 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
   monitor lives on the pads) and SPEED PITCH TAPE / KEEP (granular: 2048 frame grains every 1024, read at normal speed,
   for SPEED and HALF). The MORE diagnostics shrank to one line.
 - STAB wow / flutter back to the earlier size (+-4 % / 1.2 % at full, coming in slightly early). Label Lok35.
+
+## Step 36
+- MULT takes begin with the master loop again (the loops start together, like FOLLOW); if REC is let go while the take is
+  still waiting for the wrap it becomes a latched take (stopped by the next tap), so a short hold no longer cancels it.
+  Held takes of 75 % of the master or more round to whole master loops, below that 1/2, 1/4, 1/8.
+- SWAP replaced by PTCH (-1..1 = -24..+24 semitones, whole semitones): pitch shift without changing the speed, the
+  keep-pitch grain engine read at the pitch ratio. STAB noise down to 0.12 % at most. Label Lok36.
