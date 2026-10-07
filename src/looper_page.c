@@ -559,7 +559,7 @@ static const char *state_name(const struct looper_info *k)
     case LOOPER_REC:
         return "REC";
     case LOOPER_DUB:
-        return "DUB";
+        return k->first ? "REC" : "DUB";
     case LOOPER_PLAY:
         return k->muted ? "MUTED" : "PLAY";
     case LOOPER_CLEARING:
@@ -814,7 +814,7 @@ static void draw_rec(int t, const struct lay *L, const struct looper_info *k)
 {
     int x = L->cx, w = L->cw, colour = track_colour[t];
     int live = k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB;
-    int scol = k->armed ? C_YELLOW : k->mode == LOOPER_REC ? C_REC : k->mode == LOOPER_DUB ? C_YELLOW : k->mode == LOOPER_PLAY ? (k->muted ? C_RED : C_GREEN)
+    int scol = k->armed ? C_YELLOW : k->mode == LOOPER_REC || k->first ? C_REC : k->mode == LOOPER_DUB ? C_YELLOW : k->mode == LOOPER_PLAY ? (k->muted ? C_RED : C_GREEN)
              : k->mode == LOOPER_EMPTY ? C_RAIL : C_WHITE;
     int rx = x + 3, rw = w - 6, ry = L->rec_y, rh = L->rec_h;
     frame(rx, ry, rw, rh, scol, 1);

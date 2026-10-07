@@ -30,7 +30,7 @@ enum { LOOPER_SRC_INPUT, LOOPER_SRC_MIX };                         /* LOOPER_O_S
 enum { LOOPER_T_PLAY, LOOPER_T_STOP };
 
 struct looper_info {
-    int mode, muted, reversed, latched, undo, undo_kind, armed, half;       /* undo_kind: what UNDO would do next: 0 nothing, 1 take the last pass off, 2 delete the loop */
+    int mode, muted, reversed, latched, undo, undo_kind, armed, half, first;       /* undo_kind: what UNDO would do next: 0 nothing, 1 take the last pass off, 2 delete the loop */
     float level, pan, filt, res, crunch, drive, send_d, send_r;
     float stab, rpt, speed, drop, trim, stut, scrm, ptch;
     float progress;                               /* playhead 0..1; while a first take records: fraction of the memory */

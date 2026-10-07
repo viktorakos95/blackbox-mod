@@ -489,6 +489,7 @@ static void request_start(int t)
     }
     k->pend = P_START;
     k->tap = 0;
+    k->target = 0;
     k->pend_when = (uint8_t)when;
     k->gesture = G_HOLD;
     k->t_down = S->ticks;
@@ -531,8 +532,17 @@ static void event(int t, int ev)
             break;
         if (S->ticks - k->t_down >= HOLD_MIN) {
             if (k->pend == P_START && k->mode == LOOPER_EMPTY && S->mlen && opt_i(LOOPER_O_LEN) == LOOPER_LEN_MULT) {
-                k->gesture = G_LATCHED;           /* released while still waiting for the master loop to begin: a latched take */
-                k->tap = 1;
+                uint32_t held = (S->ticks - k->t_down) * MAXN;     /* released while still waiting for the master loop to begin */
+                if (held * 4 < S->mlen * 3) {     /* a short hold: the take that begins with the master loop lasts 1/2, 1/4 or 1/8 of it */
+                    uint32_t len = S->mlen / 2;
+                    for (int i = 0; i < 2 && held * 3 < len * 2; i++)
+                        len /= 2;
+                    k->target = len < MIN_TAKE ? MIN_TAKE : len;
+                    k->gesture = G_IDLE;
+                } else {                          /* a long one: a latched take, ended by the next tap */
+                    k->gesture = G_LATCHED;
+                    k->tap = 1;
+                }
             } else {
                 request_stop(t);                  /* held: records while held */
             }
@@ -1385,6 +1395,10 @@ static void apply(int t, int b)
                 k->rec = 0;
                 k->own = opt_i(LOOPER_O_LEN) == LOOPER_LEN_MULT ? OWN_MULT : OWN_FREE;
                 k->phase = S->mcount * S->mlen + S->mpos + (uint32_t)b;
+                if (k->target) {                      /* a short hold set the length: the take ends by itself */
+                    k->pend = P_STOP;
+                    k->pend_when = W_TARGET;
+                }
             }
         } else if (k->mode == LOOPER_PLAY) {
             k->was_empty = 0;
@@ -1882,7 +1896,9 @@ void looper_track(int t, struct looper_info *out)
     out->reversed = k->rev;
     out->latched = k->gesture == G_LATCHED;
     out->undo = k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB;       /* something to take back */
-    out->undo_kind = !out->undo ? 0 : (S->undo_track == t && S->undo_count && k->mode != LOOPER_DUB) ? 1 :
+    out->first = k->was_empty && k->mode == LOOPER_DUB;                /* a new track's first pass over the master length (FOLLOW) */
+    out->undo_kind = !out->undo ? 0 : k->was_empty ? 2 :                /* the only pass of a track: UNDO deletes it */
+                     (S->undo_track == t && S->undo_count && k->mode != LOOPER_DUB) ? 1 :
                      k->mode == LOOPER_DUB && S->undo_track == t ? (S->undo_count ? 1 : 0) : 2;
     out->armed = k->pend != P_NONE && k->pend_when != W_TARGET;
     out->half = k->half;
@@ -1918,8 +1934,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '3';                                   /* the build: step 36 */
-        *p++ = '6';
+        *p++ = '3';                                   /* the build: step 37 */
+        *p++ = '7';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';

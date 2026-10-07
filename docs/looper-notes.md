@@ -467,3 +467,10 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
   Held takes of 75 % of the master or more round to whole master loops, below that 1/2, 1/4, 1/8.
 - SWAP replaced by PTCH (-1..1 = -24..+24 semitones, whole semitones): pitch shift without changing the speed, the
   keep-pitch grain engine read at the pitch ratio. STAB noise down to 0.12 % at most. Label Lok36.
+
+## Step 37
+- A new track in FOLLOW (it records over the master length as a DUB) is shown as REC and its UNDO says DEL: it is the
+  track's only pass (`looper_info.first`, `undo_kind` 2 while `was_empty`).
+- MULT 1/2, 1/4, 1/8: let go of REC while the take is still waiting for the master loop and the hold (press to release)
+  decides the length: under 75 % of the master it becomes 1/2, 1/4 or 1/8; the take begins with the master loop and ends
+  by itself (`k->target`, W_TARGET). A long hold, or a tap, is a latched take of whole master loops. Label Lok37.

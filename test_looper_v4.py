@@ -490,6 +490,36 @@ check("UNDO kind: after an overdub pass: take the pass off (1)", undo_kind(0) ==
 ev(0, UNDO); blocks(70)
 check("UNDO kind: after the pass is off: delete the loop (2)", undo_kind(0) == 2, undo_kind(0))
 
+# a new track in FOLLOW (it records over the master's length as a DUB): shown as REC, and UNDO would delete it
+opt(O_LEN, 0)
+ev(1, REC_DOWN); blocks(20, 0.05)
+e.call("looper_track", 1, 0x3003D000)
+check("FOLLOW: the first pass of an empty track is shown as REC (first = 1) and UNDO would delete (2)", e.r32(0x3003D000 + 32) == 1 and e.r32(0x3003D000 + 20) == 2, (e.r32(0x3003D000 + 32), e.r32(0x3003D000 + 20)))
+ev(1, REC_UP); blocks(80, 0.05)
+ev(1, REC_DOWN); blocks(3); ev(1, REC_UP); blocks(70)
+e.call("looper_track", 1, 0x3003D000)
+check("... and after that pass UNDO still says delete (2), not 'undo pass'", e.r32(0x3003D000 + 20) == 2 and e.r32(0x3003D000 + 32) == 0, (e.r32(0x3003D000 + 20), e.r32(0x3003D000 + 32)))
+
+# MULT: a short hold set before the master loop begins gives a 1/2 take that starts with the master loop and ends by itself
+boot()
+opt(O_LEN, 0)
+hold(0, 200, tone)
+opt(O_LEN, 1)
+blocks(30)
+ev(1, REC_DOWN); blocks(70)
+ev(1, REC_UP)
+check("MULT: held 70 blocks (of a 200 block master) and let go while waiting: still armed", mode(1) == EMPTY and tr(1, T_PEND) == 1, (mode(1), tr(1, T_PEND)))
+began = None
+for _ in range(400):
+    block([0.05] * N)
+    if mode(1) == RECM and began is None:
+        began = st(POS)
+        break
+check("... it begins with the master loop", began is not None and began < 2 * N, began)
+blocks(120)
+check("... and ends by itself after 1/2 of the master (100 blocks)", mode(1) == PLAY and tu(1, T_LEN) == 100 * N and tu(1, T_PHASE) == 0, (mode(1), tu(1, T_LEN) / N))
+opt(O_LEN, 0)
+
 # transport: PLAY / PAUSE and STOP
 def tcmd(c):
     e.call("looper_transport", c)
