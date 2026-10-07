@@ -1434,8 +1434,10 @@ void looper_app_msg(void *app, const uint16_t *msg)
                 return;
             }
             for (int slot = 1; slot < BTNS; slot++) {
-                if (!P->bset[slot] || id != P->bid[slot] || idx != P->bidx[slot])
+                if (!P->bset[slot] || idx != P->bidx[slot])
                     continue;
+                if (id != P->bid[slot] && !(id >= 0xf4 && id <= 0xf9 && P->bid[slot] >= 0xf4 && P->bid[slot] <= 0xf9))
+                    continue;                                  /* the panel buttons' id drifts (REC read 244, then 245): the index tells them apart */
                 if (looper_ticks() - P->btn_t <= 20) {             /* a press and its release can both arrive: one action */
                     if ((slot == B_STOP || slot == B_PLAY) && looper_get_opt(LOOPER_O_HWBTN) > .5f)
                         break;
