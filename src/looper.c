@@ -229,7 +229,8 @@ struct dsp {
     float rp[LOOPER_TRACKS];                     /* the play head (frames, fractional) while the Blooper controls act */
     float wb[LOOPER_TRACKS], wl[LOOPER_TRACKS];  /* the stutter's window: where it starts (may be < 0) and how long */
     uint32_t scr_n[LOOPER_TRACKS];               /* the slice the scrambler last decided on */
-    uint8_t stut_on[LOOPER_TRACKS], gv[LOOPER_TRACKS];
+    uint8_t stut_on[LOOPER_TRACKS], gv[LOOPER_TRACKS], stut_mode_l[LOOPER_TRACKS];
+    float stut_len_l[LOOPER_TRACKS];             /* the size and side the stutter's window was taken with */
     uint32_t gst[LOOPER_TRACKS][2];              /* the keep-pitch grains: start, age (-1 = idle), direction */
     int32_t gag[LOOPER_TRACKS][2], ghc[LOOPER_TRACKS];
     int8_t gdir[LOOPER_TRACKS][2];
@@ -484,6 +485,8 @@ static void request_start(int t)
     } else if (k->mode == LOOPER_EMPTY) {
         if (opt_i(LOOPER_O_LEN) == LOOPER_LEN_MULT)
             when = W_MWRAP;                       /* a MULT take begins with the master loop, so the loops start together */
+        else if (opt_i(LOOPER_O_LEN) == LOOPER_LEN_FREE)
+            when = W_NOW;                         /* FREE is free: no grid, whether SYNC is on or not */
     } else if (k->mode != LOOPER_PLAY) {
         return;
     }
@@ -507,7 +510,8 @@ static void request_stop(int t)
     if (k->pend == P_STOP)
         return;
     if (k->mode == LOOPER_REC) {
-        ;
+        if (k->own == OWN_FREE)
+            when = W_NOW;                         /* a FREE take ends where it is let go */
     } else if (k->mode != LOOPER_DUB) {
         k->gesture = G_IDLE;
         return;
@@ -998,8 +1002,11 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
     const float s16 = 1.f / 32767.f;
     float rp = d->rp[t];
     if (on) {
-        if (p->stut_mode && !d->stut_on[t]) {         /* the stutter just came on: a slice before or after the play head */
+        if (p->stut_mode && (!d->stut_on[t] || p->stut_mode != d->stut_mode_l[t] || p->stut_len != d->stut_len_l[t])) {
+            /* the stutter just came on, or the knob moved to another size / side: a new slice before or after the play head */
             d->stut_on[t] = 1;
+            d->stut_mode_l[t] = (uint8_t)p->stut_mode;
+            d->stut_len_l[t] = p->stut_len;
             d->wl[t] = p->stut_len < (float)len ? p->stut_len : (float)len;
             d->wb[t] = p->stut_mode == 1 ? rp - d->wl[t] : rp;
             rp = d->wb[t];
@@ -1934,8 +1941,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '3';                                   /* the build: step 37 */
-        *p++ = '7';
+        *p++ = '3';                                   /* the build: step 38 */
+        *p++ = '8';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';

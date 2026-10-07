@@ -474,3 +474,12 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
 - MULT 1/2, 1/4, 1/8: let go of REC while the take is still waiting for the master loop and the hold (press to release)
   decides the length: under 75 % of the master it becomes 1/2, 1/4 or 1/8; the take begins with the master loop and ends
   by itself (`k->target`, W_TARGET). A long hold, or a tap, is a latched take of whole master loops. Label Lok37.
+
+## Step 38
+- FREE ignores SYNC: with a master loop set, a FREE take starts at once and ends where it is let go whatever SYNC is
+  (the grid only applies to the first take, FOLLOW and the grid-quantized starts of the others). Label Lok38.
+
+## Step 38
+- FREE ignores SYNC: with a master loop set, a FREE take starts at once and ends where it is let go whatever SYNC is
+  (the grid only applies to the first take, FOLLOW and the quantized starts of the others). Label Lok38.
+- STUT takes a new slice whenever the knob moves to another size or side (no need to go back to zero first).

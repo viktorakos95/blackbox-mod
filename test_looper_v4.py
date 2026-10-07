@@ -520,6 +520,47 @@ blocks(120)
 check("... and ends by itself after 1/2 of the master (100 blocks)", mode(1) == PLAY and tu(1, T_LEN) == 100 * N and tu(1, T_PHASE) == 0, (mode(1), tu(1, T_LEN) / N))
 opt(O_LEN, 0)
 
+# FREE is free even with SYNC on: no grid on its start or its end
+boot()
+opt(O_LEN, 0)
+hold(0, 200, tone)
+opt(O_SYNC, 1)
+opt(O_QUANT, 2)                                  # 1/16: 6000 frames = 23.4 blocks
+opt(O_LEN, 2)
+blocks(7)
+ev(1, REC_DOWN); blocks(2)
+check("FREE with SYNC on: the take starts at once (no wait for the grid)", mode(1) == RECM, mode(1))
+blocks(68)
+ev(1, REC_UP); blocks(2)
+L = tu(1, T_LEN)
+check("... and ends where it is let go (not a multiple of the 1/16 grid, not rounded to bars)", mode(1) == PLAY and L % 6000 != 0 and 70 * N <= L <= 76 * N, (mode(1), L, L % 6000))
+opt(O_SYNC, 0)
+opt(O_LEN, 0)
+
+# STUT: moving the knob to another size while it is on takes a new slice (it does not stick to the first one)
+boot()
+ev(0, REC_DOWN)
+for b in range(60):
+    block([((b * N + i) / (60.0 * N)) * 0.5 for i in range(N)])
+ev(0, REC_UP)
+blocks(70)
+level(0, 1.0)
+blocks(5)
+param(0, P_STUT, 0.9)                           # 1/32 beat = 750 frames
+blocks(6)
+v = flat2(60)
+p750 = sum(abs(v[i] - v[i + 750]) for i in range(2000, 6000)) / 4000
+p6000 = sum(abs(v[i] - v[i + 1125]) for i in range(2000, 6000)) / 4000
+check("STUT 1/32: repeats every 750 frames (the ramp is back at its start), not every 1125", p750 < 0.002 and p6000 > 0.005, (p750, p6000))
+param(0, P_STUT, 0.5)                           # moved on without going through zero: 1/4 beat = 6000 frames
+blocks(6)
+v = flat2(120)
+p750 = sum(abs(v[i] - v[i + 750]) for i in range(4000, 10000)) / 6000
+p6000 = sum(abs(v[i] - v[i + 6000]) for i in range(4000, 10000)) / 6000
+check("STUT moved to 1/4 beat without going back to zero: a new slice of 6000 frames", p6000 < 0.002 and p750 > 0.005, (p750, p6000))
+param(0, P_STUT, 0.0)
+blocks(5)
+
 # transport: PLAY / PAUSE and STOP
 def tcmd(c):
     e.call("looper_transport", c)
