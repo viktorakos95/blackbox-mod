@@ -411,3 +411,10 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
 - Memory: the looper owns pool entries 384..615 (231 x 64 KB = 76.8 s of stereo 16 bit), split into five fixed areas of
   15.36 s. That is a layout choice, not a hardware limit: a shared block allocator could give one track up to ~61 s
   when the others are short, and several undo levels / redo (swap the loop with the saved pass) from the same pool.
+
+## Step 31: one pink square
+- FX tab: the pink square is ONE block of four controls (2 x 2 tiles) in the selected track's column; knobs 1-4 turn
+  its four controls (top-left, top-right, bottom-left, bottom-right) on that track. Blocks: FILT RES CRSH DRIVE / DLY
+  RVB REV HALF / STAB RPT SPEED DROP / TRIM STOP. INFO steps through the blocks, then on to the next track's; a tap on
+  a tile puts the square on its block and selects the track (a tap inside the square on REV / HALF switches it; dragging
+  a dial still works). The top row shows the four controls' values. Label Lok31.

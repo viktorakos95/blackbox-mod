@@ -112,6 +112,7 @@ static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /
 #define REC_H     40             /* the record box */
 #define FX_N 14                                                   /* the FX tab's controls, two pages of eight: six dials, REV, HALF; STAB RPT SPEED DROP TRIM STOP */
 #define FX_PAGE(c) ((c) >> 3)
+#define FX_GROUP (P->fx_sel[0] & 3)                              /* the pink square: a 2 x 2 block of four controls = the four knobs; it is in track P->sel's column */
 #define BTN       34             /* the bottom row: the pan dial and the REV / MUTE buttons */
 #define DIAL      34             /* width of the pan dial's box */
 
@@ -142,7 +143,7 @@ struct page {
     uint32_t hid[2];             /* the cells' child widgets' own hidden flags, saved while the page hides them */
     int32_t ytop, hg, s, sx;     /* geometry read from the cells at the last draw */
     int32_t x0, w;               /* the page's left edge and width, in fill space */
-    uint8_t mode, fx_sel[LOOPER_TRACKS];            /* the tab; per track the selected FX dial */
+    uint8_t mode, fx_sel[LOOPER_TRACKS];            /* the tab; fx_sel[0] = the FX group (the pink square's block of four controls) */
     uint8_t drag_param, drag_opt;                   /* a dial / slider being dragged */
     int16_t drag_y, drag_v0;                        /* dial drag: start y, start value x 1000 */
     uint8_t clear_arm, sel, learn, _r5;            /* CLEAR ALL asked once; the selected track; the slot being learned */
@@ -410,7 +411,7 @@ int looper_page_hit(int x, int d, int *track, float *val)
         int th = fx_tile_h(&L);
         if (d >= y0 && d < y0 + 4 * (th + 1) && xx >= 0 && xx < 2 * (DIAL + 1) && (d - y0) % (th + 1) < th &&
             xx % (DIAL + 1) < DIAL) {
-            int c = FX_PAGE(P->fx_sel[0]) * 8 + ((d - y0) / (th + 1)) * 2 + xx / (DIAL + 1);
+            int c = (FX_GROUP >> 1) * 8 + ((d - y0) / (th + 1)) * 2 + xx / (DIAL + 1);
             if (c >= FX_N)
                 return Z_NONE;
             *val = (float)c;
@@ -739,7 +740,13 @@ static void draw_top(int t, const struct lay *L, const struct looper_info *k)
         if (*nm)
             p = put_pct(p, opt_get(P->mode == M_SETUP ? op_s[t] : op_m[t]));
     } else if (P->mode == M_FX) {
-        fx_text(b, P->fx_sel[t], fx_value(k, P->fx_sel[t]));
+        struct looper_info ks;                                    /* knob t turns control 4 * group + t of the selected track */
+        looper_track(P->sel & 3, &ks);
+        int c = FX_GROUP * 4 + t;
+        if (c < FX_N)
+            fx_text(b, c, fx_value(&ks, c));
+        else
+            b[0] = 0;
         p = b;
         while (*p)
             p++;
@@ -839,14 +846,24 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
     frame(x + 2, L->sel_y, w - 4, 13, sc, 1);
     text_c(x + 2, L->sel_y + 3, w - 4, P->sel == t ? "SELECTED" : "SELECT", P->sel == t ? C_PINK : C_GREY, 1);
     int y0 = fx_top(L), th = fx_tile_h(L);
-    int pg = FX_PAGE(P->fx_sel[0]);
-    for (int j = 0; j < 8; j++) {                                 /* the pink box is one control for all four tracks */
+    int pg = FX_GROUP >> 1;
+    for (int j = 0; j < 8; j++) {
         int p = pg * 8 + j;
         if (p >= FX_N)
             break;
         float v = fx_value(k, p);
         dial_h(x + 2 + (j & 1) * (DIAL + 1), y0 + (j >> 1) * (th + 1), th, fx_name[p],
-               p == LOOPER_P_FILT || p == 10 ? (v + 1.f) * .5f : v, P->fx_sel[0] == p, (p == 6 || p == 7) && v > .5f);
+               p == LOOPER_P_FILT || p == 10 ? (v + 1.f) * .5f : v, 0, (p == 6 || p == 7) && v > .5f);
+    }
+    if (P->sel == t) {                                            /* the one pink square: this column's block of four = knobs 1-4 */
+        int by = y0 + (FX_GROUP & 1) * 2 * (th + 1) - 2;
+        frame(x, by, 2 * (DIAL + 1) + 3, 2 * (th + 1) + 3, C_PINK, 1);
+        frame(x + 1, by + 1, 2 * (DIAL + 1) + 1, 2 * (th + 1) + 1, C_PINK, 1);
+        for (int i = 0; i < 4; i++) {                             /* which knob is which */
+            char dg[2] = {(char)('1' + i), 0};
+            if (FX_GROUP * 4 + i < FX_N)
+                text(x + 4 + (i & 1) * (DIAL + 1), y0 + ((FX_GROUP & 1) * 2 + (i >> 1)) * (th + 1) + th - 9, dg, C_PINK, 1);
+        }
     }
     int y1 = y0 + 4 * (th + 1), bw = (w - 4) / 2 - 1, hb = fx_btn_h(L), ty = (hb - 8) / 2;
     int mc = !live ? C_RAIL : k->muted ? C_RED : C_GREEN;
@@ -1332,8 +1349,9 @@ void looper_page_down(uint8_t *view, const int *pt)
         }
     } else if (zone == Z_FX) {
         int p = (int)(v + .5f);
-        int was = P->fx_sel[0] == p;
-        set_fx_sel(p);                                            /* a tap moves the pink box (for all four tracks) */
+        int was = P->sel == t && FX_GROUP == (p >> 2);
+        P->sel = (uint8_t)t;                                      /* a tap moves the one pink square to that block of four */
+        set_fx_sel(p >> 2);
         if (p == 6 || p == 7) {
             if (was)                                              /* REV / HALF: a tap on the selected one switches it */
                 looper_event(t, p == 6 ? LOOPER_EV_REVERSE : LOOPER_EV_HALF);
@@ -1415,7 +1433,7 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             struct looper_info k;
             looper_track(knob, &k);
             float step = (float)counts * KNOB_SCALE;
-            if (P->mode == M_MAIN || P->mode == M_FX)
+            if (P->mode == M_MAIN)
                 P->sel = (uint8_t)knob;                                   /* altering a track's setting selects it */
             if (P->mode == M_SETUP || P->mode == M_MORE) {
                 static const uint8_t op_s[4] = {LOOPER_O_GAIN, 0, 0, 0};
@@ -1425,14 +1443,15 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
                 else if (knob == 0)
                     looper_set_opt(op_s[0], looper_get_opt(op_s[0]) + step);
             } else if (P->mode == M_FX) {
-                int p = P->fx_sel[0];
-                if (p == 6 || p == 7) {                                   /* REV / HALF: turn right = on, left = off */
-                    int on = looper_info_of(knob, p);
+                int p = FX_GROUP * 4 + knob, tk = P->sel & 3;             /* knob n turns the n-th control of the pink square, on the selected track */
+                if (p >= FX_N) {
+                } else if (p == 6 || p == 7) {                            /* REV / HALF: turn right = on, left = off */
+                    int on = looper_info_of(tk, p);
                     if ((counts > 0) != on)
-                        looper_event(knob, p == 6 ? LOOPER_EV_REVERSE : LOOPER_EV_HALF);
+                        looper_event(tk, p == 6 ? LOOPER_EV_REVERSE : LOOPER_EV_HALF);
                 } else {
                     int q = fxp(p);
-                    set_fx(knob, q, fx_of(knob, q) + step * (q == LOOPER_P_FILT || q == LOOPER_P_SPEED ? 2.f : 1.f));
+                    set_fx(tk, q, fx_of(tk, q) + step * (q == LOOPER_P_FILT || q == LOOPER_P_SPEED ? 2.f : 1.f));
                 }
             } else if (P->mode == M_MAIN && (((P->pan_sel >> knob) & 1) || P->info_on)) {
                 looper_set_pan(knob, k.pan + step * 2.f);
@@ -1470,7 +1489,12 @@ static int info_button(unsigned id, unsigned idx)
     if (id != P->info_id || (id == MSG_BUTTON && idx != P->info_idx))
         return 0;
     if (P->mode == M_FX) {                                         /* FX tab: INFO moves the pink box on by one (all four tracks) */
-        set_fx_sel((P->fx_sel[0] + 1) % FX_N);
+        if (FX_GROUP == 3) {                                      /* INFO moves the square on: its blocks, then the next track's */
+            P->sel = (uint8_t)((P->sel + 1) & 3);
+            set_fx_sel(0);
+        } else {
+            set_fx_sel(FX_GROUP + 1);
+        }
         P->sig = 0;
         return 1;
     }
