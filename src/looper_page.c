@@ -155,6 +155,8 @@ struct page {
     uint8_t scr_h[8];                               /* the last distinct screen ids the app showed (newest first) */
     uint32_t h0[6];                                 /* the last distinct engine events, whole first word, newest first */
     uint16_t h1[6];
+    uint8_t swallow, sw_n;                          /* a transport button's message is in the stock handler: its engine events are dropped */
+    uint16_t sw_id[3];                              /* the ids of the events it tried to post (newest first) */
 };
 #define P ((volatile struct page *)0x38800f00u)
 #define PMAGIC 0x50414732u
@@ -906,6 +908,16 @@ static void draw_setup(const struct lay *L)
             y = put_hex(y, P->scr_h[i], 2);
         }
         *y = 0;
+        *y++ = ' ';
+        *y++ = 'S';
+        *y++ = 'W';
+        *y++ = ' ';
+        y = put_uint(y, P->sw_n);
+        for (int i = 0; i < 3; i++) {
+            *y++ = ' ';
+            y = put_hex(y, P->sw_id[i], 2);
+        }
+        *y = 0;
         text(6, d + 22, bv, C_GREY, 1);
         for (int r = 0; r < 2; r++) {                             /* the last six engine events, whole */
             char eb[64], *g = eb;
@@ -1436,8 +1448,11 @@ void looper_app_msg(void *app, const uint16_t *msg)
             for (int slot = 1; slot < BTNS; slot++) {
                 if (!P->bset[slot] || idx != P->bidx[slot])
                     continue;
-                if (id != P->bid[slot] && !(id >= 0xf4 && id <= 0xf9 && P->bid[slot] >= 0xf4 && P->bid[slot] <= 0xf9))
-                    continue;                                  /* the panel buttons' id drifts (REC read 244, then 245): the index tells them apart */
+                if (id != P->bid[slot]) {
+                    if (id >= 0xf4 && id <= 0xf9 && P->bid[slot] >= 0xf4 && P->bid[slot] <= 0xf9)
+                        return;                                /* the same button's other message (REC: 244 down, 245 up): taken, not an action */
+                    continue;
+                }
                 if (looper_ticks() - P->btn_t <= 20) {             /* a press and its release can both arrive: one action */
                     if ((slot == B_STOP || slot == B_PLAY) && looper_get_opt(LOOPER_O_HWBTN) > .5f)
                         break;
@@ -1467,6 +1482,11 @@ void looper_app_msg(void *app, const uint16_t *msg)
                 P->sig = 0;
                 if ((slot == B_STOP || slot == B_PLAY) && looper_get_opt(LOOPER_O_HWBTN) > .5f)
                     break;                                         /* HW STOP PLAY +STOCK: the sequencer / clock gets them too */
+                if (slot == B_STOP || slot == B_PLAY) {
+                    P->swallow = 1;                                /* the stock handler runs, but what it posts to the engine is dropped */
+                    fw_app_msg(app, msg);
+                    P->swallow = 0;
+                }
                 return;
             }
         }
@@ -1477,6 +1497,18 @@ void looper_app_msg(void *app, const uint16_t *msg)
 }
 
 /* From solo.c: a stock line / text draw was dropped (shown on MORE, to tell whether the hooks fire). */
+int looper_page_swallow(uint32_t w0)
+{
+    if (!P->swallow)
+        return 0;
+    for (int i = 2; i > 0; i--)
+        P->sw_id[i] = P->sw_id[i - 1];
+    P->sw_id[0] = (uint16_t)w0;
+    if (P->sw_n < 255)
+        P->sw_n++;
+    return 1;
+}
+
 void looper_page_dropped(void)
 {
     P->dropped++;

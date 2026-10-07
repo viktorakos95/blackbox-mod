@@ -423,6 +423,7 @@ void looper_text_draw(uint8_t *w, void *ctx)
 
 /* From the line / text stubs: 1 = drop this stock draw (the page is showing and is not the one drawing). */
 void looper_page_dropped(void);
+int looper_page_swallow(uint32_t w0);
 
 int looper_stock_blocked(void)
 {
@@ -466,6 +467,10 @@ int looper_note_event(void *list, const uint32_t *ev)
     /* The transport buttons' events (seen on the unit as 0x49, 0x4f and 0x70 for PLAY, STOP and REC in some order):
      * dropped while the page shows, so the buttons are the looper's alone; HW STOP PLAY = +STOCK lets them through. */
     uint32_t id = ev[0] & 0xffffffu;
+    if (looper_page_swallow(ev[0])) {
+        looper_page_dropped();
+        return 1;
+    }
     if (0 && (id == 0x49 || id == 0x4f || id == 0x70) && looper_get_opt(LOOPER_O_HWBTN) < .5f) {
         looper_page_dropped();
         return 1;
