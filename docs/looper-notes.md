@@ -366,3 +366,11 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
 
 - Track names / labels on the cells (needs text drawing), pan, a master looper level, tempo-synced length,
   undo, choosing the output.
+
+## Step 22
+- QUANT gained "1 BAR" (4 beats): the sync grid for starts/stops can now be a whole bar.
+- MORE: the learn/STOCK FX buttons are gone; the page is the options plus diagnostics: `LAST`, `EV` (last two engine
+  events, SCR, CLK, R) and `FX= REC= BACK= STOP= PLAY=` (the first engine event after each learned button's press, to map
+  0x49/0x4f/0x70 to buttons).
+- MULT: a held take shorter than the master becomes 1/2, 1/4 or 1/8 of it (starts at the master wrap, stops at once and
+  records on to the division's end); a tap-started take is still whole master loops. Build label "Lok22".

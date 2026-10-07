@@ -13,7 +13,7 @@ enum { LOOPER_EV_REC_DOWN, LOOPER_EV_REC_UP, LOOPER_EV_MUTE_DOWN, LOOPER_EV_MUTE
 enum { LOOPER_P_FILT, LOOPER_P_RES, LOOPER_P_CRUNCH, LOOPER_P_DRIVE, LOOPER_P_SEND_D, LOOPER_P_SEND_R, LOOPER_PARAMS };
 
 /* Global options (looper_set_opt): the first five and LOOPER_O_ROUTE are choices (whole numbers), the rest amounts 0..1.
- * QUANT: 0 = 1/4, 1 = 1/8, 2 = 1/16. ROUTE: 0 = the Blackbox's own delay and reverb, 1 = the looper's own.
+ * QUANT: 0 = 1/4, 1 = 1/8, 2 = 1/16, 3 = 1 bar. ROUTE: 0 = the Blackbox's own delay and reverb, 1 = the looper's own.
  * GAIN: the loop's make-up gain, 1 + 3 x amount (0 .. +12 dB). */
 enum { LOOPER_O_LEN, LOOPER_O_SYNC, LOOPER_O_QUANT, LOOPER_O_SRC, LOOPER_O_DTIME,
        LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET, LOOPER_O_GAIN, LOOPER_O_ROUTE, LOOPER_O_FULL, LOOPER_O_HWBTN, LOOPER_OPTS };      /* HWBTN: STOP / PLAY: 0 = the looper only, 1 = the sequencer too (REC is always the looper's) */

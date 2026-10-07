@@ -238,6 +238,17 @@ L = tu(2, T_LEN)
 check("MULT: stopped on a master loop start, length a whole multiple of the master (2 x 60 blocks)", mode(2) == PLAY and L == 120 * N, (mode(2), L, L / N))
 check("MULT: the track's playhead is the master's", tu(2, T_POS) % (60 * N) == st(POS), (tu(2, T_POS), st(POS)))
 ev(2, MUTE_DOWN); blocks(760); ev(2, MUTE_UP); blocks(70)
+# MULT, a held take shorter than the master: a division of it (1/2 here: 30 of 60 blocks)
+ev(2, REC_DOWN)
+for _ in range(120):
+    block([0.05] * N)
+    if mode(2) == RECM:
+        break
+blocks(28)
+ev(2, REC_UP)
+blocks(40)
+check("MULT: a held half-length take becomes 1/2 of the master", mode(2) == PLAY and tu(2, T_LEN) == 30 * N, (mode(2), tu(2, T_LEN) / N))
+ev(2, MUTE_DOWN); blocks(760); ev(2, MUTE_UP); blocks(70)
 opt(O_LEN, 0)
 
 # ---------------------------------------------------------------- clear all

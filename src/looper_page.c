@@ -152,6 +152,9 @@ struct page {
     int16_t touch_x, touch_y;
     uint32_t clear_t;                               /* when CLEAR ALL was asked */
     int32_t vrect[4];                               /* the mixer view's own rectangle, while the page widens it */
+    uint32_t press_t;                               /* the last learned button press, and which slot (diagnostic) */
+    uint32_t press_slot;
+    uint32_t bev[BTNS];                             /* the first engine event after each button's press */
 };
 #define P ((volatile struct page *)0x38800f00u)
 #define PMAGIC 0x50414732u
@@ -281,7 +284,7 @@ struct optrow {
 static const struct optrow rows_setup[] = {
     {"LENGTH", LOOPER_O_LEN, 3, {"FOLLOW", "MULT", "FREE", 0}},
     {"SYNC", LOOPER_O_SYNC, 2, {"OFF", "ON", 0, 0}},
-    {"QUANT", LOOPER_O_QUANT, 3, {"1/4", "1/8", "1/16", 0}},
+    {"QUANT", LOOPER_O_QUANT, 4, {"1/4", "1/8", "1/16", "1 BAR"}},
     {"SOURCE", LOOPER_O_SRC, 2, {"INPUT", "MIX", 0, 0}},
     {"FULL SCREEN", LOOPER_O_FULL, 2, {"OFF", "ON", 0, 0}},
     {"LOOP GAIN K1", LOOPER_O_GAIN, 0, {0, 0, 0, 0}},
@@ -350,7 +353,7 @@ int looper_page_hit(int x, int d, int *track, float *val)
         int r = (d - row_d(&L, 0)) / ROW_H;
         if (d < row_d(&L, 0) || r > OPT_ROWS + 1 || (d - row_d(&L, 0)) % ROW_H >= ROW_H - 3)
             return Z_NONE;
-        if (P->mode == M_MORE && r >= OPT_ROWS) {                 /* two rows of three buttons: FX REC BACK / STOP PLAY STOCK */
+        if (0) {
             int b = (x - 6) / 102;
             if (x < 6 || b > 2 || (x - 6) % 102 >= 96)
                 return Z_NONE;
@@ -849,31 +852,6 @@ static void draw_setup(const struct lay *L)
         *p = 0;
         text(OPT_X + 120, d + 5, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
     } else {
-        static const char *const nm[BTNS] = {"", "FX", "REC", "BACK", "STOP", "PLAY"};
-        for (int i = 0; i < 6; i++) {                             /* two rows of three buttons */
-            int slot = i < 5 ? i + 1 : 0, x = 6 + (i % 3) * 102, y = d + (i / 3) * ROW_H;
-            char lb[16], *q = lb;
-            if (slot) {
-                const char *z = P->learn == slot ? "PRESS " : P->bset[slot] ? "" : "LEARN ";
-                for (; *z; z++)
-                    *q++ = *z;
-                for (const char *w = nm[slot]; *w; w++)
-                    *q++ = *w;
-                if (P->learn != slot && P->bset[slot]) {
-                    for (const char *w = " LEARNT"; *w; w++)
-                        *q++ = *w;
-                }
-            } else {
-                for (const char *z = "STOCK FX >"; *z; z++)
-                    *q++ = *z;
-            }
-            *q = 0;
-            int on = slot ? P->bset[slot] : P->bset[B_FX];
-            int col = slot && P->learn == slot ? C_PINK : on ? C_GREEN : C_RAIL;
-            frame(x, y, 96, ROW_H - 4, col, 1);
-            text_c(x, y + 5, 96, lb, col == C_RAIL ? C_LIGHT : col, 1);
-        }
-        d += ROW_H;
         /* the last button message the page saw, the frame buffer's size and the touch probe, on one line */
         for (const char *q = "LAST "; *q; q++)
             *p++ = *q;
@@ -898,15 +876,13 @@ static void draw_setup(const struct lay *L)
             *p++ = *q;
         p = put_uint(p, (unsigned)(P->touch_y < 0 ? 0 : P->touch_y));
         *p = 0;
-        text(6, d + ROW_H + 2, b, C_GREY, 1);
-        char ev[64], *z = ev;                                     /* the last engine events: which one is PLAY / STOP / REC? */
+        text(6, d + 2, b, C_GREY, 1);
+        char ev[80], *z = ev;                                     /* the last engine events: which one is PLAY / STOP / REC? */
         *z++ = 'E';
         *z++ = 'V';
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 2; i++) {
             *z++ = ' ';
-            z = put_hex(z, P->ev0[i] & 0xffffff, 6);
-            *z++ = '.';
-            z = put_hex(z, P->ev1[i] & 0xffff, 4);
+            z = put_hex(z, P->ev0[i] & 0xffffff, 2);
         }
         *z++ = ' ';
         *z++ = 'S';
@@ -921,7 +897,21 @@ static void draw_setup(const struct lay *L)
             *z++ = *q;
         z = put_uint(z, (unsigned)(looper_rate() * 1000.f));
         *z = 0;
-        text(6, d + ROW_H + 12, ev, C_GREY, 1);
+        text(6, d + 12, ev, C_GREY, 1);
+        char bv[64], *y = bv;                                     /* which engine event followed each button's press */
+        static const char *const nm[BTNS] = {"", "FX", "REC", "BACK", "STOP", "PLAY"};
+        for (int i = 1; i < BTNS; i++) {
+            for (const char *q = nm[i]; *q; q++)
+                *y++ = *q;
+            *y++ = '=';
+            if (P->bev[i])
+                y = put_hex(y, P->bev[i] & 0xffffff, 2);
+            else
+                *y++ = '-';
+            *y++ = ' ';
+        }
+        *y = 0;
+        text(6, d + 22, bv, C_GREY, 1);
     }
 }
 
@@ -1438,6 +1428,9 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     return;
                 }
                 P->btn_t = looper_ticks();
+                P->press_t = P->btn_t;
+                P->press_slot = (uint8_t)slot;
+                P->bev[slot] = 0;
                 switch (slot) {
                 case B_FX:
                     P->mode = P->mode == M_FX ? M_MAIN : M_FX;     /* the FX button: the looper's FX, and back */
@@ -1479,6 +1472,8 @@ void looper_page_dropped(void)
 /* From solo.c: an event was queued for the audio engine while the page shows. Newest first, distinct ones only. */
 void looper_page_event(uint32_t w0, uint32_t w1)
 {
+    if (P->press_slot && looper_ticks() - P->press_t <= 60 && !P->bev[P->press_slot])
+        P->bev[P->press_slot] = (w0 & 0xffffff) | 0x1000000;
     for (int i = 0; i < 4; i++)
         if (P->ev0[i] == w0 && P->ev1[i] == w1)
             return;

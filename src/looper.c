@@ -114,6 +114,7 @@ struct track {
     uint8_t was_empty, mute_held, mute_fired, area_at;      /* area_at: clear / undo progress, in blocks */
     uint8_t ev_seq[EVENTS], ev_done[EVENTS];
     uint8_t pend, pend_when, half, own;
+    uint8_t tap, _pad[1];                                    /* MULT: the take was started by a tap (one master loop) */
     uint32_t t_down, deadline, t_mute;
     uint32_t len, pos, rec, target;                          /* frames; pos = the next frame to play */
     float frac;                                              /* half speed: position between frames */
@@ -371,9 +372,9 @@ static inline float beat_frames(void)
 
 static inline float grid_frames(void)
 {
-    static const float f[3] = {1.f, .5f, .25f};                         /* 1/4, 1/8, 1/16 of a beat's 4 */
+    static const float f[4] = {1.f, .5f, .25f, 4.f};                    /* 1/4, 1/8, 1/16 of a beat, 1 bar */
     int q = opt_i(LOOPER_O_QUANT);
-    return beat_frames() * f[q < 0 ? 0 : q > 2 ? 2 : q];
+    return beat_frames() * f[q < 0 ? 0 : q > 3 ? 3 : q];
 }
 
 /* --- gestures */
@@ -457,6 +458,7 @@ static void request_start(int t)
         return;
     }
     k->pend = P_START;
+    k->tap = 0;
     k->pend_when = (uint8_t)when;
     k->gesture = G_HOLD;
     k->t_down = S->ticks;
@@ -475,7 +477,7 @@ static void request_stop(int t)
         return;
     if (k->mode == LOOPER_REC) {
         if (k->own == OWN_MULT)
-            when = W_MWRAP;
+            when = !k->tap && k->rec + k->rec / 8 < S->mlen ? W_NOW : W_MWRAP;   /* a short held take: a 1/2, 1/4, 1/8 */
     } else if (k->mode != LOOPER_DUB) {
         k->gesture = G_IDLE;
         return;
@@ -500,8 +502,10 @@ static void event(int t, int ev)
             break;
         if (S->ticks - k->t_down >= HOLD_MIN)
             request_stop(t);                      /* held: records while held */
-        else
+        else {
             k->gesture = G_LATCHED;               /* a tap starts it and it keeps going until the next tap */
+            k->tap = 1;
+        }
         break;
     case LOOPER_EV_MUTE_DOWN:
         k->mute_held = 1;
@@ -1128,15 +1132,30 @@ static void apply(int t, int b)
         k->pend = P_NONE;
         finalize(t, len, b);
     } else if (k->own == OWN_MULT) {
-        uint32_t ml = S->mlen, n = (rec + ml / 2) / ml;
-        if (n < 1) {
-            erase(t);
-            return;
+        uint32_t ml = S->mlen, len;
+        if (when == W_TARGET) {
+            len = k->target;                      /* kept recording up to a division of the master loop */
+        } else if (rec >= ml - ml / 8 || k->tap) {
+            uint32_t n = (rec + ml / 2) / ml;     /* whole master loops; a tap is exactly one */
+            if (n < 1)
+                n = 1;
+            while (n > 1 && n * ml > MAX_FRAMES)
+                n--;
+            len = n * ml;
+        } else {                                  /* shorter than the master: 1/2, 1/4 or 1/8 of it, the nearest */
+            len = ml / 2;
+            for (int i = 0; i < 2 && len > rec + len / 2; i++)
+                len /= 2;
+            if (len < MIN_TAKE)
+                len = MIN_TAKE;
+            if (len > rec) {                      /* keep recording to the division's end */
+                k->pend_when = W_TARGET;
+                k->target = len;
+                return;
+            }
         }
-        while (n > 1 && n * ml > MAX_FRAMES)
-            n--;
         k->pend = P_NONE;
-        finalize(t, n * ml, b);
+        finalize(t, len, b);
     } else {
         k->pend = P_NONE;
         finalize(t, rec, b);
@@ -1560,8 +1579,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '2';                                   /* the build: step 21 */
-        *p++ = '1';
+        *p++ = '2';                                   /* the build: step 22 */
+        *p++ = '2';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';
