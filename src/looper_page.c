@@ -103,9 +103,11 @@ enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE };
 struct page {
     int32_t _legacy;             /* step 2's fader drag; looper_boot used to write -1 here */
     uint8_t pressed, track, pan_sel, info_on;
-    uint8_t info_idx, info_set, entered, _r;     /* info_idx 0xff = not learned */
-    uint16_t btn_id, btn_index;
+    uint8_t info_idx, info_set, entered, hid_on;     /* info_set: the INFO button has been learned */
+    uint16_t btn_id, btn_index;                      /* the last button message seen on the page */
+    uint16_t info_id, _r2;                           /* the learned INFO: message id (and button, for 0xf9) */
     uint32_t magic, info_t, info_down, sig, force, fb;
+    uint32_t hid[2];             /* the cells' child widgets' own hidden flags, saved while the page hides them */
     int32_t ytop, hg, s, sx;     /* geometry read from the cells at the last draw */
     int32_t x0, w;               /* the page's left edge and width, in fill space */
 };
@@ -179,6 +181,18 @@ static inline int GY(int d, int h)
     return P->s > 0 ? P->ytop - d - h : P->ytop + d;
 }
 
+/* The fader: the bottom is silence, 3/4 of the way up is unity, the top is +6 dB (gain 2): like a mixer. */
+static float gain_of(float pos)
+{
+    pos = pos < 0.f ? 0.f : pos > 1.f ? 1.f : pos;
+    return pos <= 0.75f ? pos * (1.f / 0.75f) : 1.f + (pos - 0.75f) * 4.f;
+}
+
+static float pos_of(float gain)
+{
+    return gain <= 1.f ? gain * 0.75f : 0.75f + (gain - 1.f) * 0.25f;
+}
+
 struct lay {
     int cx, cw;                  /* the column (x from the page's left edge) */
     int col_y, col_h;
@@ -220,7 +234,7 @@ int looper_page_hit(int x, int d, int *track, float *val)
         return Z_REC;
     if (d >= L.rec_y + L.rec_h + 3 && d < L.btn_y - 1) {
         float v = (float)(L.bars_y + L.bars_h - d) / (float)L.bars_h;
-        *val = v < 0.f ? 0.f : v > 1.f ? 1.f : v;
+        *val = gain_of(v);                                        /* the gain at that height */
         return Z_FADER;
     }
     if (d >= L.btn_y && d < L.btn_y + BTN) {
@@ -280,6 +294,17 @@ static void text_c(int x, int d, int w, const char *s, int color, int scale)
     text(x + (w - text_w(s, scale)) / 2, d, s, color, scale);
 }
 
+static float log2_fast(float x)
+{
+    union {
+        float f;
+        uint32_t u;
+    } v = {x};
+    float e = (float)((int)(v.u >> 23) - 127);
+    v.u = (v.u & 0x7fffffu) | 0x3f800000u;                       /* the mantissa, 1..2 */
+    return e + (-0.34484843f * v.f + 2.02466578f) * v.f - 0.67487759f;
+}
+
 static char *put_uint(char *p, unsigned v)
 {
     char tmp[6];
@@ -290,6 +315,28 @@ static char *put_uint(char *p, unsigned v)
     } while (v && n < 6);
     while (n)
         *p++ = tmp[--n];
+    return p;
+}
+
+/* A gain as dB with one decimal: "0.0dB", "-6.0dB", "+3.5dB", or "-inf". At most 8 characters. */
+static char *put_db(char *p, float g)
+{
+    if (g < 0.01f) {
+        *p++ = '-';
+        *p++ = 'i';
+        *p++ = 'n';
+        *p++ = 'f';
+        return p;
+    }
+    float db = 6.0206f * log2_fast(g);
+    int tenths = (int)((db < 0.f ? -db : db) * 10.f + .5f);
+    if (tenths)
+        *p++ = db < 0.f ? '-' : '+';
+    p = put_uint(p, (unsigned)tenths / 10);
+    *p++ = '.';
+    p = put_uint(p, (unsigned)tenths % 10);
+    *p++ = 'd';
+    *p++ = 'B';
     return p;
 }
 
@@ -404,8 +451,7 @@ static void draw_top(int t, const struct lay *L, const struct looper_info *k)
         vline(mid, 4, 7, C_GREY);
         dot(mid + (int)(k->pan * (float)half), 8, c);
     } else {
-        char b[12] = "LVL ", *p = b + 4;
-        p = put_uint(p, (unsigned)(k->level * 100.f + .5f));
+        char b[16] = "LVL ", *p = put_db(b + 4, k->level);
         *p = 0;
         text_c(x, 4, w, b, C_WHITE, 1);
     }
@@ -438,19 +484,18 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
     vline(fx, d, h, C_RAIL);
     for (int q = 0; q <= 4; q++)
         hline(fx - 3, d + q * (h - 1) / 4, 7, C_GREY);
-    int hy = d + h - (int)(k->level * (float)h + .5f);
+    int hy = d + h - (int)(pos_of(k->level) * (float)h + .5f);
     int lc = k->muted ? C_GREY : colour;
     box(fx, hy, 2, d + h - hy, lc);
     for (int c = 0; c < 2; c++) {                                 /* a thin meter for each output */
         int mx = c ? x + w - 9 : x + 8;
-        int m = live ? (int)(k->level * (c ? gr : gl) * (float)h + .5f) : 0;
+        int m = live ? (int)(pos_of(k->level * (c ? gr : gl)) * (float)h + .5f) : 0;
         vline(mx, d, h, C_RAIL);
         vline(mx, d + h - m, m, lc);
     }
     dot(fx, hy, C_WHITE);
     /* the level, small */
-    char lv[8], *q = put_uint(lv, (unsigned)(k->level * 100.f + .5f));
-    *q++ = '%';
+    char lv[12], *q = put_db(lv, k->level);
     *q = 0;
     text_c(x, L->lvl_y, w, lv, k->muted ? C_GREY : C_LIGHT, 1);
     /* the pan dial and the buttons */
@@ -490,11 +535,15 @@ static void draw_footer(const struct lay *L)
     }
     *p = 0;
     text(5, L->foot_y + 3, b, C_LIGHT, 1);
-    if (P->info_idx == 0xff) {
+    if (!P->info_set) {
         text(P->w - 5 - text_w("PRESS INFO ONCE", 1), L->foot_y + 3, "PRESS INFO ONCE", C_PINK, 1);
     } else {
-        char i[12] = "INFO=", *q = i + 5;
-        q = put_uint(q, P->info_idx);
+        char i[16] = "INFO=", *q = i + 5;
+        q = put_uint(q, P->info_id);
+        if (P->info_id == MSG_BUTTON) {
+            *q++ = ':';
+            q = put_uint(q, P->info_idx);
+        }
         *q = 0;
         text(P->w - 5 - text_w(i, 1), L->foot_y + 3, i, P->info_on ? C_PINK : C_GREY, 1);
     }
@@ -511,7 +560,7 @@ static uint32_t signature(void)
                      (uint32_t)(k.level * 100.f + .5f) << 8 | (uint32_t)(k.pan * 100.f + 100.5f) << 16;
         h = (h ^ v) * 16777619u;
     }
-    h = (h ^ ((uint32_t)P->pan_sel | (uint32_t)P->info_on << 8 | (uint32_t)P->info_idx << 16)) * 16777619u;
+    h = (h ^ ((uint32_t)P->pan_sel | (uint32_t)P->info_on << 8 | (uint32_t)P->info_set << 16 | (uint32_t)P->info_id << 17)) * 16777619u;
     h = (h ^ (uint32_t)(looper_progress() * 400.f)) * 16777619u;     /* the playhead, in 1/400ths of a loop */
     return h ^ looper_len();
 }
@@ -569,9 +618,41 @@ void looper_page_poke(uint8_t *view)
         dirty(view);
 }
 
-/* The Looper page has just been (re)shown. */
-void looper_page_enter(void)
+/* The stock cells still draw their child widgets (the cyan double boxes under each pad) after the page: hide them
+ * while the page shows. A base widget's hidden flag is its byte +0x30; the cell's children sit at +0x3c / +0x70 /
+ * +0xc8 / +0x120. Their own flags are saved and put back when the page is left. */
+static const uint16_t cell_children[4] = {0x6c, 0xa0, 0xf8, 0x150};
+
+static void hide_children(uint8_t *view, int hide)
 {
+    if (hide == P->hid_on)
+        return;
+    for (int i = 0; i < 16; i++) {
+        for (int k = 0; k < 4; k++) {
+            uint8_t *flag = cell_at(view, i) + cell_children[k];
+            uint32_t bit = 1u << ((i * 4 + k) & 31);
+            volatile uint32_t *word = &P->hid[(i * 4 + k) >> 5];
+            if (hide) {
+                *word = (*word & ~bit) | (*flag ? bit : 0);
+                *flag = 1;
+            } else {
+                *flag = (*word & bit) ? 1 : 0;
+            }
+        }
+    }
+    P->hid_on = (uint8_t)hide;
+}
+
+/* The Looper page is no longer showing (the mixer view was shown in another mode). */
+void looper_page_leave(uint8_t *view)
+{
+    hide_children(view, 0);
+}
+
+/* The Looper page has just been (re)shown. */
+void looper_page_enter(uint8_t *view)
+{
+    hide_children(view, 1);
     P->entered = 0;
     P->pressed = P_NONE;
     P->info_on = 0;
@@ -579,18 +660,24 @@ void looper_page_enter(void)
     P->force = 0;
 }
 
-/* looper_boot: reset the page; the learned INFO button is kept while the backup SRAM is. */
+/* looper_boot: reset the page; the learned INFO button is kept while the backup SRAM is. (The cells are built at
+ * boot with their stock flags, so nothing is left hidden.) */
 void looper_page_boot(void)
 {
     if (P->magic != PMAGIC) {
         P->magic = PMAGIC;
-        P->info_idx = 0xff;
+        P->info_set = 0;
     }
+    P->hid_on = 0;
     P->_legacy = -1;
     P->hg = 0;
     P->pan_sel = 0;
     P->btn_id = P->btn_index = 0;
-    looper_page_enter();
+    P->entered = 0;
+    P->pressed = P_NONE;
+    P->info_on = 0;
+    P->sig = 0;
+    P->force = 0;
 }
 
 /* ---- touch and knobs */
@@ -649,7 +736,7 @@ void looper_page_move(uint8_t *view, const int *pt)
     to_page(pt, &x, &d);
     struct lay L;
     layout(P->track, &L);
-    looper_set_level(P->track, (float)(L.bars_y + L.bars_h - d) / (float)L.bars_h);
+    looper_set_level(P->track, gain_of((float)(L.bars_y + L.bars_h - d) / (float)L.bars_h));
     dirty(view);
 }
 
@@ -679,7 +766,7 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
                 if (P->info_on)
                     info_touch();
             } else {
-                looper_set_level(knob, k.level + (float)counts * KNOB_SCALE);
+                looper_set_level(knob, gain_of(pos_of(k.level) + (float)counts * KNOB_SCALE));
             }
             dirty(view);
         }
@@ -688,39 +775,44 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
     fw_view_msg(view, msg);
 }
 
-/* INFO: tap = on until pressed again (or 10 s idle); held 0.45 s or more = on only while held. Returns 1 when the
- * message was INFO's and the stock handler must not see it. */
+/* The special button messages the app's dispatcher gets (FUN_080a2e60): 7 and 0xc switch between a screen's pages
+ * (0x2f -> 0x2e: the "back to the normal mixer" INFO caused), 8 sets the info / shift state at app + 0xea9e, 0xf9
+ * carries the eight main buttons (index 5 = MIX), 0xf4 / 0xf6 / 0xf7 clear that state. */
+static int button_msg(unsigned id)
+{
+    return id == 7 || id == 8 || id == 0xc || id == MSG_BUTTON;
+}
+
+/* INFO: its press toggles INFO mode (on until pressed again, or 10 s idle). Releases are not reported to the app, so
+ * there is no hold-to-use. Returns 1 when the message was INFO's and the stock handler must not see it. */
 static int info_button(unsigned id, unsigned idx)
 {
-    if (id == MSG_BUTTON) {
-        if (idx == BTN_MIX || idx > 7)
-            return 0;
-        if (P->info_idx == 0xff)
-            P->info_idx = (uint8_t)idx;                           /* the first other button is taken as INFO */
-        if (idx != P->info_idx)
-            return 0;
-        P->info_on = !P->info_on;
-        P->info_down = looper_ticks();
-        P->info_t = P->info_down;
-        P->sig = 0;
-        return 1;
+    if (!button_msg(id) || (id == MSG_BUTTON && (idx == BTN_MIX || idx > 7)))
+        return 0;
+    if (!P->info_set) {                                            /* the first such press is taken as INFO */
+        P->info_set = 1;
+        P->info_id = (uint16_t)id;
+        P->info_idx = (uint8_t)idx;
     }
-    if (id == MSG_RELEASE && idx == P->info_idx) {
-        if (P->info_on && looper_ticks() - P->info_down >= INFO_HOLD)
-            P->info_on = 0;
-        P->sig = 0;
-    }
-    return 0;
+    if (id != P->info_id || (id == MSG_BUTTON && idx != P->info_idx))
+        return 0;
+    P->info_on = !P->info_on;
+    P->info_down = looper_ticks();
+    P->info_t = P->info_down;
+    P->sig = 0;
+    return 1;
 }
 
 /* Replaces the app's message dispatch call (bl @0x080a23cc). */
 void looper_app_msg(void *app, const uint16_t *msg)
 {
-    if (msg && (msg[0] == MSG_BUTTON || msg[0] == MSG_RELEASE) && solo_looper_view()) {
-        unsigned idx = *(const uint32_t *)((const uint8_t *)msg + 0xc);
-        P->btn_id = msg[0];
-        P->btn_index = (uint16_t)idx;
-        if (info_button(msg[0], idx))
+    if (msg && solo_looper_view()) {
+        unsigned id = msg[0], idx = *(const uint32_t *)((const uint8_t *)msg + 0xc);
+        if (button_msg(id)) {
+            P->btn_id = (uint16_t)id;
+            P->btn_index = (uint16_t)idx;
+        }
+        if (info_button(id, idx))
             return;
     }
     fw_app_msg(app, msg);

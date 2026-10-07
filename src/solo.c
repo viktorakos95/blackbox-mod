@@ -22,7 +22,8 @@
 
 int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx);
 void looper_page_poke(uint8_t *view);
-void looper_page_enter(void);
+void looper_page_enter(uint8_t *view);
+void looper_page_leave(uint8_t *view);
 void looper_page_down(uint8_t *view, const int *pt);
 void looper_page_move(uint8_t *view, const int *pt);
 void looper_page_up(uint8_t *view, const int *pt);
@@ -254,11 +255,14 @@ void solo_set_mode(uint8_t *view, int mute_mode)
     ensure();
     S->view = view;
     S->active = mute_mode && S->pending;
+    int was_looper = S->looper;
     S->looper = mute_mode && S->looper_pending;
     S->pending = 0;
     S->looper_pending = 0;
     if (S->looper)
-        looper_page_enter();
+        looper_page_enter(view);
+    else if (was_looper)
+        looper_page_leave(view);
     fw_set_mode(view, mute_mode);
     mark_dirty(view);
 }

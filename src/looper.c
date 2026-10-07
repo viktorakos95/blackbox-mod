@@ -568,11 +568,11 @@ void looper_event(int t, int ev)
     S->t[t].ev_seq[ev]++;
 }
 
-void looper_set_level(int t, float v)
+void looper_set_level(int t, float v)                 /* the track's gain: 1.0 = unity, up to 2.0 (+6 dB) */
 {
     if (t < 0 || t >= LOOPER_TRACKS || S->magic != MAGIC)
         return;
-    S->t[t].level = v < 0.f ? 0.f : v > 1.f ? 1.f : v;
+    S->t[t].level = v < 0.f ? 0.f : v > 2.f ? 2.f : v;
 }
 
 void looper_set_pan(int t, float v)

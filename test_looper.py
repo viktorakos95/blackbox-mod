@@ -238,7 +238,7 @@ _, outs = block([0.0] * N)
 check("level 0.5, pan half right: left at 0.25, right at 0.5", all(abs(outs[0][i] - 0.25 * ramp(p)[i]) < 2e-4 and abs(outs[1][i] + 0.5 * ramp(p)[i]) < 2e-4 for i in range(N)), (outs[0][:1], outs[1][:1], ramp(p)[:1]))
 pan(0, -3.0)
 level(0, 3.0)
-check("pan and level are clamped", abs(tr(0, 0x24, "f") + 1.0) < 1e-6 and tr(0, 0x20, "f") == 1.0)
+check("pan is clamped to -1, the gain to 2 (+6 dB)", abs(tr(0, 0x24, "f") + 1.0) < 1e-6 and tr(0, 0x20, "f") == 2.0, (tr(0, 0x24, "f"), tr(0, 0x20, "f")))
 pan(0, 0.0)
 
 # --- erase with a 4 s hold
@@ -333,6 +333,7 @@ def cells(y_up=True):
 
 cells()
 e.uc.mem_write(SOLO, struct.pack("<IBBBBIHH", 0x534F4C4F, 1, 0, 0, 0, VIEW, 0, 0))   # in Solo mode
+e.uc.mem_write(VIEW + 0x3AC + 3 * 0x1A0 + 0x6C, b"\x01")             # one cell's child that is hidden by the stock firmware itself
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
 screens = []
 e.stub(0x0809EAEC, lambda: screens.append(e.arg(1)))
@@ -340,6 +341,9 @@ e.stub(0x080B5E44)
 e.call("solo_mix_pressed", APP, 0, 0, 0)
 e.call("solo_set_mode", VIEW, 1)
 check("MIX in Solo mode goes to the Looper page", screens == [0x2F] and e.r8(SOLO + 6) == 1, (screens, e.r8(SOLO + 6)))
+CHILD = (0x6C, 0xA0, 0xF8, 0x150)
+check("the stock cells' child widgets (the cyan boxes) are hidden while the page shows",
+      all(e.r8(VIEW + 0x3AC + i * 0x1A0 + c) == 1 for i in range(16) for c in CHILD))
 
 stock = []
 e.stub(0x080B5F44, lambda: stock.append("down"))
@@ -401,7 +405,7 @@ blocks(2)
 f = draw(0)
 bars = [x for x in f if x[2] == 2 and x[3] > 5 and x[4] == 0x1B]
 meters = [x for x in f if x[2] == 1 and x[3] > 5 and x[4] == 0x1B]
-check("level 50 %: the 2 px line in the track colour runs half of the fader's 93 px, both thin meters the same", len(bars) == 1 and bars[0][3] == 47 and len(meters) == 2 and meters[0][3] == meters[1][3] == 47, (bars, meters))
+check("gain 0.5 sits at 0.375 of the travel (35 of 93 px): the 2 px line and both thin meters", len(bars) == 1 and bars[0][3] == 35 and len(meters) == 2 and meters[0][3] == meters[1][3] == 35, (bars, meters))
 pan(0, 0.5)
 blocks(2)
 f = draw(0)
@@ -432,7 +436,8 @@ def hit(x, d):
 check("the record box of column 2", hit(100, 30)[:2] == (1, 1) and hit(100, 55)[:2] == (1, 1), (hit(100, 30), hit(100, 55)))
 z, t, v = hit(190, 100)
 check("bars area of column 3 is its fader", z == 2 and t == 2 and 0.0 <= v <= 1.0, (z, t, v))
-check("fader value runs 0 at the bottom of its travel to 1 at the top", hit(190, 65)[2] > 0.99 and hit(190, 157)[2] < 0.05, (hit(190, 65)[2], hit(190, 157)[2]))
+check("fader: silence at the bottom of its travel, +6 dB (gain 2) at the top, unity three quarters up",
+      hit(190, 65)[2] > 1.99 and hit(190, 157)[2] < 0.05 and abs(hit(190, 88)[2] - 1.0) < 0.05, (hit(190, 65)[2], hit(190, 157)[2], hit(190, 88)[2]))
 btn_y = 16 + (224 - 16 - 12 - 2) - 2 - 34
 check("bottom row: the pan dial on the left, REV above MUTE on the right", [hit(245, btn_y + 10)[0], hit(285, btn_y + 4)[0], hit(285, btn_y + 25)[0]] == [3, 4, 5], [hit(245, btn_y + 10), hit(285, btn_y + 4), hit(285, btn_y + 25)])
 check("the top row, the hairlines between columns and the footer are not controls", hit(100, 8)[0] == 0 and hit(78, 100)[0] == 0 and hit(100, 215)[0] == 0)
@@ -467,7 +472,7 @@ check("MUTE: down and up", evs(3)[2:4] == [1, 1], evs(3))
 touch("down", 190, 156)
 check("fader: touching near the bottom of the bars sets a low level", tr(2, 0x20, "f") < 0.1, tr(2, 0x20, "f"))
 touch("move", 190, 66)
-check("fader: dragging to the top sets level 1", abs(tr(2, 0x20, "f") - 1.0) < 0.02, tr(2, 0x20, "f"))
+check("fader: dragging to the top sets about +6 dB", abs(tr(2, 0x20, "f") - 2.0) < 0.08, tr(2, 0x20, "f"))
 touch("up", 190, 65)
 check("the page's touches never reach the stock mixer handlers", len(stock) == stock_clear, stock)
 
@@ -484,7 +489,7 @@ def knob(i, counts, msg_id=0x32):
 
 level(0, 0.5)
 knob(0, -800)
-check("knob 1 turns track 1's fader (800 counts = 10 %)", abs(tr(0, 0x20, "f") - 0.4) < 1e-5, tr(0, 0x20, "f"))
+check("knob 1 turns track 1's fader (800 counts = 10 % of the travel: gain 0.5 -> 0.367)", abs(tr(0, 0x20, "f") - 0.36667) < 1e-4, tr(0, 0x20, "f"))
 knob(3, 1600)
 check("knob 4 turns track 4's pan while PAN is selected", abs(tr(3, 0x24, "f") - 0.4) < 1e-5, tr(3, 0x24, "f"))
 knob(0, 100, msg_id=0x63)
@@ -500,11 +505,11 @@ def button(idx, msg_id=0xF9):
     e.call("looper_app_msg", APP, MSG)
 
 
-check("INFO not learned yet at boot", e.r8(PAGE + 8) == 0xFF, e.r8(PAGE + 8))
+check("INFO not learned yet at boot", e.r8(PAGE + 9) == 0, e.r8(PAGE + 9))
 button(5)
 check("MIX always reaches the stock handler", appmsg == [(0xF9, 5)], appmsg)
 button(4)
-check("the first other button is learned as INFO and swallowed", e.r8(PAGE + 8) == 4 and appmsg == [(0xF9, 5)] and e.r8(PAGE + 7) == 1, (e.r8(PAGE + 8), appmsg, e.r8(PAGE + 7)))
+check("the first other button is learned as INFO (message 0xf9, button 4) and swallowed", e.r8(PAGE + 9) == 1 and e.r16(PAGE + 16) == 0xF9 and e.r8(PAGE + 8) == 4 and appmsg == [(0xF9, 5)] and e.r8(PAGE + 7) == 1, (e.r8(PAGE + 9), e.r8(PAGE + 8), appmsg, e.r8(PAGE + 7)))
 button(2)
 check("other buttons pass through once INFO is known", appmsg[-1] == (0xF9, 2), appmsg)
 knob(1, 800)
@@ -515,12 +520,10 @@ check("INFO on: a record box tap is a MUTE press, not a REC press", evs(1)[2:4] 
 button(4)
 check("INFO again: off", e.r8(PAGE + 7) == 0)
 button(4)
-button(4, msg_id=0xFA)
-check("a quick release keeps INFO on (tap = latch)", e.r8(PAGE + 7) == 1)
-button(4)
-blocks(100)
-button(4, msg_id=0xFA)
-check("a release after 0.45 s or more ends INFO (held = momentary)", e.r8(PAGE + 7) == 0, e.r8(PAGE + 7))
+check("INFO again: on", e.r8(PAGE + 7) == 1)
+blocks(1900)
+e.call("looper_page_poke", VIEW)
+check("INFO mode ends by itself after 10 s idle", e.r8(PAGE + 7) == 0, e.r8(PAGE + 7))
 e.uc.mem_write(SOLO + 6, b"\x00")
 button(4)
 check("off the page every button goes to the stock handler (INFO included)", appmsg[-1] == (0xF9, 4), appmsg[-1])
@@ -528,12 +531,29 @@ e.uc.mem_write(SOLO + 6, b"\x01")
 
 # footer, signature
 f = draw(0)
-check("the footer shows the learned INFO button", any(c == 0x09 or c == 0x14 for _, _, c in pixels))
+check("the footer shows the learned INFO button", any(c == 0x09 or c == 0x20 for _, _, c in pixels))
 
 e.call("looper_page_enter")
 level(1, 0.3)
 e.call("looper_page_poke", VIEW)
 check("a change marks every cell dirty", all(e.r8(VIEW + 0x3AC + i * 0x1A0 + 0x17C) == 1 for i in range(16)))
+# learning from the special button messages: forget INFO, then message 7 (the "back to the normal mixer" one)
+e.uc.mem_write(PAGE + 9, b"\x00")
+e.uc.mem_write(PAGE + 7, b"\x00")
+e.uc.mem_write(SOLO + 6, b"\x01")
+appmsg.clear()
+button(5)
+button(7, msg_id=7)
+check("INFO can be learned from message 7 (swallowed, INFO on); MIX still passes", e.r8(PAGE + 9) == 1 and e.r16(PAGE + 16) == 7 and e.r8(PAGE + 7) == 1 and appmsg == [(0xF9, 5)], (e.r8(PAGE + 9), e.r16(PAGE + 16), appmsg))
+button(0xC, msg_id=0xC)
+check("a different special message afterwards passes through to the stock handler", appmsg[-1] == (0xC, 0xC), appmsg)
+button(7, msg_id=7)
+check("message 7 again: INFO off", e.r8(PAGE + 7) == 0)
+
+# leaving the page puts the child widgets back
+e.call("solo_set_mode", VIEW, 1)
+check("leaving the page: the children are restored (the one the firmware hid stays hidden)",
+      e.r8(VIEW + 0x3AC + 3 * 0x1A0 + 0x6C) == 1 and e.r8(VIEW + 0x3AC + 0x6C) == 0 and e.r8(VIEW + 0x3AC + 9 * 0x1A0 + 0x150) == 0)
 e.uc.mem_write(SOLO + 6, b"\x00")
 draw(0)
 check("off the page the stock cell draw runs", celldraw == [VIEW + 0x3AC] and not fills)

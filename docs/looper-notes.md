@@ -153,6 +153,30 @@ with ticks, a 2 px line in the track colour and a round white handle, thin L / R
 at 15, columns from 16, record box d 19..59, fader travel d 65..158, level text 162, bottom row 174..208, footer
 line at 211.
 
+## Step 6 on hardware (photos)
+
+Looks right. Problems: (1) leftover cyan double boxes at the bottom of each of the four cell rows, drawn over the
+page; (2) INFO still leaves the page ("back to the normal mixer") and was never learned (the footer still said
+PRESS INFO ONCE: it is not one of the eight 0xf9 buttons); (3) the loop sounds a little softer than the live
+monitor.
+
+## Step 7: leftovers hidden, INFO learned from the special messages, fader headroom
+
+- The leftover boxes are the cells' child widgets: a base widget draws its children (list head +0x1c, next +0x24)
+  after itself unless the child's byte +0x30 is set. The cell's children sit at cell +0x3c, +0x70, +0xc8, +0x120, so
+  their flags are cell +0x6c / +0xa0 / +0xf8 / +0x150. The page saves them, sets them while it shows, and restores them
+  when the mixer view is shown in another mode (solo_set_mode -> looper_page_leave).
+- App message dispatcher (FUN_080a2e60) button ids: 0xf9 = the eight main buttons (+0xc = 0..7, 5 = MIX; others go to
+  screens 2, 0x2b/0x31, 0x2c, 0x2d, 0x37/0x30/0x36, 7, 0x25), 7 = toggle a screen's sub-page (0x2f <-> 0x2e, which
+  is what "INFO takes me back to the normal mixer" is), 0xc = next page of the current screen family (0x2e <-> 0x2f,
+  0x25 -> 0x26 -> ... -> 0x25), 8 = sets the info / shift state at app + 0xea9e through FUN_080a16c4(app, 1), 0xf4 /
+  0xf6 / 0xf7 clear it, 0xf5 / 0xf8 are ignored. INFO is therefore one of 7, 8, 0xc. The page learns it: the first
+  special press (7, 8, 0xc, or an 0xf9 other than MIX) while the page shows is taken as INFO and swallowed, and the
+  footer shows INFO=<id>[:<button>]. Releases are not reported, so INFO is a toggle (10 s idle timeout).
+- Fader: the bottom is silence, 3/4 up is unity (gain 1), the top is +6 dB (gain 2); levels are shown in dB. Engine
+  gain range is 0..2. The loop joins Out 1 before the Out 1 level and the compressor while the live monitor does
+  not, which is the likely reason it sounded softer; the +6 dB of headroom compensates.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,
