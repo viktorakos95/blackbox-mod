@@ -142,6 +142,17 @@ are 2x. Step 5 restyles the page that way: pan as a dial (pink frame when select
 title bar, tab-style top bar (pink frame while INFO is on), track colours cyan / yellow / aqua / purple (pink is
 the selection colour).
 
+## Step 6: thin lines (from the stock EQ screen)
+
+The EQ screen (1 px frame, hairline curve, 1x corner labels, round dots, double-bordered "bypass" button) is the
+look the user likes ("thin beautiful lines"). The page is now outlines, not blocks: a 1 px frame (pink while INFO is
+on), a row of four values, hairlines between four columns, a footer. Each column: an outlined record box (state
+colour, double line while latched, 2x track number, outlined icon, hairline playhead with a dot), a hairline fader
+with ticks, a 2 px line in the track colour and a round white handle, thin L / R meters either side, the level in
+1x, then the pan dial (hairline arc) with REV and MUTE as outlined buttons. Layout (hg = 224): top row d 1..14, line
+at 15, columns from 16, record box d 19..59, fader travel d 65..158, level text 162, bottom row 174..208, footer
+line at 211.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,

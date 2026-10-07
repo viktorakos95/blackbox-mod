@@ -2,17 +2,19 @@
  * The live looper's page: Looper mode of the Mixer screen (MIX: Mixer -> Mute -> Solo -> Looper). Original 1010music
  * Blackbox, firmware 3.1.9. The engine is looper.c; solo.c routes the mixer view's hooks here while the mode shows.
  *
- * Look: the stock mixer's four columns across the whole screen. A top bar of four cells (each shows what that
- * track's knob is turning: LVL 74, or a L - R pan bar), then four bordered columns in the track's colour:
- *   title bar   "1 PLAY": the track and its state, then a state icon. This whole block is the record box:
- *               hold = record while held, double tap = latch, tap = keep (the engine times the gestures).
- *   two bars    the left and right output of the track (level and pan together); the white line is the fader.
- *               Touch or drag anywhere in the bars to set the level; the track's knob does the same.
- *   level       "74%" at 2x.
+ * Look: thin lines, like the stock EQ screen (a 1 px frame, hairline curves, small corner text, round dots). One
+ * frame around the page, a row of four values on top (what each knob is turning: LVL 74, or an L - R pan line), then
+ * four columns divided by hairlines, then a footer with the loop length / position and the INFO button:
+ *   record box  an outlined box (colour = state: red recording, yellow overdubbing, green playing; double line
+ *               while a take is latched) with the track number at 2x, the state, an outlined icon and a thin
+ *               playhead along its bottom. It is the record button: hold = record while held, double tap =
+ *               latch, tap = keep (the engine times the gestures).
+ *   fader       a hairline with ticks and a round handle (the white dot), a 2 px line in the track colour up to
+ *               it, and a thin meter on each side for the left and right output (level and pan together).
+ *               Touch or drag anywhere in it, or turn the track's knob. The level is written below.
  *   pan dial    drawn like the pad config's knobs (label, arc, pointer); tap it (pink frame) and the track's knob
  *               turns the pan instead of the level; tap again to give the knob back.
  *   buttons     REV (play backwards) | MUTE (tap: mute; hold 2 s: undo the last pass, 4 s: erase).
- * and a footer with the loop length / position.
  * INFO is a modifier: press it (tap: stays on; held 0.45 s or more: only while held) and the knobs turn the pan, a
  * tap on a record box mutes, holding it undoes / erases (2 s / 4 s). The first press of any button other than MIX is
  * taken as INFO and remembered; the footer shows "INFO=n" once known.
@@ -85,15 +87,12 @@ static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /
 /* layout, in pixels, top-down. The page width and origin come from the screen (geometry()): about 314 px on the
  * 320 px wide display, the 64 px cells being centred with 32 px of margin on each side. */
 #define MARGIN    3
-#define GAP       4
-#define TOPBAR    16
-#define FOOT      12
-#define VGAP      3
-#define TITLE     18
-#define ICON      26
+#define GAP       1              /* a hairline between columns */
+#define TOPBAR    14             /* the row of values; its line is at d = TOPBAR + 1 */
+#define FOOT      12             /* the footer; its line is at d = hg - FOOT - 1 */
+#define REC_H     40             /* the record box */
 #define BTN       34             /* the bottom row: the pan dial and the REV / MUTE buttons */
 #define DIAL      34             /* width of the pan dial's box */
-#define LEVEL     18
 
 #define INFO_TIMEOUT 1875        /* audio blocks (10 s) */
 #define INFO_HOLD    84          /* 0.45 s */
@@ -181,48 +180,45 @@ static inline int GY(int d, int h)
 }
 
 struct lay {
-    int cx, cw;                  /* the column */
+    int cx, cw;                  /* the column (x from the page's left edge) */
     int col_y, col_h;
-    int title_y, rec_h;          /* the record box: title bar and icon */
-    int icon_y, icon_h;
-    int bars_y, bars_h;          /* the fader */
+    int rec_y, rec_h;            /* the record box */
+    int bars_y, bars_h;          /* the fader's travel */
     int lvl_y, btn_y;
-    int foot_y;
+    int foot_y;                  /* the footer's line */
 };
 
 static void layout(int t, struct lay *L)
 {
-    int cw = (P->w - 3 * GAP) / 4, hg = P->hg;
+    int cw = (P->w - 2 - 3 * GAP) / 4, hg = P->hg;
     L->cw = cw;
-    L->cx = t * (cw + GAP);
-    L->col_y = TOPBAR + VGAP;
-    L->col_h = hg - TOPBAR - FOOT - 2 * VGAP;
-    L->title_y = L->col_y + 2;
-    L->icon_h = L->col_h >= 150 ? ICON : 0;
-    L->icon_y = L->title_y + TITLE;
-    L->rec_h = TITLE + L->icon_h;
+    L->cx = 1 + t * (cw + GAP);
+    L->col_y = TOPBAR + 2;
+    L->col_h = hg - L->col_y - FOOT - 2;
+    L->rec_y = L->col_y + 3;
+    L->rec_h = REC_H;
     L->btn_y = L->col_y + L->col_h - 2 - BTN;
-    L->lvl_y = L->btn_y - LEVEL - 2;
-    L->bars_y = L->title_y + L->rec_h + 4;
-    L->bars_h = L->lvl_y - 2 - L->bars_y;
+    L->lvl_y = L->btn_y - 12;
+    L->bars_y = L->rec_y + L->rec_h + 6;
+    L->bars_h = L->lvl_y - 4 - L->bars_y;
     if (L->bars_h < 20)
         L->bars_h = 20;
-    L->foot_y = hg - FOOT;
+    L->foot_y = hg - FOOT - 1;
 }
 
 /* Which control is at x pixels from the left and d from the top, and the fader value there (0..1). */
 int looper_page_hit(int x, int d, int *track, float *val)
 {
     struct lay L;
-    int cw = (P->w - 3 * GAP) / 4;
-    int t = cw > 0 ? x / (cw + GAP) : 0;
-    if (P->hg < 120 || P->w < 80 || x < 0 || t < 0 || t >= LOOPER_TRACKS || x - t * (cw + GAP) >= cw)
+    int cw = (P->w - 2 - 3 * GAP) / 4;
+    int t = cw > 0 && x >= 1 ? (x - 1) / (cw + GAP) : -1;
+    if (P->hg < 120 || P->w < 80 || t < 0 || t >= LOOPER_TRACKS || x - 1 - t * (cw + GAP) >= cw)
         return Z_NONE;                                            /* (hg is 0 until the page has been drawn once) */
     layout(t, &L);
     *track = t;
-    if (d >= L.title_y && d < L.title_y + L.rec_h)
+    if (d >= L.rec_y - 2 && d < L.rec_y + L.rec_h + 2)
         return Z_REC;
-    if (d >= L.bars_y - 4 && d < L.btn_y - 1) {
+    if (d >= L.rec_y + L.rec_h + 3 && d < L.btn_y - 1) {
         float v = (float)(L.bars_y + L.bars_h - d) / (float)L.bars_h;
         *val = v < 0.f ? 0.f : v > 1.f ? 1.f : v;
         return Z_FADER;
@@ -315,34 +311,61 @@ static const char *state_name(const struct looper_info *k)
     }
 }
 
-static void icon(const struct lay *L, const struct looper_info *k)
+static void hline(int x, int d, int w, int color)
 {
-    int cx = L->cx + L->cw / 2, y = L->icon_y + (L->icon_h - 18) / 2;
+    box(x, d, w, 1, color);
+}
+
+static void vline(int x, int d, int h, int color)
+{
+    box(x, d, 1, h, color);
+}
+
+/* A round dot, like the EQ's handles: 7 px across. */
+static void dot(int cx, int cy, int color)
+{
+    box(cx - 1, cy - 3, 3, 7, color);
+    box(cx - 2, cy - 2, 5, 5, color);
+    box(cx - 3, cy - 1, 7, 3, color);
+}
+
+static const int8_t ring_pts[16][2] = {{8, 0}, {7, -3}, {6, -6}, {3, -7}, {0, -8}, {-3, -7}, {-6, -6}, {-7, -3},
+                                       {-8, 0}, {-7, 3}, {-6, 6}, {-3, 7}, {0, 8}, {3, 7}, {6, 6}, {7, 3}};
+
+static void ring(int cx, int cy, int color)
+{
+    for (int i = 0; i < 16; i++)
+        box(cx + ring_pts[i][0], cy + ring_pts[i][1], 1, 1, color);
+}
+
+/* The state, drawn in outline at the bottom of the record box. */
+static void icon(const struct lay *L, const struct looper_info *k, int color)
+{
+    int cx = L->cx + L->cw / 2, cy = L->rec_y + 30;
     switch (k->mode) {
-    case LOOPER_REC:                                              /* a disc */
+    case LOOPER_REC:
     case LOOPER_DUB:
-        box(cx - 5, y, 10, 18, k->mode == LOOPER_REC ? C_REC : C_YELLOW);
-        box(cx - 9, y + 4, 18, 10, k->mode == LOOPER_REC ? C_REC : C_YELLOW);
-        box(cx - 7, y + 2, 14, 14, k->mode == LOOPER_REC ? C_REC : C_YELLOW);
-        if (k->mode == LOOPER_DUB)
-            box(cx - 3, y + 6, 6, 6, C_BLACK);
+        ring(cx, cy, color);
+        box(cx - 3, cy - 3, 6, 6, color);
         break;
     case LOOPER_PLAY:
-        if (k->muted) {                                           /* two bars */
-            box(cx - 8, y, 6, 18, C_RED);
-            box(cx + 2, y, 6, 18, C_RED);
-        } else {                                                  /* a triangle */
-            for (int i = 0; i < 18; i++)
-                box(cx - 6, y + i, (i < 9 ? i : 17 - i) * 2 + 2, 1, C_GREEN);
+        if (k->muted) {                                           /* two hairlines */
+            vline(cx - 4, cy - 7, 14, color);
+            vline(cx + 3, cy - 7, 14, color);
+        } else {                                                  /* a triangle outline */
+            vline(cx - 5, cy - 8, 17, color);
+            for (int i = 0; i <= 8; i++) {
+                box(cx - 5 + i * 11 / 8, cy - 8 + i, 1, 1, color);
+                box(cx - 5 + i * 11 / 8, cy + 8 - i, 1, 1, color);
+            }
         }
         break;
     case LOOPER_CLEARING:
     case LOOPER_UNDOING:
         for (int i = 0; i < 3; i++)
-            box(cx - 12 + i * 10, y + 7, 4, 4, C_LIGHT);
+            box(cx - 8 + i * 8, cy - 1, 2, 2, color);
         break;
     default:
-        frame(cx - 8, y + 1, 16, 16, C_RAIL, 1);
         break;
     }
 }
@@ -353,33 +376,33 @@ static const int8_t arc[28][2] = {
     {-6, -9}, {-5, -10}, {-3, -11}, {-1, -11}, {1, -11}, {3, -11}, {5, -10}, {6, -9}, {8, -8}, {9, -6},
     {10, -5}, {11, -3}, {11, -1}, {11, 1}, {11, 3}, {10, 5}, {9, 6}, {8, 8}};
 
-/* A knob like the pad config's: label, arc, pointer at v (0..1). The box is DIAL wide and BTN high. */
+/* A knob like the pad config's: label, hairline arc, pointer at v (0..1). The box is DIAL wide and BTN high. */
 static void dial(int x, int d, const char *name, float v, int selected)
 {
-    box(x, d, DIAL, BTN, C_BG);
-    frame(x, d, DIAL, BTN, selected ? C_PINK : C_RAIL, selected ? 2 : 1);
-    text_c(x, d + 3, DIAL, name, C_WHITE, 1);
+    frame(x, d, DIAL, BTN, selected ? C_PINK : C_RAIL, 1);
+    if (selected)
+        frame(x + 1, d + 1, DIAL - 2, BTN - 2, C_PINK, 1);
+    text_c(x, d + 3, DIAL, name, C_LIGHT, 1);
     int cx = x + DIAL / 2, cy = d + 22;
     for (int i = 0; i < 28; i++)
-        box(cx + arc[i][0] - 1, cy + arc[i][1] - 1, 2, 2, C_WHITE);
+        box(cx + arc[i][0], cy + arc[i][1], 1, 1, C_LIGHT);
     int i = (int)(v * 27.f + .5f);
     i = i < 0 ? 0 : i > 27 ? 27 : i;
-    for (int k = 1; k <= 8; k++)                                  /* the pointer, from the centre */
-        box(cx + arc[i][0] * k / 11 - 1, cy + arc[i][1] * k / 11 - 1, 2, 2, C_CYAN);
+    for (int k = 1; k <= 9; k++)                                  /* the pointer, from the centre */
+        box(cx + arc[i][0] * k / 11, cy + arc[i][1] * k / 11, 1, 1, C_CYAN);
 }
 
 static void draw_top(int t, const struct lay *L, const struct looper_info *k)
 {
     int x = L->cx, w = L->cw, on_pan = ((P->pan_sel >> t) & 1) || P->info_on;
-    box(x, 0, w, TOPBAR, P->info_on ? C_RAIL : C_TAB);
-    frame(x, 0, w, TOPBAR, P->info_on ? C_PINK : C_GREY, P->info_on ? 2 : 1);
+    box(x, 1, w, TOPBAR, C_BG);
     if (on_pan) {
-        int half = (w - 28) / 2, mid = x + w / 2;
-        text(x + 4, 4, "L", C_LIGHT, 1);
-        text(x + w - 10, 4, "R", C_LIGHT, 1);
-        box(mid - half, 7, 2 * half, 2, C_RAIL);
-        box(mid, 4, 1, 8, C_GREY);
-        box(mid + (int)(k->pan * (float)half) - 2, 3, 4, 10, C_YELLOW);
+        int half = (w - 24) / 2, mid = x + w / 2, c = P->info_on ? C_PINK : C_CYAN;
+        text(x + 3, 4, "L", C_LIGHT, 1);
+        text(x + w - 9, 4, "R", C_LIGHT, 1);
+        hline(mid - half, 7, 2 * half, C_RAIL);
+        vline(mid, 4, 7, C_GREY);
+        dot(mid + (int)(k->pan * (float)half), 8, c);
     } else {
         char b[12] = "LVL ", *p = b + 4;
         p = put_uint(p, (unsigned)(k->level * 100.f + .5f));
@@ -392,60 +415,58 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
 {
     int x = L->cx, w = L->cw, colour = track_colour[t];
     int live = k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB;
-    /* border and body */
+    int scol = k->mode == LOOPER_REC ? C_REC : k->mode == LOOPER_DUB ? C_YELLOW : k->mode == LOOPER_PLAY ? (k->muted ? C_RED : C_GREEN)
+             : k->mode == LOOPER_EMPTY ? C_RAIL : C_WHITE;
     box(x, L->col_y, w, L->col_h, C_BG);
-    frame(x, L->col_y, w, L->col_h, k->mode == LOOPER_EMPTY ? C_RAIL : colour, 2);
-    /* title bar */
-    int tcol = k->mode == LOOPER_EMPTY ? C_RAIL : k->mode == LOOPER_REC ? C_REC : colour;
-    box(x + 2, L->title_y, w - 4, TITLE, tcol);
-    int ink = tcol == C_REC || tcol == C_RAIL ? C_WHITE : C_BLACK;
+    /* the record box */
+    int rx = x + 3, rw = w - 6, ry = L->rec_y, rh = L->rec_h;
+    frame(rx, ry, rw, rh, scol, 1);
+    if (k->latched || k->mode == LOOPER_REC)
+        frame(rx + 2, ry + 2, rw - 4, rh - 4, k->latched ? C_WHITE : scol, 1);     /* a second line, like a pressed button */
     char num[2] = {(char)('1' + t), 0};
-    text(x + 6, L->title_y + 1, num, ink, 2);                     /* the track number at 2x like a tab, its state at 1x */
-    text(x + 22, L->title_y + 5, state_name(k), ink, 1);
-    if (L->icon_h)
-        icon(L, k);
-    /* the loop position along the bottom of the record box */
-    if (k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB || k->mode == LOOPER_REC) {
-        int px = (int)(looper_progress() * (float)(w - 4));
-        box(x + 2, L->title_y + L->rec_h - 3, px, 3, C_WHITE);
+    text(rx + 7, ry + 5, num, k->mode == LOOPER_EMPTY ? C_GREY : colour, 2);
+    text(rx + 24, ry + 9, state_name(k), k->mode == LOOPER_EMPTY ? C_GREY : scol, 1);
+    icon(L, k, scol);
+    if (live || k->mode == LOOPER_REC) {                          /* the playhead, a hairline along the bottom */
+        int px = (int)(looper_progress() * (float)(rw - 4));
+        hline(rx + 2, ry + rh - 4, px, colour);
+        dot(rx + 2 + px, ry + rh - 4, colour);
     }
-    if (k->latched)
-        frame(x + 2, L->title_y, w - 4, L->rec_h, C_WHITE, 2);
-    /* the two bars */
-    int bw = 16, bx = x + w / 2 - bw - 4, d = L->bars_y, h = L->bars_h;
+    /* the fader: a hairline with ticks, a 2 px line in the track colour up to a round handle */
+    int d = L->bars_y, h = L->bars_h, fx = x + w / 2;
     float gl = k->pan > 0.f ? 1.f - k->pan : 1.f, gr = k->pan < 0.f ? 1.f + k->pan : 1.f;
-    for (int c = 0; c < 2; c++) {
-        int bxx = bx + c * (bw + 8);
-        int fill = live ? (int)(k->level * (c ? gr : gl) * (float)h + .5f) : 0;
-        box(bxx, d, bw, h, C_DARK);
-        box(bxx, d + h - fill, bw, fill, k->muted ? C_GREY : colour);
-        frame(bxx - 1, d - 1, bw + 2, h + 2, C_GREY, 1);
-    }
-    for (int q = 0; q <= 4; q++)                                  /* scale ticks */
-        box(x + 8, d + q * (h - 1) / 4, 6, 1, C_GREY);
+    vline(fx, d, h, C_RAIL);
+    for (int q = 0; q <= 4; q++)
+        hline(fx - 3, d + q * (h - 1) / 4, 7, C_GREY);
     int hy = d + h - (int)(k->level * (float)h + .5f);
-    box(bx - 6, hy - 1, 2 * bw + 20, 2, C_WHITE);                 /* the fader */
-    /* level */
+    int lc = k->muted ? C_GREY : colour;
+    box(fx, hy, 2, d + h - hy, lc);
+    for (int c = 0; c < 2; c++) {                                 /* a thin meter for each output */
+        int mx = c ? x + w - 9 : x + 8;
+        int m = live ? (int)(k->level * (c ? gr : gl) * (float)h + .5f) : 0;
+        vline(mx, d, h, C_RAIL);
+        vline(mx, d + h - m, m, lc);
+    }
+    dot(fx, hy, C_WHITE);
+    /* the level, small */
     char lv[8], *q = put_uint(lv, (unsigned)(k->level * 100.f + .5f));
     *q++ = '%';
     *q = 0;
-    text_c(x + 2, L->lvl_y + 1, w - 4, lv, k->muted ? C_GREY : C_WHITE, 2);
+    text_c(x, L->lvl_y, w, lv, k->muted ? C_GREY : C_LIGHT, 1);
     /* the pan dial and the buttons */
-    int by = L->btn_y, dx = x + 2, rw = w - 4 - DIAL - 1, rx = dx + DIAL + 1, hh = BTN / 2;
-    int pan_on = ((P->pan_sel >> t) & 1) != 0;
-    dial(dx, by, "PAN", (k->pan + 1.f) * .5f, pan_on);
-    box(rx, by, rw, hh, k->reversed ? C_YELLOW : C_DARK);
-    text_c(rx, by + 5, rw, "REV", k->reversed ? C_BLACK : C_WHITE, 1);
-    int mcol = !live ? C_DARK : k->muted ? C_RED : C_GREEN;
-    box(rx, by + hh, rw, BTN - hh, mcol);
-    text_c(rx, by + hh + 5, rw, "MUTE", C_WHITE, 1);
-    frame(rx, by, rw, hh, C_GREY, 1);
-    frame(rx, by + hh, rw, BTN - hh, C_GREY, 1);
+    int by = L->btn_y, dx = x + 2, rbw = w - 4 - DIAL - 1, bx = dx + DIAL + 1, hh = BTN / 2;
+    dial(dx, by, "PAN", (k->pan + 1.f) * .5f, ((P->pan_sel >> t) & 1) != 0);
+    int rc = k->reversed ? C_YELLOW : C_GREY;
+    frame(bx, by, rbw, hh, rc, 1);
+    text_c(bx, by + 5, rbw, "REV", k->reversed ? C_YELLOW : C_LIGHT, 1);
+    int mc = !live ? C_RAIL : k->muted ? C_RED : C_GREEN;
+    frame(bx, by + hh, rbw, BTN - hh, mc, 1);
+    text_c(bx, by + hh + 5, rbw, "MUTE", !live ? C_GREY : mc, 1);
 }
 
 static void draw_footer(const struct lay *L)
 {
-    box(0, L->foot_y, P->w, FOOT, C_BG);
+    box(1, L->foot_y + 1, P->w - 2, FOOT - 1, C_BG);
     char b[48], *p = b;
     if (looper_len()) {
         unsigned len = looper_len() * 10u / 48000u, pos = (unsigned)(looper_progress() * (float)looper_len()) * 10u / 48000u;
@@ -468,14 +489,14 @@ static void draw_footer(const struct lay *L)
             *p++ = *s++;
     }
     *p = 0;
-    text(4, L->foot_y + 2, b, C_LIGHT, 1);
+    text(5, L->foot_y + 3, b, C_LIGHT, 1);
     if (P->info_idx == 0xff) {
-        text(P->w - 4 - text_w("PRESS INFO ONCE", 1), L->foot_y + 2, "PRESS INFO ONCE", C_YELLOW, 1);
+        text(P->w - 5 - text_w("PRESS INFO ONCE", 1), L->foot_y + 3, "PRESS INFO ONCE", C_PINK, 1);
     } else {
         char i[12] = "INFO=", *q = i + 5;
         q = put_uint(q, P->info_idx);
         *q = 0;
-        text(P->w - 4 - text_w(i, 1), L->foot_y + 2, i, P->info_on ? C_YELLOW : C_GREY, 1);
+        text(P->w - 5 - text_w(i, 1), L->foot_y + 3, i, P->info_on ? C_PINK : C_GREY, 1);
     }
 }
 
@@ -512,12 +533,18 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
     }
     struct lay L;
     layout(0, &L);
+    int fc = P->info_on ? C_PINK : C_LIGHT;                       /* the frame goes pink while INFO is on */
+    frame(0, 0, P->w, P->hg, fc, 1);
+    hline(1, TOPBAR + 1, P->w - 2, C_RAIL);
+    hline(1, L.foot_y, P->w - 2, C_RAIL);
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         struct looper_info k;
         looper_track(t, &k);
         layout(t, &L);
         draw_top(t, &L, &k);
         draw_column(t, &L, &k);
+        if (t < LOOPER_TRACKS - 1)
+            vline(L.cx + L.cw, 1, L.foot_y - 1, C_RAIL);
     }
     draw_footer(&L);
     P->sig = signature();
