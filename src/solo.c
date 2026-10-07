@@ -454,11 +454,26 @@ int looper_fill_blocked(void *fb, int color, const uint16_t *r)
 }
 
 void looper_page_event(uint32_t w0, uint32_t w1);
+void looper_page_dropped(void);
 
 /* Diagnostic, from the engine event post stub: remember what is queued while the page shows. */
-void looper_note_event(void *list, const uint32_t *ev)
+int looper_note_event(void *list, const uint32_t *ev)
 {
     (void)list;
-    if (page_visible())
-        looper_page_event(ev[0], ev[1]);
+    if (!page_visible())
+        return 0;
+    looper_page_event(ev[0], ev[1]);
+    /* The transport buttons' events (seen on the unit as 0x49, 0x4f and 0x70 for PLAY, STOP and REC in some order):
+     * dropped while the page shows, so the buttons are the looper's alone; HW STOP PLAY = +STOCK lets them through. */
+    uint32_t id = ev[0] & 0xffffffu;
+    if ((id == 0x49 || id == 0x4f || id == 0x70) && looper_get_opt(LOOPER_O_HWBTN) < .5f) {
+        looper_page_dropped();
+        return 1;
+    }
+    return 0;
+}
+
+unsigned looper_screen_id(void)
+{
+    return app_screen();
 }

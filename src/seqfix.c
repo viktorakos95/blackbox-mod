@@ -42,7 +42,7 @@ typedef void (*player_fn)(uint8_t *seq, const void *clock, int32_t a, int32_t b,
                                     still plays, a hair late; his report: notes "close" ahead did not sound */
 
 void bkp_enable(void);
-void looper_clock(void);
+void looper_clock(uint32_t lo, int32_t hi);
 
 #define SLOTS 32
 struct seq_clock {
@@ -88,7 +88,7 @@ void seq_play(uint8_t *seq, const void *clock, int32_t a, int32_t b, uint32_t e)
     int i = find(seq, 1);
     if (i >= 0)
         CLK->slot[i].now = now;
-    looper_clock();                                 /* the looper restarts its loops when the transport starts */
+    looper_clock((uint32_t)t, (int32_t)(t >> 32));   /* the looper follows the transport: restarts, grid lines, where the loops are */
     fw_player(seq, clock, a, b, e);
 }
 

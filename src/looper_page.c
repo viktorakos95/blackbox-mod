@@ -57,6 +57,9 @@ typedef void (*msg_fn)(void *obj, const uint16_t *msg);
 uint8_t *solo_looper_view(void);
 void looper_guard(int mode);
 void looper_note_app(void *app);
+unsigned looper_screen_id(void);
+float looper_rate(void);
+unsigned looper_clk_pos(void);
 void looper_guard_drawing(int on);
 static void rehide(uint8_t *view);
 static void paint(uint8_t *view);
@@ -905,6 +908,18 @@ static void draw_setup(const struct lay *L)
             *z++ = '.';
             z = put_hex(z, P->ev1[i] & 0xffff, 4);
         }
+        *z++ = ' ';
+        *z++ = 'S';
+        *z++ = 'C';
+        *z++ = 'R';
+        *z++ = ' ';
+        z = put_hex(z, looper_screen_id(), 2);
+        for (const char *q = " CLK "; *q; q++)
+            *z++ = *q;
+        z = put_uint(z, looper_clk_pos());
+        for (const char *q = " R "; *q; q++)
+            *z++ = *q;
+        z = put_uint(z, (unsigned)(looper_rate() * 1000.f));
         *z = 0;
         text(6, d + ROW_H + 12, ev, C_GREY, 1);
     }
@@ -920,26 +935,8 @@ static void draw_footer(const struct lay *L)
         text_c(3 + i * (TAB_W + 2), L->foot_y + 4, TAB_W, tab[i], on ? C_CYAN : C_GREY, 1);
     }
     int x0 = 3 + MODES * (TAB_W + 2) + 4;
-    char b[48], *p = b;
-    if (looper_len()) {
-        unsigned len = looper_len() * 10u / 48000u, pos = (unsigned)(looper_progress() * (float)looper_len()) * 10u / 48000u;
-        (void)pos;
-        const char *s = "LOOP ";
-        while (*s)
-            *p++ = *s++;
-        p = put_uint(p, len / 10);
-        *p++ = '.';
-        p = put_uint(p, len % 10);
-        *p++ = 's';
-    } else {
-        const char *s = "";
-        while (*s)
-            *p++ = *s++;
-    }
-    *p = 0;
-    text(x0, L->foot_y + 4, b, C_LIGHT, 1);
     if (looper_paused())
-        text(x0 + 60, L->foot_y + 4, "PAUSED", C_RED, 1);
+        text(x0, L->foot_y + 4, "PAUSED", C_RED, 1);
     if (!P->info_set)
         text(P->w - 5 - text_w("PRESS INFO", 1), L->foot_y + 4, "PRESS INFO", C_PINK, 1);
     else if (P->info_on)

@@ -113,8 +113,12 @@ looper_stage_thunk:
 guard_post:
     push    {r0, r1, r2, r3, r12, lr}
     bl      looper_note_event
+    str     r0, [sp, #16]
     pop     {r0, r1, r2, r3, r12, lr}
+    cmp     r12, #0
+    bne     9f
     ldr.w   r3, [r0, #0x600]
     ldr     r12, =0x0804f509
     bx      r12
+9:  bx      lr
     .ltorg

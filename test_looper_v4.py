@@ -25,7 +25,7 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 160, 100                                   # engine state: tracks, track size
+T0, TSIZE = 216, 100                                   # engine state: tracks, track size
 LEN, POS, OK, UNDO_T = 12, 16, 8, 44                 # master length, master playhead
 O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
 T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
@@ -94,8 +94,8 @@ def boot():
     e.uc.mem_write(0xC0000000, b"\x11" * 0x100)
     log.clear()
     e.call("looper_boot", ENGINE, count=200_000_000)
-    e.uc.mem_write(STATE + 108 + 9 * 4, struct.pack("<f", 0.0))
-    e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 0.0))
+    e.uc.mem_write(STATE + 164 + 9 * 4, struct.pack("<f", 0.0))
+    e.uc.mem_write(STATE + 164 + 11 * 4, struct.pack("<f", 0.0))
 
 
 def block(l, r=None, base=0.0):
@@ -155,8 +155,14 @@ def param(t, p, v):
     e.call("looper_set_param", t, p)
 
 
-def clock():
-    e.call("looper_clock")
+CLKPOS = [100000]
+
+
+def clock(adv=40):
+    CLKPOS[0] += adv
+    e.uc.reg_write(A.UC_ARM_REG_R0, CLKPOS[0] & 0xFFFFFFFF)
+    e.uc.reg_write(A.UC_ARM_REG_R1, CLKPOS[0] >> 32)
+    e.call("looper_clock", CLKPOS[0] & 0xFFFFFFFF, CLKPOS[0] >> 32)
 
 
 def tf(t, off):
@@ -482,6 +488,45 @@ blocks(30)
 _, dr = block([0.0] * N)
 check("drive: finite and bounded", all(v == v and abs(v) < 4 for v in dr[0]) and any(abs(v) > 0.01 for v in dr[0]), max(abs(v) for v in dr[0]))
 param(0, P_DRIVE, 0.0)
+
+# ---------------------------------------------------------------- the sequencer's own clock: grid lines and a start from anywhere
+def cblock(n, l=0.0):
+    out = None
+    for _ in range(n):
+        clock()
+        _, out = block([l] * N)
+    return out
+
+
+boot()
+opt(O_SYNC, 1)
+opt(O_QUANT, 2)                                  # 1/16 of 120 bpm = 6000 frames = 937.5 clock units at 40 units / 256 frames
+CLKPOS[0] = 50000 + 7
+cblock(4)
+ev(0, REC_DOWN)
+began = None
+for i in range(30):
+    clock()
+    block([0.2] * N)
+    if mode(0) == RECM and began is None:
+        began = (i, CLKPOS[0])
+check("sequencer clock: the take begins on a grid line of the sequencer's own clock (the line lies within that block)", began is not None and ((began[1] % 937.5) >= 937.5 - 41 or (began[1] % 937.5) < 1), began)
+for _ in range(400):
+    clock(); block([0.2] * N)
+ev(0, REC_UP)
+cf = None
+for _ in range(120):
+    clock(); block([0.2] * N)
+    if mode(0) == PLAY and cf is None:
+        cf = CLKPOS[0]
+check("first loop: one bar", st(LEN) == 96000 and mode(0) == PLAY, (st(LEN), mode(0)))
+cblock(100)
+blocks(80)                                        # the transport stops (no clock calls)
+CLKPOS[0] = cf + 3 * 15000 + 3125 - 40           # starts somewhere random: 20000 frames into the loop's timeline, 3 loops later
+cblock(8)
+exp = (20000 + 8 * 256) % 96000
+check("transport started from a random position: the loop is where the sequencer's timeline says (within a block or so)", abs(st(POS) - exp) < 1100, (st(POS), exp))
+opt(O_SYNC, 0)
 
 # ---------------------------------------------------------------- filter, crunch, half speed
 boot()

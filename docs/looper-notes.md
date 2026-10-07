@@ -334,6 +334,22 @@ post (guard_post -> looper_note_event) and shows the last three distinct events 
 "EV aaaaaa.bbbb ..." while the page shows, so pressing PLAY / STOP / REC on the page reveals their event ids; the next
 step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok20.
 
+## Step 21
+
+- Hardware report: the transport events the looper page sees are 0x49, 0x4f and 0x70 (24-bit word 0 of the engine event;
+  one per button, shown newest first so the order follows the presses). While the page shows and HW STOP PLAY = LOOPER
+  (the default) they are dropped in the engine event post (guard_post -> looper_note_event), so PLAY / STOP / REC do not
+  reach the sequencer. Unknown which id is which button, so +STOCK lets all three through (REC too).
+- Sync with the metronome: the grid lines and the loop's position now come from the sequencer's own clock, not from a
+  frame counter that restarted at a transport start. seq_play passes the clock position (clock[0..1] + a + b) to
+  looper_clock; the engine measures clock units per frame block to block (rate), puts quantized starts / stops on the
+  clock's grid lines, remembers the clock position at which the master loop began (t0), and after a transport start
+  from any position sets the loops to where the timeline says: T = (position - t0) / rate frames, loops at T mod length
+  (half speed tracks at T / 2). Unverified on hardware: the units of the clock position and that it is steady; MORE shows
+  "CLK <position> R <units per frame x 1000>".
+- The loop length text in the footer is gone. MORE also shows the app's screen id ("SCR xx"), for the stock reverb /
+  delay page navigation that INFO + FX should reach (needs the screen ids). Label: Lok21.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,

@@ -136,6 +136,12 @@ struct looper_state {
     uint16_t why, where;         /* why the looper is off (WHY_*) and at which pool block */
     uint32_t undo_start, undo_count;             /* pass start frame, frames saved */
     uint32_t seq_seen;           /* tick of the last note player call */
+    uint32_t clk_lo, clk_hi, clk_blk;            /* the sequencer clock position the note player was last given, and when */
+    uint32_t pclk_lo, pclk_hi, pclk_blk;         /* the position at the previous block */
+    uint32_t cur_lo, cur_hi, cur_ok;             /* this block's position (cur_ok: the transport runs and its rate is known) */
+    uint32_t t0_lo, t0_hi, t0_valid;             /* clock position at which the master loop started */
+    uint32_t realign;                            /* after a transport start: put the loops on the sequencer's timeline */
+    float rate;                                  /* clock units per frame, measured */
     uint32_t restart;            /* the transport started: loops restart (if SYNC) */
     uint32_t clear_req, clear_done;
     uint32_t tcmd, paused, rewind, pfade;      /* transport: a command waiting, paused, rewind on the next block, fade blocks left */
@@ -239,6 +245,8 @@ void looper_boot(void *engine)
     S->undo_start = S->undo_count = 0;
     S->seq_seen = 0;
     S->restart = 0;
+    S->clk_blk = S->pclk_blk = S->cur_ok = S->t0_valid = S->realign = 0;
+    S->rate = 0.f;
     S->clear_req = S->clear_done = 0;
     S->tcmd = S->paused = S->rewind = S->pfade = 0;
     S->fx_tail = 0;
@@ -325,7 +333,35 @@ static inline int opt_i(int o)
     return (int)(S->opt[o] + .5f);
 }
 
-/* --- clock */
+/* --- clock: positions are held as hi / lo words and handled as doubles (no libgcc here: no 64-bit divide or conversions) */
+
+static inline double clk_get(uint32_t hi, uint32_t lo)
+{
+    return (double)hi * 4294967296.0 + (double)lo;
+}
+
+static inline void clk_put(double v, volatile uint32_t *hi, volatile uint32_t *lo)
+{
+    if (v < 0.0)
+        v = 0.0;
+    uint32_t h = (uint32_t)(v / 4294967296.0);
+    *hi = h;
+    *lo = (uint32_t)(v - (double)h * 4294967296.0);
+}
+
+/* v modulo m for a modest m (the quotient must fit in 31 bits), result in [0, m) */
+static inline double dmod(double v, double m)
+{
+    double q = v / m;
+    if (q > 2e9 || q < -2e9)
+        return 0.0;
+    double r = v - (double)(int32_t)q * m;
+    while (r < 0.0)
+        r += m;
+    while (r >= m)
+        r -= m;
+    return r;
+}
 
 static inline float beat_frames(void)
 {
@@ -619,7 +655,7 @@ void looper_in(void *obj, float **bufs, int frames)
                         k->frac = 0.f;
                         k->own = OWN_NO;
                         if (!others_busy(t))
-                            S->mlen = S->mpos = S->mcount = 0;
+                            S->mlen = S->mpos = S->mcount = S->t0_valid = 0;
                     }
                 } else if (k->mode == LOOPER_UNDOING) {
                     if (restore_step(t)) {
@@ -636,7 +672,7 @@ void looper_in(void *obj, float **bufs, int frames)
 }
 
 /* Called by the sequencer's note player (seqfix.c): once a block, while the transport plays. */
-void looper_clock(void)
+void looper_clock(uint32_t lo, int32_t hi)
 {
     if (S->magic != MAGIC)
         return;
@@ -644,6 +680,9 @@ void looper_clock(void)
     if (t - S->seq_seen > TRANSPORT_GAP)
         S->restart = 1;
     S->seq_seen = t;
+    S->clk_lo = lo;
+    S->clk_hi = (uint32_t)hi;
+    S->clk_blk = t ? t : 1;
 }
 
 /* --- the block */
@@ -831,6 +870,12 @@ static void finalize(int t, uint32_t len, int b)
     if (!S->mlen) {
         S->mlen = len;
         S->mcount = 0;
+        if (S->cur_ok) {                                  /* where on the sequencer's clock the loop began */
+            clk_put(clk_get(S->cur_hi, S->cur_lo) + (double)b * (double)S->rate, &S->t0_hi, &S->t0_lo);
+            S->t0_valid = 1;
+        } else {
+            S->t0_valid = 0;
+        }
         S->mpos = (len - ((uint32_t)b % len)) % len;     /* the block's end advance leaves it at n - b */
     }
 }
@@ -1187,23 +1232,75 @@ static void run(float *bl, float *br, int n)
     }
     int sync = opt_i(LOOPER_O_SYNC);
     float gf = grid_frames();
+    /* the sequencer's clock: its position now, and how many clock units a frame is (measured block to block) */
+    int running = S->clk_blk && S->ticks - S->clk_blk <= 2;
+    double cpos = 0.0;
+    S->cur_ok = 0;
+    if (running) {
+        cpos = clk_get(S->clk_hi, S->clk_lo);
+        if (S->pclk_blk && S->pclk_blk + 1 == S->ticks) {
+            double dp = cpos - clk_get(S->pclk_hi, S->pclk_lo);
+            if (dp > 0.0) {
+                float r = (float)(dp / (double)n);
+                S->rate = S->rate > 0.f ? S->rate * .9f + r * .1f : r;
+            }
+        }
+        S->pclk_lo = S->clk_lo;
+        S->pclk_hi = S->clk_hi;
+        S->pclk_blk = S->ticks;
+        S->cur_lo = S->clk_lo;
+        S->cur_hi = S->clk_hi;
+        S->cur_ok = S->rate > 0.f;
+    }
     if (S->restart) {
         S->restart = 0;
         if (sync) {
-            S->mpos = 0;
-            S->mcount = 0;
-            for (int t = 0; t < LOOPER_TRACKS; t++) {
-                vtrack *k = &S->t[t];
-                if (k->len && k->mode != LOOPER_REC) {
-                    k->pos = 0;
-                    k->frac = 0.f;
+            if (S->t0_valid && S->mlen) {
+                S->realign = 1;                       /* the loops are put where the sequencer's timeline says, below */
+            } else {
+                S->mpos = 0;
+                S->mcount = 0;
+                for (int t = 0; t < LOOPER_TRACKS; t++) {
+                    vtrack *k = &S->t[t];
+                    if (k->len && k->mode != LOOPER_REC) {
+                        k->pos = 0;
+                        k->frac = 0.f;
+                    }
                 }
             }
             S->gphase = gf;
         }
     }
+    if (S->realign && S->cur_ok && S->mlen && S->t0_valid) {
+        S->realign = 0;                               /* started from anywhere: the loops continue as if they had played since t0 */
+        double T = (cpos - clk_get(S->t0_hi, S->t0_lo)) / (double)S->rate;       /* frames since the loop began */
+        int32_t M = (int32_t)S->mlen;
+        int32_t Ti = T > 2e9 || T < -2e9 ? 0 : (int32_t)T;
+        S->mpos = (uint32_t)(((Ti % M) + M) % M);
+        S->mcount = 0;
+        for (int t = 0; t < LOOPER_TRACKS; t++) {
+            vtrack *k = &S->t[t];
+            if (!k->len || k->mode == LOOPER_REC || k->own == OWN_FREE)
+                continue;
+            int32_t L = (int32_t)k->len;
+            if (k->half) {
+                int32_t h = Ti >> 1;
+                k->pos = (uint32_t)(((h % L) + L) % L);
+                k->frac = (Ti & 1) ? .5f : 0.f;
+            } else {
+                k->pos = (uint32_t)(((Ti % L) + L) % L);
+                k->frac = 0.f;
+            }
+        }
+    }
     int gb = -1, wb = -1;
-    if (S->gphase + (float)n >= gf) {
+    if (S->cur_ok) {                                  /* the grid lines of the sequencer's own clock */
+        double g = (double)gf * (double)S->rate;
+        double ph = dmod(cpos, g);
+        double fr = ph < g * 1e-6 ? 0.0 : (g - ph) / (double)S->rate;
+        if (fr < (double)n)
+            gb = (int)fr;
+    } else if (S->gphase + (float)n >= gf) {
         gb = (int)(gf - S->gphase);
         gb = gb < 0 ? 0 : gb >= n ? n - 1 : gb;
     }
@@ -1463,8 +1560,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '2';                                   /* the build: step 20 */
-        *p++ = '0';
+        *p++ = '2';                                   /* the build: step 21 */
+        *p++ = '1';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';
@@ -1499,6 +1596,16 @@ void looper_transport(int cmd)
 int looper_paused(void)
 {
     return S->magic == MAGIC && S->paused;
+}
+
+float looper_rate(void)
+{
+    return S->magic == MAGIC ? S->rate : 0.f;
+}
+
+unsigned looper_clk_pos(void)
+{
+    return S->magic == MAGIC ? S->clk_lo : 0;
 }
 
 unsigned looper_running(void)

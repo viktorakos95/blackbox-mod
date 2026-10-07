@@ -26,7 +26,7 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 160, 100                                   # engine state: tracks, track size
+T0, TSIZE = 216, 100                                   # engine state: tracks, track size
 LEN, POS, OK, UNDO_T = 12, 16, 8, 44                 # master length, master playhead
 O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
 T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
@@ -95,8 +95,8 @@ def boot():
     e.uc.mem_write(0xC0000000, b"\x11" * 0x100)
     log.clear()
     e.call("looper_boot", ENGINE, count=200_000_000)
-    e.uc.mem_write(STATE + 108 + 9 * 4, struct.pack("<f", 0.0))       # loop make-up gain off: unity, as the checks expect
-    e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 0.0))      # not full screen: the geometry the checks expect
+    e.uc.mem_write(STATE + 164 + 9 * 4, struct.pack("<f", 0.0))       # loop make-up gain off: unity, as the checks expect
+    e.uc.mem_write(STATE + 164 + 11 * 4, struct.pack("<f", 0.0))      # not full screen: the geometry the checks expect
 
 
 def block(l, r=None, base=0.0):
@@ -609,7 +609,7 @@ ROW0 = 16 + 3                                                  # first row, from
 def row(r):
     return ROW0 + r * 22 + 8
 def optv(i):
-    return struct.unpack("<f", e.uc.mem_read(STATE + 108 + 4 * i, 4))[0]
+    return struct.unpack("<f", e.uc.mem_read(STATE + 164 + 4 * i, 4))[0]
 check("SETUP: LENGTH row choices (FOLLOW / MULT / FREE) and the SYNC row", [hit(84 + 10, row(0))[:2], hit(84 + 52 + 10, row(0))[:2], hit(84 + 104 + 10, row(0))[:2], hit(84 + 10, row(1))[:2]] == [(9, 0), (9, 0), (9, 0), (9, 1)], [hit(84 + 10, row(0)), hit(84 + 62, row(0)), hit(84 + 114, row(0)), hit(94, row(1))])
 check("SETUP: the choice index is the value", [hit(94, row(0))[2], hit(146, row(0))[2], hit(198, row(0))[2]] == [0, 1, 2])
 touch("down", 84 + 52 + 10, row(0))
@@ -656,7 +656,7 @@ touch("up", 84 + 60, row(0))
 check("MORE: FX ROUTE choice OWN (1)", optv(10) == 1.0)
 
 opt_sync_off = struct.pack("<f", 0.0)
-for off in (108, 112, 120, 108 + 40):
+for off in (164, 168, 176, 164 + 40):
     e.uc.mem_write(STATE + off, opt_sync_off)
 tab(0)
 f = draw(0)
@@ -726,12 +726,12 @@ blocks(30)
 button(6)
 check("on other screens the FX button is the stock one", appmsg == [(0xF9, 6)], appmsg)
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
-e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 1.0))            # FULL SCREEN on
+e.uc.mem_write(STATE + 164 + 11 * 4, struct.pack("<f", 1.0))            # FULL SCREEN on
 e.call("looper_page_enter", VIEW)
 f = draw(0)
 check("full screen: the page grows upward over the screen's own top bar (240 high, same bottom edge)", f[0][:4] == (0, 0, 320, 240), f[0][:4])
 check("... and still draws inside the screen", all(x[1] >= 0 and x[1] + x[3] <= 240 for x in f))
-e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 0.0))
+e.uc.mem_write(STATE + 164 + 11 * 4, struct.pack("<f", 0.0))
 e.call("looper_page_enter", VIEW)
 draw(0)
 # ---- the drawing guard and the touch hit test
@@ -866,10 +866,10 @@ blocks(2)
 press(0xF9, 1)
 blocks(2)
 check("STOP: the looper only", appmsg == [], appmsg)
-e.uc.mem_write(STATE + 108 + 12 * 4, struct.pack("<f", 1.0))              # HW STOP PLAY: +STOCK
+e.uc.mem_write(STATE + 164 + 12 * 4, struct.pack("<f", 1.0))              # HW STOP PLAY: +STOCK
 press(0xF9, 1)
 check("with +STOCK the sequencer gets STOP too", appmsg == [(0xF9, 1)], appmsg)
-e.uc.mem_write(STATE + 108 + 12 * 4, struct.pack("<f", 0.0))
+e.uc.mem_write(STATE + 164 + 12 * 4, struct.pack("<f", 0.0))
 e.uc.mem_write(APP + 0x8CA4, b"\x25")
 press(0xF9, 1)
 check("on other screens they are the stock buttons", appmsg == [(0xF9, 1)], appmsg)
@@ -886,7 +886,7 @@ tab(0)
 # ---- live repaint: the audio task's poke posts a message, the GUI task paints
 posted = []
 e.stub(0x080B5758, lambda: posted.append(e.r16(e.arg(1))))
-e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 1.0))            # full screen
+e.uc.mem_write(STATE + 164 + 11 * 4, struct.pack("<f", 1.0))            # full screen
 e.call("looper_page_enter", VIEW)
 draw(0)
 e.uc.mem_write(PAGE + 120, b"\x00")
@@ -902,7 +902,7 @@ fills.clear()
 e.uc.mem_write(MSG, struct.pack("<H", 0x1F0) + bytes(30))
 e.call("looper_app_msg", APP, MSG, count=50_000_000)
 check("the paint message repaints the page in the GUI task and is not passed on", len(fills) > 50, len(fills))
-e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 0.0))
+e.uc.mem_write(STATE + 164 + 11 * 4, struct.pack("<f", 0.0))
 e.call("looper_page_enter", VIEW)
 draw(0)
 
