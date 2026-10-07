@@ -207,6 +207,8 @@ void looper_cell_draw(uint8_t *cell, uint8_t *ctx)
     uint8_t *view = solo_looper_view();
     if (view && ctx[0] && cell_index(view, cell) >= 0 && looper_page_draw(view, cell, ctx))
         return;
+    if (view)
+        return;                                    /* a cell of any other view, while the page shows: not drawn */
     fw_cell_draw(cell, ctx);
 }
 
@@ -396,4 +398,16 @@ void looper_text_draw(uint8_t *w, void *ctx)
     if (page_visible() && (GUARD_BLOCK == BLK1 || (uint32_t)(w - S->view) < 0x2000u))
         return;
     fw_text_draw(w, ctx);
+}
+
+/* From the line / text stubs: 1 = drop this stock draw (the page is showing and is not the one drawing). */
+void looper_page_dropped(void);
+
+int looper_stock_blocked(void)
+{
+    if (GUARD_DRAW != DRW1 && page_visible()) {
+        looper_page_dropped();
+        return 1;
+    }
+    return 0;
 }

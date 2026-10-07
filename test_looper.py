@@ -916,6 +916,24 @@ check("on other screens every text widget is drawn", drawn == [VIEW + 0x3AC + 0x
 e.call("looper_guard", 0)
 e.uc.mem_write(SCR, b"\x2f")
 
+# ---- stock line / text drawing and other views' cells are dropped while the page shows
+e.uc.mem_write(SCR, b"\x2f"); e.uc.mem_write(SOLO + 6, b"\x01"); e.uc.mem_write(VIEW + 0x1E40, b"\x01")
+def stock_blocked():
+    e.call("looper_stock_blocked")
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+check("page showing: stock line / text drawing is dropped", stock_blocked() == 1)
+e.call("looper_guard_drawing", 1)
+check("... but not while the page itself draws", stock_blocked() == 0)
+e.call("looper_guard_drawing", 0)
+e.uc.mem_write(SCR, b"\x25")
+check("on another screen nothing is dropped", stock_blocked() == 0)
+e.uc.mem_write(SCR, b"\x2f")
+celldraw.clear()
+OTHER = 0x30026000
+e.uc.mem_write(OTHER, bytes(0x400))
+e.call("looper_cell_draw", OTHER, CTX, count=5_000_000)
+check("a cell of any other view is not drawn while the page shows", celldraw == [], celldraw)
+
 # leaving the page puts the child widgets back
 e.call("solo_set_mode", VIEW, 1)
 check("leaving the page: the children are restored (the one the firmware hid stays hidden)",

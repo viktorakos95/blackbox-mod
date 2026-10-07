@@ -74,3 +74,30 @@ looper_stage_thunk:
     push    {r4, lr}
     ldrb.w  lr, [sp, #8]
     GUARD_END 0x0808f747
+
+/*
+ * Stock line and text drawing, dropped while the Looper page shows (looper_stock_blocked, solo.c): the stock cells' corner
+ * marks (the cyan boxes: FUN_080a43b8 draws them with FUN_0808ea7e, colour 5) and the screen's own "1:2 Seq" bar (text, FUN_0808ee54).
+ * The page draws with fills and pixels only. Both functions start with `push.w {r4-r8, sb, sl, fp, lr}`.
+ */
+    .macro STOCKGUARD name, resume
+    .global \name
+    .thumb_func
+    .type \name, %function
+\name:
+    push    {r0, r1, r2, r3, r12, lr}
+    bl      looper_stock_blocked
+    str     r0, [sp, #16]
+    pop     {r0, r1, r2, r3, r12, lr}
+    cmp     r12, #0
+    bne     9f
+    push.w  {r4, r5, r6, r7, r8, sb, sl, fp, lr}
+    ldr     r12, =\resume
+    bx      r12
+9:  movs    r0, #0
+    bx      lr
+    .ltorg
+    .endm
+
+    STOCKGUARD guard_line, 0x0808ea83
+    STOCKGUARD guard_text, 0x0808ee59

@@ -288,6 +288,16 @@ area. REC button = message 0xf4 (shown "244:8"); INFO = 0xc.
   undo / BACK does: UNDO PASS (yellow), DELETE LOOP (red), nothing (grey).
 - Version label ends "Lok15" (the build number), to tell builds apart.
 
+## Step 16
+
+Step 15 changed nothing visible: neither the cyan boxes nor the "1:2 Seq" bar went through the text widget class wrapper.
+The stock cell draw (FUN_080a43b8) draws 7 px corner lines with the line function FUN_0808ea7e, colour 5 (= cyan 0x09d7f5,
+same as palette 0x1b): the boxes. The bar is text drawn by FUN_0808ee54. Both are now dropped (inline hooks at their
+entries, looper_thunk.S guard_line / guard_text) while the page shows (looper_stock_blocked), and a cell of any other view
+is not drawn. Fills and pixels (the page's own drawing, and what the display needs) are left alone: dropping those in
+steps 12-14 stopped full screen from updating. MORE shows "DROP n", how many stock draws were dropped (0 with boxes
+still showing would mean the hooks are not on the path). Build number on the version label: Lok16.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,

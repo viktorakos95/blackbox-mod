@@ -142,7 +142,7 @@ struct page {
     uint16_t rect_on, touches;
     uint8_t bset[BTNS], bidx[BTNS];                 /* learned hardware buttons: set, button index ... */
     uint16_t bid[BTNS];                             /* ... and message id, per slot */
-    uint32_t rec_t, btn_t, paint_t;
+    uint32_t rec_t, btn_t, paint_t, dropped;
     uint8_t paint_req, _r6[3];
     int16_t touch_x, touch_y;
     uint32_t clear_t;                               /* when CLEAR ALL was asked */
@@ -866,6 +866,9 @@ static void draw_setup(const struct lay *L)
         p = put_uint(p, *(const uint16_t *)((const uint8_t *)FB + 4));
         *p++ = 'x';
         p = put_uint(p, *(const uint16_t *)((const uint8_t *)FB + 6));
+        for (const char *q = " DROP "; *q; q++)
+            *p++ = *q;
+        p = put_uint(p, P->dropped);
         for (const char *q = " T "; *q; q++)
             *p++ = *q;
         p = put_uint(p, P->touches);
@@ -1132,6 +1135,7 @@ void looper_page_boot(void)
         P->bidx[i] = pre_idx[i];
     }
     P->paint_req = 0;
+    P->dropped = 0;
     P->learn = 0;
     P->touches = 0;
     P->sel = 0;
@@ -1432,4 +1436,10 @@ void looper_app_msg(void *app, const uint16_t *msg)
             return;
     }
     fw_app_msg(app, msg);
+}
+
+/* From solo.c: a stock line / text draw was dropped (shown on MORE, to tell whether the hooks fire). */
+void looper_page_dropped(void)
+{
+    P->dropped++;
 }
