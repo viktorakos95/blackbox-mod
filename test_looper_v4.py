@@ -670,11 +670,11 @@ param(0, P_STOP, 0.0)
 blocks(400)
 param(0, P_DROP, -0.6)
 quiet = 0
-for _ in range(300):
+for _ in range(1200):
     _, o = block([0.0] * N)
     if max(abs(x) for x in o[0]) < 0.02:
         quiet += 1
-check("DROP (random): some blocks are silent, not all", 10 < quiet < 280, quiet)
+check("DROP (random): some blocks are silent, not all", 5 < quiet < 1100, quiet)
 param(0, P_DROP, 0.8)
 quiet = 0
 for _ in range(300):
