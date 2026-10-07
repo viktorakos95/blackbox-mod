@@ -112,6 +112,10 @@ static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /
 #define REC_H     40             /* the record box */
 #define FX_N 14                                                   /* the FX tab's controls, two pages of eight: six dials, REV, HALF; STAB RPT SPEED DROP TRIM STOP */
 #define FX_PAGE(c) ((c) >> 3)
+/* The square's tiles (0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right) lie like the encoders on the panel: left top is
+ * track 2's (knob 1), left bottom track 1's (knob 0), right top track 3's, right bottom track 4's. */
+static const uint8_t slot_knob[4] = {1, 2, 0, 3};                 /* tile slot -> knob */
+static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> tile slot */
 #define FX_GROUP (P->fx_sel[0] & 3)                              /* the pink square: a 2 x 2 block of four controls = the four knobs; it is in track P->sel's column */
 #define BTN       34             /* the bottom row: the pan dial and the REV / MUTE buttons */
 #define DIAL      34             /* width of the pan dial's box */
@@ -764,7 +768,7 @@ static void draw_top(int t, const struct lay *L, const struct looper_info *k)
     } else if (P->mode == M_FX) {
         struct looper_info ks;                                    /* knob t turns control 4 * group + t of the selected track */
         looper_track(P->sel & 3, &ks);
-        int c = FX_GROUP * 4 + t;
+        int c = FX_GROUP * 4 + knob_slot[t & 3];
         if (c < FX_N)
             fx_text(b, c, fx_value(&ks, c));
         else
@@ -892,7 +896,7 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
         frame(x, by, 2 * (DIAL + 1) + 3, 2 * (th + 1) + 3, C_PINK, 1);
         frame(x + 1, by + 1, 2 * (DIAL + 1) + 1, 2 * (th + 1) + 1, C_PINK, 1);
         for (int i = 0; i < 4; i++) {                             /* which knob is which */
-            char dg[2] = {(char)('1' + i), 0};
+            char dg[2] = {(char)('1' + slot_knob[i]), 0};
             if (FX_GROUP * 4 + i < FX_N)
                 text(x + 4 + (i & 1) * (DIAL + 1), y0 + ((FX_GROUP & 1) * 2 + (i >> 1)) * (th + 1) + th - 9, dg, C_PINK, 1);
         }
@@ -1489,7 +1493,7 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
                 else if (knob == 0)
                     looper_set_opt(op_s[0], looper_get_opt(op_s[0]) + step);
             } else if (P->mode == M_FX) {
-                int p = FX_GROUP * 4 + knob, tk = P->sel & 3;             /* knob n turns the n-th control of the pink square, on the selected track */
+                int p = FX_GROUP * 4 + knob_slot[knob & 3], tk = P->sel & 3;             /* knob n turns the n-th control of the pink square, on the selected track */
                 if (p >= FX_N) {
                 } else if (p == 6 || p == 7) {                            /* REV / HALF: turn right = on, left = off */
                     int on = looper_info_of(tk, p);

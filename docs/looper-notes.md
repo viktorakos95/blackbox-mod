@@ -430,3 +430,8 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
   TRIM has six steps: 1/2 ... 1/64 of the loop. Fast double tap (340 ms) on a dial = default (REV / HALF excluded).
 - Without a selected sequence the stock transport never runs (seq_play is not called), so there is no clock: the looper
   falls back to its own grid at the stock BPM.  Label Lok32.
+
+## Step 33
+- The pink square's four tiles lie like the encoders on the panel (user: left top 2, left bottom 1, right top 3, right
+  bottom 4): tile slots TL TR BL BR = knobs 2 3 1 4 (`slot_knob` / `knob_slot`); the digits drawn in the tiles say so.
+- STAB: only a hint of hiss (0.4 % at most), wow +-5 % and flutter 1.8 % that come in early (x (2 - x)). Label Lok33.

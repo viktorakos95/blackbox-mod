@@ -863,10 +863,11 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
     float sp = k->speed;
     float sf = sp >= 0.f ? 1.f + sp : 1.f + 2.f * sp;                 /* -1 backwards, -.5 stopped, 0 normal, 1 twice */
     p->spd = sf * (k->half ? .5f : 1.f);
-    p->wow = k->stab * .04f;                                          /* up to +-4 % of speed, slowly: a worn tape */
-    p->flut = k->stab * .012f;
-    p->nz = k->stab * k->stab * .03f;
-    p->lpa = 1.f - .85f * k->stab;
+    float sq = k->stab * (2.f - k->stab);                             /* comes in early: the first third is already audible */
+    p->wow = sq * .05f;                                               /* up to +-5 % of speed, slowly: a worn tape */
+    p->flut = sq * .018f;                                             /* and a quicker wobble on top */
+    p->nz = k->stab * k->stab * .004f;                                /* only a hint of hiss */
+    p->lpa = 1.f - .8f * k->stab;
     /* RPT: what an overdub pass keeps of the old loop; a fade of the same speed per second whatever the loop length */
     float tau = .3f + 20.f * k->rpt * k->rpt;
     float lsec = k->len ? (float)k->len / SR : 1.f;
@@ -971,7 +972,7 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
         float w = 1.f + p->wow * tri01(d->ph1[t]) + p->flut * tri01(d->ph2[t]);
         spd *= w;
         d->ph1[t] += .6f / SR;
-        d->ph2[t] += 7.5f / SR;
+        d->ph2[t] += 6.3f / SR;
         if (d->ph1[t] >= 1.f)
             d->ph1[t] -= 1.f;
         if (d->ph2[t] >= 1.f)
@@ -1787,8 +1788,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '3';                                   /* the build: step 32 */
-        *p++ = '2';
+        *p++ = '3';                                   /* the build: step 33 */
+        *p++ = '3';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';
