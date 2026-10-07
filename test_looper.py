@@ -326,8 +326,8 @@ def cells(y_up=True):
         row, col = i // 4, i % 4
         c = VIEW + 0x3AC + i * 0x1A0
         e.uc.mem_write(c + 0x38, struct.pack("<H", row << 4 | col))
-        y = 30 + row * 50 if y_up else 30 + (3 - row) * 50
-        e.uc.mem_write(c + 4, struct.pack("<4i", 40 + col * 100, y, 96, 46))
+        y = row * 56 if y_up else (3 - row) * 56
+        e.uc.mem_write(c + 4, struct.pack("<4i", 32 + col * 64, y, 64, 56))      # the real grid: 256 x 224, 32 px margins
     e.uc.mem_write(VIEW + 0x1E40, b"\x01")
 
 
@@ -352,6 +352,7 @@ celldraw = []
 e.stub(0x080A43B8, lambda: celldraw.append(e.arg(0)))
 e.uc.mem_write(CTX, b"\x01\x00\x00\x00" + struct.pack("<I", FBP))
 e.uc.mem_write(FBP, bytes(16))
+e.uc.mem_write(FBP + 4, struct.pack("<HH", 320, 240))                # the frame buffer is 320 wide
 
 
 def draw(cell=0):
@@ -365,17 +366,24 @@ def draw(cell=0):
 f = draw(5)
 check("only the first cell draws the page; the others draw nothing and skip the stock draw", not f and not pixels and not celldraw)
 f = draw(0)
-# page: 196 high (cells y 30..226), top edge 226, y up. Column 0 title bar: x 4, 112 wide, top at d = 3+16+2 = 21
-FB_ARG = FBP
-title0 = [x for x in f if x[2] == 112 and x[3] == 16]
-check("page painted: background first, then top bar, columns, footer", f[0][:4] == (2, 30, 476, 196) and f[0][4] == 0x02, f[:1])
-check("track 1's title bar (empty = grey) sits under the top bar: x 4, y = 226 - 21 - 16 = 189",
-      any(x[:4] == (4, 189, 112, 16) and x[4] == 0x10 for x in f), title0[:3])
-check("four columns of 116 px across the whole width (x 4, 124, 244, 364)",
-      sorted({x[0] for x in f if x[2] == 112 and x[3] == 16}) == [4, 124, 244, 364], sorted({x[0] for x in f if x[2] == 112 and x[3] == 16}))
+# page: 224 high (cells y 0..224), top edge 224, y up, 314 wide from x 3 (320 screen, 3 px margins); 75 px columns.
+# Column 0 title bar: x 5, 71 wide, top at d = 3+16+2 = 21
+title0 = [x for x in f if x[2] == 71 and x[3] == 16]
+check("page painted: background first, then top bar, columns, footer", f[0][:4] == (3, 0, 314, 224) and f[0][4] == 0x02, f[:1])
+check("track 1's title bar (empty = grey) sits under the top bar: x 5, y = 224 - 21 - 16 = 187",
+      any(x[:4] == (5, 187, 71, 16) and x[4] == 0x10 for x in f), title0[:3])
+check("four columns of 79 px pitch across the whole width (x 5, 84, 163, 242)",
+      sorted({x[0] for x in f if x[2] == 71 and x[3] == 16}) == [5, 84, 163, 242], sorted({x[0] for x in f if x[2] == 71 and x[3] == 16}))
 check("everything is drawn into the page's own frame buffer", all(x[5] == FBP for x in f))
-check("all fills lie inside the page", all(x[0] >= 2 and x[0] + x[2] <= 478 and x[1] >= 30 and x[1] + x[3] <= 226 for x in f), [x for x in f if not (x[0] >= 2 and x[0] + x[2] <= 478 and x[1] >= 30 and x[1] + x[3] <= 226)][:3])
-check("text is plotted pixel by pixel, inside the page", pixels and all(2 <= px < 478 and 30 <= py < 226 for px, py, _ in pixels), pixels[:3])
+check("all fills lie inside the screen (x 3..317, y 0..224)", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f), [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
+check("text is plotted pixel by pixel, inside the screen", pixels and all(3 <= px < 317 and 0 <= py < 224 for px, py, _ in pixels), pixels[:3])
+e.uc.mem_write(FBP + 4, struct.pack("<HH", 300, 240))                # a narrower frame buffer than the cells suggest
+e.call("looper_page_enter")
+f300 = draw(0)
+check("never wider than the frame buffer: with a 300 px buffer nothing is drawn past x 300", all(x[0] + x[2] <= 300 for x in f300) and all(px < 300 for px, _, _ in pixels), max(x[0] + x[2] for x in f300))
+e.uc.mem_write(FBP + 4, struct.pack("<HH", 320, 240))
+e.call("looper_page_enter")
+f = draw(0)
 
 
 # a playing track 1 so its title is coloured
@@ -384,14 +392,14 @@ blocks(60, 0.2)
 ev(0, REC_UP)
 blocks(3, 0.0)
 f = draw(0)
-check("a playing track: title bar in its colour (cyan), black text", any(x[:4] == (4, 189, 112, 16) and x[4] == 0x1B for x in f) and any(c == 0xE for _, _, c in pixels))
+check("a playing track: title bar in its colour (cyan), black text", any(x[:4] == (5, 187, 71, 16) and x[4] == 0x1B for x in f) and any(c == 0xE for _, _, c in pixels))
 check("its two bars: a white fader line across them", any(x[4] == 0x0F and x[3] == 2 for x in f))
 # levels: bar height follows level
 level(0, 0.5)
 blocks(2)
 f = draw(0)
 bars = [x for x in f if x[2] == 16 and x[4] == 0x1B]
-check("level 50 %: both bars filled to half of their 72 px (a pair of equal 16 px wide fills)", len(bars) == 2 and bars[0][3] == bars[1][3] == 36, bars)
+check("level 50 %: both bars filled to half of their 100 px (a pair of equal 16 px wide fills)", len(bars) == 2 and bars[0][3] == bars[1][3] == 50, bars)
 pan(0, 0.5)
 blocks(2)
 f = draw(0)
@@ -403,7 +411,7 @@ level(0, 1.0)
 # orientation: the same cells with y running downwards, row 3 at the top (smaller y)
 cells(y_up=False)
 f = draw(0)
-check("cells with y down: the page flips to match (title bar at y = 30 + 21)", any(x[:4] == (4, 51, 112, 16) for x in f), [x for x in f if x[2] == 112][:2])
+check("cells with y down: the page flips to match (title bar at y = 0 + 21)", any(x[:4] == (5, 21, 71, 16) for x in f), [x for x in f if x[2] == 71][:2])
 cells()
 f = draw(0)
 
@@ -419,20 +427,20 @@ def hit(x, d):
 
 
 # rows (top-down): top bar 0-16, column 19.., title 21-37, icon 37-63, bars 67.., level text, buttons
-check("title / icon area of column 2 is its record box", hit(130, 30)[:2] == (1, 1) and hit(130, 60)[:2] == (1, 1), (hit(130, 30), hit(130, 60)))
-z, t, v = hit(250, 100)
+check("title / icon area of column 2 is its record box", hit(100, 30)[:2] == (1, 1) and hit(100, 60)[:2] == (1, 1), (hit(100, 30), hit(100, 60)))
+z, t, v = hit(190, 100)
 check("bars area of column 3 is its fader", z == 2 and t == 2 and 0.0 <= v <= 1.0, (z, t, v))
-check("fader value runs 0 at the bottom of the bars to 1 at the top", hit(250, 67)[2] > 0.99 and hit(250, 67 + 195 - 67 - 1 - 18 - 18 - 4 - 4)[2] < 0.05, (hit(250, 67)[2],))
-btn_d = 19 + (196 - 16 - 12 - 2 * 3) - 2 - 18 + 5
-check("button row: PAN, REV, MUTE by thirds", [hit(370 + dx, btn_d)[0] for dx in (5, 40, 75)] == [3, 4, 5], [hit(370 + dx, btn_d) for dx in (5, 40, 75)])
-check("the top bar, the gaps between columns and the footer are not controls", hit(130, 8)[0] == 0 and hit(118, 100)[0] == 0 and hit(130, 190)[0] == 0)
+check("fader value runs 0 at the bottom of the bars to 1 at the top", hit(190, 67)[2] > 0.99 and hit(190, 166)[2] < 0.05, (hit(190, 67)[2], hit(190, 166)[2]))
+btn_d = 19 + (224 - 16 - 12 - 2 * 3) - 2 - 18 + 5
+check("button row: PAN, REV, MUTE by thirds", [hit(237 + dx, btn_d)[0] for dx in (5, 30, 60)] == [3, 4, 5], [hit(237 + dx, btn_d) for dx in (5, 30, 60)])
+check("the top bar, the gaps between columns and the footer are not controls", hit(100, 8)[0] == 0 and hit(77, 100)[0] == 0 and hit(100, 215)[0] == 0)
 
 stock_clear = len(stock)
 
 
 def touch(kind, x_rel, d, up=True):
-    # fill-space point: x = 2 + x_rel, y = 226 - d
-    e.uc.mem_write(PTA, struct.pack("<2i", 2 + x_rel, 226 - d))
+    # fill-space point: x = 3 + x_rel, y = 224 - d
+    e.uc.mem_write(PTA, struct.pack("<2i", 3 + x_rel, 224 - d))
     e.call({"down": "solo_touch_down", "move": "solo_touch_move", "up": "solo_touch_up"}[kind], VIEW, PTA, 0)
 
 
@@ -440,23 +448,23 @@ def evs(t):
     return list(e.uc.mem_read(STATE + T0 + TSIZE * t + 8, 5))
 
 
-touch("down", 130, 30)
-touch("up", 130, 30)
+touch("down", 100, 30)
+touch("up", 100, 30)
 check("touching a record box sends REC_DOWN then REC_UP for that track", evs(1)[:2] == [1, 1], evs(1))
-touch("down", 370, btn_d)
-touch("up", 370, btn_d)
+touch("down", 242, btn_d)
+touch("up", 242, btn_d)
 check("PAN: selects track 4's knob for the pan", e.r8(PAGE + 6) == 0b1000, e.r8(PAGE + 6))
-touch("down", 370 + 40, btn_d)
-touch("up", 370 + 40, btn_d)
+touch("down", 267, btn_d)
+touch("up", 267, btn_d)
 check("REV: reverse event", evs(3)[4] == 1, evs(3))
-touch("down", 370 + 75, btn_d)
-touch("up", 370 + 75, btn_d)
+touch("down", 297, btn_d)
+touch("up", 297, btn_d)
 check("MUTE: down and up", evs(3)[2:4] == [1, 1], evs(3))
-touch("down", 250, 67 + 90 - 1)
+touch("down", 190, 165)
 check("fader: touching near the bottom of the bars sets a low level", tr(2, 0x20, "f") < 0.1, tr(2, 0x20, "f"))
-touch("move", 250, 67 + 1)
+touch("move", 190, 68)
 check("fader: dragging to the top sets level 1", abs(tr(2, 0x20, "f") - 1.0) < 0.02, tr(2, 0x20, "f"))
-touch("up", 250, 67)
+touch("up", 190, 67)
 check("the page's touches never reach the stock mixer handlers", len(stock) == stock_clear, stock)
 
 # knobs: message 0x32 to the view
@@ -497,8 +505,8 @@ button(2)
 check("other buttons pass through once INFO is known", appmsg[-1] == (0xF9, 2), appmsg)
 knob(1, 800)
 check("INFO on: knob 2 turns the pan, not the level", abs(tr(1, 0x24, "f") - 0.2) < 1e-5 and tr(1, 0x20, "f") == 1.0, (tr(1, 0x24, "f"), tr(1, 0x20, "f")))
-touch("down", 130, 30)
-touch("up", 130, 30)
+touch("down", 100, 30)
+touch("up", 100, 30)
 check("INFO on: a record box tap is a MUTE press, not a REC press", evs(1)[2:4] == [1, 1] and evs(1)[:2] == [1, 1], evs(1))
 button(4)
 check("INFO again: off", e.r8(PAGE + 7) == 0)

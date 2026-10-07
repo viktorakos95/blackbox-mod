@@ -18,7 +18,9 @@
  *
  * Drawing. The firmware's screen API has its origin at the bottom left: y grows upward and a rectangle's y is its
  * bottom edge (the low-level fill 0x08041c68 computes H - y - h, the pixel plot 0x0808f524 H - y - 1). The page is laid
- * out top-down on a 476 px wide area as tall as the mixer's 16 cells, then mapped with GX / GY. Which way is up is
+ * out top-down on an area as wide as the screen (320 px; 256 px for the cells) and as tall as the mixer's 16 cells,
+ * then mapped with GX / GY. (Step 4 assumed 476 px from a guess and would have drawn past the edge: never size
+ * anything from a guess, only from the cells and the frame buffer.) Which way is up is
  * read from the cells themselves (pad row 3 is the top row, row 0 the bottom) and x from the columns, so a flipped
  * screen would still come out right. Text is the firmware's own 6x8 font (FUN_0808ee54 draws it at 2x, too big for
  * four columns) plotted pixel by pixel at 1x or 2x.
@@ -76,9 +78,9 @@ struct font {
 #define C_TEAL   0x1a
 static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x20};   /* cyan, yellow, aqua, pink */
 
-/* layout, in pixels, top-down */
-#define PAGE_X0   2
-#define PAGE_W    476
+/* layout, in pixels, top-down. The page width and origin come from the screen (geometry()): about 314 px on the
+ * 320 px wide display, the 64 px cells being centred with 32 px of margin on each side. */
+#define MARGIN    3
 #define GAP       4
 #define TOPBAR    16
 #define FOOT      12
@@ -101,11 +103,14 @@ struct page {
     uint16_t btn_id, btn_index;
     uint32_t magic, info_t, info_down, sig, force, fb;
     int32_t ytop, hg, s, sx;     /* geometry read from the cells at the last draw */
+    int32_t x0, w;               /* the page's left edge and width, in fill space */
 };
 #define P ((volatile struct page *)0x38800f00u)
 #define PMAGIC 0x50414731u
 
 _Static_assert(sizeof(struct page) <= 0x100, "page state must fit its 256 bytes");
+
+#define FB ((void *)P->fb)       /* the frame buffer (no .bss in the code cave: it lives with the page state) */
 
 /* ---- geometry */
 
@@ -118,6 +123,7 @@ static uint8_t *cell_at(uint8_t *view, int i)
 static void geometry(uint8_t *view)
 {
     int y_lo = 0x7fffffff, y_hi = -0x7fffffff, y_row0 = 0, y_row3 = 0, x_col0 = 0, x_col3 = 0;
+    int x_lo = 0x7fffffff, x_hi = -0x7fffffff;
     for (int i = 0; i < 16; i++) {
         uint8_t *c = cell_at(view, i);
         const int *r = (const int *)(c + CELL_RECT);
@@ -126,6 +132,10 @@ static void geometry(uint8_t *view)
             y_lo = r[1];
         if (r[1] + r[3] > y_hi)
             y_hi = r[1] + r[3];
+        if (r[0] < x_lo)
+            x_lo = r[0];
+        if (r[0] + r[2] > x_hi)
+            x_hi = r[0] + r[2];
         if (row == 0)
             y_row0 = r[1];
         if (row == 3)
@@ -141,11 +151,23 @@ static void geometry(uint8_t *view)
     P->ytop = P->s > 0 ? y_hi : y_lo;
     if (P->hg < 120)
         P->hg = 120;
+    /* The cells are centred on the screen, so the screen is as wide as the cells plus their margin twice; the frame
+     * buffer's own width (fb + 4) caps it when it makes sense. Never wider than that: a fill past the edge is unsafe. */
+    int ws = x_lo + x_hi, fbw = *(const uint16_t *)((const uint8_t *)FB + 4);
+    if (fbw >= 160 && fbw <= 1024 && fbw < ws)
+        ws = fbw;
+    if (ws < x_hi || ws > 1024 || x_hi - x_lo < 80) {              /* not centred, or nothing sensible: the cells only */
+        P->x0 = x_lo;
+        P->w = x_hi - x_lo;
+    } else {
+        P->x0 = MARGIN;
+        P->w = ws - 2 * MARGIN;
+    }
 }
 
 static inline int GX(int x, int w)
 {
-    return P->sx > 0 ? PAGE_X0 + x : PAGE_X0 + PAGE_W - x - w;
+    return P->sx > 0 ? P->x0 + x : P->x0 + P->w - x - w;
 }
 
 static inline int GY(int d, int h)
@@ -165,7 +187,7 @@ struct lay {
 
 static void layout(int t, struct lay *L)
 {
-    int cw = (PAGE_W - 3 * GAP) / 4, hg = P->hg;
+    int cw = (P->w - 3 * GAP) / 4, hg = P->hg;
     L->cw = cw;
     L->cx = t * (cw + GAP);
     L->col_y = TOPBAR + VGAP;
@@ -187,9 +209,9 @@ static void layout(int t, struct lay *L)
 int looper_page_hit(int x, int d, int *track, float *val)
 {
     struct lay L;
-    int cw = (PAGE_W - 3 * GAP) / 4;
-    int t = x / (cw + GAP);
-    if (P->hg < 120 || x < 0 || t < 0 || t >= LOOPER_TRACKS || x - t * (cw + GAP) >= cw)
+    int cw = (P->w - 3 * GAP) / 4;
+    int t = cw > 0 ? x / (cw + GAP) : 0;
+    if (P->hg < 120 || P->w < 80 || x < 0 || t < 0 || t >= LOOPER_TRACKS || x - t * (cw + GAP) >= cw)
         return Z_NONE;                                            /* (hg is 0 until the page has been drawn once) */
     layout(t, &L);
     *track = t;
@@ -209,7 +231,6 @@ int looper_page_hit(int x, int d, int *track, float *val)
 
 /* ---- drawing */
 
-#define FB ((void *)P->fb)       /* (no .bss in the code cave: it lives with the page state) */
 
 static void box(int x, int d, int w, int h, int color)
 {
@@ -386,7 +407,7 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
     *q = 0;
     text_c(x + 2, L->lvl_y + 1, w - 4, lv, k->muted ? C_GREY : C_WHITE, 2);
     /* buttons */
-    int bwid = (w - 4) / 3, by = L->btn_y;
+    int bwid = (w - 4) / 3, by = L->btn_y, mw = w - 4 - 2 * bwid;
     int pan_on = ((P->pan_sel >> t) & 1) != 0;
     box(x + 2, by, bwid, BTN, pan_on ? C_TEAL : C_DARK);
     text_c(x + 2, by + 5, bwid, "PAN", C_WHITE, 1);
@@ -394,7 +415,7 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
     text_c(x + 2 + bwid, by + 5, bwid, "REV", k->reversed ? C_BLACK : C_WHITE, 1);
     int mcol = !live ? C_DARK : k->muted ? C_RED : C_GREEN;
     box(x + 2 + 2 * bwid, by, w - 4 - 2 * bwid, BTN, mcol);
-    text_c(x + 2 + 2 * bwid, by + 5, w - 4 - 2 * bwid, "MUTE", C_WHITE, 1);
+    text_c(x + 2 + 2 * bwid, by + 5, mw, mw >= text_w("MUTE", 1) + 2 ? "MUTE" : "M", C_WHITE, 1);
     frame(x + 2, by, w - 4, BTN, C_GREY, 1);
     box(x + 2 + bwid, by, 1, BTN, C_GREY);
     box(x + 2 + 2 * bwid, by, 1, BTN, C_GREY);
@@ -402,7 +423,7 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
 
 static void draw_footer(const struct lay *L)
 {
-    box(0, L->foot_y, PAGE_W, FOOT, C_BG);
+    box(0, L->foot_y, P->w, FOOT, C_BG);
     char b[48], *p = b;
     if (looper_len()) {
         unsigned len = looper_len() * 10u / 48000u, pos = (unsigned)(looper_progress() * (float)looper_len()) * 10u / 48000u;
@@ -427,12 +448,12 @@ static void draw_footer(const struct lay *L)
     *p = 0;
     text(4, L->foot_y + 2, b, C_LIGHT, 1);
     if (P->info_idx == 0xff) {
-        text(PAGE_W - 4 - text_w("PRESS INFO ONCE", 1), L->foot_y + 2, "PRESS INFO ONCE", C_YELLOW, 1);
+        text(P->w - 4 - text_w("PRESS INFO ONCE", 1), L->foot_y + 2, "PRESS INFO ONCE", C_YELLOW, 1);
     } else {
         char i[12] = "INFO=", *q = i + 5;
         q = put_uint(q, P->info_idx);
         *q = 0;
-        text(PAGE_W - 4 - text_w(i, 1), L->foot_y + 2, i, P->info_on ? C_YELLOW : C_GREY, 1);
+        text(P->w - 4 - text_w(i, 1), L->foot_y + 2, i, P->info_on ? C_YELLOW : C_GREY, 1);
     }
 }
 
@@ -465,7 +486,7 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
     geometry(view);
     if (!P->entered) {
         P->entered = 1;
-        box(0, 0, PAGE_W, P->hg, C_BG);
+        box(0, 0, P->w, P->hg, C_BG);
     }
     struct lay L;
     layout(0, &L);
@@ -528,7 +549,7 @@ void looper_page_boot(void)
 /* Touch points use the same space as the cells: convert to pixels from the page's left and top. */
 static void to_page(const int *pt, int *x, int *d)
 {
-    *x = P->sx > 0 ? pt[0] - PAGE_X0 : PAGE_X0 + PAGE_W - pt[0];
+    *x = P->sx > 0 ? pt[0] - P->x0 : P->x0 + P->w - pt[0];
     *d = P->s > 0 ? P->ytop - pt[1] : pt[1] - P->ytop;
 }
 

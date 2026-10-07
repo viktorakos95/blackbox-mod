@@ -110,8 +110,8 @@ goes to another screen. (Reference photo from the user: the Blackbox 2 mixer, fo
   fill 0x08041c68 computes H - y - h; pixel plot 0x0808f524 does H - y - 1). Pad row 0 is the bottom row, so the old
   fader (written y-down) ran backwards. The framebuffer is the 8-bit palette kind (table 0x080f1d80). The stock text
   draws the 6x8 font (RAM struct 0x240000d0 -> glyphs 0x080ecdc4) at 2x; the page plots it itself at 1x / 2x.
-  The waveform view is 476 px wide, so the screen is about 480 wide.
-- The page spans 476 px x the height of the 16 cells, laid out top-down and mapped with GX / GY. Orientation is
+  (The waveform view's 476 px did not mean a 480 px screen: the screen is 320 px wide, see below.)
+- The page spans the screen width (314 px of 320) x the height of the 16 cells (224 px), laid out top-down and mapped with GX / GY. Orientation is
   re-read from the cells every draw (pad rows 0 / 3, columns 0 / 3).
 - Layout: top bar of four cells (the knob's value, or an L - R pan bar), four bordered columns in track colours
   (title "1 PLAY" + icon = the record box, two bars for L / R output with a white fader line, level % at 2x,
@@ -121,6 +121,15 @@ goes to another screen. (Reference photo from the user: the Blackbox 2 mixer, fo
   (10 s idle timeout), held 0.45 s+ = on only while held. INFO + knob = pan, INFO + box tap = mute, hold = undo / erase.
 - 34.9 KB of cave: the first build past the old 32 KB limit (cave ends at 0x08100000).
 - Redraws only when the page's signature changes (plus once a second), not every poke.
+
+## Step 4 correction: the screen is 320 px wide
+
+A photo of the step 3c page showed the real geometry: 64 px wide cells, 4 columns = 256 px with 32 px margins each
+side, so the screen is 320 px wide (about 240 high: a 16 px stock header, then the 224 px grid of 56 px rows).
+Step 4 had assumed 476 px (a guess from the slicer test's WIDTH constant) and would have drawn 160 px past the edge.
+The page now takes its width from the cells (x_lo + x_hi, as they are centred), capped by the frame buffer's own width
+(fb + 4), and falls back to the cells' own span when that makes no sense. Rule: never size anything from a guess.
+Pixel scale in that photo: a 2x text character is about 3.4 photo px per screen px.
 
 ## Redesign (asked for)
 
