@@ -998,13 +998,22 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
             mr = d->lpst[t][1];
         }
         float dt = 1.f;
-        if (p->drop_mode == 1) {                      /* a random stream of dropouts: short or long, some shallow */
+        if (p->drop_mode == 1) {                      /* random cuts: long ones and short ones, some shallow, with gaps between */
             if (d->dseg[t] <= 0) {
-                float r = rnd01(&d->rnd[t]);
-                float depth = rnd01(&d->rnd[t]);
-                d->dmute[t] = rnd01(&d->rnd[t]) < .12f + .6f * p->drop_p;
-                d->dseg[t] = (int32_t)((1.f - .8f * p->drop_p) * (1200.f + 7000.f * r));
-                d->dtarget[t] = depth < .6f ? 0.f : .15f * depth;
+                float r = rnd01(&d->rnd[t]), r2 = rnd01(&d->rnd[t]);
+                float v = p->drop_p;
+                if (!d->dmute[t]) {                   /* a gap has ended: a cut starts */
+                    d->dmute[t] = 1;
+                    float len = r < .3f + .25f * (1.f - v) ? .18f + .45f * r2 : .012f + .09f * r2;     /* seconds: long or short */
+                    if (v > .9f)
+                        len *= .35f;                  /* the far end: crumbs */
+                    d->dseg[t] = (int32_t)(len * SR);
+                    d->dtarget[t] = rnd01(&d->rnd[t]) < .7f ? 0.f : .1f + .3f * r2;
+                } else {                              /* a cut has ended: a gap starts, shorter the further the knob */
+                    d->dmute[t] = 0;
+                    float gap = (.05f + 1.6f * (1.f - v) * (1.f - v)) * (.4f + 1.2f * r);
+                    d->dseg[t] = (int32_t)(gap * SR);
+                }
             }
             d->dseg[t]--;
             dt = d->dmute[t] ? d->dtarget[t] : 1.f;
@@ -1013,7 +1022,10 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
             uint32_t h = (idx + 1u) * 2654435761u;
             h ^= h >> 15;
             h *= 2246822519u;
-            dt = (float)(h >> 24) < p->drop_p * 190.f ? 0.f : 1.f;
+            uint32_t g = ((idx >> 2) + 7u) * 2654435761u;     /* and now and then a cut over four steps */
+            g ^= g >> 13;
+            g *= 3266489917u;
+            dt = (float)(h >> 24) < p->drop_p * 130.f || (float)(g >> 24) < p->drop_p * 45.f ? 0.f : 1.f;
         }
         d->dgn[t] += (dt - d->dgn[t]) * (p->drop_mode == 2 ? .01f : .006f);
         ml *= d->dgn[t];
@@ -1056,8 +1068,9 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
         d->mact[t] = 1;
         d->xf[t] = xfade = 0;
         d->dgn[t] = 1.f;
-        d->dseg[t] = 0;
-        d->dmute[t] = 0;
+        d->dseg[t] = 1;
+        d->dmute[t] = 1;                              /* DROP starts in a gap */
+        d->dtarget[t] = 1.f;
         if (!d->rnd[t])
             d->rnd[t] = 0x9e3779b9u * (uint32_t)(t + 1);
     } else if (!use_mod && d->mact[t]) {              /* ... and off: back to the transport's place, with a short cross fade */
@@ -1788,8 +1801,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '3';                                   /* the build: step 33 */
-        *p++ = '3';
+        *p++ = '3';                                   /* the build: step 34 */
+        *p++ = '4';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';

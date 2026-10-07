@@ -110,7 +110,7 @@ static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /
 #define TOPBAR    14             /* the row of values; its line is at d = TOPBAR + 1 */
 #define FOOT      14             /* the footer; its line is at d = hg - FOOT - 1 */
 #define REC_H     40             /* the record box */
-#define FX_N 14                                                   /* the FX tab's controls, two pages of eight: six dials, REV, HALF; STAB RPT SPEED DROP TRIM STOP */
+#define FX_N 13                                                   /* the FX tab's controls, two pages of eight: six dials, REV, HALF; STAB RPT SPEED DROP TRIM */
 #define FX_PAGE(c) ((c) >> 3)
 /* The square's tiles (0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right) lie like the encoders on the panel: left top is
  * track 2's (knob 1), left bottom track 1's (knob 0), right top track 3's, right bottom track 4's. */
@@ -689,7 +689,7 @@ static float fx_value(const struct looper_info *k, int param)
 }
 
 static const char *const fx_name[FX_N] = {"FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB", "REV", "HALF",
-                                          "STAB", "RPT", "SPEED", "DROP", "TRIM", "STOP"};
+                                          "STAB", "RPT", "SPEED", "DROP", "TRIM"};
 
 /* The text a knob shows on top: "LVL 0.0dB" / the pan line / the selected FX parameter's value. */
 static void fx_text(char *b, int param, float v)

@@ -435,3 +435,10 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
 - The pink square's four tiles lie like the encoders on the panel (user: left top 2, left bottom 1, right top 3, right
   bottom 4): tile slots TL TR BL BR = knobs 2 3 1 4 (`slot_knob` / `knob_slot`); the digits drawn in the tiles say so.
 - STAB: only a hint of hiss (0.4 % at most), wow +-5 % and flutter 1.8 % that come in early (x (2 - x)). Label Lok33.
+
+## Step 34
+- STOP removed from the FX2 page (13 controls; the engine parameter stays, at 0). DROP random: alternating gaps and cuts,
+  cuts long (0.18-0.63 s) or short (12-100 ms), some shallow, gaps shorter the further the knob, crumbs at the far end;
+  pattern: steps of 16ths / 32nds / 64ths plus now and then a cut over four steps. RPT checked on a 4 s loop in the
+  emulator (one overdub pass keeps exp(-4 / tau)). The pad page already keeps recording when it is left: nothing to do.
+  Label Lok34.

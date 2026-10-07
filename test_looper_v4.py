@@ -253,6 +253,25 @@ check("MULT: a held half-length take becomes 1/2 of the master", mode(2) == PLAY
 ev(2, MUTE_DOWN); blocks(760); ev(2, MUTE_UP); blocks(70)
 opt(O_LEN, 0)
 
+# ---------------------------------------------------------------- RPT on a long loop (4 s): one overdub pass keeps exp(-4 / tau)
+boot()
+hold(0, 750, tone)
+level(0, 1.0)
+blocks(10)
+param(0, P_RPT, 0.5)                              # tau = 0.3 + 20 x 0.25 = 5.3 s: about 47 % per 4 s pass
+ev(0, REC_DOWN); blocks(3)
+check("RPT long loop: overdubbing", mode(0) == DUB, mode(0))
+blocks(760)
+ev(0, REC_UP); blocks(60)
+param(0, P_RPT, 1.0)
+vv = []
+for _ in range(750):
+    _, o = block([0.0] * N)
+    vv += o[0]
+m1 = sum(abs(x) for x in vv) / len(vv)
+ref_mean = sum(abs(tone(i)) for i in range(750 * N)) / (750 * N)
+check("RPT long loop: one pass leaves about 47 % of the old loop", 0.38 < m1 / ref_mean < 0.58, (m1, ref_mean, m1 / ref_mean))
+
 # ---------------------------------------------------------------- clear all
 e.call("looper_clear_all")
 blocks(70)
