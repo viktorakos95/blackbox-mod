@@ -26,11 +26,11 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 124, 88                                   # engine state: tracks, track size
+T0, TSIZE = 136, 100                                   # engine state: tracks, track size
 LEN, POS, OK, UNDO_T = 12, 16, 8, 40                 # master length, master playhead
-O_FILT, O_CRUNCH, O_SD, O_SR, O_LEVEL, O_PAN = 64, 68, 72, 76, 56, 60
-T_LEN, T_POS, T_REC, T_PEND, T_HALF = 36, 40, 44, 20, 22
-REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE, HALF = range(6)
+O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
+T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
+REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE, HALF, UNDO = range(7)
 MAXF = PER * 16384
 EMPTY, RECM, PLAY, DUB, CLEARING, UNDOING = range(6)
 
@@ -95,6 +95,8 @@ def boot():
     e.uc.mem_write(0xC0000000, b"\x11" * 0x100)
     log.clear()
     e.call("looper_boot", ENGINE, count=200_000_000)
+    e.uc.mem_write(STATE + 88 + 9 * 4, struct.pack("<f", 0.0))       # loop make-up gain off: unity, as the checks expect
+    e.uc.mem_write(STATE + 88 + 11 * 4, struct.pack("<f", 0.0))      # not full screen: the geometry the checks expect
 
 
 def block(l, r=None, base=0.0):
@@ -171,16 +173,12 @@ _, outs = block([0.0] * N)
 check("the take plays back on Out 1 (left +, right -)", all(abs(outs[0][i] - ramp(p)[i]) < 2e-4 and abs(outs[1][i] + ramp(p)[i]) < 2e-4 for i in range(N)), (outs[0][:2], ramp(p)[:2]))
 check("seam: the first frames of the take are faded in", e.r16(0xC0000000) == 0)
 
-# --- double tap latches an overdub on track 2 (shorter than one pass of the 60-block loop)
+# --- a tap latches an overdub on track 2 (shorter than one pass of the 60-block loop)
 ev(1, REC_DOWN)
 block([0.1] * N)
 ev(1, REC_UP)
 blocks(5, 0.1)
-check("first tap: overdubbing, waiting for the second", mode(1) == DUB and tr(1, 3) == 2, (mode(1), tr(1, 3)))
-ev(1, REC_DOWN)
-block([0.1] * N)
-ev(1, REC_UP)
-check("second tap within 400 ms: latched", tr(1, 3) == 3 and mode(1) == DUB)
+check("a tap: overdubbing, latched at once", mode(1) == DUB and tr(1, 3) == 3, (mode(1), tr(1, 3)))
 blocks(80 - 7 - 30, 0.1)
 check("a latched take keeps recording well past the double-tap window", mode(1) == DUB)
 p = st(POS)
@@ -211,12 +209,21 @@ p = st(POS)
 _, outs = block([0.0] * N)
 check("only track 1 plays now", all(abs(outs[0][i] - ramp(p)[i]) < 2e-4 for i in range(N)), outs[0][:2])
 
-# --- a lone short tap takes nothing
+# --- a short tap records until the next tap; undo it again
 ev(2, REC_DOWN)
 block([0.3] * N)
 ev(2, REC_UP)
-blocks(160, 0.3)
-check("a lone tap on an empty track: the blip is taken back, track 3 empty again", mode(2) == EMPTY, mode(2))
+blocks(10, 0.3)
+check("a tap on an empty track starts recording (latched)", mode(2) == DUB and tr(2, 3) == 3, (mode(2), tr(2, 3)))
+ev(2, REC_DOWN)
+block([0.3] * N)
+ev(2, REC_UP)
+blocks(2)
+ev(2, MUTE_DOWN)
+blocks(380)
+ev(2, MUTE_UP)
+blocks(70)
+check("the next tap keeps it; holding M 2 s takes it back: track 3 empty again", mode(2) == EMPTY, mode(2))
 check("...and its memory is silent", bytes(e.uc.mem_read(0xC0000000 + 2 * PER * 0x10000, 0x400)) == bytes(0x400))
 
 # overdub onto track 1 itself, then undo: track 1 must come back exactly
@@ -413,7 +420,7 @@ blocks(2)
 f = draw(0)
 bars = [x for x in f if x[2] == 2 and x[3] > 5 and x[4] == 0x1B]
 meters = [x for x in f if x[2] == 1 and x[3] > 5 and x[4] == 0x1B and x[1] > 20]
-check("gain 0.5 sits at 0.375 of the travel (34 of 89 px): the 2 px line and both thin meters", len(bars) == 1 and bars[0][3] == 34 and len(meters) == 2 and meters[0][3] == meters[1][3] == 34, (bars, meters))
+check("gain 0.5 sits at 0.375 of the travel (29 of 75 px): the 2 px line and both thin meters", len(bars) == 1 and bars[0][3] == 29 and len(meters) == 2 and meters[0][3] == meters[1][3] == 29, (bars, meters))
 pan(0, 0.5)
 blocks(2)
 f = draw(0)
@@ -445,7 +452,7 @@ check("the record box of column 2", hit(100, 30)[:2] == (1, 1) and hit(100, 55)[
 z, t, v = hit(190, 100)
 check("bars area of column 3 is its fader", z == 2 and t == 2 and 0.0 <= v <= 1.0, (z, t, v))
 check("fader: silence at the bottom of its travel, +6 dB (gain 2) at the top, unity three quarters up",
-      hit(190, 65)[2] > 1.99 and hit(190, 157)[2] < 0.05 and abs(hit(190, 88)[2] - 1.0) < 0.05, (hit(190, 65)[2], hit(190, 157)[2], hit(190, 88)[2]))
+      hit(190, 65)[2] > 1.99 and hit(190, 139)[2] < 0.05 and abs(hit(190, 84)[2] - 1.0) < 0.06, (hit(190, 65)[2], hit(190, 139)[2], hit(190, 84)[2]))
 btn_y = 16 + (224 - 16 - 14 - 2) - 2 - 34
 check("bottom row: the pan dial on the left, REV above MUTE on the right", [hit(245, btn_y + 10)[0], hit(285, btn_y + 4)[0], hit(285, btn_y + 25)[0]] == [3, 4, 5], [hit(245, btn_y + 10), hit(285, btn_y + 4), hit(285, btn_y + 25)])
 check("the top row, the hairlines between columns and the footer are not controls", hit(100, 8)[0] == 0 and hit(78, 100)[0] == 0 and hit(200, 215)[0] == 0)
@@ -477,7 +484,7 @@ check("REV: reverse event", evs(3)[4] == 1, evs(3))
 touch("down", 285, btn_y + 25)
 touch("up", 285, btn_y + 25)
 check("MUTE: down and up", evs(3)[2:4] == [1, 1], evs(3))
-touch("down", 190, 156)
+touch("down", 190, 138)
 check("fader: touching near the bottom of the bars sets a low level", tr(2, O_LEVEL, "f") < 0.1, tr(2, O_LEVEL, "f"))
 touch("move", 190, 66)
 check("fader: dragging to the top sets about +6 dB", abs(tr(2, O_LEVEL, "f") - 2.0) < 0.08, tr(2, O_LEVEL, "f"))
@@ -491,6 +498,7 @@ MSG = 0x2403A000
 
 
 def knob(i, counts, msg_id=0x32):
+    i = i ^ 1 if i < 2 else i                         # the left encoders are swapped: the bottom one is track 1
     e.uc.mem_write(MSG, struct.pack("<H", msg_id) + bytes(10) + struct.pack("<h", i) + bytes(2) + struct.pack("<h", counts))
     e.call("looper_view_msg", VIEW, MSG)
 
@@ -576,16 +584,16 @@ check("FX tab: everything inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 3
 y0 = 16 + 3 + 40 + 4
 h1 = hit(1 + 78 * 1 + 2 + 10, y0 + 10)
 h2 = hit(1 + 78 * 1 + 2 + 10 + 35, y0 + 10)
-h3 = hit(1 + 78 * 1 + 2 + 10, y0 + 36 + 10)
-h4 = hit(1 + 78 * 1 + 2 + 10 + 35, y0 + 36 + 10)
+h3 = hit(1 + 78 * 1 + 2 + 10, y0 + 35 + 10)
+h4 = hit(1 + 78 * 1 + 2 + 10 + 35, y0 + 35 + 10)
 check("FX tab: the four dials are zone 7 with parameters 0 1 2 3 (track 2)", [(h[0], h[1], int(h[2])) for h in (h1, h2, h3, h4)] == [(7, 1, 0), (7, 1, 1), (7, 1, 2), (7, 1, 3)], (h1, h2, h3, h4))
-y1 = y0 + 72
-check("FX tab: REV / HALF row and MUTE below", [hit(1 + 78 + 8, y1 + 5)[0], hit(1 + 78 + 60, y1 + 5)[0], hit(1 + 78 + 20, y1 + 28)[0]] == [4, 8, 5], [hit(1 + 78 + 8, y1 + 5), hit(1 + 78 + 60, y1 + 5), hit(1 + 78 + 20, y1 + 28)])
+y1 = y0 + 105
+check("FX tab: REV / HALF row and MUTE below", [hit(1 + 78 + 8, y1 + 5)[0], hit(1 + 78 + 60, y1 + 5)[0], hit(1 + 78 + 20, y1 + 25)[0]] == [4, 8, 5], [hit(1 + 78 + 8, y1 + 5), hit(1 + 78 + 60, y1 + 5), hit(1 + 78 + 20, y1 + 25)])
 # touch: select the CRSH dial of track 2 and drag it
-touch("down", 78 + 2 + 10 + 35, y0 + 10)
-check("tap a dial: it becomes the track's selected FX parameter", e.r8(PAGE + 77 + 1) == 1, e.r8(PAGE + 78))
-touch("move", 78 + 2 + 10 + 35, y0 + 10 - 40)
-touch("up", 78 + 2 + 10 + 35, y0 + 10 - 40)
+touch("down", 78 + 2 + 10, y0 + 35 + 10)
+check("tap a dial: it becomes the track's selected FX parameter", e.r8(PAGE + 77 + 1) == 2, e.r8(PAGE + 78))
+touch("move", 78 + 2 + 10, y0 + 35 + 10 - 40)
+touch("up", 78 + 2 + 10, y0 + 35 + 10 - 40)
 check("dragging a dial up by 40 px of 80 turns it half way", abs(tr(1, O_CRUNCH, "f") - 0.5) < 0.02, tr(1, O_CRUNCH, "f"))
 knob(1, 800)
 check("FX tab: the track's knob turns the selected parameter (CRSH +10 %)", abs(tr(1, O_CRUNCH, "f") - 0.6) < 0.02, tr(1, O_CRUNCH, "f"))
@@ -603,7 +611,7 @@ f = draw(0)
 check("SETUP tab drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f), [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
 ROW0 = 16 + 3                                                  # first row, from the top
 def row(r):
-    return ROW0 + r * 18 + 6
+    return ROW0 + r * 14 + 5
 check("SETUP: LENGTH row choices (FOLLOW / MULT / FREE) and the SYNC row", [hit(84 + 10, row(0))[:2], hit(84 + 52 + 10, row(0))[:2], hit(84 + 104 + 10, row(0))[:2], hit(84 + 10, row(1))[:2]] == [(9, 0), (9, 0), (9, 0), (9, 1)], [hit(84 + 10, row(0)), hit(84 + 62, row(0)), hit(84 + 114, row(0)), hit(94, row(1))])
 check("SETUP: the choice index is the value", [hit(94, row(0))[2], hit(146, row(0))[2], hit(198, row(0))[2]] == [0, 1, 2])
 touch("down", 84 + 52 + 10, row(0))
@@ -614,16 +622,20 @@ touch("up", 84 + 52 + 10, row(1))
 touch("down", 84 + 52 + 10, row(3))
 touch("up", 84 + 52 + 10, row(3))
 check("SETUP: SYNC on, SOURCE mix", struct.unpack("<f", e.uc.mem_read(STATE + 92, 4))[0] == 1.0 and struct.unpack("<f", e.uc.mem_read(STATE + 100, 4))[0] == 1.0)
-touch("down", 84 + 100, row(5))
-touch("move", 84 + 150, row(5))
-touch("up", 84 + 150, row(5))
+touch("down", 84 + 100, row(7))
+touch("move", 84 + 150, row(7))
+touch("up", 84 + 150, row(7))
 check("SETUP: dragging the DLY FB slider to 150 / 200 px = 75 %", abs(struct.unpack("<f", e.uc.mem_read(STATE + 108, 4))[0] - 0.75) < 0.01, struct.unpack("<f", e.uc.mem_read(STATE + 108, 4))[0])
 knob(3, -800)
 check("SETUP: knob 4 turns the reverb return (60 % - 10 %)", abs(struct.unpack("<f", e.uc.mem_read(STATE + 120, 4))[0] - 0.5) < 0.01, struct.unpack("<f", e.uc.mem_read(STATE + 120, 4))[0])
 f = draw(0)
 check("SETUP: three more choice boxes lit and a slider drawn", any(x[2] == 200 and x[3] == 1 for x in f) and any(x[4] == 0x1B and x[2] == 49 for x in f))
-touch("down", 84 + 10, ROW0 + 9 * 18 + 6)
-touch("up", 84 + 10, ROW0 + 9 * 18 + 6)
+touch("down", 84 + 10, ROW0 + 12 * 14 + 5)
+touch("up", 84 + 10, ROW0 + 12 * 14 + 5)
+blocks(3)
+check("SETUP: the first CLEAR ALL press only asks (nothing erased yet)", mode(0) == PLAY, mode(0))
+touch("down", 84 + 10, ROW0 + 12 * 14 + 5)
+touch("up", 84 + 10, ROW0 + 12 * 14 + 5)
 blocks(2)
 check("SETUP: CLEAR ALL erases the tracks (track 1 was playing)", mode(0) in (CLEARING, EMPTY), mode(0))
 blocks(70)
@@ -636,6 +648,55 @@ f = draw(0)
 check("back to MAIN: the fader meters are back", [x for x in f if x[2] == 2 and x[3] > 20])
 check("back on the MAIN tab", e.r8(PAGE + 76) == 0)
 
+# ---- the stock screen's pieces under the page
+e.uc.mem_write(VIEW + 4, struct.pack("<4i", 32, 0, 256, 224))
+e.uc.mem_write(VIEW + 0x3AC + 0x6C, b"\x00")                          # the stock code shows a child again
+e.call("looper_page_enter", VIEW)
+f = draw(0)
+r = struct.unpack("<4i", e.uc.mem_read(VIEW + 4, 16))
+check("the view's rectangle is widened to the whole screen while the page shows (edge touches reach it)", r == (0, 0, 320, 224), r)
+check("a child widget the stock code showed again is hidden again at the next draw", e.r8(VIEW + 0x3AC + 0x6C) == 1)
+# INFO on: the pan dials get the pink frame, the top row stays LVL
+e.uc.mem_write(PAGE + 7, b"\x01")
+f = draw(0)
+check("SHIFT ON: red label in the footer, no INFO=n", any(c == 0x0C for _, _, c in pixels))
+check("SHIFT ON: the pan dials are framed pink", sum(1 for x in f if x[4] == 0x20 and x[2] == 34) >= 4, sum(1 for x in f if x[4] == 0x20))
+e.uc.mem_write(PAGE + 7, b"\x00")
+# the UNDO button
+btn_u = 16 + (224 - 16 - 14 - 2) - 2 - 34 - 15
+touch("down", 100, btn_u + 5)
+touch("up", 100, btn_u + 5)
+check("the UNDO button sends the undo event for its track", e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 7)[6] == 1, list(e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 7)))
+# INFO belongs to the stock screens elsewhere
+e.uc.mem_write(APP + 0x8CA4, b"\x25")
+appmsg.clear()
+e.uc.mem_write(PAGE + 9, b"\x01")
+e.uc.mem_write(PAGE + 8, b"\x04")
+e.uc.mem_write(PAGE + 16, struct.pack("<H", 0xF9))
+button(4)
+check("on another screen the INFO button goes to the stock handler (the Looper flag outlives the trip)", appmsg == [(0xF9, 4)], appmsg)
+e.uc.mem_write(APP + 0x8CA4, b"\x2f")
+# FX button learning and the tab toggle
+appmsg.clear()
+e.uc.mem_write(PAGE + 90, b"\x01")                                    # LEARN FX BTN was tapped
+button(6)
+check("learning the FX button: swallowed, remembered (message 0xf9, button 6)", e.r8(PAGE + 88) == 1 and e.r8(PAGE + 89) == 6 and e.r16(PAGE + 92) == 0xF9 and e.r8(PAGE + 90) == 0 and not appmsg, (e.r8(PAGE + 88), e.r8(PAGE + 89), appmsg))
+button(6)
+check("the FX button on the Looper page: the looper's FX tab, not the Blackbox's", e.r8(PAGE + 76) == 1 and not appmsg, (e.r8(PAGE + 76), appmsg))
+button(6)
+check("... and back to MAIN", e.r8(PAGE + 76) == 0 and not appmsg)
+e.uc.mem_write(APP + 0x8CA4, b"\x25")
+button(6)
+check("on other screens the FX button is the stock one", appmsg == [(0xF9, 6)], appmsg)
+e.uc.mem_write(APP + 0x8CA4, b"\x2f")
+e.uc.mem_write(STATE + 88 + 11 * 4, struct.pack("<f", 1.0))            # FULL SCREEN on
+e.call("looper_page_enter", VIEW)
+f = draw(0)
+check("full screen: the page grows upward over the screen's own top bar (240 high, same bottom edge)", f[0][:4] == (3, 0, 314, 240), f[0][:4])
+check("... and still draws inside the screen", all(x[1] >= 0 and x[1] + x[3] <= 240 for x in f))
+e.uc.mem_write(STATE + 88 + 11 * 4, struct.pack("<f", 0.0))
+e.call("looper_page_enter", VIEW)
+draw(0)
 # leaving the page puts the child widgets back
 e.call("solo_set_mode", VIEW, 1)
 check("leaving the page: the children are restored (the one the firmware hid stays hidden)",

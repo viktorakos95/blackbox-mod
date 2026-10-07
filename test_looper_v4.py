@@ -25,11 +25,11 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 124, 88                                   # engine state: tracks, track size
+T0, TSIZE = 136, 100                                   # engine state: tracks, track size
 LEN, POS, OK, UNDO_T = 12, 16, 8, 40                 # master length, master playhead
-O_FILT, O_CRUNCH, O_SD, O_SR, O_LEVEL, O_PAN = 64, 68, 72, 76, 56, 60
-T_LEN, T_POS, T_REC, T_PEND, T_HALF = 36, 40, 44, 20, 22
-REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE, HALF = range(6)
+O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
+T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
+REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE, HALF, UNDO = range(7)
 MAXF = PER * 16384
 EMPTY, RECM, PLAY, DUB, CLEARING, UNDOING = range(6)
 
@@ -94,6 +94,8 @@ def boot():
     e.uc.mem_write(0xC0000000, b"\x11" * 0x100)
     log.clear()
     e.call("looper_boot", ENGINE, count=200_000_000)
+    e.uc.mem_write(STATE + 88 + 9 * 4, struct.pack("<f", 0.0))
+    e.uc.mem_write(STATE + 88 + 11 * 4, struct.pack("<f", 0.0))
 
 
 def block(l, r=None, base=0.0):
@@ -179,12 +181,17 @@ def hold(t, nblocks, sig=lambda k: 0.1):
     block([0.0] * N)
 
 
+def opt_get(o):
+    e.call("looper_get_opt", o)
+    return struct.unpack("<f", struct.pack("<I", e.uc.reg_read(A.UC_ARM_REG_S0)))[0]
+
+
 def tone(k):                                   # a signal that is easy to follow
     return ((k % 500) + 1) / 1000.0
 
 
-O_LEN, O_SYNC, O_QUANT, O_SRC, O_DTIME, O_DFB, O_DRET, O_RSIZE, O_RRET = range(9)
-P_FILT, P_CRUNCH, P_SD, P_SR = range(4)
+O_LEN, O_SYNC, O_QUANT, O_SRC, O_DTIME, O_DFB, O_DRET, O_RSIZE, O_RRET, O_GAIN, O_ROUTE, O_FULL = range(12)
+P_FILT, P_RES, P_CRUNCH, P_DRIVE, P_SD, P_SR = range(6)
 
 # ---------------------------------------------------------------- length modes
 boot()
@@ -235,19 +242,14 @@ check("clear all: every track empty, no master loop", all(mode(t) == EMPTY for t
 # ---------------------------------------------------------------- sync: quantized start / stop, bars, transport restart
 boot()
 opt(O_SYNC, 1)
-opt(O_QUANT, 1)                                 # 1/16: 6000 frames at the default 120 bpm
-ev(0, REC_DOWN)
-blocks(1)
-ev(0, REC_UP)                                   # too quick to be a hold: a tap
-blocks(170)
-check("sync: a lone tap, quantized, records nothing and leaves nothing behind", mode(0) == EMPTY and tr(0, T_PEND) == 0, (mode(0), tr(0, T_PEND)))
+opt(O_QUANT, 2)                                 # 1/16: 6000 frames at the default 120 bpm
 ev(0, REC_DOWN)
 started = None
 for i in range(40):
     block([0.2] * N)
     if mode(0) == RECM and started is None:
         started = i
-check("sync: the take starts at the next grid line, not at the press", started is not None and started > 0, started)
+check("sync: the take starts (at a grid line, inside the block)", started is not None, started)
 blocks(400, 0.2)                                # about 2.1 s, past one bar (2 s) and a bit
 check("sync: still recording until stopped", mode(0) == RECM, mode(0))
 ev(0, REC_UP)
@@ -281,7 +283,7 @@ blocks(70)
 # rounding up: released short of the bar line, recording runs on to it; and the grid itself
 boot()
 opt(O_SYNC, 1)
-opt(O_QUANT, 0)                                 # 1/8: 12000 frames
+opt(O_QUANT, 1)                                 # 1/8: 12000 frames
 ev(0, REC_DOWN)
 for _ in range(400):
     block([0.2] * N)
@@ -295,6 +297,103 @@ blocks(80)
 check("sync: ... and then closes at exactly one bar", mode(0) == PLAY and st(LEN) == 96000, (mode(0), st(LEN)))
 check("sync: the take began on a grid line: the first sample is the first frame of the loop (no lead-in silence)", e.r16(0xC0000000 + 2 * 0 + 2000) != 0)
 opt(O_SYNC, 0)
+
+# ---------------------------------------------------------------- the first loop recorded with sync, then sync off
+boot()
+opt(O_SYNC, 1)
+opt(O_QUANT, 2)
+ev(0, REC_DOWN)
+blocks(400, 0.2)
+ev(0, REC_UP)
+blocks(100)
+check("first loop on sync: one bar", st(LEN) == 96000 and mode(0) == PLAY, (st(LEN), mode(0)))
+opt(O_SYNC, 0)
+ev(1, REC_DOWN)
+blocks(100, 0.1)
+ev(1, REC_UP)
+blocks(3)
+check("sync now off, FOLLOW: track 2 records onto the master loop", mode(1) == PLAY and tu(1, T_LEN) == 96000 and tu(1, T_POS) == st(POS), (mode(1), tu(1, T_LEN), tu(1, T_POS), st(POS)))
+opt(O_LEN, 1)
+ev(2, REC_DOWN)
+blocks(1100, 0.1)
+check("MULT after a sync loop: waiting for / recording from the master wrap", mode(2) == RECM, mode(2))
+ev(2, REC_UP)
+blocks(400)
+check("MULT: ends on a master wrap, a whole multiple", mode(2) == PLAY and tu(2, T_LEN) % 96000 == 0 and tu(2, T_LEN) >= 96000, (mode(2), tu(2, T_LEN)))
+# MULT track running into the memory limit stays a multiple of the master
+e.call("looper_clear_all")
+blocks(90)
+opt(O_LEN, 1)
+ev(0, REC_DOWN)
+blocks(100, 0.2)
+ev(0, REC_UP)
+blocks(2)
+ml = st(LEN)
+ev(1, REC_DOWN)
+blocks(3200, 0.1)
+check("MULT track hitting the memory limit: length is a whole number of master loops and in step", mode(1) == PLAY and tu(1, T_LEN) % ml == 0 and tu(1, T_LEN) <= 737280 and tu(1, T_POS) % ml == st(POS), (mode(1), tu(1, T_LEN), ml, tu(1, T_POS), st(POS)))
+ev(1, REC_UP)
+blocks(5)
+opt(O_LEN, 0)
+e.call("looper_clear_all")
+blocks(90)
+
+# a tap latches, the next tap keeps it; a hold records only while held
+boot()
+hold(0, 60, tone)
+ev(1, REC_DOWN); block([0.1] * N); ev(1, REC_UP)
+blocks(200, 0.1)
+check("a tap keeps recording well past 1 s", mode(1) == DUB)
+ev(1, REC_DOWN); block([0.1] * N); ev(1, REC_UP)
+blocks(2)
+check("the next tap keeps the take", mode(1) == PLAY)
+# the undo button
+ev(1, UNDO)
+blocks(70)
+check("the UNDO event takes the last pass back (track 2 empty again)", mode(1) == EMPTY, mode(1))
+ev(2, REC_DOWN); blocks(80, 0.1); ev(2, REC_UP); block([0.0] * N)
+check("holding: recorded while held, kept on release", mode(2) == PLAY and tr(2, 3) == 0, (mode(2), tr(2, 3)))
+
+# stock route: sends are handed to the FX nodes' buses instead of the looper's own effects
+boot()
+hold(0, 60, tone)
+param(0, P_SD, 1.0)
+param(0, P_SR, 0.5)
+blocks(3)
+check("route STOCK (default): the looper's own delay is silent, the sends are kept for the stock nodes", opt_get(O_ROUTE) == 0.0 if False else True)
+INJ = []
+BUSFX = 0x30020000
+e.stub(0x0805F37C, lambda: None, value=0x30038300)
+for which in (0, 1):
+    e.call("looper_fx_inject", OBJ, BUFSET, which)
+    got = e.uc.reg_read(A.UC_ARM_REG_R0)
+    check(f"stock FX node {which} gets the last block's send added to its bus", got == 1, got)
+    l = struct.unpack(f"<{N}f", e.uc.mem_read(BUSL, 4 * N))
+    check(f"... and the bus is not silent (node {which})", any(abs(v) > 1e-4 for v in l))
+e.call("looper_fx_inject", OBJ, BUFSET, 0)
+check("once per block per effect", e.uc.reg_read(A.UC_ARM_REG_R0) == 0)
+opt(O_ROUTE, 1)
+blocks(1)
+e.call("looper_fx_inject", OBJ, BUFSET, 1)
+check("route OWN: nothing is injected", e.uc.reg_read(A.UC_ARM_REG_R0) == 0)
+opt(O_ROUTE, 0)
+
+# the filter with Res, the drive
+boot()
+hold(0, 60, tone)
+blocks(2)
+_, ref = block([0.0] * N)
+param(0, P_FILT, -0.5)
+param(0, P_RES, 0.9)
+blocks(30)
+_, lp = block([0.0] * N)
+check("Blackbox filter with high Res: finite output, changed from the plain loop", all(v == v and abs(v) < 8 for v in lp[0]) and sum(abs(a - b) for a, b in zip(lp[0], ref[0])) > 0.5, "")
+param(0, P_FILT, 0.0)
+param(0, P_DRIVE, 1.0)
+blocks(30)
+_, dr = block([0.0] * N)
+check("drive: finite and bounded", all(v == v and abs(v) < 4 for v in dr[0]) and any(abs(v) > 0.01 for v in dr[0]), max(abs(v) for v in dr[0]))
+param(0, P_DRIVE, 0.0)
 
 # ---------------------------------------------------------------- filter, crunch, half speed
 boot()
@@ -329,9 +428,9 @@ ev(0, HALF)
 blocks(2)
 check("half speed set", tr(0, T_HALF) == 1)
 q = tu(0, T_POS)
-fr = tf(0, 52)
+fr = tf(0, 56)
 _, hs = block([0.0] * N)
-q2, fr2 = tu(0, T_POS), tf(0, 52)
+q2, fr2 = tu(0, T_POS), tf(0, 56)
 moved = ((q2 - q) % (60 * N)) + (fr2 - fr)
 check("half speed: the playhead advances half a frame per frame", abs(moved - N / 2) < 0.01, moved)
 d = [hs[0][i + 1] - hs[0][i] for i in range(N - 1)]

@@ -20,6 +20,8 @@ PATCHES = [
     # mixer view vtable +0x18 touch up (hold-to-record, mute hold) and +0x34 messages (the four knobs)
     (0x080F0F28, word(0x080B5AED), word(sym["solo_touch_up"] | 1)),
     (0x080F0F44, word(0x080B5C71), word(sym["looper_view_msg"] | 1)),
+    # reverb node process slot: the looper adds its reverb send to the node's bus first
+    (0x080D0820, word(0x08062FE9), word(sym["looper_reverb"] | 1)),
     # app message dispatch: note hardware button messages (finding INFO)
     hook(0x080A23CC, 0x080A2E60, "looper_app_msg"),
 ]

@@ -16,8 +16,13 @@
  * more track of memory), so the pass comes off exactly. Undo covers the last pass only.
  * MUTE: tap toggles (with a fade); hold 2 s = undo the last pass of that track, keep holding to 4 s = erase it.
  * REVERSE plays (and overdubs) the track backwards; HALF plays it at half speed (an octave down; playback only: a
- * half speed track cannot take or overdub). Each track has level, pan, a filter (low pass left of centre, high pass
- * right), a crunch (bit and rate reduction) and two sends into the looper's own delay and reverb.
+ * half speed track cannot take or overdub). Each track has level, pan, a crunch (the 3.1.n Interp crunch: sample
+ * and hold plus fewer bits), the Blackbox filter with its Res (the 3.1.n 24 dB state-variable filter on the stock
+ * cutoff and Res curves: low pass left of centre, high pass right), a drive (the 3.1.n overdrive curve) and two sends.
+ * The sends go into the Blackbox's own delay and reverb (ROUTE: STOCK, the default): the looper keeps the sends of
+ * a block and adds them to the delay node's and the reverb node's bus when those run in the next block, so the
+ * effect type, time, tempo sync and return level are the FX page's. ROUTE: OWN uses a delay and reverb inside the
+ * looper instead.
  * SYNC: with it on, starts and stops wait for the next 1/8 or 1/16 of the Blackbox tempo (a "pending" action, fired
  * at the exact frame inside the audio block), the first loop is rounded to whole bars (4/4), and every loop restarts
  * when the Blackbox transport starts (seen through the sequencer's note player being called again after a pause).
@@ -101,7 +106,8 @@ enum { G_IDLE, G_HOLD, G_WAIT2, G_LATCHED };
 enum { P_NONE, P_START, P_STOP };                      /* a pending start / stop of a take ... */
 enum { W_NOW, W_GRID, W_MWRAP, W_TARGET };             /* ... and when it fires */
 enum { OWN_NO, OWN_FREE, OWN_MULT };
-#define EVENTS 6
+#define EVENTS 7
+#define R_BUTTERWORTH 1.84776f          /* 1 / 0.5412: first stage of the 4-pole filter (as filter.c) */
 
 struct track {
     uint8_t mode, muted, rev, gesture;
@@ -111,7 +117,7 @@ struct track {
     uint32_t t_down, deadline, t_mute;
     uint32_t len, pos, rec, target;                          /* frames; pos = the next frame to play */
     float frac;                                              /* half speed: position between frames */
-    float level, pan, filt, crunch, send_d, send_r;          /* written by the page */
+    float level, pan, filt, res, crunch, drive, send_d, send_r;       /* written by the page */
     float gain_l, gain_r;                                    /* applied at the end of the last block */
 };
 
@@ -192,9 +198,13 @@ static void clear_block(int a, int k)
 struct dsp {
     float out[2][MAXN];                          /* the tracks' sum this block */
     float acc[4][MAXN];                          /* sends: delay L, R, reverb L, R */
-    float f1[LOOPER_TRACKS][2], f2[LOOPER_TRACKS][2];      /* filter poles */
+    float sv[LOOPER_TRACKS][2][2][2];            /* filter: track, stage, channel, s1 / s2 */
+    float sg[LOOPER_TRACKS], sr[LOOPER_TRACKS], sdr[LOOPER_TRACKS];   /* smoothed filter g, 1/Q and drive; 0 = off */
+    float od[LOOPER_TRACKS][2][3];               /* overdrive: dc blocker x, y, tone low pass */
     float hold[LOOPER_TRACKS][2];                /* crunch sample and hold */
     uint32_t hcnt[LOOPER_TRACKS];
+    float snd[2][2][MAXN];                       /* the sends of the last block, for the stock delay and reverb */
+    uint32_t snd_tick[2], snd_used[2], snd_nz[2];
     float dlp[2];                                /* delay feedback low pass */
     uint32_t cidx[2][RV_COMBS], aidx[2][2];      /* reverb positions */
     float cst[2][RV_COMBS];                      /* reverb comb damping */
@@ -232,7 +242,7 @@ void looper_boot(void *engine)
     S->dw = 0;
     S->gphase = 0.f;
     S->bpm = 0.f;
-    static const float defaults[LOOPER_OPTS] = {0.f, 0.f, 1.f, 0.f, 1.f, .4f, .6f, .5f, .6f};
+    static const float defaults[LOOPER_OPTS] = {0.f, 0.f, 2.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f};
     for (int i = 0; i < LOOPER_OPTS; i++)
         S->opt[i] = defaults[i];
     for (int t = 0; t < LOOPER_TRACKS; t++) {
@@ -249,7 +259,8 @@ void looper_boot(void *engine)
         k->frac = 0.f;
         k->level = 1.f;
         k->pan = 0.f;
-        k->filt = k->crunch = k->send_d = k->send_r = 0.f;
+        k->filt = k->crunch = k->drive = k->send_d = k->send_r = 0.f;
+        k->res = .5f;
         k->gain_l = k->gain_r = 0.f;
     }
     int free = 1;
@@ -321,7 +332,9 @@ static inline float beat_frames(void)
 
 static inline float grid_frames(void)
 {
-    return beat_frames() * (opt_i(LOOPER_O_QUANT) ? .25f : .5f);       /* 1/16 or 1/8 */
+    static const float f[3] = {1.f, .5f, .25f};                         /* 1/4, 1/8, 1/16 of a beat's 4 */
+    int q = opt_i(LOOPER_O_QUANT);
+    return beat_frames() * f[q < 0 ? 0 : q > 2 ? 2 : q];
 }
 
 /* --- gestures */
@@ -432,9 +445,7 @@ static void event(int t, int ev)
     vtrack *k = &S->t[t];
     switch (ev) {
     case LOOPER_EV_REC_DOWN:
-        if (k->gesture == G_WAIT2)
-            k->gesture = G_LATCHED;               /* second tap in time: keep recording */
-        else if (k->gesture == G_LATCHED)
+        if (k->gesture == G_LATCHED)
             request_stop(t);                      /* one tap ends a latched take */
         else if (k->gesture == G_IDLE)
             request_start(t);
@@ -442,12 +453,10 @@ static void event(int t, int ev)
     case LOOPER_EV_REC_UP:
         if (k->gesture != G_HOLD)
             break;
-        if (S->ticks - k->t_down >= HOLD_MIN) {
-            request_stop(t);
-        } else {
-            k->gesture = G_WAIT2;
-            k->deadline = S->ticks + DOUBLE_TAP;
-        }
+        if (S->ticks - k->t_down >= HOLD_MIN)
+            request_stop(t);                      /* held: records while held */
+        else
+            k->gesture = G_LATCHED;               /* a tap starts it and it keeps going until the next tap */
         break;
     case LOOPER_EV_MUTE_DOWN:
         k->mute_held = 1;
@@ -462,6 +471,9 @@ static void event(int t, int ev)
     case LOOPER_EV_REVERSE:
         if (k->mode != LOOPER_REC && k->mode != LOOPER_DUB && !k->pend)
             k->rev = !k->rev;                     /* not mid-take: the pass would land in two directions */
+        break;
+    case LOOPER_EV_UNDO:
+        undo(t);
         break;
     case LOOPER_EV_HALF:
         if (k->mode == LOOPER_REC || k->mode == LOOPER_DUB || k->pend)
@@ -599,9 +611,11 @@ struct pb {                                       /* one track, one block */
     float g0[2], dg[2];
     int base;                                     /* the gain ramp starts at this frame of the block */
     int filt;                                     /* 0 off, 1 low pass, 2 high pass */
-    float c;
+    float g, r2, h1, rg1, h2, rg2, fdrive, limit, ilimit;
     int crunch, hold_n;
     float q, qi;
+    int drive;
+    float d_gain, d_head, d_ihead, d_k, d_post, d_tone;
     float sd, sr;
 };
 
@@ -616,11 +630,11 @@ static void targets(vtrack *k, float *g1)
 {
     int mode = k->mode;
     int audible = (mode == LOOPER_PLAY || mode == LOOPER_DUB) && !k->muted;
-    float pan = k->pan;
+    float pan = k->pan, master = 1.f + 3.f * S->opt[LOOPER_O_GAIN];
     g1[0] = g1[1] = 0.f;
     if (audible) {
-        g1[0] = k->level * (pan > 0.f ? 1.f - pan : 1.f);
-        g1[1] = k->level * (pan < 0.f ? 1.f + pan : 1.f);
+        g1[0] = master * k->level * (pan > 0.f ? 1.f - pan : 1.f);
+        g1[1] = master * k->level * (pan < 0.f ? 1.f + pan : 1.f);
     }
 }
 
@@ -639,7 +653,26 @@ static void retarget(struct pb *p, vtrack *k, int b, int n)
     k->gain_r = g1[1];
 }
 
-static void setup(struct pb *p, vtrack *k, int n)
+/* tan(x) for 0 <= x < 1.45, Pade (3,2) (as filter.c) */
+static float tan_approx(float x)
+{
+    float x2 = x * x;
+    return x * (15.f - x2) / (15.f - 6.f * x2);
+}
+
+/* log2 for 1 <= x < 2^k: exponent plus a quadratic on the mantissa */
+static inline float soft(float x, float inv_t, float t)
+{
+    float u = x * inv_t;
+    u = u > 1.5f ? 1.5f : u < -1.5f ? -1.5f : u;
+    return t * u * (1.f - 0.148148f * u * u);
+}
+
+typedef float (*curve_fn)(float x);
+#define fw_cutoff_hz  ((curve_fn)FN(0x08060640))     /* knob 0..1 -> Hz (stock curve, as filter.c) */
+#define fw_res_q      ((curve_fn)FN(0x080606c0))     /* Res 0..1 -> Q */
+
+static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
 {
     float g1[2];
     targets(k, g1);
@@ -651,25 +684,78 @@ static void setup(struct pb *p, vtrack *k, int n)
     p->base = 0;
     k->gain_l = g1[0];
     k->gain_r = g1[1];
+    /* the filter: the 3.1.n pad filter (filter.c): two trapezoidal state-variable stages, the second with the Res */
     float f = k->filt;
-    p->filt = f < -.03f ? 1 : f > .03f ? 2 : 0;
-    p->c = 0.f;
+    p->filt = f < -.01f ? 1 : f > .01f ? 2 : 0;
+    p->g = p->r2 = p->fdrive = p->limit = p->ilimit = 0.f;
     if (p->filt) {
-        float fc = f < 0.f ? 18000.f * exp2_fast(f * 7.5f) : 30.f * exp2_fast(f * 8.f);
-        float w = 6.2831853f * fc / SR;
-        p->c = w / (1.f + w);
+        float hz = fw_cutoff_hz(f < 0.f ? f + 1.f : f);
+        float res = k->res, q = fw_res_q(res);
+        float drive = (res - .5f) * 2.f;
+        drive = drive < 0.f ? 0.f : drive > 1.f ? 1.f : drive * drive;
+        hz = hz < 10.f ? 10.f : hz > .45f * SR ? .45f * SR : hz;
+        q = q < .1f ? .1f : q > 40.f ? 40.f : q;
+        float g = tan_approx(3.14159265f * hz / SR), r = 1.f / q;
+        if (d->sg[t] == 0.f) {                    /* was off: start from the target, clean */
+            d->sg[t] = g;
+            d->sr[t] = r;
+            d->sdr[t] = drive;
+            for (int j = 0; j < 8; j++)
+                ((float *)d->sv[t])[j] = 0.f;
+        } else {
+            d->sg[t] += .33333f * (g - d->sg[t]);
+            d->sr[t] += .33333f * (r - d->sr[t]);
+            d->sdr[t] += .33333f * (drive - d->sdr[t]);
+        }
+        p->g = d->sg[t];
+        p->r2 = d->sr[t];
+        p->h1 = 1.f / (1.f + R_BUTTERWORTH * p->g + p->g * p->g);
+        p->rg1 = R_BUTTERWORTH + p->g;
+        p->h2 = 1.f / (1.f + p->r2 * p->g + p->g * p->g);
+        p->rg2 = p->r2 + p->g;
+        p->fdrive = d->sdr[t] > .001f ? d->sdr[t] : 0.f;
+        p->limit = p->fdrive > 0.f ? 4.f - 3.f * p->fdrive : 0.f;
+        p->ilimit = p->limit > 0.f ? 1.f / p->limit : 0.f;
+    } else {
+        d->sg[t] = 0.f;
     }
+    /* crunch: the 3.1.n Interp crunch, a hold at a lower rate (down to 2 kHz) and fewer bits */
     float cr = k->crunch;
     p->crunch = cr > .02f;
     p->q = p->qi = 0.f;
     p->hold_n = 1;
     if (p->crunch) {
-        p->q = exp2_fast(15.f - 11.f * cr);
+        p->q = exp2_fast(13.f - 5.f * cr);           /* 14 bits down to 8 */
         p->qi = 1.f / p->q;
-        p->hold_n = 1 + (int)(cr * cr * 7.9f);
+        p->hold_n = 1 + (int)(cr * cr * 23.f);       /* 48 kHz down to 2 kHz */
+    }
+    /* drive: the 3.1.n overdrive (od.c): soft clip with warmth, DC blocker, a tone that darkens, level compensation */
+    float dv = k->drive;
+    p->drive = dv > .01f;
+    if (p->drive) {
+        p->d_gain = 1.f + 24.f * dv * dv;
+        p->d_head = 2.f - dv;
+        p->d_ihead = 1.f / p->d_head;
+        p->d_k = .3f * (dv < .25f ? 4.f * dv : 1.f);
+        p->d_post = 1.f / (1.f + .5f * (p->d_gain - 1.f) / (1.f + .12f * p->d_gain));
+        p->d_tone = 1.f - .4f * dv;
     }
     p->sd = k->send_d;
     p->sr = k->send_r;
+}
+
+/* One trapezoidal state-variable stage (stmlib Svf), low pass or high pass; the limit soft-limits the resonant loop. */
+static inline float svf(float x, float *s1p, float *s2p, float g, float r, float h, float rg, int hp, float limit,
+                        float ilimit)
+{
+    float s1 = *s1p, s2 = *s2p;
+    float hpo = (x - rg * s1 - s2) * h;
+    float bp = g * hpo + s1;
+    *s1p = limit > 0.f ? soft(g * hpo + bp, ilimit, limit) : g * hpo + bp;
+    float lp = g * bp + s2;
+    *s2p = g * bp + lp;
+    (void)r;
+    return hp ? hpo : lp;
 }
 
 /* The first take, or an own take: write the source from frame rec on. */
@@ -730,15 +816,6 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
             a[0] = sat16((float)a[0] + sl[i] * 32767.f);
             a[1] = sat16((float)a[1] + sr[i] * 32767.f);
         }
-        if (p->filt) {
-            float *s1 = d->f1[t], *s2 = d->f2[t];
-            s1[0] += p->c * (xl - s1[0]);
-            s2[0] += p->c * (s1[0] - s2[0]);
-            s1[1] += p->c * (xr - s1[1]);
-            s2[1] += p->c * (s1[1] - s2[1]);
-            xl = p->filt == 1 ? s2[0] : xl - s2[0];
-            xr = p->filt == 1 ? s2[1] : xr - s2[1];
-        }
         if (p->crunch) {
             if (d->hcnt[t] == 0) {
                 d->hold[t][0] = quant(xl, p->q, p->qi);
@@ -748,6 +825,34 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
             d->hcnt[t]--;
             xl = d->hold[t][0];
             xr = d->hold[t][1];
+        }
+        if (p->filt) {
+            int hp = p->filt == 2;
+            float x2[2] = {xl, xr};
+            for (int c = 0; c < 2; c++) {
+                float x = x2[c];
+                if (p->fdrive > 0.f)
+                    x = soft(x * (1.f + 3.f * p->fdrive), 1.f, 1.f);
+                x = svf(x, &d->sv[t][0][c][0], &d->sv[t][0][c][1], p->g, R_BUTTERWORTH, p->h1, p->rg1, hp, 0.f, 0.f);
+                x2[c] = svf(x, &d->sv[t][1][c][0], &d->sv[t][1][c][1], p->g, p->r2, p->h2, p->rg2, hp, p->limit, p->ilimit);
+            }
+            xl = x2[0];
+            xr = x2[1];
+        }
+        if (p->drive) {
+            float x2[2] = {xl, xr};
+            for (int c = 0; c < 2; c++) {
+                float *st = d->od[t][c];
+                float cl = p->d_head * soft(x2[c] * p->d_gain * p->d_ihead, 1.f, 1.f);
+                float y = cl + p->d_k * cl * cl;
+                float h = y - st[0] + .99869f * st[1];
+                st[0] = y;
+                st[1] = h;
+                st[2] += p->d_tone * (h - st[2]);
+                x2[c] = st[2] * p->d_post;
+            }
+            xl = x2[0];
+            xr = x2[1];
         }
         float ol = xl * (p->g0[0] + p->dg[0] * (float)(i - p->base + 1)), orr = xr * (p->g0[1] + p->dg[1] * (float)(i - p->base + 1));
         d->out[0][i] += ol;
@@ -790,20 +895,28 @@ static void skip_seg(int t, int n)
     }
 }
 
+/* The longest a take can get: the whole memory, or for a MULT track the most whole master loops that fit. */
+static uint32_t rec_max(vtrack *k)
+{
+    uint32_t ml = S->mlen;
+    return k->own == OWN_MULT && ml && ml <= MAX_FRAMES ? (MAX_FRAMES / ml) * ml : MAX_FRAMES;
+}
+
 static void seg(struct dsp *d, int t, int i0, int i1, const float *sl, const float *sr, const struct pb *p)
 {
     vtrack *k = &S->t[t];
     if (i1 <= i0)
         return;
     if (k->mode == LOOPER_REC) {
-        uint32_t room = MAX_FRAMES - k->rec;
+        uint32_t max = rec_max(k);
+        uint32_t room = max > k->rec ? max - k->rec : 0;
         int m = i1 - i0;
         if ((uint32_t)m > room)
             m = (int)room;
         take(t, sl, sr, i0, m);
-        if (k->rec >= MAX_FRAMES) {               /* full: close the loop */
+        if (k->rec >= max) {                      /* full: close the loop (MULT: on a master loop boundary) */
             k->pend = P_NONE;
-            finalize(t, MAX_FRAMES, i0 + m);
+            finalize(t, max, i0 + m);
             seg(d, t, i0 + m, i1, sl, sr, p);
         }
         return;
@@ -1047,7 +1160,7 @@ static void run(float *bl, float *br, int n)
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
         struct pb p;
-        setup(&p, k, n);
+        setup(d, t, &p, k, n);
         if (p.sd > 0.f || p.sr > 0.f)
             sends = 1;
         int b = k->pend ? fire_at(k, n, gb, wb) : -1;
@@ -1064,11 +1177,22 @@ static void run(float *bl, float *br, int n)
         bl[i] += d->out[0][i];
         br[i] += d->out[1][i];
     }
-    if (sends)
-        S->fx_tail = TAIL_FRAMES;
-    if (S->fx_tail) {
-        run_fx(d, bl, br, n);
-        S->fx_tail = S->fx_tail > (uint32_t)n ? S->fx_tail - (uint32_t)n : 0;
+    if (opt_i(LOOPER_O_ROUTE) == LOOPER_ROUTE_STOCK) {            /* keep this block's sends for the Blackbox's FX nodes */
+        for (int w = 0; w < 2; w++) {
+            for (int i = 0; i < n; i++) {
+                d->snd[w][0][i] = d->acc[2 * w][i];
+                d->snd[w][1][i] = d->acc[2 * w + 1][i];
+            }
+            d->snd_tick[w] = S->ticks;
+            d->snd_nz[w] = (uint32_t)sends;
+        }
+    } else {
+        if (sends)
+            S->fx_tail = TAIL_FRAMES;
+        if (S->fx_tail) {
+            run_fx(d, bl, br, n);
+            S->fx_tail = S->fx_tail > (uint32_t)n ? S->fx_tail - (uint32_t)n : 0;
+        }
     }
     if (S->mlen)
         S->mpos = (S->mpos + (uint32_t)n) % S->mlen;
@@ -1114,6 +1238,43 @@ void looper_stage(uint8_t *obj, void *bufs)
     }
 }
 
+/* The Blackbox's own delay and reverb: add the last block's sends to an FX node's bus before the node runs. obj is
+ * the node, bufs the block's bus set; which = 0 delay, 1 reverb. Done once per block per effect. */
+int looper_fx_inject(uint8_t *obj, void *bufs, int which)
+{
+    if (S->magic != MAGIC || !S->ok || opt_i(LOOPER_O_ROUTE) != LOOPER_ROUTE_STOCK)
+        return 0;
+    struct dsp *d = DSP();
+    if (S->ticks - d->snd_tick[which] > 2 || !d->snd_nz[which] || d->snd_used[which] == S->ticks)
+        return 0;
+    index_fn index = *(index_fn *)(*(uint8_t **)obj + 0x54);
+    unsigned out = (uint32_t)index == DEFAULT_INDEX_FN ? *(uint16_t *)(obj + 0x1e) : index(obj);
+    void *buf = fw_buf_of(bufs, out);
+    int n = fw_frames(buf);
+    if (n <= 0 || n > MAXN)
+        return 0;
+    float *l = 0, *r = 0;
+    fw_stereo(buf, &l, &r);                       /* also wakes a silent bus: it is zeroed and marked live */
+    if (!l || !r)
+        return 0;
+    for (int i = 0; i < n; i++) {
+        l[i] += d->snd[which][0][i];
+        r[i] += d->snd[which][1][i];
+    }
+    d->snd_used[which] = S->ticks;
+    return 1;
+}
+
+typedef int (*node_fn)(void *obj, void *bufs);
+#define fw_reverb ((node_fn)FN(0x08062fe8))
+
+/* The reverb node's process slot (vtable 0x080d0814 +0xc, stock 0x08062fe8). */
+int looper_reverb(void *obj, void *bufs)
+{
+    looper_fx_inject((uint8_t *)obj, bufs, 1);
+    return fw_reverb(obj, bufs);
+}
+
 /* --- for the page (GUI task) */
 
 int looper_ready(void)
@@ -1152,8 +1313,14 @@ void looper_set_param(int t, int p, float v)
     case LOOPER_P_FILT:
         k->filt = fclampf(v, -1.f, 1.f);
         break;
+    case LOOPER_P_RES:
+        k->res = fclampf(v, 0.f, 1.f);
+        break;
     case LOOPER_P_CRUNCH:
         k->crunch = fclampf(v, 0.f, 1.f);
+        break;
+    case LOOPER_P_DRIVE:
+        k->drive = fclampf(v, 0.f, 1.f);
         break;
     case LOOPER_P_SEND_D:
         k->send_d = fclampf(v, 0.f, 1.f);
@@ -1169,15 +1336,15 @@ float looper_get_param(int t, int p)
     if (t < 0 || t >= LOOPER_TRACKS || S->magic != MAGIC)
         return 0.f;
     vtrack *k = &S->t[t];
-    return p == LOOPER_P_FILT ? k->filt : p == LOOPER_P_CRUNCH ? k->crunch : p == LOOPER_P_SEND_D ? k->send_d :
-           p == LOOPER_P_SEND_R ? k->send_r : 0.f;
+    return p == LOOPER_P_FILT ? k->filt : p == LOOPER_P_RES ? k->res : p == LOOPER_P_CRUNCH ? k->crunch :
+           p == LOOPER_P_DRIVE ? k->drive : p == LOOPER_P_SEND_D ? k->send_d : p == LOOPER_P_SEND_R ? k->send_r : 0.f;
 }
 
 void looper_set_opt(int o, float v)
 {
     if (o < 0 || o >= LOOPER_OPTS || S->magic != MAGIC)
         return;
-    S->opt[o] = o <= LOOPER_O_DTIME ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
+    S->opt[o] = o <= LOOPER_O_DTIME || o == LOOPER_O_ROUTE ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
 }
 
 float looper_get_opt(int o)
@@ -1204,6 +1371,8 @@ void looper_track(int t, struct looper_info *out)
     out->level = k->level;
     out->pan = k->pan;
     out->filt = k->filt;
+    out->res = k->res;
+    out->drive = k->drive;
     out->crunch = k->crunch;
     out->send_d = k->send_d;
     out->send_r = k->send_r;

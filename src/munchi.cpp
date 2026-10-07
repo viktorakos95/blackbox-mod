@@ -333,8 +333,11 @@ static inline void process48(Munchi *m, float xl, float xr, float *ol, float *or
 }
 
 /* Replaces the delay process call in the delay's vtable wrapper (bl FUN_080548c8 @0x08054f3a). */
+int looper_fx_inject(uint8_t *obj, void *bufs, int which);
+
 int munchi_process(uint8_t *obj, uint32_t *bufs)
 {
+    looper_fx_inject(obj, bufs, 0);                 /* the looper's delay send joins this node's input first */
     unsigned row = (*(uint32_t *)(obj + OBJ_ID) >> 8) & 0xff;
     const void *store = (const void *)(APP_FX + (row < 5 ? row : 0) * 0x18u);
     unsigned alg = row < 5 ? (unsigned)fw_setting(store, P_TYPE) : ALG_DELAY;

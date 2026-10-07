@@ -211,6 +211,42 @@ the new engine).
   (tap = select, the knob turns it, drag up and down on it), REV, HALF, MUTE. SETUP: option rows, four sliders
   (knobs 1-4 = DLY FB, DLY RET, RVB SIZE, RVB RET), CLEAR ALL, BPM and transport status.
 
+## Step 9: after the step 8 hardware report
+
+Report: cyan leftovers still there; INFO=12 (message 0xc); asked for CLEAR ALL confirmation, more loop volume, tap =
+latch / hold = while held, the Blackbox's own delay / reverb / filter (with Res), more 3.1.n effects, FX button
+mapping, no panning lines, edge touches hitting something behind the page, QUANT 1/4, FOLLOW / MULT after a synced
+first loop, MULT hitting the memory limit; later: left encoders swapped, INFO broken on the stock pages, UNDO as its
+own button, full screen.
+
+- **Edge touches / leftover boxes** (unverified on hardware): touches only reach the mixer view inside its own
+  rectangle (hit test FUN_080aebaa compares the point with the widget's +4..+0x10 rect), i.e. the 256 px of cells;
+  the page now widens the view's rectangle to the screen's width while it shows and restores it on leaving. The cells'
+  child widgets (the cyan boxes; their flag byte +0x30) are now re-hidden at every draw, not only on entering, in case
+  the cells' own update shows them again.
+- **INFO on the stock pages**: the Looper flag outlives a trip to another screen, so the learned INFO (message 0xc)
+  was swallowed everywhere. looper_app_msg now acts only while the app's current screen (app + 0x8ca4) is 0x2f.
+- **Gestures**: a tap (< 300 ms) starts and latches, the next tap keeps it; a hold records while held.
+- **Loop gain**: LOOP GAIN option (SETUP, knob 1), 1 + 3 x amount (0 to +12 dB), default +6 dB, on top of the
+  faders. QUANT: 1/4, 1/8, 1/16. MULT takes at most the whole number of master loops that fit in the memory.
+- **Blackbox effects**: filter = the 3.1.n pad filter (two trapezoidal state-variable stages on the stock cutoff
+  and Res curves FUN_08060640 / FUN_080606c0, drive riding on Res), CRSH = the 3.1.n Interp crunch idea (hold down to
+  2 kHz, 14 to 8 bits), DRIVE = the 3.1.n overdrive curve (od.c). Sends: ROUTE STOCK hands each block's sends to the
+  delay node (hook in munchi_process) and the reverb node (vtable 0x080d0820, looper_reverb) by adding them to the
+  node's bus before it runs (one block later), so the node's Type (Delay / Munchi, Plate / Room), time, sync and
+  return are the FX page's. Unverified: that those buses really are the nodes' inputs. ROUTE OWN keeps the looper's own
+  delay and reverb as a fallback.
+- **FX button**: SETUP LEARN FX BTN, then press the physical FX button once; on the Looper page it then toggles the
+  looper's FX tab. (Which button index is FX is not known statically: the app dispatcher maps 0xf9 buttons 0..7 to
+  screens 2, 0x2b/0x31, 0x2c, 0x2d, 0x37/0x30/0x36, 0x2e/0x2f, 7, 0x25.)
+- **UNDO** button (MAIN: above the PAN / REV / MUTE row; FX: next to MUTE); the 2 s / 4 s MUTE hold still undoes /
+  erases. FULL SCREEN option (default on): the page grows upward by the screen's top bar height (assumes the bar is
+  not drawn after the page).
+- Encoders: the left pair is swapped (bottom = track 1). INFO on: the pan dials get the pink frame, the footer says
+  SHIFT ON in red.
+- Not done: Chase Bliss Habit / Blooper style effects (needs a design: Habit = a micro looping delay with
+  collage-like playback; Blooper = per-loop modulation, feedback, stability, speed).
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,

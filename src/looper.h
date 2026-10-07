@@ -7,20 +7,23 @@ enum { LOOPER_EMPTY, LOOPER_REC, LOOPER_PLAY, LOOPER_DUB, LOOPER_CLEARING, LOOPE
 
 /* Touch events the page sends; the engine times holds, double taps and latches against its audio clock. */
 enum { LOOPER_EV_REC_DOWN, LOOPER_EV_REC_UP, LOOPER_EV_MUTE_DOWN, LOOPER_EV_MUTE_UP, LOOPER_EV_REVERSE,
-       LOOPER_EV_HALF };
+       LOOPER_EV_HALF, LOOPER_EV_UNDO };
 
 /* Per-track parameters (looper_set_param). */
-enum { LOOPER_P_FILT, LOOPER_P_CRUNCH, LOOPER_P_SEND_D, LOOPER_P_SEND_R, LOOPER_PARAMS };
+enum { LOOPER_P_FILT, LOOPER_P_RES, LOOPER_P_CRUNCH, LOOPER_P_DRIVE, LOOPER_P_SEND_D, LOOPER_P_SEND_R, LOOPER_PARAMS };
 
-/* Global options (looper_set_opt): the first four are choices (whole numbers), the rest amounts 0..1. */
+/* Global options (looper_set_opt): the first five and LOOPER_O_ROUTE are choices (whole numbers), the rest amounts 0..1.
+ * QUANT: 0 = 1/4, 1 = 1/8, 2 = 1/16. ROUTE: 0 = the Blackbox's own delay and reverb, 1 = the looper's own.
+ * GAIN: the loop's make-up gain, 1 + 3 x amount (0 .. +12 dB). */
 enum { LOOPER_O_LEN, LOOPER_O_SYNC, LOOPER_O_QUANT, LOOPER_O_SRC, LOOPER_O_DTIME,
-       LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET, LOOPER_OPTS };
+       LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET, LOOPER_O_GAIN, LOOPER_O_ROUTE, LOOPER_O_FULL, LOOPER_OPTS };
+enum { LOOPER_ROUTE_STOCK, LOOPER_ROUTE_OWN };
 enum { LOOPER_LEN_FOLLOW, LOOPER_LEN_MULT, LOOPER_LEN_FREE };      /* LOOPER_O_LEN */
 enum { LOOPER_SRC_INPUT, LOOPER_SRC_MIX };                         /* LOOPER_O_SRC */
 
 struct looper_info {
     int mode, muted, reversed, latched, undo, armed, half;
-    float level, pan, filt, crunch, send_d, send_r;
+    float level, pan, filt, res, crunch, drive, send_d, send_r;
     float progress;                               /* playhead 0..1; while a first take records: fraction of the memory */
 };
 
