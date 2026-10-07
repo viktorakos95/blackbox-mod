@@ -483,3 +483,13 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
 - FREE ignores SYNC: with a master loop set, a FREE take starts at once and ends where it is let go whatever SYNC is
   (the grid only applies to the first take, FOLLOW and the quantized starts of the others). Label Lok38.
 - STUT takes a new slice whenever the knob moves to another size or side (no need to go back to zero first).
+
+## Step 39
+- SPEED PITCH (MORE): TAPE / GRAIN / SMOOTH. SMOOTH = WSOLA: each new grain's start is searched (+-512 frames coarse, then
+  fine) so that its first hop matches what the grain before it would have played next (normalised cross-correlation on a
+  subsampled mono sum); one search per 1024 frames per track. Used by SPEED, HALF and PTCH alike.
+- Faster way to the stock FX: INFO + FX (MAIN tab) and a STOCK FX button at the right end of the footer hand the FX
+  button's message to the stock handler (the Blackbox's FX page). The reverb / delay pages themselves still wait for their
+  screen ids.
+- Cave space was down to 116 bytes: removed the diagnostics that were done (engine event post hook, swallow, unpatched
+  drawing guards, draw-blocked / text-draw wrappers). 57 004 of 57 736 bytes in use. Label Lok39.

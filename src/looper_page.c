@@ -312,7 +312,7 @@ static const struct optrow rows_more[] = {
     {"OWN RVB SIZE K3", LOOPER_O_RSIZE, 0, {0, 0, 0, 0}},
     {"OWN RVB RET K4", LOOPER_O_RRET, 0, {0, 0, 0, 0}},
     {"MONITOR INPUT", LOOPER_O_MON, 0, {0, 0, 0, 0}},
-    {"SPEED PITCH", LOOPER_O_PITCH, 2, {"TAPE", "KEEP", 0, 0}},
+    {"SPEED PITCH", LOOPER_O_PITCH, 3, {"TAPE", "GRAIN", "SMOOTH", 0}},
 };
 #define OPT_ROWS opt_rows()                                       /* rows above the buttons row: 7 on SETUP, 6 on MORE */
 static int opt_rows(void);
@@ -361,7 +361,11 @@ int looper_page_hit(int x, int d, int *track, float *val)
     if (P->hg < 120 || P->w < 80 || cw <= 0)
         return Z_NONE;                                            /* (hg is 0 until the page has been drawn once) */
     layout(0, &L);
-    if (d > L.foot_y) {                                           /* the footer: the tabs */
+    if (d > L.foot_y) {                                           /* the footer: the tabs, and at the right the stock FX shortcut */
+        if (x >= P->w - 58 && x < P->w - 4) {
+            *track = 94;
+            return Z_OPTC;
+        }
         int i = (x - 3) / (TAB_W + 2);
         if (x >= 3 && i < NTABS && (x - 3) % (TAB_W + 2) < TAB_W) {
             *track = i;
@@ -886,6 +890,19 @@ static void set_fx_sel(int p)
         P->fx_sel[t] = (uint8_t)p;
 }
 
+/* The stock FX page: the FX button's own message, handed to the app's dispatcher (the Blackbox goes to its FX page from here
+ * as it does from the pads). Reached by the footer's STOCK FX button and by INFO + FX. */
+static void stock_fx(void)
+{
+    uint16_t m[32];
+    for (int i = 0; i < 32; i++)
+        m[i] = 0;
+    m[0] = P->bset[B_FX] ? P->bid[B_FX] : 0xf9;
+    *(uint32_t *)((uint8_t *)m + 0xc) = P->bset[B_FX] ? P->bidx[B_FX] : 4;
+    P->info_on = 0;
+    fw_app_msg((void *)0x24020088u, m);
+}
+
 /* A tab of the footer (0 MAIN, 1 FX, 2 FX2, 3 SETUP, 4 MORE). FX / FX2 keep the square where it is when it is on that page. */
 static void tab_select(int i)
 {
@@ -1020,12 +1037,12 @@ static void draw_footer(const struct lay *L)
         text_c(3 + i * (TAB_W + 2), L->foot_y + 4, TAB_W, tab[i], on ? C_CYAN : C_GREY, 1);
     }
     int x0 = 3 + NTABS * (TAB_W + 2) + 4;
+    frame(P->w - 58, L->foot_y + 2, 54, FOOT - 3, C_RAIL, 1);
+    text_c(P->w - 58, L->foot_y + 4, 54, "STOCK FX", C_LIGHT, 1);
     if (looper_paused())
         text(x0, L->foot_y + 4, "PAUSED", C_RED, 1);
-    if (!P->info_set)
-        text(P->w - 5 - text_w("PRESS INFO", 1), L->foot_y + 4, "PRESS INFO", C_PINK, 1);
     else if (P->info_on)
-        text(P->w - 5 - text_w("SHIFT ON", 1), L->foot_y + 4, "SHIFT ON", C_RED, 1);
+        text(x0, L->foot_y + 4, "SHIFT ON", C_RED, 1);
 }
 
 /* A number that changes whenever something the page shows changes. */
@@ -1327,14 +1344,7 @@ void looper_page_down(uint8_t *view, const int *pt)
             int slot = 100 - t;                                   /* LEARN <button>: the next press of it is remembered */
             P->learn = P->learn == slot ? 0 : (uint8_t)slot;
         } else if (t == 94) {
-            if (P->bset[B_FX]) {                                  /* hand the FX button's message to the stock handler: its FX page */
-                uint16_t m[32];
-                for (int i = 0; i < 32; i++)
-                    m[i] = 0;
-                m[0] = P->bid[B_FX];
-                *(uint32_t *)((uint8_t *)m + 0xc) = P->bidx[B_FX];
-                fw_app_msg((void *)0x24020088u, m);
-            }
+            stock_fx();
         } else {
             looper_set_opt(t, v);
             P->entered = 0;                                       /* e.g. FULL SCREEN: repaint the whole background */
@@ -1578,7 +1588,9 @@ void looper_app_msg(void *app, const uint16_t *msg)
                 P->btn_t = looper_ticks();
                 switch (slot) {
                 case B_FX:
-                    if (P->mode != M_FX)                           /* the FX button: MAIN -> FX -> FX2 -> MAIN */
+                    if (P->info_on)                                /* INFO + FX: the Blackbox's own FX page */
+                        stock_fx();
+                    else if (P->mode != M_FX)                      /* the FX button: MAIN -> FX -> FX2 -> MAIN */
                         tab_select(1);
                     else if (FX_GROUP < 2)
                         tab_select(2);
@@ -1611,47 +1623,4 @@ void looper_app_msg(void *app, const uint16_t *msg)
             return;
     }
     fw_app_msg(app, msg);
-}
-
-/* From solo.c: a stock line / text draw was dropped (shown on MORE, to tell whether the hooks fire). */
-int looper_page_swallow(uint32_t w0)
-{
-    if (!P->swallow)
-        return 0;
-    for (int i = 2; i > 0; i--)
-        P->sw_id[i] = P->sw_id[i - 1];
-    P->sw_id[0] = (uint16_t)w0;
-    if (P->sw_n < 255)
-        P->sw_n++;
-    return 1;
-}
-
-void looper_page_dropped(void)
-{
-    P->dropped++;
-}
-
-/* From solo.c: an event was queued for the audio engine while the page shows. Newest first, distinct ones only. */
-void looper_page_event(uint32_t w0, uint32_t w1)
-{
-    int seen = 0;
-    for (int i = 0; i < 6; i++)
-        seen |= P->h0[i] == w0 && P->h1[i] == (uint16_t)w1;
-    if (!seen) {
-        for (int i = 5; i > 0; i--) {
-            P->h0[i] = P->h0[i - 1];
-            P->h1[i] = P->h1[i - 1];
-        }
-        P->h0[0] = w0;
-        P->h1[0] = (uint16_t)w1;
-    }
-    for (int i = 0; i < 4; i++)
-        if (P->ev0[i] == w0 && P->ev1[i] == w1)
-            return;
-    for (int i = 3; i > 0; i--) {
-        P->ev0[i] = P->ev0[i - 1];
-        P->ev1[i] = P->ev1[i - 1];
-    }
-    P->ev0[0] = w0;
-    P->ev1[0] = w1;
 }

@@ -55,26 +55,6 @@ looper_stage_thunk:
     sub     sp, #0x14
     GUARD_END 0x0808f925
 
-    GUARD   guard_pixel, 0x0808f529
-    push    {r4, r5, r6, lr}
-    mov     r4, r0
-    GUARD_END 0x0808f529
-
-    GUARD   guard_f624, 0x0808f629
-    push    {r4, r5, r6, r7, lr}
-    mov     r6, r2
-    GUARD_END 0x0808f629
-
-    GUARD   guard_f4a4, 0x0808f4a9
-    push    {r3, lr}
-    mov     r2, r1
-    GUARD_END 0x0808f4a9
-
-    GUARD   guard_f740, 0x0808f747
-    push    {r4, lr}
-    ldrb.w  lr, [sp, #8]
-    GUARD_END 0x0808f747
-
 /*
  * Stock line and text drawing, dropped while the Looper page shows (looper_stock_blocked, solo.c): the stock cells' corner
  * marks (the cyan boxes: FUN_080a43b8 draws them with FUN_0808ea7e, colour 5) and the screen's own "1:2 Seq" bar (text, FUN_0808ee54).
@@ -102,23 +82,4 @@ looper_stage_thunk:
     STOCKGUARD guard_line, 0x0808ea83
     STOCKGUARD guard_text, 0x0808ee59
 
-/*
- * Diagnostic: the engine's event post (FUN_0804f504(list, event), 24-byte events queued for the audio task; the
- * transport buttons must end up here). Calls looper_note_event(list, event) first, then runs the displaced
- * `ldr.w r3, [r0, #0x600]` and continues at 0x0804f508.
- */
-    .global guard_post
-    .thumb_func
-    .type guard_post, %function
-guard_post:
-    push    {r0, r1, r2, r3, r12, lr}
-    bl      looper_note_event
-    str     r0, [sp, #16]
-    pop     {r0, r1, r2, r3, r12, lr}
-    cmp     r12, #0
-    bne     9f
-    ldr.w   r3, [r0, #0x600]
-    ldr     r12, =0x0804f509
-    bx      r12
-9:  bx      lr
-    .ltorg
+

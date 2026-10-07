@@ -360,12 +360,6 @@ static int page_owns_screen(void)
     return GUARD_BLOCK == BLK1 && S->magic == MAGIC && S->looper && S->view && app_screen() == SCREEN_MUTE;
 }
 
-/* From the drawing primitive stubs (looper_thunk.S): 1 = drop this stock draw. Must stay tiny: it runs per pixel. */
-int looper_draw_blocked(void)
-{
-    return GUARD_DRAW != DRW1 && page_owns_screen();
-}
-
 typedef int (*whit_fn)(uint8_t *w, const int *pt, uint8_t **out);
 typedef int (*rect_fn)(uint8_t *w, const int *pt);
 typedef int (*chk_fn)(uint8_t *w);
@@ -408,27 +402,11 @@ static int page_visible(void)
            S->view[VIEW_MUTE];
 }
 
-/*
- * Draw slot of the text widget class (vtable 0x080f17a4 + 4, stock 0x080c3d2c). The cyan boxes that stayed over the page
- * are text widgets inside the mixer cells (three per cell, cell + 0x70 / 0xc8 / 0x120), drawn whatever their hidden flag
- * says; and the screen's own top bar is text too. While the page shows, a text widget inside the mixer view is not drawn;
- * on full screen no text widget is.
- */
-void looper_text_draw(uint8_t *w, void *ctx)
-{
-    if (page_visible() && (GUARD_BLOCK == BLK1 || (uint32_t)(w - S->view) < 0x2000u))
-        return;
-    fw_text_draw(w, ctx);
-}
-
 /* From the line / text stubs: 1 = drop this stock draw (the page is showing and is not the one drawing). */
-void looper_page_dropped(void);
-int looper_page_swallow(uint32_t w0);
 
 int looper_stock_blocked(void)
 {
     if (GUARD_DRAW != DRW1 && page_visible()) {
-        looper_page_dropped();
         return 1;
     }
     return 0;
@@ -448,31 +426,6 @@ int looper_fill_blocked(void *fb, int color, const uint16_t *r)
         return 0;
     int x = r[4], w = r[2];
     if (w > 0 && (x + w <= 32 || x >= 288)) {
-        looper_page_dropped();
-        return 1;
-    }
-    return 0;
-}
-
-void looper_page_event(uint32_t w0, uint32_t w1);
-void looper_page_dropped(void);
-
-/* Diagnostic, from the engine event post stub: remember what is queued while the page shows. */
-int looper_note_event(void *list, const uint32_t *ev)
-{
-    (void)list;
-    if (!page_visible())
-        return 0;
-    looper_page_event(ev[0], ev[1]);
-    /* The transport buttons' events (seen on the unit as 0x49, 0x4f and 0x70 for PLAY, STOP and REC in some order):
-     * dropped while the page shows, so the buttons are the looper's alone; HW STOP PLAY = +STOCK lets them through. */
-    uint32_t id = ev[0] & 0xffffffu;
-    if (looper_page_swallow(ev[0])) {
-        looper_page_dropped();
-        return 1;
-    }
-    if (0 && (id == 0x49 || id == 0x4f || id == 0x70) && looper_get_opt(LOOPER_O_HWBTN) < .5f) {
-        looper_page_dropped();
         return 1;
     }
     return 0;
@@ -494,7 +447,6 @@ int looper_key_pop(void *obj, uint8_t *ev)
             return r;
         if (idx != 8 && looper_get_opt(LOOPER_O_HWBTN) > .5f)
             return r;
-        looper_page_dropped();
     }
 }
 

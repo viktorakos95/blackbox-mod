@@ -758,6 +758,7 @@ struct pb {                                       /* one track, one block */
     int win;                                      /* the play window: 0 = the whole loop, else a power of two to divide it by */
     float stut_len, scr_p;
     int keep;                                     /* SPEED / HALF keep the pitch (granular) */
+    int smooth;                                   /* ... with the grains lined up by waveform similarity (WSOLA) */
     float pratio;                                 /* PTCH: the pitch ratio */
     int ptch_on;
     int stut_mode, scr_mode;             /* stutter 0 off 1 back 2 forward; scrambler 0 off 1 random 2 sequence */
@@ -916,7 +917,8 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
     float cv = k->scrm < 0.f ? -k->scrm : k->scrm;
     p->scr_p = cv;
     p->scr_mode = cv < .02f ? 0 : k->scrm < 0.f ? 1 : 2;
-    p->keep = opt_i(LOOPER_O_PITCH) == 1;
+    p->keep = opt_i(LOOPER_O_PITCH) >= 1;
+    p->smooth = opt_i(LOOPER_O_PITCH) == 2;
     int semi = (int)(k->ptch * 24.f + (k->ptch >= 0.f ? .5f : -.5f));       /* PTCH: whole semitones */
     p->ptch_on = semi != 0;
     p->pratio = exp2_fast((float)semi * (1.f / 12.f));
@@ -996,6 +998,46 @@ static inline float rnd01(uint32_t *s)
 /* The play head's sample for this frame (the Blooper controls), replacing x: speed, trim window, stutter slice, scrambler
  * jumps, wow / flutter, the tape dulling and noise, dropouts, pitch shift. During the cross fade back to the plain read it
  * is mixed in. pos is the transport's place in the loop (what the scrambler's slices and sequence are counted on). */
+/* WSOLA: where a new grain should start, near the nominal place (the play head), so that its first hop matches what the
+ * grain before it would have played next. A coarse search (every 8 frames, +-512) on a subsampled mono sum, then a fine one. */
+static inline int32_t wsmp(int t, vtrack *k, uint32_t len, int32_t idx)
+{
+    int32_t m = idx % (int32_t)len;
+    if (m < 0)
+        m += (int32_t)len;
+    int16_t *a = frame_at(t, place(k, (uint32_t)m, len));
+    return (int32_t)a[0] + (int32_t)a[1];
+}
+
+static uint32_t wsola_start(int t, vtrack *k, uint32_t len, uint32_t pst, int pdir, int32_t page, uint32_t nominal, int dir, float rr)
+{
+    if (page < 0)
+        return nominal;                           /* no grain before it */
+    float tg[GH / 8];
+    for (int j = 0; j < GH / 8; j++)              /* what the grain before it plays next (the overlap) */
+        tg[j] = (float)wsmp(t, k, len, (int32_t)pst + pdir * (int32_t)((float)(page + j * 8) * rr));
+    int best = 0;
+    float bs = -1.f;
+    for (int pass = 0; pass < 2; pass++) {
+        int lo = pass ? best - 6 : -512, hi = pass ? best + 6 : 512, st = pass ? 1 : 8;
+        for (int o = lo; o <= hi; o += st) {
+            float sx = 0.f, ee = 1.f;
+            for (int j = 0; j < GH / 8; j++) {
+                float b = (float)wsmp(t, k, len, (int32_t)nominal + o + dir * (int32_t)((float)(j * 8) * rr));
+                sx += tg[j] * b;
+                ee += b * b;
+            }
+            float sc = sx > 0.f ? sx * sx / ee : 0.f;
+            if (sc > bs) {
+                bs = sc;
+                best = o;
+            }
+        }
+    }
+    int32_t r = ((int32_t)nominal + best) % (int32_t)len;
+    return (uint32_t)(r < 0 ? r + (int32_t)len : r);
+}
+
 static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32_t len, uint32_t wlen, uint32_t pos, int on,
                      int *xfade, float *xl, float *xr)
 {
@@ -1065,7 +1107,8 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
         if (d->ghc[t] <= 0) {
             int v = d->gv[t] & 1;
             d->gv[t] ^= 1;
-            d->gst[t][v] = i0;
+            int dirn = p->spd < 0.f ? -1 : 1;
+            d->gst[t][v] = p->smooth ? wsola_start(t, k, len, d->gst[t][v ^ 1], d->gdir[t][v ^ 1], d->gag[t][v ^ 1], i0, dirn, rr) : i0;
             d->gag[t][v] = 0;
             d->gdir[t][v] = p->spd < 0.f ? -1 : 1;
             d->ghc[t] = GH;
@@ -1941,8 +1984,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '3';                                   /* the build: step 38 */
-        *p++ = '8';
+        *p++ = '3';                                   /* the build: step 39 */
+        *p++ = '9';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';

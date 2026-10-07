@@ -15,8 +15,8 @@ Kept in the order they came up. "Needs" says what is missing before it can be bu
   `frame_at` indirection and a careful test pass. Hard ceiling stays 231 pool blocks (76.8 s in all).
 - **INFO + FX -> stock reverb page -> stock delay page -> FX back to the looper FX page.** Needs the screen ids of those
   pages (MORE shows the visited ids on its `S` line; photo wanted after: song, fx, fx again, info, mix x4).
-- **Pitch algorithms**: today SPEED / HALF / PTCH use a plain granular engine (2048-frame grains, no alignment).
-  Wanted: better options (WSOLA "smooth", long-window "pad", maybe formant-aware); see the chat.
+- **Pitch algorithms**: SMOOTH (WSOLA) is in (step 39); GRAIN is the old plain granular engine.
+  Still wanted: PAD (long, soft grains for sustained material), maybe formant-aware shifting. Cave space is very tight (about 700 bytes left).
 - **Blooper**: STRETCHER (speed without pitch, now only through KEEP), stepped / chromatic SPEED, one-shot overdub,
   Sampler mode, LAYERS (needs the shared pool).
 - **Habit-style effects** (Chase Bliss Habit): not designed.
