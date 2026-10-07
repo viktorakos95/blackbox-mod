@@ -265,6 +265,18 @@ area. REC button = message 0xf4 (shown "244:8"); INFO = 0xc.
   started or the transport restarted), so a half speed track stays in step across master loops.
 - FX tab: the button rows share the height the dials leave.
 
+## Step 14 (hardware reports after step 13)
+
+- Button messages read off the unit: FX 0xf9:4, REC 0xf4:8, BACK 7:11, STOP 0xf6:9, PLAY 0xf7:10, INFO 0xc, MIX 0xf9:5.
+  All preset (and relearnable on MORE). REC, STOP and PLAY are acted on by the looper and also passed to the stock
+  handler, so the sequencer / clock transport keeps working; FX and BACK are taken by the page.
+- Full screen on: the drawing guard stopped the page updating by itself (taps only showed after leaving and coming
+  back; with FULL SCREEN off everything updated). So the GUI-task handlers (touch, knob) now paint the page directly
+  (dirty_now), and the audio task's poke posts a message (id 0x1f0, FUN_080b5758 into the GUI queue at app + 0x30)
+  that looper_app_msg answers by painting. Cause of the stall not understood; the stock draw pass seems not to be
+  asked for a redraw when only our dirty flags change.
+- Changing an option repaints the whole background (the cyan boxes stayed after switching FULL SCREEN on).
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,

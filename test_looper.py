@@ -676,7 +676,7 @@ check("learning the REC button (message 0xf5): remembered and swallowed", e.r8(P
 before = list(e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 2))
 e.call("looper_app_msg", APP, MSG)
 after = list(e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 2))
-check("the REC button on the Looper page: a tap on the selected track (2), not the stock handler", after[0] == before[0] + 1 and after[1] == before[1] + 1 and not appmsg, (before, after, appmsg))
+check("the REC button on the Looper page: a tap on the selected track (2), and it also reaches the stock handler (sequencer / clock)", after[0] == before[0] + 1 and after[1] == before[1] + 1 and appmsg == [(0xF5, 0)], (before, after, appmsg))
 tab(0)
 
 # ---- the stock screen's pieces under the page
@@ -807,7 +807,7 @@ e.uc.mem_write(PAGE + 98, b"\x01"); e.uc.mem_write(PAGE + 104, b"\x08"); e.uc.me
 e.call("looper_app_msg", APP, MSG)
 e.call("looper_app_msg", APP, MSG)
 after = list(e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 2))
-check("REC button (0xf4, 8) is preset: one tap on the selected track; the release right after is ignored", after[0] == before[0] + 1 and not appmsg, (before, after, appmsg))
+check("REC button (0xf4, 8) is preset: one tap on the selected track; the release right after is ignored", after[0] == before[0] + 1 and appmsg == [(0xF4, 8), (0xF4, 8)], (before, after, appmsg))
 tab(0)
 
 # INFO + tap on each record box toggles that track's mute
@@ -853,12 +853,12 @@ after = list(e.uc.mem_read(STATE + T0 + TSIZE * 2 + 8, 7))
 check("BACK: an undo event for the selected track (3), swallowed", after[6] == before[6] + 1 and not appmsg, (before, after, appmsg))
 press(0xF9, 2)
 blocks(2)
-check("PLAY / PAUSE swallowed", not appmsg)
+check("PLAY / PAUSE also reaches the sequencer", appmsg == [(0xF9, 2)], appmsg)
 press(0xF9, 2)
 blocks(2)
 press(0xF9, 1)
 blocks(2)
-check("STOP / PLAY / BACK are swallowed on the page", not appmsg)
+check("STOP also reaches the sequencer", appmsg == [(0xF9, 1)], appmsg)
 e.uc.mem_write(APP + 0x8CA4, b"\x25")
 press(0xF9, 1)
 check("on other screens they are the stock buttons", appmsg == [(0xF9, 1)], appmsg)
@@ -871,6 +871,29 @@ button(0, msg_id=0xC)
 fx1 = list(e.uc.mem_read(PAGE + 77, 4))
 check("INFO on the FX tab steps every track's dial on by one (filter drive drive rvb -> res dly dly filter)", fx1 == [1, 4, 4, 0] and e.r8(PAGE + 7) == 0, fx1)
 tab(0)
+
+# ---- live repaint: the audio task's poke posts a message, the GUI task paints
+posted = []
+e.stub(0x080B5758, lambda: posted.append(e.r16(e.arg(1))))
+e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 1.0))            # full screen
+e.call("looper_page_enter", VIEW)
+draw(0)
+e.uc.mem_write(PAGE + 120, b"\x00")
+level(2, 0.4)
+posted.clear()
+e.call("looper_page_poke", VIEW)
+check("full screen: a change makes the poke post one paint message for the GUI task", posted == [0x1F0], posted)
+e.call("looper_page_poke", VIEW)
+level(2, 0.45)
+e.call("looper_page_poke", VIEW)
+check("... and only one while it is in flight", posted == [0x1F0], posted)
+fills.clear()
+e.uc.mem_write(MSG, struct.pack("<H", 0x1F0) + bytes(30))
+e.call("looper_app_msg", APP, MSG, count=50_000_000)
+check("the paint message repaints the page in the GUI task and is not passed on", len(fills) > 50, len(fills))
+e.uc.mem_write(STATE + 108 + 11 * 4, struct.pack("<f", 0.0))
+e.call("looper_page_enter", VIEW)
+draw(0)
 
 # leaving the page puts the child widgets back
 e.call("solo_set_mode", VIEW, 1)

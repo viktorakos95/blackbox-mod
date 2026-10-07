@@ -52,11 +52,13 @@ typedef void (*msg_fn)(void *obj, const uint16_t *msg);
 #define fw_px       ((px_fn)FN(0x0808f524))                /* fb, x, y (y up), palette index */
 #define fw_view_msg ((msg_fn)FN(0x080b5c70))               /* mixer view message handler (vtable +0x34) */
 #define fw_app_msg  ((msg_fn)FN(0x080a2e60))               /* app message dispatch */
+#define fw_post     ((msg_fn)FN(0x080b5758))               /* queue a message for the GUI task (app + 0x30) */
 
 uint8_t *solo_looper_view(void);
 void looper_guard(int on);
 void looper_guard_drawing(int on);
 static void rehide(uint8_t *view);
+static void paint(uint8_t *view);
 static void widen(uint8_t *view);
 
 #define VIEW_CELLS  0x3ac
@@ -72,6 +74,7 @@ struct font {
     uint16_t w, h;
 };
 
+#define MSG_PAINT   0x1f0        /* our own: "repaint the page" (posted by the audio task's poke, handled in the GUI task) */
 #define MSG_KNOB    0x32         /* view message: +0xc knob 0..3 (int16), +0x10 counts (int16) */
 #define KNOB_SCALE  (1.f / 8000.f)
 #define MSG_BUTTON  0xf9         /* app message: +0xc = button 0..7 (5 = MIX) */
@@ -139,7 +142,8 @@ struct page {
     uint16_t rect_on, touches;
     uint8_t bset[BTNS], bidx[BTNS];                 /* learned hardware buttons: set, button index ... */
     uint16_t bid[BTNS];                             /* ... and message id, per slot */
-    uint32_t rec_t, btn_t;
+    uint32_t rec_t, btn_t, paint_t;
+    uint8_t paint_req, _r6[3];
     int16_t touch_x, touch_y;
     uint32_t clear_t;                               /* when CLEAR ALL was asked */
     int32_t vrect[4];                               /* the mixer view's own rectangle, while the page widens it */
@@ -941,6 +945,13 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
     if (idx != 0)
         return 1;
     P->fb = (uint32_t)*(void **)(ctx + CTX_FB);
+    paint(view);
+    return 1;
+}
+
+/* The whole page, into the frame buffer the last stock draw pass handed over. */
+static void paint(uint8_t *view)
+{
     geometry(view);
     rehide(view);
     widen(view);
@@ -974,7 +985,6 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
     draw_footer(&L);
     P->sig = signature();
     looper_guard_drawing(0);
-    return 1;
 }
 
 static void dirty(uint8_t *view)
@@ -984,6 +994,15 @@ static void dirty(uint8_t *view)
     P->force = 0;
 }
 
+/* From the GUI task (touches, knobs): mark dirty and also paint at once, so the page shows what was just done even when
+ * no stock draw pass follows (the stock widgets that used to ask for one are out of the way). */
+static void dirty_now(uint8_t *view)
+{
+    dirty(view);
+    if (P->fb && solo_looper_view() == view)
+        paint(view);
+}
+
 /* From the audio task (looper_ui_poke -> solo.c): redraw when something changed, and now and then regardless. */
 void looper_page_poke(uint8_t *view)
 {
@@ -991,8 +1010,21 @@ void looper_page_poke(uint8_t *view)
         P->info_on = 0;
         P->sig = 0;
     }
-    if (signature() != P->sig || ++P->force >= 40)
+    if (signature() != P->sig || ++P->force >= 40) {
         dirty(view);
+        /* With the stock screen dropped (full screen) nothing else asks the GUI for a draw pass: post our own message,
+         * handled in the GUI task by looper_app_msg. One in flight at a time. */
+        if (looper_get_opt(LOOPER_O_FULL) > .5f && P->fb &&
+            (!P->paint_req || looper_ticks() - P->paint_t > 60)) {
+            uint16_t m[12];
+            for (int i = 0; i < 12; i++)
+                m[i] = 0;
+            m[0] = MSG_PAINT;
+            P->paint_req = 1;
+            P->paint_t = looper_ticks();
+            fw_post((void *)(0x24020088u + 0x30u), m);
+        }
+    }
 }
 
 /* The stock cells still draw their child widgets (the cyan double boxes under each pad) after the page: hide them
@@ -1085,9 +1117,14 @@ void looper_page_boot(void)
     P->info_idx = 0;                                         /* nothing is learned by pressing any more              */
     for (int i = 0; i < BTNS; i++)
         P->bset[i] = 0;
-    P->bset[B_REC] = 1;                                      /* the REC button: message 0xf4, button 8 (seen as "244:8") */
-    P->bid[B_REC] = 0xf4;
-    P->bidx[B_REC] = 8;
+    static const uint8_t pre_idx[BTNS] = {0, 4, 8, 11, 9, 10};                 /* as read off the unit: */
+    static const uint16_t pre_id[BTNS] = {0, 0xf9, 0xf4, 7, 0xf6, 0xf7};      /* FX 249:4, REC 244:8, BACK 7:11, STOP 246:9, PLAY 247:10 */
+    for (int i = 1; i < BTNS; i++) {
+        P->bset[i] = 1;
+        P->bid[i] = pre_id[i];
+        P->bidx[i] = pre_idx[i];
+    }
+    P->paint_req = 0;
     P->learn = 0;
     P->touches = 0;
     P->sel = 0;
@@ -1168,8 +1205,10 @@ void looper_page_down(uint8_t *view, const int *pt)
                 *(uint32_t *)((uint8_t *)m + 0xc) = P->bidx[B_FX];
                 fw_app_msg((void *)0x24020088u, m);
             }
-        } else
+        } else {
             looper_set_opt(t, v);
+            P->entered = 0;                                       /* e.g. FULL SCREEN: repaint the whole background */
+        }
     } else if (zone == Z_SLIDER) {
         looper_set_opt(t, v);
         P->drag_opt = (uint8_t)t;
@@ -1214,7 +1253,7 @@ void looper_page_down(uint8_t *view, const int *pt)
         looper_event(t, LOOPER_EV_MUTE_DOWN);
         P->pressed = P_MUTE;
     }
-    dirty(view);
+    dirty_now(view);
 }
 
 void looper_page_move(uint8_t *view, const int *pt)
@@ -1234,7 +1273,7 @@ void looper_page_move(uint8_t *view, const int *pt)
         float v = (float)(x - OPT_X) / (float)SLIDER_W;
         looper_set_opt(P->drag_opt, v < 0.f ? 0.f : v > 1.f ? 1.f : v);
     }
-    dirty(view);
+    dirty_now(view);
 }
 
 void looper_page_up(uint8_t *view, const int *pt)
@@ -1245,7 +1284,7 @@ void looper_page_up(uint8_t *view, const int *pt)
     else if (P->pressed == P_MUTE)
         looper_event(P->track, LOOPER_EV_MUTE_UP);
     P->pressed = P_NONE;
-    dirty(view);
+    dirty_now(view);
 }
 
 /* Mixer view vtable +0x34 (0x080f0f44): its messages. On the page the four knobs turn the tracks' levels, or the pans
@@ -1277,7 +1316,7 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             } else {
                 looper_set_level(knob, gain_of(pos_of(k.level) + step));
             }
-            dirty(view);
+            dirty_now(view);
         }
         return;
     }
@@ -1321,6 +1360,13 @@ static int info_button(unsigned id, unsigned idx)
 /* Replaces the app's message dispatch call (bl @0x080a23cc). */
 void looper_app_msg(void *app, const uint16_t *msg)
 {
+    if (msg && msg[0] == MSG_PAINT) {
+        P->paint_req = 0;
+        uint8_t *view = solo_looper_view();
+        if (view && P->fb && ((const uint8_t *)app)[0x8ca4] == 0x2f)
+            paint(view);
+        return;
+    }
     /* only while the mixer screen (0x2f) is the one showing: the Looper flag outlives a trip to other screens, and INFO
      * must stay the stock button there */
     if (msg && solo_looper_view() && ((const uint8_t *)app)[0x8ca4] == 0x2f) {
@@ -1344,8 +1390,11 @@ void looper_app_msg(void *app, const uint16_t *msg)
             for (int slot = 1; slot < BTNS; slot++) {
                 if (!P->bset[slot] || id != P->bid[slot] || idx != P->bidx[slot])
                     continue;
-                if (looper_ticks() - P->btn_t <= 20)               /* a press and its release can both arrive: one action */
+                if (looper_ticks() - P->btn_t <= 20) {             /* a press and its release can both arrive: one action */
+                    if (slot == B_REC || slot == B_STOP || slot == B_PLAY)
+                        break;
                     return;
+                }
                 P->btn_t = looper_ticks();
                 switch (slot) {
                 case B_FX:
@@ -1368,6 +1417,8 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     break;
                 }
                 P->sig = 0;
+                if (slot == B_REC || slot == B_STOP || slot == B_PLAY)
+                    break;                                         /* the transport buttons also reach the sequencer / clock */
                 return;
             }
         }
