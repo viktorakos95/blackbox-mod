@@ -281,6 +281,7 @@ static const struct optrow rows_setup[] = {
     {"SOURCE", LOOPER_O_SRC, 2, {"INPUT", "MIX", 0, 0}},
     {"FULL SCREEN", LOOPER_O_FULL, 2, {"OFF", "ON", 0, 0}},
     {"LOOP GAIN K1", LOOPER_O_GAIN, 0, {0, 0, 0, 0}},
+    {"HW REC PLAY", LOOPER_O_HWBTN, 2, {"STOCK", "+LOOPER", 0, 0}},
 };
 static const struct optrow rows_more[] = {
     {"FX ROUTE", LOOPER_O_ROUTE, 2, {"STOCK", "OWN", 0, 0}},
@@ -290,7 +291,13 @@ static const struct optrow rows_more[] = {
     {"OWN RVB SIZE K3", LOOPER_O_RSIZE, 0, {0, 0, 0, 0}},
     {"OWN RVB RET K4", LOOPER_O_RRET, 0, {0, 0, 0, 0}},
 };
-#define OPT_ROWS 6                                                /* rows above the buttons row, on both pages */
+#define OPT_ROWS opt_rows()                                       /* rows above the buttons row: 7 on SETUP, 6 on MORE */
+static int opt_rows(void);
+
+static int opt_rows(void)
+{
+    return P->mode == M_MORE ? 6 : 7;
+}
 
 static const struct optrow *page_rows(void)
 {
@@ -906,7 +913,7 @@ static void draw_footer(const struct lay *L)
         p = put_uint(p, len % 10);
         *p++ = 's';
     } else {
-        const char *s = "TAP TO REC";
+        const char *s = "";
         while (*s)
             *p++ = *s++;
     }
@@ -1195,6 +1202,7 @@ void looper_page_down(uint8_t *view, const int *pt)
     if (zone == Z_NONE)
         return;
     P->track = (uint8_t)t;
+    int was_sel = P->sel == t;
     if (zone != Z_TAB && zone != Z_OPTC && zone != Z_SLIDER && zone != Z_CLEAR)
         P->sel = (uint8_t)t;                                      /* touching a track's column selects it */
     if (P->info_on)
@@ -1255,8 +1263,10 @@ void looper_page_down(uint8_t *view, const int *pt)
             P->pressed = P_REC;
         }
     } else if (zone == Z_FADER) {
-        looper_set_level(t, v);
-        P->pressed = P_FADER;
+        if (was_sel) {                                            /* the first touch of an unselected track only selects it */
+            looper_set_level(t, v);
+            P->pressed = P_FADER;
+        }
     } else if (zone == Z_PAN) {
         P->pan_sel ^= (uint8_t)(1u << t);
     } else if (zone == Z_REV) {
@@ -1311,6 +1321,8 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             struct looper_info k;
             looper_track(knob, &k);
             float step = (float)counts * KNOB_SCALE;
+            if (P->mode == M_MAIN || P->mode == M_FX)
+                P->sel = (uint8_t)knob;                                   /* altering a track's setting selects it */
             if (P->mode == M_SETUP || P->mode == M_MORE) {
                 static const uint8_t op_s[4] = {LOOPER_O_GAIN, 0, 0, 0};
                 static const uint8_t op_m[4] = {LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET};
@@ -1415,17 +1427,21 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     P->entered = 0;
                     break;
                 case B_REC:
-                    looper_event(P->sel, LOOPER_EV_REC_DOWN);      /* the selected track: a tap */
-                    looper_event(P->sel, LOOPER_EV_REC_UP);
+                    if (looper_get_opt(LOOPER_O_HWBTN) > .5f) {
+                        looper_event(P->sel, LOOPER_EV_REC_DOWN);  /* the selected track: a tap */
+                        looper_event(P->sel, LOOPER_EV_REC_UP);
+                    }
                     break;
                 case B_BACK:
                     looper_event(P->sel, LOOPER_EV_UNDO);          /* BACK: undo on the selected track */
                     break;
                 case B_STOP:
-                    looper_transport(LOOPER_T_STOP);
+                    if (looper_get_opt(LOOPER_O_HWBTN) > .5f)
+                        looper_transport(LOOPER_T_STOP);
                     break;
                 case B_PLAY:
-                    looper_transport(LOOPER_T_PLAY);
+                    if (looper_get_opt(LOOPER_O_HWBTN) > .5f)
+                        looper_transport(LOOPER_T_PLAY);
                     break;
                 }
                 P->sig = 0;

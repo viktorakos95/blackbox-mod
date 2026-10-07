@@ -245,7 +245,7 @@ void looper_boot(void *engine)
     S->dw = 0;
     S->gphase = 0.f;
     S->bpm = 0.f;
-    static const float defaults[LOOPER_OPTS] = {0.f, 0.f, 2.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f};
+    static const float defaults[LOOPER_OPTS] = {0.f, 0.f, 2.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f};
     for (int i = 0; i < LOOPER_OPTS; i++)
         S->opt[i] = defaults[i];
     for (int t = 0; t < LOOPER_TRACKS; t++) {
@@ -1413,7 +1413,7 @@ void looper_set_opt(int o, float v)
 {
     if (o < 0 || o >= LOOPER_OPTS || S->magic != MAGIC)
         return;
-    S->opt[o] = o <= LOOPER_O_DTIME || o == LOOPER_O_ROUTE ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
+    S->opt[o] = o <= LOOPER_O_DTIME || o == LOOPER_O_ROUTE || o == LOOPER_O_HWBTN ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
 }
 
 float looper_get_opt(int o)
@@ -1463,8 +1463,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '1';                                   /* the build: step 17 */
-        *p++ = '7';
+        *p++ = '1';                                   /* the build: step 18 */
+        *p++ = '8';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';

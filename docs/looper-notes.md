@@ -307,6 +307,14 @@ now uses the real app object (the pointer the message hook last saw, kept xor'd 
 reliably at 0x24020088), solo_looper_view() itself says "not showing" on any other screen, and the drop only applies while
 the guard word says the page has been painted (BLK1 full / BLK2 normal, cleared on leaving). Label: Lok17.
 
+## Step 18
+
+- The first touch of an unselected track's fader only selects the track (no level jump); encoder turns on the MAIN / FX
+  tabs select the track they turn.
+- REC / STOP / PLAY: by default (SETUP: HW REC PLAY = STOCK) they are the stock buttons only, as ever; with +LOOPER the
+  looper also taps REC on the selected track and pauses / rewinds. BACK and FX are always the page's.
+- The "TAP TO REC" footer hint is gone. Label: Lok18.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,
