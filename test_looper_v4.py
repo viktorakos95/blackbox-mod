@@ -539,6 +539,16 @@ CLKPOS[0] = cf + 3 * 15000 + 3125 - 40           # starts somewhere random: 2000
 cblock(8)
 exp = (20000 + 8 * 256) % 96000
 check("transport started from a random position: the loop is where the sequencer's timeline says (within a block or so)", abs(st(POS) - exp) < 1100, (st(POS), exp))
+# STOP then PLAY on the looper page while the sequencer keeps running: the loops come back on its timeline
+t_before = CLKPOS[0]
+e.call("looper_transport", 1)
+cblock(6)
+check("looper STOP: paused and rewound", st(POS) < 2000 and tr(0, 0) == PLAY, st(POS))
+cblock(40)
+e.call("looper_transport", 0)
+cblock(4)
+exp = int((CLKPOS[0] - cf) / 0.15625) % 96000
+check("looper PLAY after STOP, sequencer running: the loop is aligned to its timeline", min(abs(st(POS) - exp), 96000 - abs(st(POS) - exp)) < 1100, (st(POS), exp))
 opt(O_SYNC, 0)
 
 # ---------------------------------------------------------------- filter, crunch, half speed

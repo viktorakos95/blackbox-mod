@@ -636,6 +636,8 @@ void looper_in(void *obj, float **bufs, int frames)
                 } else {                                          /* PLAY / PAUSE */
                     S->paused = !S->paused;
                     S->pfade = 2;
+                    if (!S->paused && opt_i(LOOPER_O_SYNC))
+                        S->realign = 1;                               /* played again: back on the sequencer's timeline (if it runs) */
                 }
             }
             if (S->clear_done != S->clear_req) {
@@ -1588,8 +1590,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '2';                                   /* the build: step 27 */
-        *p++ = '7';
+        *p++ = '2';                                   /* the build: step 28 */
+        *p++ = '8';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';
