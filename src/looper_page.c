@@ -115,7 +115,7 @@ enum { M_MAIN, M_FX, M_SETUP, M_MORE, MODES };
 #define ROW_H      22                      /* SETUP: one option per row */
 #define OPT_X      84                      /* SETUP: where the choices start */
 #define CHOICE_W   52
-#define SLIDER_W   200
+#define SLIDER_W   150
 #define CLEAR_WAIT 563                     /* audio blocks (3 s) to confirm CLEAR ALL */
 
 struct page {
@@ -134,7 +134,8 @@ struct page {
     uint8_t fx_set, fx_idx, learn_fx, clear_arm;    /* the learned FX button; waiting for it; CLEAR ALL asked once */
     uint16_t fx_id, rect_on;
     uint8_t sel, rec_set, rec_idx, learn_rec;       /* the selected track; the learned hardware REC button */
-    uint16_t rec_id, _r3;
+    uint16_t rec_id, touches;
+    int16_t touch_x, touch_y;
     uint32_t clear_t;                               /* when CLEAR ALL was asked */
     int32_t vrect[4];                               /* the mixer view's own rectangle, while the page widens it */
 };
@@ -811,6 +812,18 @@ static void draw_setup(const struct lay *L)
         p = put_uint(p, *(const uint16_t *)((const uint8_t *)FB + 6));
         *p = 0;
         text(6, d + 5, b, C_GREY, 1);
+        char t[40], *q = t;
+        for (const char *z = "TOUCHES "; *z; z++)
+            *q++ = *z;
+        q = put_uint(q, P->touches);
+        for (const char *z = " LAST X "; *z; z++)
+            *q++ = *z;
+        q = put_uint(q, (unsigned)(P->touch_x < 0 ? 0 : P->touch_x));
+        for (const char *z = " Y "; *z; z++)
+            *q++ = *z;
+        q = put_uint(q, (unsigned)(P->touch_y < 0 ? 0 : P->touch_y));
+        *q = 0;
+        text(6, d + 18, t, C_GREY, 1);
     }
 }
 
@@ -907,10 +920,10 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
         else if (P->mode == M_MAIN)
             draw_column(t, &L, &k);
         if (t < LOOPER_TRACKS - 1)
-            vline(L.cx + L.cw, 1, (P->mode == M_SETUP ? TOPBAR : L.foot_y) - 1, C_RAIL);
+            vline(L.cx + L.cw, 1, (P->mode >= M_SETUP ? TOPBAR : L.foot_y) - 1, C_RAIL);
     }
     layout(0, &L);
-    if (P->mode == M_SETUP)
+    if (P->mode == M_SETUP || P->mode == M_MORE)
         draw_setup(&L);
     draw_footer(&L);
     P->sig = signature();
@@ -1023,6 +1036,7 @@ void looper_page_boot(void)
     P->info_idx = 0;                                         /* nothing is learned by pressing any more              */
     P->fx_set = P->rec_set = 0;
     P->learn_rec = 0;
+    P->touches = 0;
     P->sel = 0;
     P->hid_on = 0;
     P->rect_on = 0;
@@ -1050,6 +1064,10 @@ static void to_page(const int *pt, int *x, int *d)
 {
     *x = P->sx > 0 ? pt[0] - P->x0 : P->x0 + P->w - pt[0];
     *d = P->s > 0 ? P->ytop - pt[1] : pt[1] - P->ytop;
+    P->touch_x = (int16_t)pt[0];                                  /* shown on MORE: does a touch reach the page? */
+    P->touch_y = (int16_t)pt[1];
+    P->touches++;
+    *x = *x < 1 ? 1 : *x > P->w - 2 ? P->w - 2 : *x;              /* a tap on the very edge counts as the outermost column */
 }
 
 static void info_touch(void)

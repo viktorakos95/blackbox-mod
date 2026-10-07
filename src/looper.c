@@ -199,7 +199,7 @@ struct dsp {
     float out[2][MAXN];                          /* the tracks' sum this block */
     float acc[4][MAXN];                          /* sends: delay L, R, reverb L, R */
     float sv[LOOPER_TRACKS][2][2][2];            /* filter: track, stage, channel, s1 / s2 */
-    float sg[LOOPER_TRACKS], sr[LOOPER_TRACKS], sdr[LOOPER_TRACKS];   /* smoothed filter g, 1/Q and drive; 0 = off */
+    float sg[LOOPER_TRACKS], sr[LOOPER_TRACKS], sdr[LOOPER_TRACKS], fm[LOOPER_TRACKS], fmode[LOOPER_TRACKS];   /* smoothed filter g, 1/Q, drive; wet mix */
     float od[LOOPER_TRACKS][2][3];               /* overdrive: dc blocker x, y, tone low pass */
     float hold[LOOPER_TRACKS][2];                /* crunch sample and hold */
     uint32_t hcnt[LOOPER_TRACKS];
@@ -616,7 +616,8 @@ void looper_clock(void)
 struct pb {                                       /* one track, one block */
     float g0[2], dg[2];
     int base;                                     /* the gain ramp starts at this frame of the block */
-    int filt;                                     /* 0 off, 1 low pass, 2 high pass */
+    int filt;                                     /* 1 low pass, 2 high pass (the filter always runs: its mix fades) */
+    float fm0, dfm;
     float g, r2, h1, rg1, h2, rg2, fdrive, limit, ilimit;
     int crunch, hold_n;
     float q, qi;
@@ -690,24 +691,27 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
     p->base = 0;
     k->gain_l = g1[0];
     k->gain_r = g1[1];
-    /* the filter: the 3.1.n pad filter (filter.c): two trapezoidal state-variable stages, the second with the Res */
+    /* the filter: the 3.1.n pad filter (filter.c): two trapezoidal state-variable stages, the second with the Res.
+     * It runs all the time (wide open when the knob is centred) so its state follows the signal, and the knob's
+     * centre only fades its mix out: no click when it is switched on or off. */
     float f = k->filt;
-    p->filt = f < -.01f ? 1 : f > .01f ? 2 : 0;
-    p->g = p->r2 = p->fdrive = p->limit = p->ilimit = 0.f;
-    if (p->filt) {
-        float hz = fw_cutoff_hz(f < 0.f ? f + 1.f : f);
-        float res = k->res, q = fw_res_q(res);
+    int active = f < -.01f || f > .01f;
+    if (active)
+        d->fmode[t] = f > 0.f ? 2.f : 1.f;               /* the type is kept while the mix fades out */
+    p->filt = d->fmode[t] > 1.5f ? 2 : 1;
+    {
+        float hz = active ? fw_cutoff_hz(f < 0.f ? f + 1.f : f) : 14000.f;
+        float res = active ? k->res : .5f, q = fw_res_q(res);
         float drive = (res - .5f) * 2.f;
-        drive = drive < 0.f ? 0.f : drive > 1.f ? 1.f : drive * drive;
+        drive = !active || drive < 0.f ? 0.f : drive > 1.f ? 1.f : drive * drive;
         hz = hz < 10.f ? 10.f : hz > .45f * SR ? .45f * SR : hz;
         q = q < .1f ? .1f : q > 40.f ? 40.f : q;
         float g = tan_approx(3.14159265f * hz / SR), r = 1.f / q;
-        if (d->sg[t] == 0.f) {                    /* was off: start from the target, clean */
+        if (d->sg[t] == 0.f) {                    /* first use: start from the target */
             d->sg[t] = g;
             d->sr[t] = r;
             d->sdr[t] = drive;
-            for (int j = 0; j < 8; j++)
-                ((float *)d->sv[t])[j] = 0.f;
+            d->fm[t] = 0.f;
         } else {
             d->sg[t] += .33333f * (g - d->sg[t]);
             d->sr[t] += .33333f * (r - d->sr[t]);
@@ -722,8 +726,10 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
         p->fdrive = d->sdr[t] > .001f ? d->sdr[t] : 0.f;
         p->limit = p->fdrive > 0.f ? 4.f - 3.f * p->fdrive : 0.f;
         p->ilimit = p->limit > 0.f ? 1.f / p->limit : 0.f;
-    } else {
-        d->sg[t] = 0.f;
+        float target = active ? 1.f : 0.f;
+        p->fm0 = d->fm[t];
+        p->dfm = (target - p->fm0) / (float)n;
+        d->fm[t] = target;
     }
     /* crunch: the 3.1.n Interp crunch, a hold at a lower rate (down to 2 kHz) and fewer bits */
     float cr = k->crunch;
@@ -832,9 +838,10 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
             xl = d->hold[t][0];
             xr = d->hold[t][1];
         }
-        if (p->filt) {
+        {
             int hp = p->filt == 2;
             float x2[2] = {xl, xr};
+            float m = p->fm0 + p->dfm * (float)(i + 1);
             for (int c = 0; c < 2; c++) {
                 float x = x2[c];
                 if (p->fdrive > 0.f)
@@ -842,8 +849,8 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
                 x = svf(x, &d->sv[t][0][c][0], &d->sv[t][0][c][1], p->g, R_BUTTERWORTH, p->h1, p->rg1, hp, 0.f, 0.f);
                 x2[c] = svf(x, &d->sv[t][1][c][0], &d->sv[t][1][c][1], p->g, p->r2, p->h2, p->rg2, hp, p->limit, p->ilimit);
             }
-            xl = x2[0];
-            xr = x2[1];
+            xl += (x2[0] - xl) * m;
+            xr += (x2[1] - xr) * m;
         }
         if (p->drive) {
             float x2[2] = {xl, xr};

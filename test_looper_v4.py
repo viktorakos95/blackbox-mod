@@ -393,6 +393,24 @@ e.call("looper_fx_inject", OBJ, BUFSET, 1)
 check("route OWN: nothing is injected", e.uc.reg_read(A.UC_ARM_REG_R0) == 0)
 opt(O_ROUTE, 0)
 
+# the filter switches on and off without a click
+boot()
+hold(0, 60, lambda k: 0.3)
+blocks(4)
+prev = None
+mx = 0.0
+param(0, P_FILT, 0.0)
+for i in range(12):
+    if i == 4:
+        param(0, P_FILT, 1.0)
+    if i == 8:
+        param(0, P_FILT, 0.0)
+    _, o = block([0.0] * N)
+    seq = ([prev] if prev is not None else []) + o[0]
+    mx = max([mx] + [abs(seq[j + 1] - seq[j]) for j in range(len(seq) - 1)])
+    prev = o[0][-1]
+check("filter on (high pass +1) and off again: no step bigger than 0.02 per sample", mx < 0.02, mx)
+
 # the filter with Res, the drive
 boot()
 hold(0, 60, tone)
