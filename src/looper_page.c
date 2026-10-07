@@ -325,10 +325,16 @@ static int fx_top(const struct lay *L)
     return L->sel_y + 16;                                         /* below the record box and its SELECT button */
 }
 
-/* FX tab: height of the two button rows (REV | HALF, MUTE | UNDO): they share what the dials leave. */
+/* FX tab: the height of a control tile (four rows of two) and of the MUTE | UNDO row below them. */
+static int fx_tile_h(const struct lay *L)
+{
+    int h = (L->col_y + L->col_h - fx_top(L) - 3 - 16) / 4 - 1;
+    return h > BTN ? BTN : h < 24 ? 24 : h;
+}
+
 static int fx_btn_h(const struct lay *L)
 {
-    int y1 = fx_top(L) + 3 * (BTN + 1), h = (L->col_y + L->col_h - y1 - 3) / 2;
+    int y1 = fx_top(L) + 4 * (fx_tile_h(L) + 1), h = L->col_y + L->col_h - y1 - 3;
     return h < 14 ? 14 : h > 34 ? 34 : h;
 }
 
@@ -399,15 +405,14 @@ int looper_page_hit(int x, int d, int *track, float *val)
         int y0 = fx_top(&L), xx = x - L.cx - 2;
         if (d >= L.sel_y && d < L.sel_y + 13)
             return Z_SEL;
-        if (d >= y0 && d < y0 + 3 * (BTN + 1) && xx >= 0 && xx < 2 * (DIAL + 1) && (d - y0) % (BTN + 1) < BTN &&
+        int th = fx_tile_h(&L);
+        if (d >= y0 && d < y0 + 4 * (th + 1) && xx >= 0 && xx < 2 * (DIAL + 1) && (d - y0) % (th + 1) < th &&
             xx % (DIAL + 1) < DIAL) {
-            *val = (float)(((d - y0) / (BTN + 1)) * 2 + xx / (DIAL + 1));
+            *val = (float)(((d - y0) / (th + 1)) * 2 + xx / (DIAL + 1));
             return Z_FX;
         }
-        int y1 = y0 + 3 * (BTN + 1), hb = fx_btn_h(&L);
+        int y1 = y0 + 4 * (th + 1), hb = fx_btn_h(&L);
         if (d >= y1 && d < y1 + hb)
-            return xx < (L.cw - 4) / 2 ? Z_REV : Z_HALF;
-        if (d >= y1 + hb + 1 && d < y1 + 2 * hb + 1)
             return xx < (L.cw - 4) / 2 ? Z_MUTE : Z_UNDO;
         return Z_NONE;
     }
@@ -616,19 +621,24 @@ static const int8_t arc[28][2] = {
     {10, -5}, {11, -3}, {11, -1}, {11, 1}, {11, 3}, {10, 5}, {9, 6}, {8, 8}};
 
 /* A knob like the pad config's: label, hairline arc, pointer at v (0..1). The box is DIAL wide and BTN high. */
-static void dial(int x, int d, const char *name, float v, int selected)
+static void dial_h(int x, int d, int h, const char *name, float v, int selected, int on)
 {
-    frame(x, d, DIAL, BTN, selected ? C_PINK : C_RAIL, 1);
+    frame(x, d, DIAL, h, selected ? C_PINK : on ? C_YELLOW : C_RAIL, 1);
     if (selected)
-        frame(x + 1, d + 1, DIAL - 2, BTN - 2, C_PINK, 1);
-    text_c(x, d + 3, DIAL, name, C_LIGHT, 1);
-    int cx = x + DIAL / 2, cy = d + 22;
+        frame(x + 1, d + 1, DIAL - 2, h - 2, C_PINK, 1);
+    text_c(x, d + 3, DIAL, name, on ? C_YELLOW : C_LIGHT, 1);
+    int cx = x + DIAL / 2, cy = d + h - 12;
     for (int i = 0; i < 28; i++)
         box(cx + arc[i][0], cy + arc[i][1], 1, 1, C_LIGHT);
     int i = (int)(v * 27.f + .5f);
     i = i < 0 ? 0 : i > 27 ? 27 : i;
     for (int k = 1; k <= 9; k++)                                  /* the pointer, from the centre */
         box(cx + arc[i][0] * k / 11, cy + arc[i][1] * k / 11, 1, 1, C_CYAN);
+}
+
+static void dial(int x, int d, const char *name, float v, int selected)
+{
+    dial_h(x, d, BTN, name, v, selected, 0);
 }
 
 /* A percentage, "0".."100" */
@@ -640,11 +650,14 @@ static char *put_pct(char *p, float v)
 
 static float fx_value(const struct looper_info *k, int param)
 {
+    if (param >= 6)
+        return (param == 6 ? k->reversed : k->half) ? 1.f : 0.f;
     return param == LOOPER_P_FILT ? k->filt : param == LOOPER_P_RES ? k->res : param == LOOPER_P_CRUNCH ? k->crunch :
            param == LOOPER_P_DRIVE ? k->drive : param == LOOPER_P_SEND_D ? k->send_d : k->send_r;
 }
 
-static const char *const fx_name[6] = {"FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB"};
+#define FX_N 8                                                    /* the FX tab's controls: six dials, then REV and HALF (on / off by turning) */
+static const char *const fx_name[FX_N] = {"FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB", "REV", "HALF"};
 
 /* The text a knob shows on top: "LVL 0.0dB" / the pan line / the selected FX parameter's value. */
 static void fx_text(char *b, int param, float v)
@@ -653,7 +666,11 @@ static void fx_text(char *b, int param, float v)
     for (const char *s = fx_name[param]; *s; s++)
         *p++ = *s;
     *p++ = ' ';
-    if (param == LOOPER_P_FILT) {
+    if (param >= 6) {
+        const char *o = v > .5f ? "ON" : "OFF";
+        for (; *o; o++)
+            *p++ = *o;
+    } else if (param == LOOPER_P_FILT) {
         if (v > -.03f && v < .03f) {
             *p++ = 'O';
             *p++ = 'F';
@@ -775,33 +792,34 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
 }
 
 /* FX tab: the record box, six dials (FILT RES / CRSH DRIVE / DLY RVB), REV and HALF, MUTE. */
+static void set_fx_sel(int p)
+{
+    for (int t = 0; t < LOOPER_TRACKS; t++)
+        P->fx_sel[t] = (uint8_t)p;
+}
+
 static void draw_column_fx(int t, const struct lay *L, const struct looper_info *k)
 {
     int x = L->cx, w = L->cw;
     int live = k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB;
     box(x, L->col_y, w, L->col_h, C_BG);
     draw_rec(t, L, k);
-    int sc = P->sel == t ? C_PINK : C_RAIL;                       /* SELECT: INFO cycles this track's dial; BACK / REC act on it */
+    int sc = P->sel == t ? C_PINK : C_RAIL;                       /* SELECT: BACK / REC act on this track */
     frame(x + 2, L->sel_y, w - 4, 13, sc, 1);
     text_c(x + 2, L->sel_y + 3, w - 4, P->sel == t ? "SELECTED" : "SELECT", P->sel == t ? C_PINK : C_GREY, 1);
-    int y0 = fx_top(L);
-    for (int p = 0; p < 6; p++) {
+    int y0 = fx_top(L), th = fx_tile_h(L);
+    for (int p = 0; p < FX_N; p++) {                              /* the pink box is one control for all four tracks */
         float v = fx_value(k, p);
-        dial(x + 2 + (p & 1) * (DIAL + 1), y0 + (p >> 1) * (BTN + 1), fx_name[p], p == LOOPER_P_FILT ? (v + 1.f) * .5f : v,
-             P->fx_sel[t] == p);
+        dial_h(x + 2 + (p & 1) * (DIAL + 1), y0 + (p >> 1) * (th + 1), th, fx_name[p], p == LOOPER_P_FILT ? (v + 1.f) * .5f : v,
+               P->fx_sel[0] == p, p >= 6 && v > .5f);
     }
-    int y1 = y0 + 3 * (BTN + 1), bw = (w - 4) / 2 - 1, hb = fx_btn_h(L), ty = (hb - 8) / 2;
-    int rc = k->reversed ? C_YELLOW : C_GREY, hc = k->half ? C_YELLOW : C_GREY;
-    frame(x + 2, y1, bw, hb, rc, 1);
-    text_c(x + 2, y1 + ty, bw, "REV", k->reversed ? C_YELLOW : C_LIGHT, 1);
-    frame(x + 3 + bw, y1, bw, hb, hc, 1);
-    text_c(x + 3 + bw, y1 + ty, bw, "HALF", k->half ? C_YELLOW : C_LIGHT, 1);
+    int y1 = y0 + 4 * (th + 1), bw = (w - 4) / 2 - 1, hb = fx_btn_h(L), ty = (hb - 8) / 2;
     int mc = !live ? C_RAIL : k->muted ? C_RED : C_GREEN;
-    frame(x + 2, y1 + hb + 1, bw, hb, mc, 1);
-    text_c(x + 2, y1 + hb + 1 + ty, bw, "MUTE", !live ? C_GREY : mc, 1);
+    frame(x + 2, y1, bw, hb, mc, 1);
+    text_c(x + 2, y1 + ty, bw, "MUTE", !live ? C_GREY : mc, 1);
     int uc = k->undo_kind == 2 ? C_RED : k->undo_kind == 1 ? C_YELLOW : C_RAIL;
-    frame(x + 3 + bw, y1 + hb + 1, bw, hb, uc, 1);
-    text_c(x + 3 + bw, y1 + hb + 1 + ty, bw, k->undo_kind == 2 ? "DEL" : "UNDO", uc == C_RAIL ? C_GREY : uc, 1);
+    frame(x + 3 + bw, y1, bw, hb, uc, 1);
+    text_c(x + 3 + bw, y1 + ty, bw, k->undo_kind == 2 ? "DEL" : "UNDO", uc == C_RAIL ? C_GREY : uc, 1);
 }
 
 /* SETUP and MORE tabs: the option rows, then a row of buttons. */
@@ -1210,6 +1228,13 @@ static void info_touch(void)
     P->info_t = looper_ticks();
 }
 
+static int looper_info_of(int t, int p)                           /* REV (6) / HALF (7) of track t: on? */
+{
+    struct looper_info k;
+    looper_track(t, &k);
+    return (p == 6 ? k.reversed : k.half) != 0;
+}
+
 static float fx_of(int t, int param)
 {
     return looper_get_param(t, param);
@@ -1272,17 +1297,22 @@ void looper_page_down(uint8_t *view, const int *pt)
         }
     } else if (zone == Z_FX) {
         int p = (int)(v + .5f);
-        P->fx_sel[t] = (uint8_t)p;
-        P->drag_param = (uint8_t)p;
-        P->drag_y = (int16_t)d;
-        P->drag_v0 = (int16_t)(fx_of(t, p) * 1000.f);
-        P->pressed = P_DIAL;
+        int was = P->fx_sel[0] == p;
+        set_fx_sel(p);                                            /* a tap moves the pink box (for all four tracks) */
+        if (p >= 6) {
+            if (was)                                              /* REV / HALF: a tap on the selected one switches it */
+                looper_event(t, p == 6 ? LOOPER_EV_REVERSE : LOOPER_EV_HALF);
+        } else {
+            P->drag_param = (uint8_t)p;
+            P->drag_y = (int16_t)d;
+            P->drag_v0 = (int16_t)(fx_of(t, p) * 1000.f);
+            P->pressed = P_DIAL;
+        }
     } else if (zone == Z_SEL) {
         P->sel = (uint8_t)t;
     } else if (zone == Z_UNDO) {
         looper_event(t, LOOPER_EV_UNDO);
     } else if (zone == Z_HALF) {
-        looper_event(t, LOOPER_EV_HALF);
     } else if (zone == Z_REC) {
         if (P->info_on) {                                         /* INFO + box: mute, hold = undo / erase */
             looper_event(t, LOOPER_EV_MUTE_DOWN);
@@ -1360,8 +1390,14 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
                 else if (knob == 0)
                     looper_set_opt(op_s[0], looper_get_opt(op_s[0]) + step);
             } else if (P->mode == M_FX) {
-                int p = P->fx_sel[knob];
-                set_fx(knob, p, fx_of(knob, p) + step * (p == LOOPER_P_FILT ? 2.f : 1.f));
+                int p = P->fx_sel[0];
+                if (p >= 6) {                                             /* REV / HALF: turn right = on, left = off */
+                    int on = looper_info_of(knob, p);
+                    if ((counts > 0) != on)
+                        looper_event(knob, p == 6 ? LOOPER_EV_REVERSE : LOOPER_EV_HALF);
+                } else {
+                    set_fx(knob, p, fx_of(knob, p) + step * (p == LOOPER_P_FILT ? 2.f : 1.f));
+                }
             } else if (P->mode == M_MAIN && (((P->pan_sel >> knob) & 1) || P->info_on)) {
                 looper_set_pan(knob, k.pan + step * 2.f);
                 if (P->info_on)
@@ -1397,8 +1433,8 @@ static int info_button(unsigned id, unsigned idx)
     }
     if (id != P->info_id || (id == MSG_BUTTON && idx != P->info_idx))
         return 0;
-    if (P->mode == M_FX) {                                         /* FX tab: INFO steps the selected track's dial on by one */
-        P->fx_sel[P->sel & 3] = (uint8_t)((P->fx_sel[P->sel & 3] + 1) % 6);
+    if (P->mode == M_FX) {                                         /* FX tab: INFO moves the pink box on by one (all four tracks) */
+        set_fx_sel((P->fx_sel[0] + 1) % FX_N);
         P->sig = 0;
         return 1;
     }

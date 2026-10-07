@@ -1590,8 +1590,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '2';                                   /* the build: step 28 */
-        *p++ = '8';
+        *p++ = '2';                                   /* the build: step 29 */
+        *p++ = '9';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';

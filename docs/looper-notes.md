@@ -392,3 +392,11 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
   longer one the nearest whole number of masters (recording on to the exact length); a tap-started take is at least one
   master. TSIZE is 104 now.
 - SETUP: CLEAR ALL -> "TAP AGAIN" -> "CLEARED!" (2 s). Label Lok27.
+
+## Step 28-29
+- Step 28: with SYNC on, looper PLAY after STOP / pause realigns the loops to the sequencer's running timeline.
+- Step 29: FX tab = one pink box for all four tracks (fx_sel[0..3] always equal). Eight controls per track in four rows
+  of two: FILT RES / CRSH DRIVE / DLY RVB / REV HALF. Knob k turns the selected control of track k (REV / HALF: right =
+  on, left = off); INFO or a tap moves the box (a tap on the selected REV / HALF tile switches it). MUTE | UNDO below.
+  Label Lok29.
+- Next: Blooper-style modifiers as more FX controls (design in the chat; manual saved in the scratchpad).
