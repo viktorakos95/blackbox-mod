@@ -99,6 +99,29 @@ claim was not the problem. Suspect: `solo_looper_view()` required the mixer view
 Step 3c drops the range test (null and alignment only) and clears the Looper mode flag in `looper_boot` instead.
 Not yet confirmed on hardware.
 
+## Step 3c on hardware
+
+The page appears. Complaints: cramped, unused space left and right, letters too big, faders upside down, INFO
+goes to another screen. (Reference photo from the user: the Blackbox 2 mixer, for the look only.)
+
+## Step 4: page v2 (this build)
+
+- Screen API facts (read from the firmware): origin bottom-left, y up, a rectangle's y is its bottom edge (low-level
+  fill 0x08041c68 computes H - y - h; pixel plot 0x0808f524 does H - y - 1). Pad row 0 is the bottom row, so the old
+  fader (written y-down) ran backwards. The framebuffer is the 8-bit palette kind (table 0x080f1d80). The stock text
+  draws the 6x8 font (RAM struct 0x240000d0 -> glyphs 0x080ecdc4) at 2x; the page plots it itself at 1x / 2x.
+  The waveform view is 476 px wide, so the screen is about 480 wide.
+- The page spans 476 px x the height of the 16 cells, laid out top-down and mapped with GX / GY. Orientation is
+  re-read from the cells every draw (pad rows 0 / 3, columns 0 / 3).
+- Layout: top bar of four cells (the knob's value, or an L - R pan bar), four bordered columns in track colours
+  (title "1 PLAY" + icon = the record box, two bars for L / R output with a white fader line, level % at 2x,
+  PAN | REV | MUTE buttons), footer with loop length / position and the INFO button.
+- INFO: hardware buttons arrive as app message 0xf9 (+0xc = 0..7, 5 = MIX), releases maybe as 0xfa. The first
+  non-MIX button pressed on the page is learned as INFO (kept in backup SRAM) and swallowed; tap = INFO stays on
+  (10 s idle timeout), held 0.45 s+ = on only while held. INFO + knob = pan, INFO + box tap = mute, hold = undo / erase.
+- 34.9 KB of cave: the first build past the old 32 KB limit (cave ends at 0x08100000).
+- Redraws only when the page's signature changes (plus once a second), not every poke.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,

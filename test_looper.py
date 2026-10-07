@@ -314,15 +314,25 @@ check("looper_ready reports it (the page is then not offered)", e.uc.reg_read(A.
 e.uc.mem_write(0x2405FF60, struct.pack("<IBBBB", 0x534F4C4F, 0, 0, 1, 1))   # a Looper mode left over from before
 boot()
 check("boot clears a leftover Looper mode flag", e.r8(0x2405FF60 + 6) == 0 and e.r8(0x2405FF60 + 7) == 0)
-SOLO, VIEW, APP, PTA, CTX = 0x2405FF60, 0x30024000, 0x24030000, 0x24038000, 0x24039000   # view outside AXI SRAM, as it may be
+SOLO, VIEW, APP, PTA, CTX, FBP = 0x2405FF60, 0x30024000, 0x24030000, 0x24038000, 0x24039000, 0x24039100
 PAGE = 0x38800F00
-e.uc.mem_write(VIEW, bytes(0x2000))
+e.w32(0x240000D0, 0x080ECDC4)                                        # the firmware's text font: glyphs, 6 x 8
+e.uc.mem_write(0x240000D4, struct.pack("<HH", 6, 8))
+
+
+def cells(y_up=True):
+    e.uc.mem_write(VIEW, bytes(0x2000))
+    for i in range(16):
+        row, col = i // 4, i % 4
+        c = VIEW + 0x3AC + i * 0x1A0
+        e.uc.mem_write(c + 0x38, struct.pack("<H", row << 4 | col))
+        y = 30 + row * 50 if y_up else 30 + (3 - row) * 50
+        e.uc.mem_write(c + 4, struct.pack("<4i", 40 + col * 100, y, 96, 46))
+    e.uc.mem_write(VIEW + 0x1E40, b"\x01")
+
+
+cells()
 e.uc.mem_write(SOLO, struct.pack("<IBBBBIHH", 0x534F4C4F, 1, 0, 0, 0, VIEW, 0, 0))   # in Solo mode
-for i in range(16):
-    c = VIEW + 0x3AC + i * 0x1A0
-    e.uc.mem_write(c + 0x38, struct.pack("<H", (i // 4) << 4 | (i % 4)))
-    e.uc.mem_write(c + 4, struct.pack("<4i", 120 * (i % 4), 60 * (i // 4), 120, 60))
-e.uc.mem_write(VIEW + 0x1E40, b"\x01")
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
 screens = []
 e.stub(0x0809EAEC, lambda: screens.append(e.arg(1)))
@@ -335,20 +345,94 @@ stock = []
 e.stub(0x080B5F44, lambda: stock.append("down"))
 e.stub(0x080B5EBC, lambda: stock.append("move"))
 e.stub(0x080B5AEC, lambda: stock.append("up"))
-hit = {"cell": 0}
+fills, pixels = [], []
+e.stub(0x0808EA22, lambda: fills.append(struct.unpack("<4i", e.uc.mem_read(e.arg(0), 16)) + (e.arg(1), e.arg(2))))
+e.stub(0x0808F524, lambda: pixels.append((e.arg(1), e.arg(2), e.arg(3))))
+celldraw = []
+e.stub(0x080A43B8, lambda: celldraw.append(e.arg(0)))
+e.uc.mem_write(CTX, b"\x01\x00\x00\x00" + struct.pack("<I", FBP))
+e.uc.mem_write(FBP, bytes(16))
 
 
-def fake_hit():
-    e.w32(e.arg(2), hit["cell"])
-    e.ret(1)
+def draw(cell=0):
+    fills.clear()
+    pixels.clear()
+    celldraw.clear()
+    e.call("looper_cell_draw", VIEW + 0x3AC + cell * 0x1A0, CTX, count=50_000_000)
+    return list(fills)
 
 
-e.stubs[0x080B5E78] = fake_hit
+f = draw(5)
+check("only the first cell draws the page; the others draw nothing and skip the stock draw", not f and not pixels and not celldraw)
+f = draw(0)
+# page: 196 high (cells y 30..226), top edge 226, y up. Column 0 title bar: x 4, 112 wide, top at d = 3+16+2 = 21
+FB_ARG = FBP
+title0 = [x for x in f if x[2] == 112 and x[3] == 16]
+check("page painted: background first, then top bar, columns, footer", f[0][:4] == (2, 30, 476, 196) and f[0][4] == 0x02, f[:1])
+check("track 1's title bar (empty = grey) sits under the top bar: x 4, y = 226 - 21 - 16 = 189",
+      any(x[:4] == (4, 189, 112, 16) and x[4] == 0x10 for x in f), title0[:3])
+check("four columns of 116 px across the whole width (x 4, 124, 244, 364)",
+      sorted({x[0] for x in f if x[2] == 112 and x[3] == 16}) == [4, 124, 244, 364], sorted({x[0] for x in f if x[2] == 112 and x[3] == 16}))
+check("everything is drawn into the page's own frame buffer", all(x[5] == FBP for x in f))
+check("all fills lie inside the page", all(x[0] >= 2 and x[0] + x[2] <= 478 and x[1] >= 30 and x[1] + x[3] <= 226 for x in f), [x for x in f if not (x[0] >= 2 and x[0] + x[2] <= 478 and x[1] >= 30 and x[1] + x[3] <= 226)][:3])
+check("text is plotted pixel by pixel, inside the page", pixels and all(2 <= px < 478 and 30 <= py < 226 for px, py, _ in pixels), pixels[:3])
 
 
-def touch(kind, row, col, x=None, y=None):
-    hit["cell"] = VIEW + 0x3AC + (row * 4 + col) * 0x1A0
-    e.uc.mem_write(PTA, struct.pack("<2i", 120 * col + 10 if x is None else x, 60 * row + 10 if y is None else y))
+# a playing track 1 so its title is coloured
+ev(0, REC_DOWN)
+blocks(60, 0.2)
+ev(0, REC_UP)
+blocks(3, 0.0)
+f = draw(0)
+check("a playing track: title bar in its colour (cyan), black text", any(x[:4] == (4, 189, 112, 16) and x[4] == 0x1B for x in f) and any(c == 0xE for _, _, c in pixels))
+check("its two bars: a white fader line across them", any(x[4] == 0x0F and x[3] == 2 for x in f))
+# levels: bar height follows level
+level(0, 0.5)
+blocks(2)
+f = draw(0)
+bars = [x for x in f if x[2] == 16 and x[4] == 0x1B]
+check("level 50 %: both bars filled to half of their 72 px (a pair of equal 16 px wide fills)", len(bars) == 2 and bars[0][3] == bars[1][3] == 36, bars)
+pan(0, 0.5)
+blocks(2)
+f = draw(0)
+bars = sorted([x for x in f if x[2] == 16 and x[4] == 0x1B], key=lambda x: x[0])
+check("pan half right: the left bar is half as tall as the right", len(bars) == 2 and abs(bars[0][3] * 2 - bars[1][3]) <= 2, bars)
+pan(0, 0.0)
+level(0, 1.0)
+
+# orientation: the same cells with y running downwards, row 3 at the top (smaller y)
+cells(y_up=False)
+f = draw(0)
+check("cells with y down: the page flips to match (title bar at y = 30 + 21)", any(x[:4] == (4, 51, 112, 16) for x in f), [x for x in f if x[2] == 112][:2])
+cells()
+f = draw(0)
+
+# hit testing (pixels from the page's left / top)
+tr_p, val_p = 0x24039200, 0x24039204
+
+
+def hit(x, d):
+    e.uc.mem_write(tr_p, bytes(8))
+    e.call("looper_page_hit", x, d, tr_p, val_p)
+    z = e.uc.reg_read(A.UC_ARM_REG_R0)
+    return z, e.r32(tr_p), struct.unpack("<f", e.uc.mem_read(val_p, 4))[0]
+
+
+# rows (top-down): top bar 0-16, column 19.., title 21-37, icon 37-63, bars 67.., level text, buttons
+check("title / icon area of column 2 is its record box", hit(130, 30)[:2] == (1, 1) and hit(130, 60)[:2] == (1, 1), (hit(130, 30), hit(130, 60)))
+z, t, v = hit(250, 100)
+check("bars area of column 3 is its fader", z == 2 and t == 2 and 0.0 <= v <= 1.0, (z, t, v))
+check("fader value runs 0 at the bottom of the bars to 1 at the top", hit(250, 67)[2] > 0.99 and hit(250, 67 + 195 - 67 - 1 - 18 - 18 - 4 - 4)[2] < 0.05, (hit(250, 67)[2],))
+btn_d = 19 + (196 - 16 - 12 - 2 * 3) - 2 - 18 + 5
+check("button row: PAN, REV, MUTE by thirds", [hit(370 + dx, btn_d)[0] for dx in (5, 40, 75)] == [3, 4, 5], [hit(370 + dx, btn_d) for dx in (5, 40, 75)])
+check("the top bar, the gaps between columns and the footer are not controls", hit(130, 8)[0] == 0 and hit(118, 100)[0] == 0 and hit(130, 190)[0] == 0)
+
+stock_clear = len(stock)
+
+
+def touch(kind, x_rel, d, up=True):
+    # fill-space point: x = 2 + x_rel, y = 226 - d
+    e.uc.mem_write(PTA, struct.pack("<2i", 2 + x_rel, 226 - d))
     e.call({"down": "solo_touch_down", "move": "solo_touch_move", "up": "solo_touch_up"}[kind], VIEW, PTA, 0)
 
 
@@ -356,26 +440,24 @@ def evs(t):
     return list(e.uc.mem_read(STATE + T0 + TSIZE * t + 8, 5))
 
 
-touch("down", 0, 2)
-touch("up", 0, 2)
-check("box: down and up become REC_DOWN / REC_UP for that track", evs(2)[:2] == [1, 1], evs(2))
-touch("down", 1, 1, x=120 + 5)
-check("row 1, left third: PAN selected for track 2 (knob turns pan)", e.r8(PAGE + 6) == 0b10, e.r8(PAGE + 6))
-touch("up", 1, 1)
-touch("down", 1, 1, x=120 + 60)
-touch("up", 1, 1)
-check("row 1, middle third: REVERSE", evs(1)[4] == 1, evs(1))
-touch("down", 1, 1, x=120 + 110)
-touch("up", 1, 1, x=120 + 110)
-check("row 1, right third: M down / up", evs(1)[2:4] == [1, 1], evs(1))
-touch("down", 3, 0, y=180 + 60 - 6)
-lv = tr(0, 0x20, "f")
-check("fader: touching its bottom sets level 0", abs(lv) < 1e-6, lv)
-touch("move", 2, 0, y=120 + 6)
-lv = tr(0, 0x20, "f")
-check("fader: dragging to its top sets level 1", abs(lv - 1.0) < 1e-6, lv)
-touch("up", 2, 0)
-check("the page's touches never reach the stock mixer handlers", stock == [], stock)
+touch("down", 130, 30)
+touch("up", 130, 30)
+check("touching a record box sends REC_DOWN then REC_UP for that track", evs(1)[:2] == [1, 1], evs(1))
+touch("down", 370, btn_d)
+touch("up", 370, btn_d)
+check("PAN: selects track 4's knob for the pan", e.r8(PAGE + 6) == 0b1000, e.r8(PAGE + 6))
+touch("down", 370 + 40, btn_d)
+touch("up", 370 + 40, btn_d)
+check("REV: reverse event", evs(3)[4] == 1, evs(3))
+touch("down", 370 + 75, btn_d)
+touch("up", 370 + 75, btn_d)
+check("MUTE: down and up", evs(3)[2:4] == [1, 1], evs(3))
+touch("down", 250, 67 + 90 - 1)
+check("fader: touching near the bottom of the bars sets a low level", tr(2, 0x20, "f") < 0.1, tr(2, 0x20, "f"))
+touch("move", 250, 67 + 1)
+check("fader: dragging to the top sets level 1", abs(tr(2, 0x20, "f") - 1.0) < 0.02, tr(2, 0x20, "f"))
+touch("up", 250, 67)
+check("the page's touches never reach the stock mixer handlers", len(stock) == stock_clear, stock)
 
 # knobs: message 0x32 to the view
 viewmsg = []
@@ -391,55 +473,57 @@ def knob(i, counts, msg_id=0x32):
 level(0, 0.5)
 knob(0, -800)
 check("knob 1 turns track 1's fader (800 counts = 10 %)", abs(tr(0, 0x20, "f") - 0.4) < 1e-5, tr(0, 0x20, "f"))
-knob(1, 1600)
-check("knob 2 turns track 2's pan while PAN is selected", abs(tr(1, 0x24, "f") - 0.4) < 1e-5, tr(1, 0x24, "f"))
+knob(3, 1600)
+check("knob 4 turns track 4's pan while PAN is selected", abs(tr(3, 0x24, "f") - 0.4) < 1e-5, tr(3, 0x24, "f"))
 knob(0, 100, msg_id=0x63)
 check("other view messages go to the stock handler", viewmsg == [0x63], viewmsg)
+
+# INFO
+appmsg = []
+e.stub(0x080A2E60, lambda: appmsg.append((e.r16(e.arg(1)), e.r32(e.arg(1) + 0xC))))
+
+
+def button(idx, msg_id=0xF9):
+    e.uc.mem_write(MSG, struct.pack("<H", msg_id) + bytes(10) + struct.pack("<i", idx))
+    e.call("looper_app_msg", APP, MSG)
+
+
+check("INFO not learned yet at boot", e.r8(PAGE + 8) == 0xFF, e.r8(PAGE + 8))
+button(5)
+check("MIX always reaches the stock handler", appmsg == [(0xF9, 5)], appmsg)
+button(4)
+check("the first other button is learned as INFO and swallowed", e.r8(PAGE + 8) == 4 and appmsg == [(0xF9, 5)] and e.r8(PAGE + 7) == 1, (e.r8(PAGE + 8), appmsg, e.r8(PAGE + 7)))
+button(2)
+check("other buttons pass through once INFO is known", appmsg[-1] == (0xF9, 2), appmsg)
+knob(1, 800)
+check("INFO on: knob 2 turns the pan, not the level", abs(tr(1, 0x24, "f") - 0.2) < 1e-5 and tr(1, 0x20, "f") == 1.0, (tr(1, 0x24, "f"), tr(1, 0x20, "f")))
+touch("down", 130, 30)
+touch("up", 130, 30)
+check("INFO on: a record box tap is a MUTE press, not a REC press", evs(1)[2:4] == [1, 1] and evs(1)[:2] == [1, 1], evs(1))
+button(4)
+check("INFO again: off", e.r8(PAGE + 7) == 0)
+button(4)
+button(4, msg_id=0xFA)
+check("a quick release keeps INFO on (tap = latch)", e.r8(PAGE + 7) == 1)
+button(4)
+blocks(100)
+button(4, msg_id=0xFA)
+check("a release after 0.45 s or more ends INFO (held = momentary)", e.r8(PAGE + 7) == 0, e.r8(PAGE + 7))
 e.uc.mem_write(SOLO + 6, b"\x00")
-knob(0, 800)
-check("off the page, knobs go to the stock handler too", viewmsg == [0x63, 0x32] and abs(tr(0, 0x20, "f") - 0.4) < 1e-5, viewmsg)
+button(4)
+check("off the page every button goes to the stock handler (INFO included)", appmsg[-1] == (0xF9, 4), appmsg[-1])
 e.uc.mem_write(SOLO + 6, b"\x01")
 
-# app messages: the last hardware button is noted
-appmsg = []
-e.stub(0x080A2E60, lambda: appmsg.append(e.r16(e.arg(1))))
-e.uc.mem_write(MSG, struct.pack("<H", 0xF9) + bytes(10) + struct.pack("<i", 6))
-e.call("looper_app_msg", APP, MSG)
-check("app message passed on, button noted (f9:6)", appmsg == [0xF9] and e.r16(PAGE + 8) == 0xF9 and e.r16(PAGE + 10) == 6, (appmsg, e.r16(PAGE + 8)))
+# footer, signature
+f = draw(0)
+check("the footer shows the learned INFO button", any(c == 0x09 or c == 0x14 for _, _, c in pixels))
 
-# drawing
-fills, texts = [], []
-e.stub(0x0808EA22, lambda: fills.append(e.arg(1)))
-e.stub(0x0808E994)
-e.stub(0x0808EE54, lambda: texts.append(bytes(e.uc.mem_read(e.arg(0), 12)).split(b"\0")[0].decode()))
-e.stub(0x0808ED28, value=20)
-celldraw = []
-e.stub(0x080A43B8, lambda: celldraw.append(e.arg(0)))
-e.uc.mem_write(CTX, b"\x01\x00\x00\x00" + struct.pack("<I", 0x24039100))
-
-
-def draw(row, col):
-    fills.clear()
-    texts.clear()
-    celldraw.clear()
-    e.call("looper_cell_draw", VIEW + 0x3AC + (row * 4 + col) * 0x1A0, CTX)
-    return list(fills), list(texts)
-
-
-f, t = draw(0, 0)
-check("box of an empty track: dark, labelled '1' / 'EMPTY'", f[0] == 0x19 and t[:2] == ["1", "EMPTY"], (f, t))
-ev(0, REC_DOWN)
-block([0.2] * N)
-f, t = draw(0, 0)
-check("while recording: red, 'REC'", f[0] == 0x06 and "REC" in t, (f, t))
-f, t = draw(1, 1)
-check("row 1: PAN (selected: teal), REV, M", f[0] == 0x1A and t == ["PAN", "REV", "M"], (f, t))
-f, t = draw(2, 0)
-check("fader top half: shows the level in %", "40" in t, t)
-f, t = draw(3, 3)
-check("bottom-right corner shows the last button message", "bf9:6" in t, t)
+e.call("looper_page_enter")
+level(1, 0.3)
+e.call("looper_page_poke", VIEW)
+check("a change marks every cell dirty", all(e.r8(VIEW + 0x3AC + i * 0x1A0 + 0x17C) == 1 for i in range(16)))
 e.uc.mem_write(SOLO + 6, b"\x00")
-draw(0, 0)
+draw(0)
 check("off the page the stock cell draw runs", celldraw == [VIEW + 0x3AC] and not fills)
 
 print(f"\n{fails} failure(s)")

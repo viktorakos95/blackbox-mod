@@ -2,15 +2,28 @@
  * The live looper's page: Looper mode of the Mixer screen (MIX: Mixer -> Mute -> Solo -> Looper). Original 1010music
  * Blackbox, firmware 3.1.9. The engine is looper.c; solo.c routes the mixer view's hooks here while the mode shows.
  *
- * One strip per track, like the channel strips of a looper pedal, drawn over the 4 x 4 mixer cells:
- *   row 0     the track's box: tap / hold / double tap to record (the engine times the gestures), its colour is the
- *             state (dark empty, red recording, yellow overdubbing, green playing, white clearing, grey undoing),
- *             a white frame while a take is latched, the playhead along its bottom.
- *   row 1     three small buttons: PAN (tap: the track's knob turns its pan instead of its level; the bar shows L-R),
- *             REV (tap: play backwards), M (tap: mute; hold 2 s: undo the last pass; keep holding to 4 s: erase).
- *   rows 2-3  the fader: drag it, or turn the track's knob (knob 1..4 = track 1..4).
- * Text is drawn with the firmware's own string renderer (FUN_0808ee54, the one the pad names use).
- * For finding the INFO button: the page shows the last hardware button message (id:index) in its bottom-right corner.
+ * Look: the stock mixer's four columns across the whole screen. A top bar of four cells (each shows what that
+ * track's knob is turning: LVL 74, or a L - R pan bar), then four bordered columns in the track's colour:
+ *   title bar   "1 PLAY": the track and its state, then a state icon. This whole block is the record box:
+ *               hold = record while held, double tap = latch, tap = keep (the engine times the gestures).
+ *   two bars    the left and right output of the track (level and pan together); the white line is the fader.
+ *               Touch or drag anywhere in the bars to set the level; the track's knob does the same.
+ *   level       "74%" at 2x.
+ *   buttons     PAN (tap: the knob now turns the pan, tap again for the level) | REV (play backwards) |
+ *               MUTE (tap: mute; hold 2 s: undo the last pass, 4 s: erase).
+ * and a footer with the loop length / position.
+ * INFO is a modifier: press it (tap: stays on; held 0.45 s or more: only while held) and the knobs turn the pan, a
+ * tap on a record box mutes, holding it undoes / erases (2 s / 4 s). The first press of any button other than MIX is
+ * taken as INFO and remembered; the footer shows "INFO=n" once known.
+ *
+ * Drawing. The firmware's screen API has its origin at the bottom left: y grows upward and a rectangle's y is its
+ * bottom edge (the low-level fill 0x08041c68 computes H - y - h, the pixel plot 0x0808f524 H - y - 1). The page is laid
+ * out top-down on a 476 px wide area as tall as the mixer's 16 cells, then mapped with GX / GY. Which way is up is
+ * read from the cells themselves (pad row 3 is the top row, row 0 the bottom) and x from the columns, so a flipped
+ * screen would still come out right. Text is the firmware's own 6x8 font (FUN_0808ee54 draws it at 2x, too big for
+ * four columns) plotted pixel by pixel at 1x or 2x.
+ *
+ * State lives in the backup SRAM after the engine's (0x38800f00, 256 bytes). looper_boot calls page_boot().
  */
 #include <stdint.h>
 
@@ -19,18 +32,13 @@
 #define FN(addr) ((addr) | 1u)
 
 typedef void (*fill_fn)(const void *rect, int color, void *fb);
-typedef void (*text_fn)(const char *s, const int *rect, int color, void *fb);
-typedef int (*width_fn)(const char *s);
-typedef int (*hit_fn)(void *view, const void *pt, uint8_t **cell);
+typedef void (*px_fn)(void *fb, int x, int y, int color);
 typedef void (*msg_fn)(void *obj, const uint16_t *msg);
 
 #define fw_fill     ((fill_fn)FN(0x0808ea22))
-#define fw_outline  ((fill_fn)FN(0x0808e994))
-#define fw_text     ((text_fn)FN(0x0808ee54))
-#define fw_width    ((width_fn)FN(0x0808ed28))
-#define fw_hit      ((hit_fn)FN(0x080b5e78))
-#define fw_view_msg ((msg_fn)FN(0x080b5c70))     /* mixer view message handler (vtable +0x34) */
-#define fw_app_msg  ((msg_fn)FN(0x080a2e60))     /* app message dispatch */
+#define fw_px       ((px_fn)FN(0x0808f524))                /* fb, x, y (y up), palette index */
+#define fw_view_msg ((msg_fn)FN(0x080b5c70))               /* mixer view message handler (vtable +0x34) */
+#define fw_app_msg  ((msg_fn)FN(0x080a2e60))               /* app message dispatch */
 
 uint8_t *solo_looper_view(void);
 
@@ -41,10 +49,20 @@ uint8_t *solo_looper_view(void);
 #define CELL_DIRTY  0x17c
 #define CTX_FB      0x04
 
+#define FONT        ((const struct font *)0x240000d0u)     /* the firmware's text font: {glyphs, w, h} = 6 x 8 */
+struct font {
+    const uint8_t *data;
+    uint16_t w, h;
+};
+
 #define MSG_KNOB    0x32         /* view message: +0xc knob 0..3 (int16), +0x10 counts (int16) */
 #define KNOB_SCALE  (1.f / 8000.f)
+#define MSG_BUTTON  0xf9         /* app message: +0xc = button 0..7 (5 = MIX) */
+#define MSG_RELEASE 0xfa
+#define BTN_MIX     5
 
 /* palette (table at 0x080f1d80) */
+#define C_BG     0x02            /* 141414: the screen */
 #define C_DARK   0x19
 #define C_RAIL   0x10
 #define C_GREY   0x09
@@ -55,70 +73,188 @@ uint8_t *solo_looper_view(void);
 #define C_RED    0x0c
 #define C_REC    0x06
 #define C_YELLOW 0x14
-#define C_CYAN   0x1b
 #define C_TEAL   0x1a
+static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x20};   /* cyan, yellow, aqua, pink */
+
+/* layout, in pixels, top-down */
+#define PAGE_X0   2
+#define PAGE_W    476
+#define GAP       4
+#define TOPBAR    16
+#define FOOT      12
+#define VGAP      3
+#define TITLE     16
+#define ICON      26
+#define BTN       18
+#define LEVEL     18
+
+#define INFO_TIMEOUT 1875        /* audio blocks (10 s) */
+#define INFO_HOLD    84          /* 0.45 s */
 
 enum { P_NONE, P_REC, P_MUTE, P_FADER };
+enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE };
 
-/* After the engine's state in the backup SRAM. Its first word is reset by looper_boot. */
 struct page {
-    int32_t _legacy;             /* step 2's fader drag; looper_boot writes -1 here */
-    uint8_t pressed, track, pan_sel, _r;
-    uint16_t btn_id, btn_index;  /* last hardware button message */
+    int32_t _legacy;             /* step 2's fader drag; looper_boot used to write -1 here */
+    uint8_t pressed, track, pan_sel, info_on;
+    uint8_t info_idx, info_set, entered, _r;     /* info_idx 0xff = not learned */
+    uint16_t btn_id, btn_index;
+    uint32_t magic, info_t, info_down, sig, force, fb;
+    int32_t ytop, hg, s, sx;     /* geometry read from the cells at the last draw */
 };
 #define P ((volatile struct page *)0x38800f00u)
+#define PMAGIC 0x50414731u
+
+_Static_assert(sizeof(struct page) <= 0x100, "page state must fit its 256 bytes");
+
+/* ---- geometry */
 
 static uint8_t *cell_at(uint8_t *view, int i)
 {
     return view + VIEW_CELLS + i * CELL_SIZE;
 }
 
-static int row_of(const uint8_t *cell)
+/* Read where the cells are: the page spans their rows, and which way is up follows from pad rows 0 and 3. */
+static void geometry(uint8_t *view)
 {
-    return (*(const uint16_t *)(cell + CELL_PAD) >> 4) & 0xf;
-}
-
-static int col_of(const uint8_t *cell)
-{
-    return *(const uint16_t *)(cell + CELL_PAD) & 0xf;
-}
-
-static const int *rect_of(uint8_t *view, int row, int col)
-{
+    int y_lo = 0x7fffffff, y_hi = -0x7fffffff, y_row0 = 0, y_row3 = 0, x_col0 = 0, x_col3 = 0;
     for (int i = 0; i < 16; i++) {
         uint8_t *c = cell_at(view, i);
-        if (row_of(c) == row && col_of(c) == col)
-            return (const int *)(c + CELL_RECT);
+        const int *r = (const int *)(c + CELL_RECT);
+        unsigned pad = *(uint16_t *)(c + CELL_PAD), row = (pad >> 4) & 0xf, col = pad & 0xf;
+        if (r[1] < y_lo)
+            y_lo = r[1];
+        if (r[1] + r[3] > y_hi)
+            y_hi = r[1] + r[3];
+        if (row == 0)
+            y_row0 = r[1];
+        if (row == 3)
+            y_row3 = r[1];
+        if (col == 0)
+            x_col0 = r[0];
+        if (col == 3)
+            x_col3 = r[0];
     }
-    return 0;
+    P->s = y_row3 >= y_row0 ? 1 : -1;
+    P->sx = x_col3 >= x_col0 ? 1 : -1;
+    P->hg = y_hi - y_lo;
+    P->ytop = P->s > 0 ? y_hi : y_lo;
+    if (P->hg < 120)
+        P->hg = 120;
 }
 
-static void dirty(uint8_t *view)
+static inline int GX(int x, int w)
 {
-    for (int i = 0; i < 16; i++)
-        cell_at(view, i)[CELL_DIRTY] = 1;
+    return P->sx > 0 ? PAGE_X0 + x : PAGE_X0 + PAGE_W - x - w;
 }
 
-static void box(void *fb, int x, int y, int w, int h, int color)
+static inline int GY(int d, int h)
 {
-    int r[4] = {x, y, w, h};
+    return P->s > 0 ? P->ytop - d - h : P->ytop + d;
+}
+
+struct lay {
+    int cx, cw;                  /* the column */
+    int col_y, col_h;
+    int title_y, rec_h;          /* the record box: title bar and icon */
+    int icon_y, icon_h;
+    int bars_y, bars_h;          /* the fader */
+    int lvl_y, btn_y;
+    int foot_y;
+};
+
+static void layout(int t, struct lay *L)
+{
+    int cw = (PAGE_W - 3 * GAP) / 4, hg = P->hg;
+    L->cw = cw;
+    L->cx = t * (cw + GAP);
+    L->col_y = TOPBAR + VGAP;
+    L->col_h = hg - TOPBAR - FOOT - 2 * VGAP;
+    L->title_y = L->col_y + 2;
+    L->icon_h = L->col_h >= 150 ? ICON : 0;
+    L->icon_y = L->title_y + TITLE;
+    L->rec_h = TITLE + L->icon_h;
+    L->btn_y = L->col_y + L->col_h - 2 - BTN;
+    L->lvl_y = L->btn_y - LEVEL - 2;
+    L->bars_y = L->title_y + L->rec_h + 4;
+    L->bars_h = L->lvl_y - 2 - L->bars_y;
+    if (L->bars_h < 20)
+        L->bars_h = 20;
+    L->foot_y = hg - FOOT;
+}
+
+/* Which control is at x pixels from the left and d from the top, and the fader value there (0..1). */
+int looper_page_hit(int x, int d, int *track, float *val)
+{
+    struct lay L;
+    int cw = (PAGE_W - 3 * GAP) / 4;
+    int t = x / (cw + GAP);
+    if (P->hg < 120 || x < 0 || t < 0 || t >= LOOPER_TRACKS || x - t * (cw + GAP) >= cw)
+        return Z_NONE;                                            /* (hg is 0 until the page has been drawn once) */
+    layout(t, &L);
+    *track = t;
+    if (d >= L.title_y && d < L.title_y + L.rec_h)
+        return Z_REC;
+    if (d >= L.bars_y - 4 && d < L.btn_y - 1) {
+        float v = (float)(L.bars_y + L.bars_h - d) / (float)L.bars_h;
+        *val = v < 0.f ? 0.f : v > 1.f ? 1.f : v;
+        return Z_FADER;
+    }
+    if (d >= L.btn_y && d < L.btn_y + BTN) {
+        int third = (x - L.cx - 2) * 3 / (cw - 4 > 0 ? cw - 4 : 1);
+        return third <= 0 ? Z_PAN : third == 1 ? Z_REV : Z_MUTE;
+    }
+    return Z_NONE;
+}
+
+/* ---- drawing */
+
+#define FB ((void *)P->fb)       /* (no .bss in the code cave: it lives with the page state) */
+
+static void box(int x, int d, int w, int h, int color)
+{
+    int r[4] = {GX(x, w), GY(d, h), w, h};
     if (w > 0 && h > 0)
-        fw_fill(r, color, fb);
+        fw_fill(r, color, FB);
 }
 
-static void frame(void *fb, int x, int y, int w, int h, int color)
+static void frame(int x, int d, int w, int h, int color, int th)
 {
-    int r[4] = {x, y, w, h};
-    if (w > 0 && h > 0)
-        fw_outline(r, color, fb);
+    box(x, d, w, th, color);
+    box(x, d + h - th, w, th, color);
+    box(x, d + th, th, h - 2 * th, color);
+    box(x + w - th, d + th, th, h - 2 * th, color);
 }
 
-/* Centred text in a box. */
-static void label(void *fb, int x, int y, int w, int h, const char *s, int color)
+static int text_w(const char *s, int scale)
 {
-    int tw = fw_width(s);
-    int r[4] = {x + (w - tw) / 2, y + (h - 14) / 2, tw + 2, 16};
-    fw_text(s, r, color, fb);
+    int n = 0;
+    while (s[n])
+        n++;
+    return n * FONT->w * scale;
+}
+
+/* The firmware's 6x8 font at scale 1 or 2, top-left at x / d. */
+static void text(int x, int d, const char *s, int color, int scale)
+{
+    const struct font *f = FONT;
+    if (!f->data || f->w != 6 || f->h != 8)
+        return;
+    for (; *s; s++, x += f->w * scale) {
+        unsigned c = (unsigned char)*s;
+        const uint8_t *g = f->data + (c < 0x20 || c > 0x7e ? '?' - 0x20 : c - 0x20) * f->h;
+        for (int r = 0; r < f->h; r++)
+            for (int k = 0; k < f->w; k++)
+                if (g[r] & (0x80 >> k))
+                    for (int a = 0; a < scale; a++)
+                        for (int b = 0; b < scale; b++)
+                            fw_px(FB, GX(x + k * scale + a, 1), GY(d + r * scale + b, 1), color);
+    }
+}
+
+static void text_c(int x, int d, int w, const char *s, int color, int scale)
+{
+    text(x + (w - text_w(s, scale)) / 2, d, s, color, scale);
 }
 
 static char *put_uint(char *p, unsigned v)
@@ -134,15 +270,7 @@ static char *put_uint(char *p, unsigned v)
     return p;
 }
 
-static char *put_hex2(char *p, unsigned v)
-{
-    static const char hex[] = "0123456789abcdef";
-    *p++ = hex[(v >> 4) & 0xf];
-    *p++ = hex[v & 0xf];
-    return p;
-}
-
-static const char *mode_name(const struct looper_info *k)
+static const char *state_name(const struct looper_info *k)
 {
     switch (k->mode) {
     case LOOPER_REC:
@@ -160,143 +288,299 @@ static const char *mode_name(const struct looper_info *k)
     }
 }
 
-static void draw_box(void *fb, const int *r, int t, const struct looper_info *k)
+static void icon(const struct lay *L, const struct looper_info *k)
 {
-    int fill = k->mode == LOOPER_REC ? C_REC : k->mode == LOOPER_DUB ? C_YELLOW : k->mode == LOOPER_PLAY ? C_GREEN
-             : k->mode == LOOPER_CLEARING ? C_WHITE : k->mode == LOOPER_UNDOING ? C_LIGHT : C_DARK;
-    if (k->mode == LOOPER_PLAY && k->muted)
-        fill = C_RAIL;
-    box(fb, r[0], r[1], r[2], r[3], fill);
-    int ink = fill == C_DARK || fill == C_RAIL || fill == C_REC ? C_WHITE : C_BLACK;
-    char name[8] = {(char)('1' + t), 0};
-    label(fb, r[0], r[1] + 2, r[2], r[3] / 2, name, ink);
-    label(fb, r[0], r[1] + r[3] / 2 - 4, r[2], r[3] / 2, mode_name(k), ink);
-    if (k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB || k->mode == LOOPER_REC)
-        box(fb, r[0], r[1] + r[3] - 4, (int)(looper_progress() * (float)r[2]), 4, C_CYAN);
-    if (k->latched)
-        frame(fb, r[0] + 1, r[1] + 1, r[2] - 2, r[3] - 2, C_WHITE);
-}
-
-static void draw_buttons(void *fb, const int *r, int t, const struct looper_info *k)
-{
-    int w = r[2] / 3, x = r[0], y = r[1], h = r[3];
-    int has = k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB;
-    /* PAN */
-    int sel = (P->pan_sel >> t) & 1;
-    box(fb, x, y, w, h, sel ? C_TEAL : C_DARK);
-    label(fb, x, y + 1, w, h / 2, "PAN", C_WHITE);
-    int mid = x + w / 2, half = w / 2 - 4, by = y + h * 3 / 4;
-    box(fb, x + 4, by, w - 8, 2, C_GREY);
-    box(fb, mid - 1, by - 3, 2, 8, C_LIGHT);
-    box(fb, mid + (int)(k->pan * (float)half) - 2, by - 4, 4, 10, C_CYAN);
-    /* REV */
-    box(fb, x + w, y, w, h, k->reversed ? C_YELLOW : C_DARK);
-    label(fb, x + w, y, w, h, "REV", k->reversed ? C_BLACK : C_WHITE);
-    /* MUTE */
-    int mfill = !has ? C_DARK : k->muted ? C_RED : C_GREEN;
-    box(fb, x + 2 * w, y, r[0] + r[2] - (x + 2 * w), h, mfill);
-    label(fb, x + 2 * w, y, r[0] + r[2] - (x + 2 * w), h, "M", C_WHITE);
-    frame(fb, x, y, r[2], h, C_GREY);
-    box(fb, x + w, y, 1, h, C_GREY);
-    box(fb, x + 2 * w, y, 1, h, C_GREY);
-}
-
-/* The fader spans rows 2 and 3; each cell draws its own part of it. */
-static void draw_fader(uint8_t *view, void *fb, const int *r, int row, int t, const struct looper_info *k)
-{
-    const int *top = rect_of(view, 2, t), *bot = rect_of(view, 3, t);
-    if (!top || !bot)
-        return;
-    int y0 = top[1] + 6, y1 = bot[1] + bot[3] - 6, span = y1 - y0;
-    int cap = y1 - (int)(k->level * (float)span);
-    box(fb, r[0], r[1], r[2], r[3], C_DARK);
-    int cx = r[0] + r[2] / 2;
-    /* clip every piece to this cell */
-    int ct = r[1], cb = r[1] + r[3];
-    int a = cap > ct ? cap : ct, b = y1 < cb ? y1 : cb;
-    box(fb, cx - 2, ct > y0 ? ct : y0, 4, (cb < y1 ? cb : y1) - (ct > y0 ? ct : y0), C_RAIL);
-    if (b > a)
-        box(fb, cx - 6, a, 12, b - a, k->muted ? C_TEAL : C_CYAN);
-    if (cap - 3 >= ct && cap + 3 <= cb)
-        box(fb, r[0] + 6, cap - 3, r[2] - 12, 6, C_WHITE);
-    if (row == 2) {
-        char pct[8], *p = put_uint(pct, (unsigned)(k->level * 100.f + .5f));
-        *p = 0;
-        label(fb, r[0], r[1] + 2, r[2] / 3, 16, pct, C_LIGHT);
-    } else if (t == LOOPER_TRACKS - 1) {
-        char dbg[12] = "b", *p = put_hex2(dbg + 1, P->btn_id);
-        *p++ = ':';
-        p = put_uint(p, P->btn_index);
-        *p = 0;
-        label(fb, r[0] + r[2] / 2, r[1] + r[3] - 18, r[2] / 2, 16, dbg, C_GREY);
+    int cx = L->cx + L->cw / 2, y = L->icon_y + (L->icon_h - 18) / 2;
+    switch (k->mode) {
+    case LOOPER_REC:                                              /* a disc */
+    case LOOPER_DUB:
+        box(cx - 5, y, 10, 18, k->mode == LOOPER_REC ? C_REC : C_YELLOW);
+        box(cx - 9, y + 4, 18, 10, k->mode == LOOPER_REC ? C_REC : C_YELLOW);
+        box(cx - 7, y + 2, 14, 14, k->mode == LOOPER_REC ? C_REC : C_YELLOW);
+        if (k->mode == LOOPER_DUB)
+            box(cx - 3, y + 6, 6, 6, C_BLACK);
+        break;
+    case LOOPER_PLAY:
+        if (k->muted) {                                           /* two bars */
+            box(cx - 8, y, 6, 18, C_RED);
+            box(cx + 2, y, 6, 18, C_RED);
+        } else {                                                  /* a triangle */
+            for (int i = 0; i < 18; i++)
+                box(cx - 6, y + i, (i < 9 ? i : 17 - i) * 2 + 2, 1, C_GREEN);
+        }
+        break;
+    case LOOPER_CLEARING:
+    case LOOPER_UNDOING:
+        for (int i = 0; i < 3; i++)
+            box(cx - 12 + i * 10, y + 7, 4, 4, C_LIGHT);
+        break;
+    default:
+        frame(cx - 8, y + 1, 16, 16, C_RAIL, 1);
+        break;
     }
 }
 
-/* Called for every mixer cell while the page shows; returns 0 to let the stock draw handle the cell. */
+static void draw_top(int t, const struct lay *L, const struct looper_info *k)
+{
+    int x = L->cx, w = L->cw, on_pan = ((P->pan_sel >> t) & 1) || P->info_on;
+    box(x, 0, w, TOPBAR, C_DARK);
+    frame(x, 0, w, TOPBAR, P->info_on ? C_YELLOW : C_GREY, 1);
+    if (on_pan) {
+        int half = (w - 28) / 2, mid = x + w / 2;
+        text(x + 4, 4, "L", C_LIGHT, 1);
+        text(x + w - 10, 4, "R", C_LIGHT, 1);
+        box(mid - half, 7, 2 * half, 2, C_RAIL);
+        box(mid, 4, 1, 8, C_GREY);
+        box(mid + (int)(k->pan * (float)half) - 2, 3, 4, 10, C_YELLOW);
+    } else {
+        char b[12] = "LVL ", *p = b + 4;
+        p = put_uint(p, (unsigned)(k->level * 100.f + .5f));
+        *p = 0;
+        text_c(x, 4, w, b, C_WHITE, 1);
+    }
+}
+
+static void draw_column(int t, const struct lay *L, const struct looper_info *k)
+{
+    int x = L->cx, w = L->cw, colour = track_colour[t];
+    int live = k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB;
+    /* border and body */
+    box(x, L->col_y, w, L->col_h, C_BG);
+    frame(x, L->col_y, w, L->col_h, k->mode == LOOPER_EMPTY ? C_RAIL : colour, 2);
+    /* title bar */
+    int tcol = k->mode == LOOPER_EMPTY ? C_RAIL : k->mode == LOOPER_REC ? C_REC : colour;
+    box(x + 2, L->title_y, w - 4, TITLE, tcol);
+    char title[12] = {(char)('1' + t), ' ', 0};
+    const char *sn = state_name(k);
+    char *p = title + 2;
+    while (*sn)
+        *p++ = *sn++;
+    *p = 0;
+    text_c(x + 2, L->title_y + 4, w - 4, title, tcol == C_REC || tcol == C_RAIL ? C_WHITE : C_BLACK, 1);
+    if (L->icon_h)
+        icon(L, k);
+    /* the loop position along the bottom of the record box */
+    if (k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB || k->mode == LOOPER_REC) {
+        int px = (int)(looper_progress() * (float)(w - 4));
+        box(x + 2, L->title_y + L->rec_h - 3, px, 3, C_WHITE);
+    }
+    if (k->latched)
+        frame(x + 2, L->title_y, w - 4, L->rec_h, C_WHITE, 2);
+    /* the two bars */
+    int bw = 16, bx = x + w / 2 - bw - 4, d = L->bars_y, h = L->bars_h;
+    float gl = k->pan > 0.f ? 1.f - k->pan : 1.f, gr = k->pan < 0.f ? 1.f + k->pan : 1.f;
+    for (int c = 0; c < 2; c++) {
+        int bxx = bx + c * (bw + 8);
+        int fill = live ? (int)(k->level * (c ? gr : gl) * (float)h + .5f) : 0;
+        box(bxx, d, bw, h, C_DARK);
+        box(bxx, d + h - fill, bw, fill, k->muted ? C_GREY : colour);
+        frame(bxx - 1, d - 1, bw + 2, h + 2, C_GREY, 1);
+    }
+    for (int q = 0; q <= 4; q++)                                  /* scale ticks */
+        box(x + 8, d + q * (h - 1) / 4, 6, 1, C_GREY);
+    int hy = d + h - (int)(k->level * (float)h + .5f);
+    box(bx - 6, hy - 1, 2 * bw + 20, 2, C_WHITE);                 /* the fader */
+    /* level */
+    char lv[8], *q = put_uint(lv, (unsigned)(k->level * 100.f + .5f));
+    *q++ = '%';
+    *q = 0;
+    text_c(x + 2, L->lvl_y + 1, w - 4, lv, k->muted ? C_GREY : C_WHITE, 2);
+    /* buttons */
+    int bwid = (w - 4) / 3, by = L->btn_y;
+    int pan_on = ((P->pan_sel >> t) & 1) != 0;
+    box(x + 2, by, bwid, BTN, pan_on ? C_TEAL : C_DARK);
+    text_c(x + 2, by + 5, bwid, "PAN", C_WHITE, 1);
+    box(x + 2 + bwid, by, bwid, BTN, k->reversed ? C_YELLOW : C_DARK);
+    text_c(x + 2 + bwid, by + 5, bwid, "REV", k->reversed ? C_BLACK : C_WHITE, 1);
+    int mcol = !live ? C_DARK : k->muted ? C_RED : C_GREEN;
+    box(x + 2 + 2 * bwid, by, w - 4 - 2 * bwid, BTN, mcol);
+    text_c(x + 2 + 2 * bwid, by + 5, w - 4 - 2 * bwid, "MUTE", C_WHITE, 1);
+    frame(x + 2, by, w - 4, BTN, C_GREY, 1);
+    box(x + 2 + bwid, by, 1, BTN, C_GREY);
+    box(x + 2 + 2 * bwid, by, 1, BTN, C_GREY);
+}
+
+static void draw_footer(const struct lay *L)
+{
+    box(0, L->foot_y, PAGE_W, FOOT, C_BG);
+    char b[48], *p = b;
+    if (looper_len()) {
+        unsigned len = looper_len() * 10u / 48000u, pos = (unsigned)(looper_progress() * (float)looper_len()) * 10u / 48000u;
+        const char *s = "LOOP ";
+        while (*s)
+            *p++ = *s++;
+        p = put_uint(p, len / 10);
+        *p++ = '.';
+        p = put_uint(p, len % 10);
+        s = "s  POS ";
+        while (*s)
+            *p++ = *s++;
+        p = put_uint(p, pos / 10);
+        *p++ = '.';
+        p = put_uint(p, pos % 10);
+        *p++ = 's';
+    } else {
+        const char *s = "HOLD A TRACK TO RECORD";
+        while (*s)
+            *p++ = *s++;
+    }
+    *p = 0;
+    text(4, L->foot_y + 2, b, C_LIGHT, 1);
+    if (P->info_idx == 0xff) {
+        text(PAGE_W - 4 - text_w("PRESS INFO ONCE", 1), L->foot_y + 2, "PRESS INFO ONCE", C_YELLOW, 1);
+    } else {
+        char i[12] = "INFO=", *q = i + 5;
+        q = put_uint(q, P->info_idx);
+        *q = 0;
+        text(PAGE_W - 4 - text_w(i, 1), L->foot_y + 2, i, P->info_on ? C_YELLOW : C_GREY, 1);
+    }
+}
+
+/* A number that changes whenever something the page shows changes. */
+static uint32_t signature(void)
+{
+    uint32_t h = 2166136261u;
+    for (int t = 0; t < LOOPER_TRACKS; t++) {
+        struct looper_info k;
+        looper_track(t, &k);
+        uint32_t v = (uint32_t)k.mode | (uint32_t)k.muted << 4 | (uint32_t)k.reversed << 5 | (uint32_t)k.latched << 6 |
+                     (uint32_t)(k.level * 100.f + .5f) << 8 | (uint32_t)(k.pan * 100.f + 100.5f) << 16;
+        h = (h ^ v) * 16777619u;
+    }
+    h = (h ^ ((uint32_t)P->pan_sel | (uint32_t)P->info_on << 8 | (uint32_t)P->info_idx << 16)) * 16777619u;
+    h = (h ^ (uint32_t)(looper_progress() * 400.f)) * 16777619u;     /* the playhead, in 1/400ths of a loop */
+    return h ^ looper_len();
+}
+
+/* Called for every mixer cell while the page shows: the first cell draws the whole page, the others nothing.
+ * Returns 0 only for a cell outside the grid (the stock draw then runs). */
 int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
 {
-    int t = col_of(cell), row = row_of(cell);
-    if (t >= LOOPER_TRACKS || row > 3)
+    int idx = (int)((cell - cell_at(view, 0)) / CELL_SIZE);
+    if (idx < 0 || idx > 15)
         return 0;
-    void *fb = *(void **)(ctx + CTX_FB);
-    const int *r = (const int *)(cell + CELL_RECT);
-    struct looper_info k;
-    looper_track(t, &k);
-    if (row == 0)
-        draw_box(fb, r, t, &k);
-    else if (row == 1)
-        draw_buttons(fb, r, t, &k);
-    else
-        draw_fader(view, fb, r, row, t, &k);
+    if (idx != 0)
+        return 1;
+    P->fb = (uint32_t)*(void **)(ctx + CTX_FB);
+    geometry(view);
+    if (!P->entered) {
+        P->entered = 1;
+        box(0, 0, PAGE_W, P->hg, C_BG);
+    }
+    struct lay L;
+    layout(0, &L);
+    for (int t = 0; t < LOOPER_TRACKS; t++) {
+        struct looper_info k;
+        looper_track(t, &k);
+        layout(t, &L);
+        draw_top(t, &L, &k);
+        draw_column(t, &L, &k);
+    }
+    draw_footer(&L);
+    P->sig = signature();
     return 1;
 }
 
-static void fader_to(uint8_t *view, int t, int y)
+static void dirty(uint8_t *view)
 {
-    const int *top = rect_of(view, 2, t), *bot = rect_of(view, 3, t);
-    if (!top || !bot)
-        return;
-    int y0 = top[1] + 6, y1 = bot[1] + bot[3] - 6;
-    looper_set_level(t, (float)(y1 - y) / (float)(y1 - y0));
+    for (int i = 0; i < 16; i++)
+        cell_at(view, i)[CELL_DIRTY] = 1;
+    P->force = 0;
+}
+
+/* From the audio task (looper_ui_poke -> solo.c): redraw when something changed, and now and then regardless. */
+void looper_page_poke(uint8_t *view)
+{
+    if (P->info_on && looper_ticks() - P->info_t > INFO_TIMEOUT) {
+        P->info_on = 0;
+        P->sig = 0;
+    }
+    if (signature() != P->sig || ++P->force >= 40)
+        dirty(view);
+}
+
+/* The Looper page has just been (re)shown. */
+void looper_page_enter(void)
+{
+    P->entered = 0;
+    P->pressed = P_NONE;
+    P->info_on = 0;
+    P->sig = 0;
+    P->force = 0;
+}
+
+/* looper_boot: reset the page; the learned INFO button is kept while the backup SRAM is. */
+void looper_page_boot(void)
+{
+    if (P->magic != PMAGIC) {
+        P->magic = PMAGIC;
+        P->info_idx = 0xff;
+    }
+    P->_legacy = -1;
+    P->hg = 0;
+    P->pan_sel = 0;
+    P->btn_id = P->btn_index = 0;
+    looper_page_enter();
+}
+
+/* ---- touch and knobs */
+
+/* Touch points use the same space as the cells: convert to pixels from the page's left and top. */
+static void to_page(const int *pt, int *x, int *d)
+{
+    *x = P->sx > 0 ? pt[0] - PAGE_X0 : PAGE_X0 + PAGE_W - pt[0];
+    *d = P->s > 0 ? P->ytop - pt[1] : pt[1] - P->ytop;
+}
+
+static void info_touch(void)
+{
+    P->info_t = looper_ticks();
 }
 
 void looper_page_down(uint8_t *view, const int *pt)
 {
-    uint8_t *cell = 0;
+    int x, d, t = 0;
+    float v = 0.f;
     P->pressed = P_NONE;
-    if (!fw_hit(view, pt, &cell) || !cell)
+    to_page(pt, &x, &d);
+    int zone = looper_page_hit(x, d, &t, &v);
+    if (zone == Z_NONE)
         return;
-    int t = col_of(cell), row = row_of(cell);
-    if (t >= LOOPER_TRACKS || row > 3)
-        return;
-    const int *r = (const int *)(cell + CELL_RECT);
     P->track = (uint8_t)t;
-    if (row == 0) {
-        looper_event(t, LOOPER_EV_REC_DOWN);
-        P->pressed = P_REC;
-    } else if (row == 1) {
-        int third = (pt[0] - r[0]) * 3 / (r[2] > 0 ? r[2] : 1);
-        if (third <= 0) {
-            P->pan_sel ^= (uint8_t)(1u << t);
-        } else if (third == 1) {
-            looper_event(t, LOOPER_EV_REVERSE);
-        } else {
+    if (P->info_on)
+        info_touch();
+    if (zone == Z_REC) {
+        if (P->info_on) {                                         /* INFO + box: mute, hold = undo / erase */
             looper_event(t, LOOPER_EV_MUTE_DOWN);
             P->pressed = P_MUTE;
+        } else {
+            looper_event(t, LOOPER_EV_REC_DOWN);
+            P->pressed = P_REC;
         }
-    } else {
-        fader_to(view, t, pt[1]);
+    } else if (zone == Z_FADER) {
+        looper_set_level(t, v);
         P->pressed = P_FADER;
+    } else if (zone == Z_PAN) {
+        P->pan_sel ^= (uint8_t)(1u << t);
+    } else if (zone == Z_REV) {
+        looper_event(t, LOOPER_EV_REVERSE);
+    } else {
+        looper_event(t, LOOPER_EV_MUTE_DOWN);
+        P->pressed = P_MUTE;
     }
     dirty(view);
 }
 
 void looper_page_move(uint8_t *view, const int *pt)
 {
-    if (P->pressed == P_FADER) {
-        fader_to(view, P->track, pt[1]);
-        dirty(view);
-    }
+    if (P->pressed != P_FADER)
+        return;
+    int x, d;
+    to_page(pt, &x, &d);
+    struct lay L;
+    layout(P->track, &L);
+    looper_set_level(P->track, (float)(L.bars_y + L.bars_h - d) / (float)L.bars_h);
+    dirty(view);
 }
 
 void looper_page_up(uint8_t *view, const int *pt)
@@ -310,7 +594,8 @@ void looper_page_up(uint8_t *view, const int *pt)
     dirty(view);
 }
 
-/* Mixer view vtable +0x34 (0x080f0f44): its messages. On the page the four knobs move the tracks' faders (or pans). */
+/* Mixer view vtable +0x34 (0x080f0f44): its messages. On the page the four knobs turn the tracks' levels, or the pans
+ * (the PAN button, or INFO held). */
 void looper_view_msg(uint8_t *view, const uint16_t *msg)
 {
     if (msg && msg[0] == MSG_KNOB && solo_looper_view() == view) {
@@ -319,10 +604,13 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
         if (knob >= 0 && knob < LOOPER_TRACKS) {
             struct looper_info k;
             looper_track(knob, &k);
-            if ((P->pan_sel >> knob) & 1)
+            if (((P->pan_sel >> knob) & 1) || P->info_on) {
                 looper_set_pan(knob, k.pan + (float)counts * KNOB_SCALE * 2.f);
-            else
+                if (P->info_on)
+                    info_touch();
+            } else {
                 looper_set_level(knob, k.level + (float)counts * KNOB_SCALE);
+            }
             dirty(view);
         }
         return;
@@ -330,12 +618,40 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
     fw_view_msg(view, msg);
 }
 
-/* Replaces the app's message dispatch call (bl @0x080a23cc): note hardware button messages for the INFO hunt. */
+/* INFO: tap = on until pressed again (or 10 s idle); held 0.45 s or more = on only while held. Returns 1 when the
+ * message was INFO's and the stock handler must not see it. */
+static int info_button(unsigned id, unsigned idx)
+{
+    if (id == MSG_BUTTON) {
+        if (idx == BTN_MIX || idx > 7)
+            return 0;
+        if (P->info_idx == 0xff)
+            P->info_idx = (uint8_t)idx;                           /* the first other button is taken as INFO */
+        if (idx != P->info_idx)
+            return 0;
+        P->info_on = !P->info_on;
+        P->info_down = looper_ticks();
+        P->info_t = P->info_down;
+        P->sig = 0;
+        return 1;
+    }
+    if (id == MSG_RELEASE && idx == P->info_idx) {
+        if (P->info_on && looper_ticks() - P->info_down >= INFO_HOLD)
+            P->info_on = 0;
+        P->sig = 0;
+    }
+    return 0;
+}
+
+/* Replaces the app's message dispatch call (bl @0x080a23cc). */
 void looper_app_msg(void *app, const uint16_t *msg)
 {
-    if (msg && msg[0] >= 0xf0 && msg[0] <= 0xff && looper_ready()) {
+    if (msg && (msg[0] == MSG_BUTTON || msg[0] == MSG_RELEASE) && solo_looper_view()) {
+        unsigned idx = *(const uint32_t *)((const uint8_t *)msg + 0xc);
         P->btn_id = msg[0];
-        P->btn_index = (uint16_t)*(const int32_t *)((const uint8_t *)msg + 0xc);
+        P->btn_index = (uint16_t)idx;
+        if (info_button(msg[0], idx))
+            return;
     }
     fw_app_msg(app, msg);
 }

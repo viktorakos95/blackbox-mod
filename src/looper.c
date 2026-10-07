@@ -46,6 +46,7 @@ typedef void (*pool_fn)(void *engine);
 void bkp_enable(void);
 void looper_ui_poke(void);
 void solo_boot_reset(void);
+void looper_page_boot(void);
 
 #define POOL_ENTRIES   615
 #define ENTRY_SIZE     0x1c
@@ -196,7 +197,7 @@ void looper_boot(void *engine)
                 clear_block(a, k);
         S->ok = 1;
     }
-    *(volatile int32_t *)0x38800f00u = -1;        /* the page's state (backup SRAM is not cleared) */
+    looper_page_boot();                           /* the page's state (backup SRAM is not cleared) */
     solo_boot_reset();                            /* and the mixer's Looper mode flag, in patch RAM */
     S->magic = MAGIC;
 }
@@ -618,6 +619,16 @@ char *looper_status(char *p)
     while (n)
         *p++ = tmp[--n];
     return p;
+}
+
+unsigned looper_len(void)
+{
+    return S->magic == MAGIC ? S->len : 0;
+}
+
+unsigned looper_ticks(void)
+{
+    return S->ticks;
 }
 
 /* Loop progress 0..1 (0 when no loop), or, while the first take records, how much of the 16 s is used. */

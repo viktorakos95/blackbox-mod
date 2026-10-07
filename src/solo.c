@@ -21,6 +21,8 @@
 #include "looper.h"
 
 int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx);
+void looper_page_poke(uint8_t *view);
+void looper_page_enter(void);
 void looper_page_down(uint8_t *view, const int *pt);
 void looper_page_move(uint8_t *view, const int *pt);
 void looper_page_up(uint8_t *view, const int *pt);
@@ -207,14 +209,14 @@ void looper_cell_draw(uint8_t *cell, uint8_t *ctx)
     fw_cell_draw(cell, ctx);
 }
 
-/* From the audio task, about 19 times a second: have the GUI redraw the page (playhead, state changes). */
+/* From the audio task, about 19 times a second: the page asks for a redraw when something it shows has changed. */
 void looper_ui_poke(void)
 {
     if (S->magic != MAGIC)
         return;
     uint8_t *view = solo_looper_view();
     if (view)
-        mark_dirty(view);
+        looper_page_poke(view);
 }
 
 /* Mixer view vtable +0x18 (0x080f0f28): touch up. */
@@ -255,6 +257,8 @@ void solo_set_mode(uint8_t *view, int mute_mode)
     S->looper = mute_mode && S->looper_pending;
     S->pending = 0;
     S->looper_pending = 0;
+    if (S->looper)
+        looper_page_enter();
     fw_set_mode(view, mute_mode);
     mark_dirty(view);
 }

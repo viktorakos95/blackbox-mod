@@ -19,3 +19,5 @@ void looper_set_level(int track, float level);
 void looper_set_pan(int track, float pan);
 void looper_track(int track, struct looper_info *out);
 float looper_progress(void);
+unsigned looper_len(void);                       /* loop length in frames, 0 = no loop yet */
+unsigned looper_ticks(void);                     /* audio blocks since boot */
