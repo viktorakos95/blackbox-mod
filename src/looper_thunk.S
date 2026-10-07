@@ -36,7 +36,7 @@ looper_stage_thunk:
     .type \name, %function
 \name:
     push    {r0, r1, r2, r3, r12, lr}     /* 24 bytes: the stack stays 8-byte aligned for the C call */
-    bl      looper_draw_blocked
+    bl      looper_fill_blocked
     str     r0, [sp, #16]                   /* the answer comes back in r12's slot */
     pop     {r0, r1, r2, r3, r12, lr}
     cmp     r12, #0

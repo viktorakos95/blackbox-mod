@@ -315,6 +315,15 @@ the guard word says the page has been painted (BLK1 full / BLK2 normal, cleared 
   looper also taps REC on the selected track and pauses / rewinds. BACK and FX are always the page's.
 - The "TAP TO REC" footer hint is gone. Label: Lok18.
 
+## Step 19
+
+- Hardware buttons on the page: REC is the looper's only (never reaches the sequencer); STOP / PLAY are the looper's
+  only by default; SETUP "HW STOP PLAY" = +STOCK lets the sequencer have them too. (Step 18 had it the other way round.)
+- Glitches on the left of the screen that changed with every redraw: stock widgets in the side margins (x < 32 / >= 288,
+  outside the mixer cells) redraw after the page. Their fills are dropped through the rectangle fill hook (0x0808f920,
+  guard_fill) only for those margins while the page shows (looper_fill_blocked); dropping every fill (steps 12-14)
+  stopped full screen updating. Label: Lok19.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,

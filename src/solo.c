@@ -432,3 +432,23 @@ int looper_stock_blocked(void)
     }
     return 0;
 }
+
+/*
+ * From the rectangle fill stub (looper_thunk.S, hook at 0x0808f920; r0 fb, r1 colour, r2 -> {u16 0, 0, w, h, x, y}-style
+ * block: w +4, h +6, x +8, y +0xa): stock fills in the side margins (x < 32 or x >= 288, outside the mixer cells) are
+ * dropped while the page shows: the widgets there redraw after the page and leave bits of themselves on its left side.
+ * Only these narrow fills: dropping every fill stopped the display from updating (steps 12-14).
+ */
+int looper_fill_blocked(void *fb, int color, const uint16_t *r)
+{
+    (void)fb;
+    (void)color;
+    if (GUARD_DRAW == DRW1 || !page_visible())
+        return 0;
+    int x = r[4], w = r[2];
+    if (w > 0 && (x + w <= 32 || x >= 288)) {
+        looper_page_dropped();
+        return 1;
+    }
+    return 0;
+}

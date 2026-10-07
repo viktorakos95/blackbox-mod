@@ -281,7 +281,7 @@ static const struct optrow rows_setup[] = {
     {"SOURCE", LOOPER_O_SRC, 2, {"INPUT", "MIX", 0, 0}},
     {"FULL SCREEN", LOOPER_O_FULL, 2, {"OFF", "ON", 0, 0}},
     {"LOOP GAIN K1", LOOPER_O_GAIN, 0, {0, 0, 0, 0}},
-    {"HW REC PLAY", LOOPER_O_HWBTN, 2, {"STOCK", "+LOOPER", 0, 0}},
+    {"HW STOP PLAY", LOOPER_O_HWBTN, 2, {"LOOPER", "+STOCK", 0, 0}},
 };
 static const struct optrow rows_more[] = {
     {"FX ROUTE", LOOPER_O_ROUTE, 2, {"STOCK", "OWN", 0, 0}},
@@ -1415,7 +1415,7 @@ void looper_app_msg(void *app, const uint16_t *msg)
                 if (!P->bset[slot] || id != P->bid[slot] || idx != P->bidx[slot])
                     continue;
                 if (looper_ticks() - P->btn_t <= 20) {             /* a press and its release can both arrive: one action */
-                    if (slot == B_REC || slot == B_STOP || slot == B_PLAY)
+                    if ((slot == B_STOP || slot == B_PLAY) && looper_get_opt(LOOPER_O_HWBTN) > .5f)
                         break;
                     return;
                 }
@@ -1427,26 +1427,22 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     P->entered = 0;
                     break;
                 case B_REC:
-                    if (looper_get_opt(LOOPER_O_HWBTN) > .5f) {
-                        looper_event(P->sel, LOOPER_EV_REC_DOWN);  /* the selected track: a tap */
-                        looper_event(P->sel, LOOPER_EV_REC_UP);
-                    }
+                    looper_event(P->sel, LOOPER_EV_REC_DOWN);      /* the selected track: a tap (the sequencer never sees REC here) */
+                    looper_event(P->sel, LOOPER_EV_REC_UP);
                     break;
                 case B_BACK:
                     looper_event(P->sel, LOOPER_EV_UNDO);          /* BACK: undo on the selected track */
                     break;
                 case B_STOP:
-                    if (looper_get_opt(LOOPER_O_HWBTN) > .5f)
-                        looper_transport(LOOPER_T_STOP);
+                    looper_transport(LOOPER_T_STOP);
                     break;
                 case B_PLAY:
-                    if (looper_get_opt(LOOPER_O_HWBTN) > .5f)
-                        looper_transport(LOOPER_T_PLAY);
+                    looper_transport(LOOPER_T_PLAY);
                     break;
                 }
                 P->sig = 0;
-                if (slot == B_REC || slot == B_STOP || slot == B_PLAY)
-                    break;                                         /* the transport buttons also reach the sequencer / clock */
+                if ((slot == B_STOP || slot == B_PLAY) && looper_get_opt(LOOPER_O_HWBTN) > .5f)
+                    break;                                         /* HW STOP PLAY +STOCK: the sequencer / clock gets them too */
                 return;
             }
         }
