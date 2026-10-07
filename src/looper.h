@@ -10,7 +10,11 @@ enum { LOOPER_EV_REC_DOWN, LOOPER_EV_REC_UP, LOOPER_EV_MUTE_DOWN, LOOPER_EV_MUTE
        LOOPER_EV_HALF, LOOPER_EV_UNDO };
 
 /* Per-track parameters (looper_set_param). */
-enum { LOOPER_P_FILT, LOOPER_P_RES, LOOPER_P_CRUNCH, LOOPER_P_DRIVE, LOOPER_P_SEND_D, LOOPER_P_SEND_R, LOOPER_PARAMS };
+/* The Blooper-style controls: STAB wow / flutter / noise / dull, RPT how much of the old loop is kept per overdub pass
+ * (1 = all), SPEED -1..1 (0 = normal, up to 2x, down through stopped to backwards), DROP random dropouts, TRIM the
+ * play head loops 1/2, 1/4, 1/8, 1/16 of the loop (steps), STOP fade (< .5) or tape stop (>= .5). */
+enum { LOOPER_P_FILT, LOOPER_P_RES, LOOPER_P_CRUNCH, LOOPER_P_DRIVE, LOOPER_P_SEND_D, LOOPER_P_SEND_R,
+       LOOPER_P_STAB, LOOPER_P_RPT, LOOPER_P_SPEED, LOOPER_P_DROP, LOOPER_P_TRIM, LOOPER_P_STOP, LOOPER_PARAMS };
 
 /* Global options (looper_set_opt): the first five and LOOPER_O_ROUTE are choices (whole numbers), the rest amounts 0..1.
  * QUANT: 0 = 1/4, 1 = 1/8, 2 = 1/16, 3 = 1 bar. ROUTE: 0 = the Blackbox's own delay and reverb, 1 = the looper's own.
@@ -26,6 +30,7 @@ enum { LOOPER_T_PLAY, LOOPER_T_STOP };
 struct looper_info {
     int mode, muted, reversed, latched, undo, undo_kind, armed, half;       /* undo_kind: what UNDO would do next: 0 nothing, 1 take the last pass off, 2 delete the loop */
     float level, pan, filt, res, crunch, drive, send_d, send_r;
+    float stab, rpt, speed, drop, trim, stop;
     float progress;                               /* playhead 0..1; while a first take records: fraction of the memory */
 };
 
@@ -33,7 +38,7 @@ int looper_ready(void);
 void looper_event(int track, int ev);
 void looper_set_level(int track, float level);
 void looper_set_pan(int track, float pan);
-void looper_set_param(int track, int param, float v);   /* LOOPER_P_*: filt -1..1, the others 0..1 */
+void looper_set_param(int track, int param, float v);   /* LOOPER_P_*: filt and speed -1..1, the others 0..1 */
 float looper_get_param(int track, int param);
 void looper_set_opt(int opt, float v);
 float looper_get_opt(int opt);

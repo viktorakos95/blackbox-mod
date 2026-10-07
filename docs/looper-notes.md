@@ -400,3 +400,14 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
   on, left = off); INFO or a tap moves the box (a tap on the selected REV / HALF tile switches it). MUTE | UNDO below.
   Label Lok29.
 - Next: Blooper-style modifiers as more FX controls (design in the chat; manual saved in the scratchpad).
+
+## Step 30: Blooper-style controls (phase 1)
+- Six more FX controls per track (second FX page, INFO / a tap moves the pink box over to it): STAB (wow + flutter +
+  tape noise + dulling), RPT (how much of the old loop an overdub pass keeps: 20 % + 80 % x RPT), SPEED (-1 backwards,
+  -.5 stopped, 0 normal, +1 twice), DROP (random 40-160 ms dropouts), TRIM (play head loops 1/2, 1/4, 1/8, 1/16 of the
+  loop, stepped), STOP (< 50 %: fade, >= 50 %: tape stop). Only the play head is modified (`mod_read`, state in the dsp
+  buffer); the record head keeps its pace and the loop length never changes, as on the pedal. `track` grew by 24 bytes
+  (TSIZE 128). Label Lok30.
+- Memory: the looper owns pool entries 384..615 (231 x 64 KB = 76.8 s of stereo 16 bit), split into five fixed areas of
+  15.36 s. That is a layout choice, not a hardware limit: a shared block allocator could give one track up to ~61 s
+  when the others are short, and several undo levels / redo (swap the loop with the saved pass) from the same pool.

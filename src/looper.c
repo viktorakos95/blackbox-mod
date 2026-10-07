@@ -119,6 +119,7 @@ struct track {
     uint32_t len, pos, rec, target;                          /* frames; pos = the next frame to play */
     float frac;                                              /* half speed: position between frames */
     float level, pan, filt, res, crunch, drive, send_d, send_r;       /* written by the page */
+    float stab, rpt, speed, drop, trim, stop;                         /* the Blooper-style controls (looper.h) */
     float gain_l, gain_r;                                    /* applied at the end of the last block */
     uint32_t phase;                                          /* MULT: master timeline frame at which the loop's frame 0 was recorded */
 };
@@ -225,6 +226,14 @@ struct dsp {
     float dlp[2];                                /* delay feedback low pass */
     uint32_t cidx[2][RV_COMBS], aidx[2][2];      /* reverb positions */
     float cst[2][RV_COMBS];                      /* reverb comb damping */
+    float rp[LOOPER_TRACKS];                     /* the play head (frames, fractional) while the Blooper controls act */
+    float stopp[LOOPER_TRACKS];                  /* STOP progress 0..1 */
+    float ph1[LOOPER_TRACKS], ph2[LOOPER_TRACKS];    /* wow and flutter phases */
+    float dgn[LOOPER_TRACKS];                    /* DROP gain */
+    float lpst[LOOPER_TRACKS][2];                /* STAB dulling low pass */
+    uint32_t rnd[LOOPER_TRACKS];
+    int32_t dseg[LOOPER_TRACKS], xf[LOOPER_TRACKS];
+    uint8_t mact[LOOPER_TRACKS], dmute[LOOPER_TRACKS];
     float zero[MAXN];
 };
 _Static_assert(sizeof(struct dsp) <= 32768, "dsp state must fit in one 32 KB buffer");
@@ -280,6 +289,8 @@ void looper_boot(void *engine)
         k->level = 1.f;
         k->pan = 0.f;
         k->filt = k->crunch = k->drive = k->send_d = k->send_r = 0.f;
+        k->stab = k->speed = k->drop = k->trim = k->stop = 0.f;
+        k->rpt = 1.f;
         k->res = .5f;
         k->gain_l = k->gain_r = 0.f;
     }
@@ -710,6 +721,12 @@ struct pb {                                       /* one track, one block */
     int drive;
     float d_gain, d_head, d_ihead, d_k, d_post, d_tone;
     float sd, sr;
+    int mod;                                      /* the play head is modified (speed / trim / stop / drop / stability) */
+    float spd, wow, flut, nz, lpa, rptm;
+    int win;                                      /* the play window: 0 = the whole loop, else a power of two to divide it by */
+    float stop_rate;
+    int stop_mode;                                /* 0 off, 1 fade, 2 tape */
+    float drop_p;
 };
 
 static inline float quant(float x, float q, float qi)
@@ -840,6 +857,21 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
     }
     p->sd = k->send_d;
     p->sr = k->send_r;
+    /* Blooper-style controls: only the play head is touched; the record head keeps its pace */
+    float sp = k->speed;
+    float sf = sp >= 0.f ? 1.f + sp : 1.f + 2.f * sp;                 /* -1 backwards, -.5 stopped, 0 normal, 1 twice */
+    p->spd = sf * (k->half ? .5f : 1.f);
+    p->wow = k->stab * .012f;
+    p->flut = k->stab * .003f;
+    p->nz = k->stab * k->stab * .012f;
+    p->lpa = 1.f - .72f * k->stab;
+    p->rptm = k->rpt >= .995f ? 1.f : .2f + .8f * k->rpt;
+    int tw = (int)(k->trim * 4.f + .5f);
+    p->win = tw <= 0 ? 0 : tw;                                        /* 1: 1/2, 2: 1/4, 3: 1/8, 4: 1/16 */
+    p->stop_mode = k->stop < .02f ? 0 : k->stop < .5f ? 1 : 2;
+    p->stop_rate = 1.f / (SR * (.15f + 1.2f * (p->stop_mode == 1 ? k->stop * 2.f : (k->stop - .5f) * 2.f)));
+    p->drop_p = k->drop;
+    p->mod = (sp > .01f || sp < -.01f) || k->stab > .01f || tw > 0 || p->stop_mode || k->drop > .01f || d->stopp[t] > 0.f;
 }
 
 /* One trapezoidal state-variable stage (stmlib Svf), low pass or high pass; the limit soft-limits the resonant loop. */
@@ -892,6 +924,103 @@ static void finalize(int t, uint32_t len, int b)
     }
 }
 
+#define XF 128                                    /* cross fade frames when the Blooper controls go off */
+
+static inline float tri01(float ph)               /* -1..1 triangle of a 0..1 phase */
+{
+    float v = ph - .5f;
+    return 4.f * (v < 0.f ? -v : v) - 1.f;
+}
+
+static inline float rnd01(uint32_t *s)
+{
+    *s = *s * 1664525u + 1013904223u;
+    return (float)(*s >> 8) * (1.f / 16777216.f);
+}
+
+/* The play head's sample for this frame (the Blooper controls), replacing x: speed, trim window, wow / flutter, the
+ * tape dulling and noise, dropouts and the fade / tape stop. During the cross fade back to the plain read it is mixed in. */
+static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32_t len, uint32_t wlen, int on, int *xfade,
+                     float *xl, float *xr)
+{
+    const float s16 = 1.f / 32767.f;
+    float rp = d->rp[t];
+    uint32_t i0 = (uint32_t)rp;
+    float f = rp - (float)i0;
+    if (i0 >= wlen) {
+        i0 = 0;
+        f = 0.f;
+        rp = 0.f;
+    }
+    uint32_t i1 = i0 + 1 >= wlen ? 0 : i0 + 1;
+    int16_t *a = frame_at(t, place(k, i0, len)), *b = frame_at(t, place(k, i1, len));
+    float ml = (float)a[0] * s16, mr = (float)a[1] * s16;
+    ml += ((float)b[0] * s16 - ml) * f;
+    mr += ((float)b[1] * s16 - mr) * f;
+    float spd = on ? p->spd : (k->half ? .5f : 1.f);
+    if (on) {
+        float w = 1.f + p->wow * tri01(d->ph1[t]) + p->flut * tri01(d->ph2[t]);
+        spd *= w;
+        d->ph1[t] += .6f / SR;
+        d->ph2[t] += 7.5f / SR;
+        if (d->ph1[t] >= 1.f)
+            d->ph1[t] -= 1.f;
+        if (d->ph2[t] >= 1.f)
+            d->ph2[t] -= 1.f;
+        /* STOP: engaged moves its progress to 1 (a fade, or a slowing down), released moves it back */
+        float sp = d->stopp[t];
+        sp += p->stop_mode ? p->stop_rate : -4.f * p->stop_rate - .0004f;
+        d->stopp[t] = sp < 0.f ? 0.f : sp > 1.f ? 1.f : sp;
+        if (p->stop_mode == 2)
+            spd *= 1.f - d->stopp[t];
+        else if (p->stop_mode == 1 || d->stopp[t] > 0.f)
+            ml *= 1.f - d->stopp[t], mr *= 1.f - d->stopp[t];
+        if (p->nz > 0.f) {
+            ml += (rnd01(&d->rnd[t]) - .5f) * p->nz * 2.f;
+            mr += (rnd01(&d->rnd[t]) - .5f) * p->nz * 2.f;
+        }
+        if (p->lpa < .999f) {
+            d->lpst[t][0] += p->lpa * (ml - d->lpst[t][0]);
+            d->lpst[t][1] += p->lpa * (mr - d->lpst[t][1]);
+            ml = d->lpst[t][0];
+            mr = d->lpst[t][1];
+        }
+        if (p->drop_p > .01f) {                       /* dropouts: segments of 40..160 ms, a share of them silent */
+            if (d->dseg[t] <= 0) {
+                float r = rnd01(&d->rnd[t]);
+                d->dmute[t] = rnd01(&d->rnd[t]) < p->drop_p * .8f;
+                d->dseg[t] = (int32_t)((1.f - .7f * p->drop_p) * (1900.f + 5800.f * r));
+            }
+            d->dseg[t]--;
+        } else {
+            d->dmute[t] = 0;
+        }
+        float dt = d->dmute[t] ? 0.f : 1.f;
+        d->dgn[t] += (dt - d->dgn[t]) * .02f;
+        ml *= d->dgn[t];
+        mr *= d->dgn[t];
+    }
+    rp += spd;
+    float W = (float)wlen;
+    int guard = 0;
+    while (rp >= W && guard++ < 8)
+        rp -= W;
+    while (rp < 0.f && guard++ < 16)
+        rp += W;
+    if (rp >= W || rp < 0.f)
+        rp = 0.f;
+    d->rp[t] = rp;
+    if (on) {
+        *xl = ml;
+        *xr = mr;
+    } else {
+        float w = (float)*xfade * (1.f / (float)XF);
+        *xl = ml * w + *xl * (1.f - w);
+        *xr = mr * w + *xr * (1.f - w);
+        (*xfade)--;
+    }
+}
+
 static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, const float *sr, const struct pb *p)
 {
     vtrack *k = &S->t[t];
@@ -902,6 +1031,25 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
     uint32_t saved = S->undo_count;
     int half = k->half;
     const float s16 = 1.f / 32767.f;
+    int use_mod = p->mod, xfade = d->xf[t];
+    if (use_mod && !d->mact[t]) {                     /* the controls just came on: the play head starts where the loop is */
+        d->rp[t] = (float)pos + fr;
+        d->mact[t] = 1;
+        d->xf[t] = xfade = 0;
+        d->dgn[t] = 1.f;
+        d->dseg[t] = 0;
+        d->dmute[t] = 0;
+        if (!d->rnd[t])
+            d->rnd[t] = 0x9e3779b9u * (uint32_t)(t + 1);
+    } else if (!use_mod && d->mact[t]) {              /* ... and off: back to the transport's place, with a short cross fade */
+        d->mact[t] = 0;
+        d->xf[t] = xfade = XF;
+    }
+    uint32_t wlen = len;                              /* the play window (TRIM) */
+    for (int q = 0; q < p->win; q++)
+        wlen >>= 1;
+    if (wlen < 64)
+        wlen = len < 64 ? len : 64;
     for (int i = i0; i < i1; i++) {
         uint32_t m = place(k, pos, len);
         int16_t *a = frame_at(t, m);
@@ -911,6 +1059,8 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
             xl += ((float)b[0] * s16 - xl) * fr;
             xr += ((float)b[1] * s16 - xr) * fr;
         }
+        if (use_mod || xfade > 0)
+            mod_read(d, t, k, p, len, wlen, use_mod, &xfade, &xl, &xr);
         if (dubbing) {
             if (save && saved < len) {
                 int16_t *u = frame_at(UNDO_AREA, m);
@@ -918,8 +1068,8 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
                 u[1] = a[1];
                 saved++;
             }
-            a[0] = sat16((float)a[0] + sl[i] * 32767.f);
-            a[1] = sat16((float)a[1] + sr[i] * 32767.f);
+            a[0] = sat16((float)a[0] * p->rptm + sl[i] * 32767.f);
+            a[1] = sat16((float)a[1] * p->rptm + sr[i] * 32767.f);
         }
         if (p->crunch) {
             if (d->hcnt[t] == 0) {
@@ -981,6 +1131,7 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
     }
     k->pos = pos;
     k->frac = fr;
+    d->xf[t] = xfade;
     if (save)
         S->undo_count = saved;
 }
@@ -991,6 +1142,8 @@ static void skip_seg(int t, int n)
     vtrack *k = &S->t[t];
     if (!k->len)
         return;
+    DSP()->mact[t] = 0;                           /* the Blooper play head starts over at the transport's place */
+    DSP()->xf[t] = 0;
     if (k->half) {
         float tot = k->frac + .5f * (float)n;
         uint32_t whole = (uint32_t)tot;
@@ -1524,6 +1677,24 @@ void looper_set_param(int t, int p, float v)
     case LOOPER_P_SEND_R:
         k->send_r = fclampf(v, 0.f, 1.f);
         break;
+    case LOOPER_P_STAB:
+        k->stab = fclampf(v, 0.f, 1.f);
+        break;
+    case LOOPER_P_RPT:
+        k->rpt = fclampf(v, 0.f, 1.f);
+        break;
+    case LOOPER_P_SPEED:
+        k->speed = fclampf(v, -1.f, 1.f);
+        break;
+    case LOOPER_P_DROP:
+        k->drop = fclampf(v, 0.f, 1.f);
+        break;
+    case LOOPER_P_TRIM:
+        k->trim = fclampf(v, 0.f, 1.f);
+        break;
+    case LOOPER_P_STOP:
+        k->stop = fclampf(v, 0.f, 1.f);
+        break;
     }
 }
 
@@ -1533,7 +1704,9 @@ float looper_get_param(int t, int p)
         return 0.f;
     vtrack *k = &S->t[t];
     return p == LOOPER_P_FILT ? k->filt : p == LOOPER_P_RES ? k->res : p == LOOPER_P_CRUNCH ? k->crunch :
-           p == LOOPER_P_DRIVE ? k->drive : p == LOOPER_P_SEND_D ? k->send_d : p == LOOPER_P_SEND_R ? k->send_r : 0.f;
+           p == LOOPER_P_DRIVE ? k->drive : p == LOOPER_P_SEND_D ? k->send_d : p == LOOPER_P_SEND_R ? k->send_r :
+           p == LOOPER_P_STAB ? k->stab : p == LOOPER_P_RPT ? k->rpt : p == LOOPER_P_SPEED ? k->speed :
+           p == LOOPER_P_DROP ? k->drop : p == LOOPER_P_TRIM ? k->trim : p == LOOPER_P_STOP ? k->stop : 0.f;
 }
 
 void looper_set_opt(int o, float v)
@@ -1574,6 +1747,12 @@ void looper_track(int t, struct looper_info *out)
     out->crunch = k->crunch;
     out->send_d = k->send_d;
     out->send_r = k->send_r;
+    out->stab = k->stab;
+    out->rpt = k->rpt;
+    out->speed = k->speed;
+    out->drop = k->drop;
+    out->trim = k->trim;
+    out->stop = k->stop;
     out->progress = k->mode == LOOPER_REC ? (float)k->rec / (float)MAX_FRAMES :
                     k->len ? (float)k->pos / (float)k->len : 0.f;
 }
@@ -1590,8 +1769,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '2';                                   /* the build: step 29 */
-        *p++ = '9';
+        *p++ = '3';                                   /* the build: step 30 */
+        *p++ = '0';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';

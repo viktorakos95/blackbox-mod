@@ -110,6 +110,8 @@ static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /
 #define TOPBAR    14             /* the row of values; its line is at d = TOPBAR + 1 */
 #define FOOT      14             /* the footer; its line is at d = hg - FOOT - 1 */
 #define REC_H     40             /* the record box */
+#define FX_N 14                                                   /* the FX tab's controls, two pages of eight: six dials, REV, HALF; STAB RPT SPEED DROP TRIM STOP */
+#define FX_PAGE(c) ((c) >> 3)
 #define BTN       34             /* the bottom row: the pan dial and the REV / MUTE buttons */
 #define DIAL      34             /* width of the pan dial's box */
 
@@ -408,7 +410,10 @@ int looper_page_hit(int x, int d, int *track, float *val)
         int th = fx_tile_h(&L);
         if (d >= y0 && d < y0 + 4 * (th + 1) && xx >= 0 && xx < 2 * (DIAL + 1) && (d - y0) % (th + 1) < th &&
             xx % (DIAL + 1) < DIAL) {
-            *val = (float)(((d - y0) / (th + 1)) * 2 + xx / (DIAL + 1));
+            int c = FX_PAGE(P->fx_sel[0]) * 8 + ((d - y0) / (th + 1)) * 2 + xx / (DIAL + 1);
+            if (c >= FX_N)
+                return Z_NONE;
+            *val = (float)c;
             return Z_FX;
         }
         int y1 = y0 + 4 * (th + 1), hb = fx_btn_h(&L);
@@ -648,16 +653,24 @@ static char *put_pct(char *p, float v)
     return put_uint(p, (unsigned)(n < 0 ? 0 : n > 100 ? 100 : n));
 }
 
+static int fxp(int c)                                             /* control -> engine parameter (6 and 7 are the REV / HALF switches) */
+{
+    return c >= 8 ? c - 2 : c;
+}
+
 static float fx_value(const struct looper_info *k, int param)
 {
-    if (param >= 6)
+    if (param == 6 || param == 7)
         return (param == 6 ? k->reversed : k->half) ? 1.f : 0.f;
+    if (param >= 8)
+        return param == 8 ? k->stab : param == 9 ? k->rpt : param == 10 ? k->speed : param == 11 ? k->drop :
+               param == 12 ? k->trim : k->stop;
     return param == LOOPER_P_FILT ? k->filt : param == LOOPER_P_RES ? k->res : param == LOOPER_P_CRUNCH ? k->crunch :
            param == LOOPER_P_DRIVE ? k->drive : param == LOOPER_P_SEND_D ? k->send_d : k->send_r;
 }
 
-#define FX_N 8                                                    /* the FX tab's controls: six dials, then REV and HALF (on / off by turning) */
-static const char *const fx_name[FX_N] = {"FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB", "REV", "HALF"};
+static const char *const fx_name[FX_N] = {"FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB", "REV", "HALF",
+                                          "STAB", "RPT", "SPEED", "DROP", "TRIM", "STOP"};
 
 /* The text a knob shows on top: "LVL 0.0dB" / the pan line / the selected FX parameter's value. */
 static void fx_text(char *b, int param, float v)
@@ -666,8 +679,26 @@ static void fx_text(char *b, int param, float v)
     for (const char *s = fx_name[param]; *s; s++)
         *p++ = *s;
     *p++ = ' ';
-    if (param >= 6) {
+    if (param == 6 || param == 7) {
         const char *o = v > .5f ? "ON" : "OFF";
+        for (; *o; o++)
+            *p++ = *o;
+    } else if (param == 10) {                                     /* SPEED: the factor */
+        float f = v >= 0.f ? 1.f + v : 1.f + 2.f * v;
+        if (f < 0.f)
+            *p++ = '-';
+        int n = (int)((f < 0.f ? -f : f) * 10.f + .5f);
+        p = put_uint(p, (unsigned)(n / 10));
+        *p++ = '.';
+        p = put_uint(p, (unsigned)(n % 10));
+        *p++ = 'x';
+    } else if (param == 12) {                                     /* TRIM: the part of the loop that plays */
+        int n = (int)(v * 4.f + .5f);
+        const char *o = n <= 0 ? "OFF" : n == 1 ? "1/2" : n == 2 ? "1/4" : n == 3 ? "1/8" : "1/16";
+        for (; *o; o++)
+            *p++ = *o;
+    } else if (param == 13) {
+        const char *o = v < .02f ? "OFF" : v < .5f ? "FADE" : "TAPE";
         for (; *o; o++)
             *p++ = *o;
     } else if (param == LOOPER_P_FILT) {
@@ -808,10 +839,14 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
     frame(x + 2, L->sel_y, w - 4, 13, sc, 1);
     text_c(x + 2, L->sel_y + 3, w - 4, P->sel == t ? "SELECTED" : "SELECT", P->sel == t ? C_PINK : C_GREY, 1);
     int y0 = fx_top(L), th = fx_tile_h(L);
-    for (int p = 0; p < FX_N; p++) {                              /* the pink box is one control for all four tracks */
+    int pg = FX_PAGE(P->fx_sel[0]);
+    for (int j = 0; j < 8; j++) {                                 /* the pink box is one control for all four tracks */
+        int p = pg * 8 + j;
+        if (p >= FX_N)
+            break;
         float v = fx_value(k, p);
-        dial_h(x + 2 + (p & 1) * (DIAL + 1), y0 + (p >> 1) * (th + 1), th, fx_name[p], p == LOOPER_P_FILT ? (v + 1.f) * .5f : v,
-               P->fx_sel[0] == p, p >= 6 && v > .5f);
+        dial_h(x + 2 + (j & 1) * (DIAL + 1), y0 + (j >> 1) * (th + 1), th, fx_name[p],
+               p == LOOPER_P_FILT || p == 10 ? (v + 1.f) * .5f : v, P->fx_sel[0] == p, (p == 6 || p == 7) && v > .5f);
     }
     int y1 = y0 + 4 * (th + 1), bw = (w - 4) / 2 - 1, hb = fx_btn_h(L), ty = (hb - 8) / 2;
     int mc = !live ? C_RAIL : k->muted ? C_RED : C_GREEN;
@@ -1299,13 +1334,13 @@ void looper_page_down(uint8_t *view, const int *pt)
         int p = (int)(v + .5f);
         int was = P->fx_sel[0] == p;
         set_fx_sel(p);                                            /* a tap moves the pink box (for all four tracks) */
-        if (p >= 6) {
+        if (p == 6 || p == 7) {
             if (was)                                              /* REV / HALF: a tap on the selected one switches it */
                 looper_event(t, p == 6 ? LOOPER_EV_REVERSE : LOOPER_EV_HALF);
         } else {
-            P->drag_param = (uint8_t)p;
+            P->drag_param = (uint8_t)fxp(p);
             P->drag_y = (int16_t)d;
-            P->drag_v0 = (int16_t)(fx_of(t, p) * 1000.f);
+            P->drag_v0 = (int16_t)(fx_of(t, fxp(p)) * 1000.f);
             P->pressed = P_DIAL;
         }
     } else if (zone == Z_SEL) {
@@ -1348,7 +1383,7 @@ void looper_page_move(uint8_t *view, const int *pt)
     if (P->pressed == P_FADER) {
         looper_set_level(P->track, gain_of((float)(L.bars_y + L.bars_h - d) / (float)L.bars_h));
     } else if (P->pressed == P_DIAL) {                            /* 80 px of travel for the full range */
-        float span = P->drag_param == LOOPER_P_FILT ? 2.f : 1.f;
+        float span = P->drag_param == LOOPER_P_FILT || P->drag_param == LOOPER_P_SPEED ? 2.f : 1.f;
         set_fx(P->track, P->drag_param, (float)P->drag_v0 * .001f + (float)(P->drag_y - d) * span / 80.f);
     } else {
         float v = (float)(x - OPT_X) / (float)SLIDER_W;
@@ -1391,12 +1426,13 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
                     looper_set_opt(op_s[0], looper_get_opt(op_s[0]) + step);
             } else if (P->mode == M_FX) {
                 int p = P->fx_sel[0];
-                if (p >= 6) {                                             /* REV / HALF: turn right = on, left = off */
+                if (p == 6 || p == 7) {                                   /* REV / HALF: turn right = on, left = off */
                     int on = looper_info_of(knob, p);
                     if ((counts > 0) != on)
                         looper_event(knob, p == 6 ? LOOPER_EV_REVERSE : LOOPER_EV_HALF);
                 } else {
-                    set_fx(knob, p, fx_of(knob, p) + step * (p == LOOPER_P_FILT ? 2.f : 1.f));
+                    int q = fxp(p);
+                    set_fx(knob, q, fx_of(knob, q) + step * (q == LOOPER_P_FILT || q == LOOPER_P_SPEED ? 2.f : 1.f));
                 }
             } else if (P->mode == M_MAIN && (((P->pan_sel >> knob) & 1) || P->info_on)) {
                 looper_set_pan(knob, k.pan + step * 2.f);

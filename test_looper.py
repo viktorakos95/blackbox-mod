@@ -26,7 +26,7 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 216, 104                                   # engine state: tracks, track size
+T0, TSIZE = 216, 128                                   # engine state: tracks, track size
 LEN, POS, OK, UNDO_T = 12, 16, 8, 44                 # master length, master playhead
 O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
 T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
@@ -894,7 +894,17 @@ fx1 = list(e.uc.mem_read(PAGE + 77, 4))
 check("INFO on the FX tab moves the one pink box on (drive -> dly) for all tracks", fx1 == [4, 4, 4, 4] and e.r8(PAGE + 7) == 0, fx1)
 e.uc.mem_write(PAGE + 77, bytes([7, 7, 7, 7]))
 button(0, msg_id=0xC)
-check("... and after HALF it wraps to FILT", list(e.uc.mem_read(PAGE + 77, 4)) == [0, 0, 0, 0], list(e.uc.mem_read(PAGE + 77, 4)))
+check("... after HALF comes STAB (the second page)", list(e.uc.mem_read(PAGE + 77, 4)) == [8, 8, 8, 8], list(e.uc.mem_read(PAGE + 77, 4)))
+e.uc.mem_write(PAGE + 77, bytes([13, 13, 13, 13]))
+button(0, msg_id=0xC)
+check("... and after STOP it wraps to FILT", list(e.uc.mem_read(PAGE + 77, 4)) == [0, 0, 0, 0], list(e.uc.mem_read(PAGE + 77, 4)))
+e.uc.mem_write(PAGE + 77, bytes([8, 8, 8, 8]))
+h7 = hit(1 + 78 * 1 + 2 + 10, y0 + 10)
+h8 = hit(1 + 78 * 1 + 2 + 10 + 35, y0 + 35 + 10)
+check("second page: the first tiles are STAB and (row 2, column 2) DROP", (h7[0], int(h7[2])) == (7, 8) and (h8[0], int(h8[2])) == (7, 11), (h7, h8))
+knob(1, 800)
+check("second page: track 2's knob raises its STAB (+10 %)", abs(tr(1, O_SR + 4, "f") - 0.1) < 0.02, tr(1, O_SR + 4, "f"))
+e.uc.mem_write(PAGE + 77, bytes([0, 0, 0, 0]))
 tab(0)
 
 # ---- live repaint: the audio task's poke posts a message, the GUI task paints

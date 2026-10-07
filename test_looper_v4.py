@@ -25,11 +25,11 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 216, 104                                   # engine state: tracks, track size
+T0, TSIZE = 216, 128                                   # engine state: tracks, track size
 LEN, POS, OK, UNDO_T = 12, 16, 8, 44                 # master length, master playhead
 O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
 T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
-T_PHASE, T_DOWN = 100, 28
+T_PHASE, T_DOWN = 124, 28
 REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE, HALF, UNDO = range(7)
 MAXF = PER * 16384
 EMPTY, RECM, PLAY, DUB, CLEARING, UNDOING = range(6)
@@ -198,7 +198,7 @@ def tone(k):                                   # a signal that is easy to follow
 
 
 O_LEN, O_SYNC, O_QUANT, O_SRC, O_DTIME, O_DFB, O_DRET, O_RSIZE, O_RRET, O_GAIN, O_ROUTE, O_FULL = range(12)
-P_FILT, P_RES, P_CRUNCH, P_DRIVE, P_SD, P_SR = range(6)
+P_FILT, P_RES, P_CRUNCH, P_DRIVE, P_SD, P_SR, P_STAB, P_RPT, P_SPEED, P_DROP, P_TRIM, P_STOP = range(12)
 
 # ---------------------------------------------------------------- length modes
 boot()
@@ -599,6 +599,83 @@ ev(0, HALF); blocks(1)
 check("half speed cannot be switched on mid-overdub", tr(0, T_HALF) == 0)
 ev(0, REC_UP); blocks(70)
 
+# ---------------------------------------------------------------- Blooper controls: speed, trim, stop, drop, stability, repeats
+def flat(n):
+    out = []
+    for _ in range(n):
+        _, o = block([0.0] * N)
+        out += o[0]
+    return out
+
+def slope(v):
+    d = [b - a for a, b in zip(v, v[1:]) if abs(b - a) < 0.1]
+    m = sorted(abs(x) for x in d)
+    return (m[len(m) // 2] if m else 0.0), sum(d) / max(1, len(d))
+
+blocks(5)
+base_abs, base_sgn = slope(flat(4))
+check("blooper: plain loop first (rising saw)", base_sgn > 0 and base_abs > 0, (base_abs, base_sgn))
+param(0, P_SPEED, 1.0)                           # twice as fast
+blocks(3)
+sa, ss = slope(flat(4))
+check("SPEED +1: the play head runs twice as fast", abs(sa / base_abs - 2.0) < 0.15 and ss > 0, (sa, base_abs))
+param(0, P_SPEED, -1.0)                          # backwards
+blocks(3)
+sa, ss = slope(flat(4))
+check("SPEED -1: the loop plays backwards", ss < 0 and abs(sa / base_abs - 1.0) < 0.15, (sa, ss, base_abs))
+param(0, P_SPEED, 0.0)
+blocks(3)
+sa, ss = slope(flat(4))
+check("SPEED 0: normal speed again", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
+param(0, P_TRIM, 0.25)                           # 1/2 of the loop
+blocks(3)
+v = flat(70)
+half_len = 30 * N
+per = sum(abs(v[i] - v[i + half_len]) for i in range(200, 4000)) / 3800
+check("TRIM 1/2: the play head repeats every half loop", per < 0.01, per)
+param(0, P_TRIM, 0.0)
+blocks(3)
+param(0, P_STOP, 1.0)                            # tape stop
+blocks(420)
+v = flat(2)
+check("STOP (tape): the play head comes to a halt", max(v) - min(v) < 0.02, max(v) - min(v))
+param(0, P_STOP, 0.0)
+blocks(300)
+sa, ss = slope(flat(4))
+check("STOP released: plays again", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
+param(0, P_STOP, 0.3)                            # fade
+blocks(400)
+v = flat(2)
+check("STOP (fade): silent", max(abs(x) for x in v) < 0.01, max(abs(x) for x in v))
+param(0, P_STOP, 0.0)
+blocks(400)
+param(0, P_DROP, 1.0)
+quiet = 0
+for _ in range(300):
+    _, o = block([0.0] * N)
+    if max(abs(x) for x in o[0]) < 0.02:
+        quiet += 1
+check("DROP: some blocks are silent, not all", 20 < quiet < 280, quiet)
+param(0, P_DROP, 0.0)
+blocks(60)
+param(0, P_STAB, 1.0)
+blocks(10)
+v = flat(6)
+check("STAB: finite and bounded, and different from the plain saw", all(x == x and abs(x) < 2 for x in v) and slope(v)[0] != base_abs, slope(v))
+param(0, P_STAB, 0.0)
+blocks(80)
+sa, ss = slope(flat(4))
+check("STAB off: plain again", abs(sa / base_abs - 1.0) < 0.1, (sa, base_abs))
+if mode(0) == DUB:
+    ev(0, REC_DOWN); blocks(5)
+ev(0, REC_UP); blocks(5)
+v0 = flat(60); peak0 = sum(abs(x) for x in v0) / len(v0)
+param(0, P_RPT, 0.5)
+ev(0, REC_DOWN); blocks(61)                       # one pass of overdub (silence): the old loop is kept at 0.2 + 0.8 * 0.5
+ev(0, REC_UP); blocks(70)
+param(0, P_RPT, 1.0)
+v1 = flat(60); peak1 = sum(abs(x) for x in v1) / len(v1)
+check("RPT 50 %: an overdub pass fades the old loop to about 60 %", 0.5 < peak1 / peak0 < 0.75, (peak0, peak1))
 # ---------------------------------------------------------------- sends
 param(0, P_SD, 1.0)
 param(0, P_SR, 0.0)
