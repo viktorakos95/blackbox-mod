@@ -26,8 +26,8 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 136, 100                                   # engine state: tracks, track size
-LEN, POS, OK, UNDO_T = 12, 16, 8, 40                 # master length, master playhead
+T0, TSIZE = 140, 100                                   # engine state: tracks, track size
+LEN, POS, OK, UNDO_T = 12, 16, 8, 44                 # master length, master playhead
 O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
 T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
 REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE, HALF, UNDO = range(7)
@@ -95,8 +95,8 @@ def boot():
     e.uc.mem_write(0xC0000000, b"\x11" * 0x100)
     log.clear()
     e.call("looper_boot", ENGINE, count=200_000_000)
-    e.uc.mem_write(STATE + 88 + 9 * 4, struct.pack("<f", 0.0))       # loop make-up gain off: unity, as the checks expect
-    e.uc.mem_write(STATE + 88 + 11 * 4, struct.pack("<f", 0.0))      # not full screen: the geometry the checks expect
+    e.uc.mem_write(STATE + 92 + 9 * 4, struct.pack("<f", 0.0))       # loop make-up gain off: unity, as the checks expect
+    e.uc.mem_write(STATE + 92 + 11 * 4, struct.pack("<f", 0.0))      # not full screen: the geometry the checks expect
 
 
 def block(l, r=None, base=0.0):
@@ -604,7 +604,7 @@ ROW0 = 16 + 3                                                  # first row, from
 def row(r):
     return ROW0 + r * 22 + 8
 def optv(i):
-    return struct.unpack("<f", e.uc.mem_read(STATE + 88 + 4 * i, 4))[0]
+    return struct.unpack("<f", e.uc.mem_read(STATE + 92 + 4 * i, 4))[0]
 check("SETUP: LENGTH row choices (FOLLOW / MULT / FREE) and the SYNC row", [hit(84 + 10, row(0))[:2], hit(84 + 52 + 10, row(0))[:2], hit(84 + 104 + 10, row(0))[:2], hit(84 + 10, row(1))[:2]] == [(9, 0), (9, 0), (9, 0), (9, 1)], [hit(84 + 10, row(0)), hit(84 + 62, row(0)), hit(84 + 114, row(0)), hit(94, row(1))])
 check("SETUP: the choice index is the value", [hit(94, row(0))[2], hit(146, row(0))[2], hit(198, row(0))[2]] == [0, 1, 2])
 touch("down", 84 + 52 + 10, row(0))
@@ -635,7 +635,7 @@ blocks(70)
 check("...and they end up empty", all(mode(t) == EMPTY for t in range(4)))
 tab(3)
 f = draw(0)
-check("MORE tab shows its rows and buttons (text, frames, the LEARN buttons)", len(pixels) > 300 and any(x[2] == 110 and x[3] == 1 for x in f), (len(pixels),))
+check("MORE tab shows its rows and buttons (text, frames, the LEARN buttons)", len(pixels) > 300 and any(x[2] == 96 and x[3] == 1 for x in f), (len(pixels),))
 check("MORE tab drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
 touch("down", 84 + 100, row(2))
 touch("move", 84 + 112, row(2))
@@ -651,7 +651,7 @@ touch("up", 84 + 60, row(0))
 check("MORE: FX ROUTE choice OWN (1)", optv(10) == 1.0)
 
 opt_sync_off = struct.pack("<f", 0.0)
-for off in (88, 92, 100, 88 + 40):
+for off in (92, 96, 104, 92 + 40):
     e.uc.mem_write(STATE + off, opt_sync_off)
 tab(0)
 f = draw(0)
@@ -717,14 +717,95 @@ e.uc.mem_write(APP + 0x8CA4, b"\x25")
 button(6)
 check("on other screens the FX button is the stock one", appmsg == [(0xF9, 6)], appmsg)
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
-e.uc.mem_write(STATE + 88 + 11 * 4, struct.pack("<f", 1.0))            # FULL SCREEN on
+e.uc.mem_write(STATE + 92 + 11 * 4, struct.pack("<f", 1.0))            # FULL SCREEN on
 e.call("looper_page_enter", VIEW)
 f = draw(0)
-check("full screen: the page grows upward over the screen's own top bar (240 high, same bottom edge)", f[0][:4] == (3, 0, 314, 240), f[0][:4])
+check("full screen: the page grows upward over the screen's own top bar (240 high, same bottom edge)", f[0][:4] == (0, 0, 320, 240), f[0][:4])
 check("... and still draws inside the screen", all(x[1] >= 0 and x[1] + x[3] <= 240 for x in f))
-e.uc.mem_write(STATE + 88 + 11 * 4, struct.pack("<f", 0.0))
+e.uc.mem_write(STATE + 92 + 11 * 4, struct.pack("<f", 0.0))
 e.call("looper_page_enter", VIEW)
 draw(0)
+# ---- the drawing guard and the touch hit test
+GB, GD, SCR = 0x2405FF58, 0x2405FF5C, 0x24028D2C
+def blocked():
+    e.call("looper_draw_blocked")
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+e.uc.mem_write(SCR, b"\x2f")
+e.uc.mem_write(SOLO + 6, b"\x01")
+e.call("looper_guard", 0)
+check("guard off: nothing is dropped", blocked() == 0)
+e.call("looper_guard", 1)
+check("guard on, page showing on the mixer screen: the stock drawing is dropped", blocked() == 1)
+e.call("looper_guard_drawing", 1)
+check("... except the page's own drawing", blocked() == 0)
+e.call("looper_guard_drawing", 0)
+e.uc.mem_write(SCR, b"\x25")
+check("on another screen nothing is dropped, whatever the flag says", blocked() == 0)
+e.uc.mem_write(SCR, b"\x2f")
+e.uc.mem_write(SOLO + 6, b"\x00")
+check("page not showing (Looper flag off): nothing is dropped", blocked() == 0)
+e.uc.mem_write(SOLO + 6, b"\x01")
+e.uc.mem_write(GB, b"\xff\xff\xff\xff")
+check("garbage in the flag (patch RAM is not cleared at boot): nothing is dropped", blocked() == 0)
+e.call("looper_guard", 0)
+# hit test: stock logic reproduced (widget +0x30 hidden, children at +0x18 / next +0x20, vtable +0xc rect, +0x1c check)
+HW, HC, HV, HCV = 0x3003E000, 0x3003E200, 0x3003E400, 0x3003E500
+e.w32(HW, HV); e.w32(HC, HCV)
+e.w32(HW + 0x18, HC); e.w32(HC + 0x20, 0)
+SA, SB, SC = 0x080EE100, 0x080EE110, 0x080EE120
+e.w32(HV + 0xC, SB | 1); e.w32(HV + 0x1C, SC | 1); e.w32(HCV + 0x28, SA | 1)
+hlog = []
+child_r, rect_r, chk_r = [0], [1], [5]
+def s_child():
+    hlog.append("child")
+    if child_r[0]:
+        e.w32(e.arg(2), HC)
+    e.uc.reg_write(A.UC_ARM_REG_R0, child_r[0])
+def s_rect():
+    hlog.append("rect"); e.uc.reg_write(A.UC_ARM_REG_R0, rect_r[0])
+def s_chk():
+    hlog.append("chk"); e.uc.reg_write(A.UC_ARM_REG_R0, chk_r[0])
+e.stub(SA, s_child); e.stub(SB, s_rect); e.stub(SC, s_chk)
+def hit_w(hidden=0):
+    e.uc.mem_write(HW + 0x30, bytes([hidden]))
+    e.w32(0x3003E800, 0)
+    hlog.clear()
+    e.call("looper_basehit", HW, 0x3003E900, 0x3003E800)
+    return e.uc.reg_read(A.UC_ARM_REG_R0), e.r32(0x3003E800)
+child_r[0], rect_r[0], chk_r[0] = 1, 1, 5
+r = hit_w()
+check("hit test: a child that takes the point wins, the widget itself is not asked", r == (1, HC) and hlog == ["child"], (r, hlog))
+child_r[0] = 0
+r = hit_w()
+check("hit test: no child: the widget's own rectangle and check decide, the answer is the widget (value of the check)", r == (5, HW) and hlog == ["child", "rect", "chk"], (r, hlog))
+rect_r[0] = 0
+r = hit_w()
+check("hit test: outside the rectangle: 0", r[0] == 0 and hlog == ["child", "rect"], (r, hlog))
+rect_r[0], chk_r[0] = 1, 0
+r = hit_w()
+check("hit test: the check refuses: 0", r[0] == 0 and hlog == ["child", "rect", "chk"], (r, hlog))
+chk_r[0] = 5
+r = hit_w(hidden=1)
+check("hit test: a hidden widget is never hit", r[0] == 0 and not hlog, (r, hlog))
+e.call("looper_guard", 1)
+e.w32(0x2405FF64, 0) if False else None
+r = hit_w()
+check("hit test while the page owns the screen: always the mixer view (nothing behind the page can take a touch)", r == (1, VIEW) and not hlog, (r, hlog))
+e.call("looper_guard", 0)
+# the REC button default (message 0xf4) and its debounce
+blocks(30)
+tab(3)
+e.call("looper_page_enter", VIEW)
+appmsg.clear()
+before = list(e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 2))
+e.uc.mem_write(MSG, struct.pack("<H", 0xF4) + bytes(10) + struct.pack("<i", 8))
+e.uc.mem_write(PAGE + 97, b"\x01"); e.uc.mem_write(PAGE + 98, b"\x08"); e.uc.mem_write(PAGE + 100, struct.pack("<H", 0xF4))
+e.call("looper_app_msg", APP, MSG)
+e.call("looper_app_msg", APP, MSG)
+after = list(e.uc.mem_read(STATE + T0 + TSIZE * 1 + 8, 2))
+check("REC button (0xf4, 8) is preset: one tap on the selected track; the release right after is ignored", after[0] == before[0] + 1 and not appmsg, (before, after, appmsg))
+tab(0)
+
 # leaving the page puts the child widgets back
 e.call("solo_set_mode", VIEW, 1)
 check("leaving the page: the children are restored (the one the firmware hid stays hidden)",

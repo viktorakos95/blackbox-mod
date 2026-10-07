@@ -22,3 +22,55 @@ looper_stage_thunk:
     pop     {r0, r1, r2, r3, r12, lr}
     ldrb.w  r3, [r5, #0xd60]
     bx      lr
+
+/*
+ * Drawing guard for the Looper page (looper_draw_blocked, solo.c): while the page shows full screen, everything the
+ * stock firmware draws is dropped, so the screen's own top bar and the mixer cells' widgets cannot show through or on
+ * top of the page. Each stub replaces the first instructions of one low-level drawing primitive, asks
+ * looper_draw_blocked, and either returns at once or runs the displaced instructions and continues the primitive.
+ * Hooks: 0x0808f920 rectangle fill, 0x0808f524 pixel, 0x0808f624, 0x0808f4a4, 0x0808f740 (the other line / blit forms).
+ */
+    .macro GUARD name, resume
+    .global \name
+    .thumb_func
+    .type \name, %function
+\name:
+    push    {r0, r1, r2, r3, r12, lr}     /* 24 bytes: the stack stays 8-byte aligned for the C call */
+    bl      looper_draw_blocked
+    str     r0, [sp, #16]                   /* the answer comes back in r12's slot */
+    pop     {r0, r1, r2, r3, r12, lr}
+    cmp     r12, #0
+    bne     9f
+    .endm
+
+    .macro GUARD_END resume
+    ldr     r12, =\resume
+    bx      r12
+9:  bx      lr
+    .ltorg
+    .endm
+
+    GUARD   guard_fill, 0x0808f925
+    push    {r4, r5, lr}
+    sub     sp, #0x14
+    GUARD_END 0x0808f925
+
+    GUARD   guard_pixel, 0x0808f529
+    push    {r4, r5, r6, lr}
+    mov     r4, r0
+    GUARD_END 0x0808f529
+
+    GUARD   guard_f624, 0x0808f629
+    push    {r4, r5, r6, r7, lr}
+    mov     r6, r2
+    GUARD_END 0x0808f629
+
+    GUARD   guard_f4a4, 0x0808f4a9
+    push    {r3, lr}
+    mov     r2, r1
+    GUARD_END 0x0808f4a9
+
+    GUARD   guard_f740, 0x0808f747
+    push    {r4, lr}
+    ldrb.w  lr, [sp, #8]
+    GUARD_END 0x0808f747

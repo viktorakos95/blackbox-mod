@@ -247,6 +247,24 @@ own button, full screen.
 - Not done: Chase Bliss Habit / Blooper style effects (needs a design: Habit = a micro looping delay with
   collage-like playback; Blooper = per-loop modulation, feedback, stability, speed).
 
+## Steps 10-12 (hardware photos)
+
+Photos showed: the cyan boxes are the mixer cells' 16 px child widgets (one band per cell row), drawn after the page,
+whatever the hidden flags say; the screen's own top bar ("1:1 Seq 1") too; FULL SCREEN does cover the 16 px bar's
+area. REC button = message 0xf4 (shown "244:8"); INFO = 0xc.
+- **Drawing guard**: while the page is up, full screen, on the mixer screen (app + 0x8ca4 == 0x2f) and the Looper
+  flag set, the five low-level drawing primitives (rect fill 0x0808f920, pixel 0x0808f524, 0x0808f624, 0x0808f4a4,
+  0x0808f740) return at once unless the page itself is drawing. Flags in patch RAM 0x2405ff58 / ff5c (exact magic
+  words: patch RAM is not zeroed at boot). Stubs in looper_thunk.S.
+- **Touch hit test**: FUN_080aeb5e (the base widget's hit test, shared by every class) is replaced by looper_basehit,
+  an exact C copy of it that, while the page owns the screen, answers "the mixer view" for any widget: no stock widget
+  can take a touch meant for the page (edge taps).
+- REC button preset (0xf4), one tap on the selected track, repeats within 20 blocks ignored. STOCK FX > on MORE hands
+  the learned FX button message to the stock handler (opens the stock FX page).
+- Half speed keeps the master's timeline: it is read at T / 2, T = mcount x mlen + mpos (frames since the loop
+  started or the transport restarted), so a half speed track stays in step across master loops.
+- FX tab: the button rows share the height the dials leave.
+
 ## Redesign (asked for)
 
 - 4 fader strips like the EHX 45000; each track's encoder moves its fader. Extra small knobs per strip (pan,

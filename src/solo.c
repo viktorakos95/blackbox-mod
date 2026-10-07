@@ -313,3 +313,66 @@ void solo_touch_move(uint8_t *view, void *pt, void *arg)
         return;
     fw_touch_move(view, pt, arg);
 }
+
+/* --- Looper page: keep the stock screen out of its way */
+
+#define GUARD_BLOCK (*(volatile uint32_t *)0x2405ff58u)    /* patch RAM: exactly BLK1 = the page owns the screen */
+#define GUARD_DRAW  (*(volatile uint32_t *)0x2405ff5cu)    /* exactly DRW1 = the page itself is drawing */
+#define BLK1        0x424c4b31u
+#define DRW1        0x44525731u
+#define APP_SCREEN_ADDR (*(volatile uint8_t *)(0x24020088u + 0x8ca4u))
+
+void looper_guard(int on)
+{
+    GUARD_BLOCK = on ? BLK1 : 0;
+}
+
+void looper_guard_drawing(int on)
+{
+    GUARD_DRAW = on ? DRW1 : 0;
+}
+
+/* The page owns the screen right now (it is showing, full screen, on the mixer screen). */
+static int page_owns_screen(void)
+{
+    return GUARD_BLOCK == BLK1 && S->magic == MAGIC && S->looper && S->view && APP_SCREEN_ADDR == SCREEN_MUTE;
+}
+
+/* From the drawing primitive stubs (looper_thunk.S): 1 = drop this stock draw. Must stay tiny: it runs per pixel. */
+int looper_draw_blocked(void)
+{
+    return GUARD_DRAW != DRW1 && page_owns_screen();
+}
+
+typedef int (*whit_fn)(uint8_t *w, const int *pt, uint8_t **out);
+typedef int (*rect_fn)(uint8_t *w, const int *pt);
+typedef int (*chk_fn)(uint8_t *w);
+
+/*
+ * Replaces the base widget's touch hit test (FUN_080aeb5e, patched in at its entry; every widget class shares it):
+ * the widget at the point, children first. The stock one is reproduced here exactly. While the Looper page owns the
+ * screen the answer is always the mixer view, so no widget of the stock screen (the cyan boxes, the top bar) can take a
+ * touch that is meant for the page, whatever part of the screen it is on.
+ */
+int looper_basehit(uint8_t *w, const int *pt, uint8_t **out)
+{
+    if (page_owns_screen() && S->view[VIEW_MUTE]) {
+        *out = S->view;
+        return 1;
+    }
+    if (w[0x30])
+        return 0;
+    for (uint8_t *c = *(uint8_t **)(w + 0x18); c; c = *(uint8_t **)(c + 0x20)) {
+        int r = (*(whit_fn *)(*(uint8_t **)c + 0x28))(c, pt, out);
+        if (r)
+            return r;
+    }
+    int r = (*(rect_fn *)(*(uint8_t **)w + 0xc))(w, pt);
+    if (!r)
+        return 0;
+    r = (*(chk_fn *)(*(uint8_t **)w + 0x1c))(w);
+    if (!r)
+        return 0;
+    *out = w;
+    return r;
+}

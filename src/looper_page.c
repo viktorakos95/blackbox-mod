@@ -54,6 +54,8 @@ typedef void (*msg_fn)(void *obj, const uint16_t *msg);
 #define fw_app_msg  ((msg_fn)FN(0x080a2e60))               /* app message dispatch */
 
 uint8_t *solo_looper_view(void);
+void looper_guard(int on);
+void looper_guard_drawing(int on);
 static void rehide(uint8_t *view);
 static void widen(uint8_t *view);
 
@@ -135,6 +137,7 @@ struct page {
     uint16_t fx_id, rect_on;
     uint8_t sel, rec_set, rec_idx, learn_rec;       /* the selected track; the learned hardware REC button */
     uint16_t rec_id, touches;
+    uint32_t rec_t;
     int16_t touch_x, touch_y;
     uint32_t clear_t;                               /* when CLEAR ALL was asked */
     int32_t vrect[4];                               /* the mixer view's own rectangle, while the page widens it */
@@ -201,8 +204,9 @@ static void geometry(uint8_t *view)
         P->x0 = x_lo;
         P->w = x_hi - x_lo;
     } else {
-        P->x0 = MARGIN;
-        P->w = ws - 2 * MARGIN;
+        int full = looper_get_opt(LOOPER_O_FULL) > .5f;
+        P->x0 = full ? 0 : MARGIN;                                /* full screen: right to the edges */
+        P->w = full ? ws : ws - 2 * MARGIN;
     }
 }
 
@@ -297,6 +301,13 @@ static int fx_top(const struct lay *L)
     return L->rec_y + L->rec_h + 4;
 }
 
+/* FX tab: height of the two button rows (REV | HALF, MUTE | UNDO): they share what the dials leave. */
+static int fx_btn_h(const struct lay *L)
+{
+    int y1 = fx_top(L) + 3 * (BTN + 1), h = (L->col_y + L->col_h - y1 - 3) / 2;
+    return h < 14 ? 14 : h > 34 ? 34 : h;
+}
+
 /* Which control is at x pixels from the left and d from the top. For a fader *val is its gain there; for a tab
  * *track is the tab, for an FX dial *val its parameter, for a SETUP choice *track is the option and *val the choice,
  * for a slider *val is 0..1. */
@@ -322,11 +333,12 @@ int looper_page_hit(int x, int d, int *track, float *val)
         if (d < row_d(&L, 0) || r > OPT_ROWS || (d - row_d(&L, 0)) % ROW_H >= ROW_H - 3)
             return Z_NONE;
         if (r == OPT_ROWS) {
-            if (x >= OPT_X && x < OPT_X + 110)
-                return P->mode == M_SETUP ? Z_CLEAR : (*track = 99, Z_OPTC);          /* CLEAR ALL / LEARN FX */
-            if (P->mode == M_MORE && x >= OPT_X + 116 && x < OPT_X + 226) {
-                *track = 98;
-                return Z_OPTC;                                    /* LEARN REC */
+            if (P->mode == M_SETUP)
+                return x >= OPT_X && x < OPT_X + 110 ? Z_CLEAR : Z_NONE;
+            int b = (x - 6) / 102;                                /* three buttons, 96 wide: LEARN FX, LEARN REC, STOCK FX */
+            if (x >= 6 && b < 3 && (x - 6) % 102 < 96) {
+                *track = 99 - b;
+                return Z_OPTC;
             }
             return Z_NONE;
         }
@@ -359,10 +371,10 @@ int looper_page_hit(int x, int d, int *track, float *val)
             *val = (float)(((d - y0) / (BTN + 1)) * 2 + xx / (DIAL + 1));
             return Z_FX;
         }
-        int y1 = y0 + 3 * (BTN + 1);
-        if (d >= y1 && d < y1 + 17)
+        int y1 = y0 + 3 * (BTN + 1), hb = fx_btn_h(&L);
+        if (d >= y1 && d < y1 + hb)
             return xx < (L.cw - 4) / 2 ? Z_REV : Z_HALF;
-        if (d >= y1 + 18 && d < y1 + 35)
+        if (d >= y1 + hb + 1 && d < y1 + 2 * hb + 1)
             return xx < (L.cw - 4) / 2 ? Z_MUTE : Z_UNDO;
         return Z_NONE;
     }
@@ -732,17 +744,17 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
         dial(x + 2 + (p & 1) * (DIAL + 1), y0 + (p >> 1) * (BTN + 1), fx_name[p], p == LOOPER_P_FILT ? (v + 1.f) * .5f : v,
              P->fx_sel[t] == p);
     }
-    int y1 = y0 + 3 * (BTN + 1), bw = (w - 4) / 2 - 1;
+    int y1 = y0 + 3 * (BTN + 1), bw = (w - 4) / 2 - 1, hb = fx_btn_h(L), ty = (hb - 8) / 2;
     int rc = k->reversed ? C_YELLOW : C_GREY, hc = k->half ? C_YELLOW : C_GREY;
-    frame(x + 2, y1, bw, 17, rc, 1);
-    text_c(x + 2, y1 + 4, bw, "REV", k->reversed ? C_YELLOW : C_LIGHT, 1);
-    frame(x + 3 + bw, y1, bw, 17, hc, 1);
-    text_c(x + 3 + bw, y1 + 4, bw, "HALF", k->half ? C_YELLOW : C_LIGHT, 1);
+    frame(x + 2, y1, bw, hb, rc, 1);
+    text_c(x + 2, y1 + ty, bw, "REV", k->reversed ? C_YELLOW : C_LIGHT, 1);
+    frame(x + 3 + bw, y1, bw, hb, hc, 1);
+    text_c(x + 3 + bw, y1 + ty, bw, "HALF", k->half ? C_YELLOW : C_LIGHT, 1);
     int mc = !live ? C_RAIL : k->muted ? C_RED : C_GREEN;
-    frame(x + 2, y1 + 18, bw, 17, mc, 1);
-    text_c(x + 2, y1 + 22, bw, "MUTE", !live ? C_GREY : mc, 1);
-    frame(x + 3 + bw, y1 + 18, bw, 17, k->undo ? C_YELLOW : C_RAIL, 1);
-    text_c(x + 3 + bw, y1 + 22, bw, "UNDO", k->undo ? C_YELLOW : C_GREY, 1);
+    frame(x + 2, y1 + hb + 1, bw, hb, mc, 1);
+    text_c(x + 2, y1 + hb + 1 + ty, bw, "MUTE", !live ? C_GREY : mc, 1);
+    frame(x + 3 + bw, y1 + hb + 1, bw, hb, k->undo ? C_YELLOW : C_RAIL, 1);
+    text_c(x + 3 + bw, y1 + hb + 1 + ty, bw, "UNDO", k->undo ? C_YELLOW : C_GREY, 1);
 }
 
 /* SETUP and MORE tabs: the option rows, then a row of buttons. */
@@ -796,11 +808,13 @@ static void draw_setup(const struct lay *L)
         *p = 0;
         text(OPT_X + 120, d + 5, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
     } else {
-        frame(OPT_X, d, 110, ROW_H - 4, P->learn_fx ? C_PINK : C_RAIL, 1);
-        text_c(OPT_X, d + 5, 110, P->learn_fx ? "PRESS FX BTN" : P->fx_set ? "FX BTN LEARNT" : "LEARN FX BTN", P->learn_fx ? C_PINK : C_LIGHT, 1);
-        frame(OPT_X + 116, d, 110, ROW_H - 4, P->learn_rec ? C_PINK : C_RAIL, 1);
-        text_c(OPT_X + 116, d + 5, 110, P->learn_rec ? "PRESS REC BTN" : P->rec_set ? "REC BTN LEARNT" : "LEARN REC BTN", P->learn_rec ? C_PINK : C_LIGHT, 1);
-        /* the last button message the page saw, to help finding a button's code */
+        frame(6, d, 96, ROW_H - 4, P->learn_fx ? C_PINK : C_RAIL, 1);
+        text_c(6, d + 5, 96, P->learn_fx ? "PRESS FX BTN" : P->fx_set ? "FX LEARNT" : "LEARN FX BTN", P->learn_fx ? C_PINK : C_LIGHT, 1);
+        frame(108, d, 96, ROW_H - 4, P->learn_rec ? C_PINK : C_RAIL, 1);
+        text_c(108, d + 5, 96, P->learn_rec ? "PRESS REC BTN" : "LEARN REC BTN", P->learn_rec ? C_PINK : C_LIGHT, 1);
+        frame(210, d, 96, ROW_H - 4, P->fx_set ? C_GREEN : C_RAIL, 1);
+        text_c(210, d + 5, 96, "STOCK FX >", P->fx_set ? C_GREEN : C_GREY, 1);
+        /* the last button message the page saw, to help finding a button's code, and the touch probe */
         for (const char *q = "LAST BTN "; *q; q++)
             *p++ = *q;
         p = put_uint(p, P->btn_id);
@@ -811,7 +825,7 @@ static void draw_setup(const struct lay *L)
         *p++ = 'x';
         p = put_uint(p, *(const uint16_t *)((const uint8_t *)FB + 6));
         *p = 0;
-        text(6, d + 5, b, C_GREY, 1);
+        text(6, d + ROW_H + 2, b, C_GREY, 1);
         char t[40], *q = t;
         for (const char *z = "TOUCHES "; *z; z++)
             *q++ = *z;
@@ -823,7 +837,7 @@ static void draw_setup(const struct lay *L)
             *q++ = *z;
         q = put_uint(q, (unsigned)(P->touch_y < 0 ? 0 : P->touch_y));
         *q = 0;
-        text(6, d + 18, t, C_GREY, 1);
+        text(6, d + ROW_H + 14, t, C_GREY, 1);
     }
 }
 
@@ -900,6 +914,8 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
     geometry(view);
     rehide(view);
     widen(view);
+    looper_guard(looper_get_opt(LOOPER_O_FULL) > .5f);          /* from now on the stock screen's own drawing is dropped */
+    looper_guard_drawing(1);
     if (!P->entered) {
         P->entered = 1;
         box(0, 0, P->w, P->hg, C_BG);
@@ -927,6 +943,7 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
         draw_setup(&L);
     draw_footer(&L);
     P->sig = signature();
+    looper_guard_drawing(0);
     return 1;
 }
 
@@ -1002,6 +1019,7 @@ static void widen(uint8_t *view)
 /* The Looper page is no longer showing (the mixer view was shown in another mode). */
 void looper_page_leave(uint8_t *view)
 {
+    looper_guard(0);
     hide_children(view, 0);
     if (P->rect_on) {
         int *r = (int *)(view + 4);
@@ -1031,10 +1049,15 @@ void looper_page_boot(void)
         P->info_set = 0;
         P->fx_set = 0;
     }
+    looper_guard(0);
+    looper_guard_drawing(0);
     P->info_set = 1;                                         /* INFO is message 0xc (seen as "INFO=12" on the unit);   */
     P->info_id = 0xc;                                        /* the backup SRAM does not survive a power cycle, so  */
     P->info_idx = 0;                                         /* nothing is learned by pressing any more              */
-    P->fx_set = P->rec_set = 0;
+    P->fx_set = 0;
+    P->rec_set = 1;                                          /* the REC button: message 0xf4 (seen as "244:8") */
+    P->rec_id = 0xf4;
+    P->rec_idx = 8;
     P->learn_rec = 0;
     P->touches = 0;
     P->sel = 0;
@@ -1110,6 +1133,15 @@ void looper_page_down(uint8_t *view, const int *pt)
         } else if (t == 98) {
             P->learn_rec = !P->learn_rec;                         /* ... or the REC button */
             P->learn_fx = 0;
+        } else if (t == 97) {
+            if (P->fx_set) {                                      /* hand the FX button's message to the stock handler: its FX page */
+                uint16_t m[32];
+                for (int i = 0; i < 32; i++)
+                    m[i] = 0;
+                m[0] = P->fx_id;
+                *(uint32_t *)((uint8_t *)m + 0xc) = P->fx_idx;
+                fw_app_msg((void *)0x24020088u, m);
+            }
         } else
             looper_set_opt(t, v);
     } else if (zone == Z_SLIDER) {
@@ -1290,8 +1322,11 @@ void looper_app_msg(void *app, const uint16_t *msg)
                 return;
             }
             if (P->rec_set && id == P->rec_id && (id != MSG_BUTTON || idx == P->rec_idx)) {
-                looper_event(P->sel, LOOPER_EV_REC_DOWN);          /* the REC button: the selected track (a tap) */
-                looper_event(P->sel, LOOPER_EV_REC_UP);
+                if (looper_ticks() - P->rec_t > 20) {              /* a press and its release can both arrive: one tap */
+                    looper_event(P->sel, LOOPER_EV_REC_DOWN);      /* the REC button: the selected track (a tap) */
+                    looper_event(P->sel, LOOPER_EV_REC_UP);
+                }
+                P->rec_t = looper_ticks();
                 P->sig = 0;
                 return;
             }

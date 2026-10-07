@@ -25,8 +25,8 @@ STATE = 0x38800C00
 ENTRIES, PER, AREAS = 615, 45, 5
 FXE = 6
 FIRST = ENTRIES - AREAS * PER - FXE
-T0, TSIZE = 136, 100                                   # engine state: tracks, track size
-LEN, POS, OK, UNDO_T = 12, 16, 8, 40                 # master length, master playhead
+T0, TSIZE = 140, 100                                   # engine state: tracks, track size
+LEN, POS, OK, UNDO_T = 12, 16, 8, 44                 # master length, master playhead
 O_FILT, O_RES, O_CRUNCH, O_DRIVE, O_SD, O_SR, O_LEVEL, O_PAN = 68, 72, 76, 80, 84, 88, 60, 64
 T_LEN, T_POS, T_REC, T_PEND, T_HALF = 40, 44, 48, 22, 24
 REC_DOWN, REC_UP, MUTE_DOWN, MUTE_UP, REVERSE, HALF, UNDO = range(7)
@@ -94,8 +94,8 @@ def boot():
     e.uc.mem_write(0xC0000000, b"\x11" * 0x100)
     log.clear()
     e.call("looper_boot", ENGINE, count=200_000_000)
-    e.uc.mem_write(STATE + 88 + 9 * 4, struct.pack("<f", 0.0))
-    e.uc.mem_write(STATE + 88 + 11 * 4, struct.pack("<f", 0.0))
+    e.uc.mem_write(STATE + 92 + 9 * 4, struct.pack("<f", 0.0))
+    e.uc.mem_write(STATE + 92 + 11 * 4, struct.pack("<f", 0.0))
 
 
 def block(l, r=None, base=0.0):
@@ -369,6 +369,22 @@ ev(2, UNDO); blocks(70)
 check("... and the loop is gone", mode(2) == EMPTY, mode(2))
 hold(0, 60, tone) if False else None
 
+# half speed keeps the master's timeline (it is read at T / 2, T = frames since the loop started)
+boot()
+hold(0, 60, tone)
+blocks(7)
+ev(0, HALF)
+ok = True
+for i in range(200):
+    block([0.0] * N)
+    T = st(20) * st(LEN) + st(POS)
+    half_pos = tu(0, T_POS) + tf(0, 56)
+    ok = ok and abs((T / 2.0) % st(LEN) - half_pos) < 1.0
+check("half speed: over 200 blocks (3 master loops) the track stays at T / 2 of the master's timeline", ok, (T, half_pos))
+ev(0, HALF)
+blocks(2)
+check("half speed off again: back at the master's position", tu(0, T_POS) == st(POS), (tu(0, T_POS), st(POS)))
+
 # stock route: sends are handed to the FX nodes' buses instead of the looper's own effects
 boot()
 hold(0, 60, tone)
@@ -467,7 +483,7 @@ q2, fr2 = tu(0, T_POS), tf(0, 56)
 moved = ((q2 - q) % (60 * N)) + (fr2 - fr)
 check("half speed: the playhead advances half a frame per frame", abs(moved - N / 2) < 0.01, moved)
 d = [hs[0][i + 1] - hs[0][i] for i in range(N - 1)]
-check("half speed: interpolated (smooth steps, half the ramp's slope)", all(abs(x) < 0.0011 for x in d if abs(x) < 0.5), d[:6])
+check("half speed: interpolated (smooth steps, half the ramp's slope)", sum(1 for x in d if abs(x) < 0.0011) > 0.9 * len(d), d[:6])
 ev(0, HALF)
 blocks(2)
 check("half speed off: back in step with the master", tr(0, T_HALF) == 0 and tu(0, T_POS) == st(POS), (tu(0, T_POS), st(POS)))

@@ -127,6 +127,7 @@ struct looper_state {
     uint32_t ok;                 /* memory claimed and still ours */
     uint32_t mlen;               /* master loop length in frames, 0 = not set yet */
     uint32_t mpos;               /* master playhead, 0..mlen-1 */
+    uint32_t mcount;             /* master loops completed since the start / the transport restart */
     uint32_t check;              /* next block to re-check */
     const float *in_l, *in_r;    /* this block's input, for the output side */
     uint32_t in_frames;
@@ -229,7 +230,7 @@ void looper_boot(void *engine)
     S->magic = 0;
     S->engine = (uint8_t *)engine;
     S->ok = 0;
-    S->mlen = S->mpos = S->check = 0;
+    S->mlen = S->mpos = S->mcount = S->check = 0;
     S->in_l = S->in_r = 0;
     S->in_frames = 0;
     S->ticks = 0;
@@ -486,8 +487,15 @@ static void event(int t, int ev)
             break;
         k->half = !k->half;
         k->frac = 0.f;
-        if (!k->half && k->len && k->own != OWN_FREE && S->mlen)      /* back in step with the master */
-            k->pos = S->mpos % k->len;
+        if (k->len && k->own != OWN_FREE && S->mlen) {                /* stay in step with the master's timeline */
+            uint32_t T = S->mcount * S->mlen + S->mpos;               /* frames since the start */
+            if (k->half) {                                            /* half speed: the loop is read at T / 2 */
+                k->pos = (T / 2) % k->len;
+                k->frac = (T & 1) ? .5f : 0.f;
+            } else {
+                k->pos = T % k->len;
+            }
+        }
         break;
     }
 }
@@ -584,7 +592,7 @@ void looper_in(void *obj, float **bufs, int frames)
                         k->frac = 0.f;
                         k->own = OWN_NO;
                         if (!others_busy(t))
-                            S->mlen = S->mpos = 0;
+                            S->mlen = S->mpos = S->mcount = 0;
                     }
                 } else if (k->mode == LOOPER_UNDOING) {
                     if (restore_step(t)) {
@@ -795,6 +803,7 @@ static void finalize(int t, uint32_t len, int b)
         k->gesture = G_IDLE;
     if (!S->mlen) {
         S->mlen = len;
+        S->mcount = 0;
         S->mpos = (len - ((uint32_t)b % len)) % len;     /* the block's end advance leaves it at n - b */
     }
 }
@@ -1139,6 +1148,7 @@ static void run(float *bl, float *br, int n)
         S->restart = 0;
         if (sync) {
             S->mpos = 0;
+            S->mcount = 0;
             for (int t = 0; t < LOOPER_TRACKS; t++) {
                 vtrack *k = &S->t[t];
                 if (k->len && k->mode != LOOPER_REC) {
@@ -1207,8 +1217,11 @@ static void run(float *bl, float *br, int n)
             S->fx_tail = S->fx_tail > (uint32_t)n ? S->fx_tail - (uint32_t)n : 0;
         }
     }
-    if (S->mlen)
+    if (S->mlen) {
+        if (S->mpos + (uint32_t)n >= S->mlen)
+            S->mcount++;
         S->mpos = (S->mpos + (uint32_t)n) % S->mlen;
+    }
     S->gphase += (float)n;
     while (S->gphase >= gf)
         S->gphase -= gf;
