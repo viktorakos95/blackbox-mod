@@ -32,12 +32,16 @@ struct sm {
     uint32_t ov_t;
     int16_t fx0[SM_VOICES];                 /* GUI: where each finger went down (tape) */
     struct smvoice v[SM_VOICES];
+    uint16_t filled;                        /* overview columns complete */
+    uint8_t ofill[SM_COLS];
+    float omn[SM_COLS], omx[SM_COLS];
     int8_t ov[2][SM_COLS];                  /* per column: lowest and highest sample, -127..127 */
     float tl[SM_TMP], tr[SM_TMP];
 };
 
 struct sm *samplr(void);                    /* 0 until the looper's memory is up */
 void samplr_run(float *bl, float *br, int n);
+void samplr_refresh(unsigned ticks);        /* call while the tab shows: fills the waveform as a streamed sample loads */
 void samplr_enter(void);                    /* the tab was opened: look at the pads again */
 void samplr_leave(void);                    /* the tab was left: let go of everything */
 void samplr_select(int delta);              /* previous / next loaded pad sample */

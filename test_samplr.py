@@ -97,6 +97,21 @@ e.call("samplr_name", 0x24072100, 24)
 check("name is the file name without folder and extension", e.cstr(0x24072100) == "kick", e.cstr(0x24072100))
 
 
+# a streamed sample: block 1 (the second half) is not resident at first
+asked = []
+e.stub(0x08074CE8, lambda: asked.append(e.arg(2)))
+e.uc.mem_write(BL, struct.pack("<HH", 1, 0xFFFF))
+e.call("samplr_enter", count=50_000_000)
+check("streamed: half the columns are filled, the rest wait", 70 <= sm(368, "H") <= 80 and sm(9, "B") == 0, (sm(368, "H"), sm(9, "B")))
+e.call("samplr_refresh", 1000)
+check("streamed: the missing block is asked for (prefetch at frame 8192)", 8192 in asked, asked)
+e.uc.mem_write(BL, struct.pack("<HH", 1, 2))
+e.call("samplr_refresh", 1000)
+check("streamed: no second try within half a second", sm(368, "H") < 150)
+e.call("samplr_refresh", 1200)
+check("streamed: once the block is there the waveform completes", sm(368, "H") == 150 and sm(9, "B") == 1, (sm(368, "H"), sm(9, "B")))
+
+
 def touch(kind, i, fx, fy):
     e.call("samplr_touch", kind, i, fx, fy)
 

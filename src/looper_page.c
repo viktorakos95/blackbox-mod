@@ -1112,6 +1112,7 @@ static void draw_samplr(void)
         return;
     }
     char nm[24];
+    samplr_refresh(looper_ticks());
     samplr_name(nm, 22);
     text(6, 4, s->mode == SM_SLICER ? "SLICER" : "TAPE", C_CYAN, 1);
     if (s->mode == SM_SLICER) {
@@ -1120,7 +1121,13 @@ static void draw_samplr(void)
         *q = 0;
         text(6 + 7 * 6, 4, b, C_LIGHT, 1);
     }
-    text(P->w - 6 - 6 * 12, 4, s->ov_ok ? "" : "LOADING", C_YELLOW, 1);
+    if (!s->ov_ok && s->id >= 0) {
+        char b[12], *q = b;
+        q = put_uint(q, s->filled * 100u / SM_COLS);
+        *q++ = '%';
+        *q = 0;
+        text(P->w - 6 - 6 * 5, 4, b, C_YELLOW, 1);
+    }
     int cy = wy + wh / 2;
     frame(wx - 1, wy - 1, SM_W + 2, wh + 2, C_RAIL, 1);
     if (s->id < 0) {
@@ -1143,7 +1150,7 @@ static void draw_samplr(void)
             for (int f = 0; f < SM_VOICES; f++)
                 if (slice >= 0 && (s->v[f].on || s->v[f].env > 0.f) && s->v[f].slice == slice)
                     col = track_colour[f];
-            box(wx + 2 * c, cy - hi, 2, hi + lo + 1, col);
+            box(wx + 2 * c, cy - hi, 2, hi + lo + 1, s->ofill[c] ? col : C_DARK);
         }
         if (s->mode == SM_SLICER)
             for (int i = 1; i < s->nslice; i++)

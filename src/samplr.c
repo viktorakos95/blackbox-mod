@@ -85,14 +85,26 @@ static void scan(struct sm *s)
     s->npads = (uint8_t)n;
 }
 
-/* min / max per column from the resident pool blocks (floats), straight from the entries as the stock waveform does. */
-static void overview(struct sm *s)
+/* min / max per column from the resident pool blocks (floats), straight from the entries as the stock waveform does.
+ * A long sample is streamed from the card and only part of it is resident: a column is filled once every block it covers
+ * has been seen, the first missing block of the first unfilled column is asked for (prefetch, vtable method 4), and the
+ * page calls this again twice a second until all columns are filled. */
+typedef void (*prefetch_fn)(void *eng, int id, int64_t pos);
+#define PREFETCH (*(prefetch_fn *)(0x080e9604u + 16))
+
+static void overview(struct sm *s, int reset)
 {
     uint8_t *E = (uint8_t *)ENGINE;
     int id = s->id;
-    for (int c = 0; c < SM_COLS; c++)
-        s->ov[0][c] = s->ov[1][c] = 0;
-    s->ov_ok = 0;
+    if (reset) {
+        for (int c = 0; c < SM_COLS; c++) {
+            s->ofill[c] = 0;
+            s->omn[c] = s->omx[c] = 0.f;
+            s->ov[0][c] = s->ov[1][c] = 0;
+        }
+        s->filled = 0;
+        s->ov_ok = 0;
+    }
     if (id < 0)
         return;
     unsigned si = *(uint16_t *)(E + 0x434c + 2 * id);
@@ -102,12 +114,14 @@ static void overview(struct sm *s)
     if ((uint32_t)bl < 0x20000000u)
         return;
     int32_t len = s->len, per = len / SM_COLS ? len / SM_COLS : 1;
-    int stride = per / 192 ? per / 192 : 1, miss = 0, cur = -1;
-    const float *L = 0;
-    uint32_t valid = 0;
-    float peak = 0.f, mn[SM_COLS], mx[SM_COLS];
+    int stride = per / 192 ? per / 192 : 1, asked = 0;
     for (int c = 0; c < SM_COLS; c++) {
+        if (s->ofill[c])
+            continue;
         float lo = 0.f, hi = 0.f;
+        int cur = -1, miss = 0;
+        const float *L = 0;
+        uint32_t valid = 0;
         for (int32_t f = per * c; f < per * (c + 1) && f < len; f += stride) {
             int blk = f >> 13;
             if (blk != cur) {
@@ -124,8 +138,13 @@ static void overview(struct sm *s)
                         }
                     }
                 }
-                if (!L)
+                if (!L) {
                     miss++;
+                    if (asked < 2) {
+                        asked++;
+                        PREFETCH(ENGINE, id, (int64_t)blk << 13);
+                    }
+                }
             }
             if (L && (uint32_t)(f & 8191) < valid) {
                 float v = L[f & 8191];
@@ -133,17 +152,37 @@ static void overview(struct sm *s)
                 hi = v > hi ? v : hi;
             }
         }
-        mn[c] = lo;
-        mx[c] = hi;
-        float a = -lo > hi ? -lo : hi;
-        peak = a > peak ? a : peak;
+        if (!miss) {
+            s->ofill[c] = 1;
+            s->omn[c] = lo;
+            s->omx[c] = hi;
+            s->filled++;
+        }
+        if (asked >= 2 && miss)
+            break;                                    /* two requests per call are enough; the next call goes on */
     }
+    float peak = 0.f;
+    for (int c = 0; c < SM_COLS; c++)
+        if (s->ofill[c]) {
+            float a = -s->omn[c] > s->omx[c] ? -s->omn[c] : s->omx[c];
+            peak = a > peak ? a : peak;
+        }
     float k = peak > 0.001f ? 127.f / peak : 0.f;
     for (int c = 0; c < SM_COLS; c++) {
-        s->ov[0][c] = (int8_t)(mn[c] * k);
-        s->ov[1][c] = (int8_t)(mx[c] * k);
+        s->ov[0][c] = (int8_t)(s->omn[c] * k);
+        s->ov[1][c] = (int8_t)(s->omx[c] * k);
     }
-    s->ov_ok = miss == 0;
+    s->ov_ok = s->filled >= SM_COLS;
+}
+
+/* The page calls this while it shows: twice a second until the waveform is complete. */
+void samplr_refresh(unsigned ticks)
+{
+    struct sm *s = samplr();
+    if (!s || s->ov_ok || s->id < 0 || ticks - s->ov_t < 94)
+        return;
+    s->ov_t = ticks;
+    overview(s, 0);
 }
 
 static void choose(struct sm *s, int k)
@@ -157,7 +196,7 @@ static void choose(struct sm *s, int k)
         s->mono = ch < 2;
         s->ratio = (float)s->hz * (1.f / 48000.f);
     }
-    overview(s);
+    overview(s, 1);
 }
 
 void samplr_enter(void)
@@ -412,7 +451,7 @@ uint32_t samplr_sig(void)
     struct sm *s = samplr();
     if (!s)
         return 0;
-    uint32_t h = (uint32_t)s->mode | (uint32_t)s->gate << 2 | (uint32_t)s->nslice << 3 | (uint32_t)s->sel << 10 | (uint32_t)s->ov_ok << 15 |
+    uint32_t h = (uint32_t)s->mode | (uint32_t)s->gate << 2 | (uint32_t)s->nslice << 3 | (uint32_t)s->sel << 10 | (uint32_t)s->filled << 15 |
                  (uint32_t)(s->vol * 20.f) << 16;
     for (int f = 0; f < SM_VOICES; f++) {
         struct smvoice *v = &s->v[f];
