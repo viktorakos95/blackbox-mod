@@ -47,3 +47,9 @@ Everything below passes the emulator tests; none of it has a hardware report yet
   unconfirmed: clock units / rate / `a+b` offset.
 - **Earlier**: stock FX route audibility (ROUTE = STOCK), BPM read, QUANT 1 BAR, bars rounding, half-time sync, loop gain,
   undo / DEL labels, MIDI-free clock facts (CLK / R on MORE).
+
+# Noted
+- After flashing builds from the size test on (step 40 and the touch probes), the unit restarts a few times before it powers
+  on (a screen with the CPU figure "12/13%" and upward waves), then stays up; earlier builds did not do that. Cause not
+  known (only right after flashing; stable afterwards). Watch it: if it comes back on ordinary power-ups, suspect the
+  cave growing into flash bank 2 (the next build that does so will be the first to run code from there).
