@@ -102,14 +102,14 @@ asked = []
 e.stub(0x08074CE8, lambda: asked.append(e.arg(2)))
 e.uc.mem_write(BL, struct.pack("<HH", 1, 0xFFFF))
 e.call("samplr_enter", count=50_000_000)
-check("streamed: half the columns are filled, the rest wait", 70 <= sm(368, "H") <= 80 and sm(9, "B") == 0, (sm(368, "H"), sm(9, "B")))
+check("streamed: half the columns are filled, the rest wait", 70 <= sm(140, "H") <= 80 and sm(9, "B") == 0, (sm(140, "H"), sm(9, "B")))
 e.call("samplr_refresh", 1000)
 check("streamed: the missing block is asked for (prefetch at frame 8192)", 8192 in asked, asked)
 e.uc.mem_write(BL, struct.pack("<HH", 1, 2))
 e.call("samplr_refresh", 1000)
-check("streamed: no second try within half a second", sm(368, "H") < 150)
+check("streamed: no second try within half a second", sm(140, "H") < 150)
 e.call("samplr_refresh", 1200)
-check("streamed: once the block is there the waveform completes", sm(368, "H") == 150 and sm(9, "B") == 1, (sm(368, "H"), sm(9, "B")))
+check("streamed: once the block is there the waveform completes", sm(140, "H") == 150 and sm(9, "B") == 1, (sm(140, "H"), sm(9, "B")))
 
 
 def touch(kind, i, fx, fy):
@@ -198,5 +198,87 @@ play()
 e.uc.mem_write(SE + 0x434C + 2 * 5, b"\xff\xff")
 o = play()[0]
 check("sample removed: no sound, no crash", max(abs(x) for x in o) < 1e-5)
+
+
+# ---- sync, arpeggiator, granular
+import math
+
+e.uc.mem_write(SE + 0x434C + 2 * 5, struct.pack('<H', 0))
+e.call('samplr_enter', count=50_000_000)
+
+
+def sph():
+    return struct.unpack("<f", e.uc.mem_read(SMP + 124, 4))[0]
+
+
+def setb(off, v):
+    e.uc.mem_write(SMP + off, bytes([v]))
+
+
+e.call("samplr_set_mode", 0)
+setb(112, 3)                                           # quantize 1/16 = 6000 frames at 120 bpm
+play(3)
+touch(0, 0, 3 * 64 + 10, 512)
+GF = 6000
+found = None
+for k in range(60):
+    t0 = sph()
+    o = play()[0]
+    nz = [i for i, x in enumerate(o) if abs(x) > 1e-6]
+    if nz:
+        found = (t0, nz[0])
+        break
+nxt = math.ceil(t0 / GF - 1e-5) * GF - t0
+check("quantize: the slice starts at the next 1/16 line, not at the touch", found is not None and k > 0 and abs(found[1] - nxt) <= 2, (found, nxt, k))
+touch(2, 0, 0, 0)
+play(3)
+setb(112, 0)
+
+# arpeggiator: 1/8 steps (12000 frames), MAJ7, 2 octaves, UP
+e.call("samplr_set_mode", 2)
+setb(113, 1)
+setb(114, 0)
+setb(115, 0)
+setb(116, 2)
+touch(0, 0, 512, 512)
+allo = []
+for _ in range(190):
+    allo += play()[0]
+touch(2, 0, 0, 0)
+segs, cur = [], None
+for i, x in enumerate(allo):
+    if abs(x) > 1e-4:
+        if cur is None:
+            cur = [i, i]
+        cur[1] = i
+    elif cur is not None and i - cur[1] > 100:
+        segs.append(cur)
+        cur = None
+if cur:
+    segs.append(cur)
+slopes = []
+for a_, b_ in segs[:4]:
+    m = (a_ + b_) // 2
+    slopes.append((allo[m + 40] - allo[m]) / 40.0 * LENF / 0.9)
+check("arp: four notes in four steps", len(segs) >= 4, segs)
+gaps = [segs[i + 1][0] - segs[i][0] for i in range(min(3, len(segs) - 1))]
+check("arp: the notes start 12000 frames apart (1/8 at 120 bpm)", all(abs(g - 12000) < 300 for g in gaps), gaps)
+exp = [1.0, 1.2599, 1.4983, 1.8877]
+check("arp: the pitch walks the MAJ7 chord (0 4 7 11 semitones)", len(slopes) >= 4 and all(abs(a_ - b_) < 0.06 for a_, b_ in zip(slopes, exp)), slopes)
+play(3)
+
+# granular
+e.call("samplr_set_mode", 3)
+setb(113, 3)                                           # 1/32: a grain every 3000 frames
+touch(0, 1, 512, 512)
+mx, tot = 0.0, 0.0
+for _ in range(100):
+    o = play()
+    mx = max(mx, max(abs(x) for x in o[0]))
+    tot += sum(abs(x) for x in o[0])
+check("grain: a cloud sounds, bounded", 0.01 < mx < 1.5, mx)
+touch(2, 1, 0, 0)
+play(100)
+check("grain: silent once the grains have ended", max(abs(x) for x in play()[0]) < 1e-5)
 
 print(f"\n{fails} failure(s)")

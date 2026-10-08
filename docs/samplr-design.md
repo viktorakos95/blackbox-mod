@@ -60,3 +60,15 @@ takes three overdub layers.
 - Not yet: tempo sync / quantised starts, arpeggiator, granular (E-bow), looper mode, gesture recorder (3 layers), effects,
   stereo level of the voice (pan), sample-rate conversion is only the file/48k ratio (linear interpolation).
 - First build whose code runs from flash bank 2 (image 791,156 bytes).
+
+## Build 3 (tempo grid, ARP, GRAIN)  -- done in the emulator, awaiting hardware
+- Tempo grid: `looper_grid_offset(beats, sph, n)` (looper.c): while the sequencer runs, the grid lines come from its clock (same math as
+  the looper's own QUANT); otherwise from a free-running phase at the Blackbox BPM (`sph`, frames, wraps every 16 beats).
+- Buttons: rows SLICE TAPE ARP GRAIN | Q (quantize slicer starts: OFF 1/4 1/8 1/16) | GATE/ONE | PAT (arp pattern) and < name >.
+- SLICER: with Q on a touch waits for the next grid line (start offset inside the block is exact when the voice is idle).
+- ARP: touch = start point (x) and root pitch (y, like the slicer). One note per grid step (knob 2 left top: 1/4 1/8 1/16 1/32), the same
+  start point, the pitch walks a chord (knob 3: MAJ7 MIN7 PENT 5THS; knob 4: 1-3 octaves; PAT: UP DOWN UP-DN RND). 4 fingers = 4 arps.
+- GRAIN (granular / E-bow): touch = the cloud's centre (x) and grain size (y: top 20 ms, bottom 400 ms); a grain starts on each grid line
+  (knob 2: rate), position and pan scatter with knob 3 (left top = rate, right top = scatter). 8 grains per finger, parabola window.
+- Knob map (knob 1 = left bottom is always volume): SLICER k2 slices; ARP k2 rate, k3 chord, k4 octaves; GRAIN k2 rate, k3 scatter.
+- Not yet: gesture recorder (3 layers), looper mode, effects, pan of voices, grain pitch, sync of tape.

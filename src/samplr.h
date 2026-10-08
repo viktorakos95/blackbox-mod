@@ -1,23 +1,41 @@
-/* SAMPLR: a sample played from the touch screen (waveform, slicer, tape ...). The state lives in the looper's spare
- * effect memory block (looper_scratch(9)); samplr_run mixes the voices into the Out 1 bus after the looper. */
+/* SAMPLR: a sample played from the touch screen (waveform, slicer, tape, arpeggiator, granular). The state lives in the looper's
+ * spare effect memory block 9 (looper_scratch(9)); samplr_run mixes the voices into the Out 1 bus after the looper. */
 #pragma once
 #include <stdint.h>
 
 #define SM_COLS   150            /* waveform overview columns */
 #define SM_VOICES 4              /* one per finger */
-#define SM_TMP    2112           /* source frames one voice reads per block (8x pitch up of 256 frames + margin) */
+#define SM_GRAINS 8              /* per finger */
+#define SM_TMP    2112           /* source frames one read takes per block (8x pitch up of 256 frames + margin) */
 #define SM_PADS   16
 
-enum { SM_SLICER, SM_TAPE, SM_MODES };
+enum { SM_SLICER, SM_TAPE, SM_ARP, SM_GRAIN, SM_MODES };
+enum { SM_PAT_UP, SM_PAT_DOWN, SM_PAT_UPDN, SM_PAT_RND, SM_PATS };
+
+struct smgrain {
+    int32_t ip, age, len, delay;
+    float frac, rate, gl, gr;
+    uint8_t on, _p[3];
+};
 
 struct smvoice {
     volatile uint32_t cmd, seen;            /* trigger sequence: the GUI task bumps cmd after writing the c_ fields */
     int32_t c_pos, c_start, c_end;
-    float c_rate, c_gain;
+    float c_rate, c_gain, c_q;              /* c_q: start on the next grid line of this many beats (0 = at once) */
     uint8_t c_loop, c_gate, held, rel;
-    uint8_t on, loop, slice, _p;
+    uint8_t on, loop, slice, wait_hi;
     int32_t ipos, start, end;
     float frac, rate, gain, env;            /* rate and gain are rewritten live by the GUI (tape) */
+    int32_t wait, c_wait;                         /* frames into the block where the note starts */
+    /* arpeggiator */
+    uint8_t a_on;
+    int8_t a_root;
+    uint16_t a_step;
+    int32_t a_start;
+    /* granular cloud */
+    uint8_t g_on;
+    int32_t g_centre, g_size;
+    struct smgrain g[SM_GRAINS];
 };
 
 struct sm {
@@ -31,11 +49,15 @@ struct sm {
     float ratio, vol;
     uint32_t ov_t;
     int16_t fx0[SM_VOICES];                 /* GUI: where each finger went down (tape) */
-    struct smvoice v[SM_VOICES];
+    uint8_t qi, div, pat, scale, oct, _q[3];/* quantize (0 off, 1 1/4, 2 1/8, 3 1/16), arp / grain rate, arp pattern, scale, octaves */
+    float scat, sph;                        /* grain scatter 0..1; free-running phase in frames */
+    uint32_t rnd;
+    int16_t kacc[4];                        /* knob counts not yet turned into a step */
     uint16_t filled;                        /* overview columns complete */
     uint8_t ofill[SM_COLS];
     float omn[SM_COLS], omx[SM_COLS];
     int8_t ov[2][SM_COLS];                  /* per column: lowest and highest sample, -127..127 */
+    struct smvoice v[SM_VOICES];
     float tl[SM_TMP], tr[SM_TMP];
 };
 
@@ -48,6 +70,10 @@ void samplr_select(int delta);              /* previous / next loaded pad sample
 void samplr_set_mode(int m);
 void samplr_toggle_gate(void);
 void samplr_set_slices(int n);
+void samplr_cycle(int what);                /* 0 quantize, 1 arp pattern */
+void samplr_knob(int knob, int counts);     /* knobs 1..3 per mode (the page handles knob 0 = volume) */
 void samplr_touch(int kind, int id, int fx, int fy);   /* kind 0 down, 1 move, 2 up; fx, fy 0..1023 inside the waveform */
 void samplr_name(char *out, int max);       /* the selected sample's name for the page */
+void samplr_info(char *out);                /* the mode's settings as text for the top bar */
+const char *samplr_pat_name(int p);
 uint32_t samplr_sig(void);

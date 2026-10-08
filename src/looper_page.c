@@ -1081,46 +1081,45 @@ static void draw_footer(const struct lay *L)
         text(x0, L->foot_y + 4, "SHIFT", C_RED, 1);
 }
 
-/* ---- SMPLR tab: the sample's waveform on top (touch it), the buttons below. */
+/* ---- SMPLR tab: the sample's waveform on top (touch it), two rows of buttons below. */
 #define SM_W 300                                                  /* waveform: SM_COLS columns of 2 px */
-#define SM_BH 26
-static void sm_geom(int *wx, int *wy, int *wh, int *by)
+#define SM_BH 20
+static void sm_geom(int *wx, int *wy, int *wh, int *ba, int *bb)
 {
     struct lay L;
     layout(0, &L);
     *wx = (P->w - SM_W) / 2;
     *wy = TOPBAR + 4;
-    *by = L.foot_y - SM_BH - 3;
-    *wh = *by - 4 - *wy;
+    *bb = L.foot_y - SM_BH - 3;
+    *ba = *bb - SM_BH - 2;
+    *wh = *ba - 4 - *wy;
 }
 
 static void sm_button(int x, int by, int w, const char *s, int on)
 {
     frame(x, by, w, SM_BH, on ? C_CYAN : C_RAIL, 1);
-    text_c(x, by + 9, w, s, on ? C_CYAN : C_LIGHT, 1);
+    text_c(x, by + 6, w, s, on ? C_CYAN : C_LIGHT, 1);
 }
+
+static const char *const sm_mode_name[SM_MODES] = {"SLICE", "TAPE", "ARP", "GRAIN"};
+static const char *const sm_q_name[4] = {"Q OFF", "Q 1/4", "Q 1/8", "Q 1/16"};
 
 static void draw_samplr(void)
 {
     struct sm *s = samplr();
-    int wx, wy, wh, by;
-    sm_geom(&wx, &wy, &wh, &by);
+    int wx, wy, wh, ba, bb;
+    sm_geom(&wx, &wy, &wh, &ba, &bb);
     box(1, 1, P->w - 2, TOPBAR, C_BG);
-    box(1, wy - 1, P->w - 2, by - wy + SM_BH + 3, C_BG);
+    box(1, wy - 1, P->w - 2, bb - wy + SM_BH + 3, C_BG);
     if (!s) {
         text(6, 4, "SAMPLR: LOOPER MEMORY NOT READY", C_RED, 1);
         return;
     }
-    char nm[24];
+    char nm[24], info[40];
     samplr_refresh(looper_ticks());
     samplr_name(nm, 22);
-    text(6, 4, s->mode == SM_SLICER ? "SLICER" : "TAPE", C_CYAN, 1);
-    if (s->mode == SM_SLICER) {
-        char b[4], *q = b;
-        q = put_uint(q, s->nslice);
-        *q = 0;
-        text(6 + 7 * 6, 4, b, C_LIGHT, 1);
-    }
+    samplr_info(info);
+    text(6, 4, info, C_CYAN, 1);
     if (!s->ov_ok && s->id >= 0) {
         char b[12], *q = b;
         q = put_uint(q, s->filled * 100u / SM_COLS);
@@ -1157,39 +1156,57 @@ static void draw_samplr(void)
                 vline(wx + (i * SM_W) / s->nslice, wy, wh, C_GREY);
         for (int f = 0; f < SM_VOICES; f++) {
             struct smvoice *v = &s->v[f];
-            if (v->on || v->env > 0.f) {
-                int x = wx + v->ipos / (s->len / SM_W + 1);
-                vline(x < wx ? wx : x >= wx + SM_W ? wx + SM_W - 1 : x, wy, wh, C_WHITE);
+            int x = -1;
+            if (s->mode == SM_ARP && v->a_on)
+                x = v->a_start / (s->len / SM_W + 1);
+            else if (s->mode == SM_GRAIN && v->g_on)
+                x = v->g_centre / (s->len / SM_W + 1);
+            else if (s->mode != SM_ARP && s->mode != SM_GRAIN && (v->on || v->env > 0.f))
+                x = v->ipos / (s->len / SM_W + 1);
+            if (x >= 0) {
+                x = x >= SM_W ? SM_W - 1 : x;
+                vline(wx + x, wy, wh, s->mode == SM_ARP || s->mode == SM_GRAIN ? track_colour[f] : C_WHITE);
+                if (s->mode == SM_GRAIN) {                        /* the grain size, as a bracket around the centre */
+                    int hw = v->g_size / (s->len / SM_W + 1) / 2;
+                    hline(wx + (x - hw < 0 ? 0 : x - hw), wy + 2, (x + hw >= SM_W ? SM_W - 1 : x + hw) - (x - hw < 0 ? 0 : x - hw) + 1, track_colour[f]);
+                }
             }
         }
     }
-    sm_button(3, by, 46, "SLICE", s->mode == SM_SLICER);
-    sm_button(51, by, 46, "TAPE", s->mode == SM_TAPE);
-    sm_button(99, by, 22, "<", 0);
-    frame(123, by, 94, SM_BH, C_RAIL, 1);
-    text_c(123, by + 9, 94, nm[0] ? nm : "-", C_LIGHT, 1);
-    sm_button(219, by, 22, ">", 0);
-    sm_button(243, by, 46, s->mode == SM_TAPE || s->gate ? "GATE" : "ONE", s->gate || s->mode == SM_TAPE);
+    for (int i = 0; i < SM_MODES; i++)
+        sm_button(3 + 42 * i, ba, 40, sm_mode_name[i], s->mode == i);
+    sm_button(173, ba, 46, sm_q_name[s->qi & 3], s->qi != 0);
+    sm_button(221, ba, 46, s->mode == SM_SLICER && !s->gate ? "ONE" : "GATE", s->mode == SM_SLICER ? s->gate : 1);
+    if (s->mode == SM_ARP)
+        sm_button(269, ba, 42, samplr_pat_name(s->pat), 1);
+    sm_button(3, bb, 22, "<", 0);
+    frame(27, bb, 160, SM_BH, C_RAIL, 1);
+    text_c(27, bb + 6, 160, nm[0] ? nm : "-", C_LIGHT, 1);
+    sm_button(189, bb, 22, ">", 0);
 }
 
 /* A touch on the SMPLR tab above the footer. Returns 1 when it was used. */
 static int sm_touch(int kind, int id, int x, int d)
 {
-    int wx, wy, wh, by;
-    sm_geom(&wx, &wy, &wh, &by);
-    if (d >= by) {
+    int wx, wy, wh, ba, bb;
+    sm_geom(&wx, &wy, &wh, &ba, &bb);
+    if (d >= ba) {
         if (kind != 0)
             return 1;
-        if (x < 49)
-            samplr_set_mode(SM_SLICER);
-        else if (x < 97)
-            samplr_set_mode(SM_TAPE);
-        else if (x >= 99 && x < 121)
-            samplr_select(-1);
-        else if (x >= 219 && x < 241)
-            samplr_select(1);
-        else if (x >= 243 && x < 289)
+        if (d >= bb) {
+            if (x >= 3 && x < 25)
+                samplr_select(-1);
+            else if (x >= 189 && x < 211)
+                samplr_select(1);
+        } else if (x >= 3 && x < 3 + 42 * SM_MODES) {
+            samplr_set_mode((x - 3) / 42);
+        } else if (x >= 173 && x < 219) {
+            samplr_cycle(0);
+        } else if (x >= 221 && x < 267) {
             samplr_toggle_gate();
+        } else if (x >= 269 && x < 311) {
+            samplr_cycle(1);
+        }
         P->sig = 0;
         return 1;
     }
@@ -1665,14 +1682,8 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
                 if (sm && knob == 0) {
                     float vv = sm->vol + step * 2.f;
                     sm->vol = vv < 0.f ? 0.f : vv > 2.f ? 2.f : vv;
-                } else if (sm && knob == 1 && counts) {
-                    static const uint8_t ns[5] = {4, 8, 16, 32, 64};
-                    int i = 0;
-                    for (int q = 0; q < 5; q++)
-                        if (ns[q] == sm->nslice)
-                            i = q;
-                    i += counts > 0 ? 1 : -1;
-                    samplr_set_slices(ns[i < 0 ? 0 : i > 4 ? 4 : i]);
+                } else if (sm) {
+                    samplr_knob(knob, counts);
                 }
             } else if (P->mode == M_MAIN)
                 P->sel = (uint8_t)knob;                                   /* altering a track's setting selects it */

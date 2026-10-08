@@ -1858,6 +1858,32 @@ void looper_stage(uint8_t *obj, void *bufs)
     }
 }
 
+/* A grid line of `beats` beats (of the sequencer's clock while it runs, else of the free-running phase sph, in frames) that falls
+ * inside this block of n frames: its offset, or -1. */
+int looper_grid_offset(float beats, float sph, int n)
+{
+    if (S->magic != MAGIC)
+        return -1;
+    float bf = beat_frames(), gf = bf * beats;
+    if (S->cur_ok) {
+        double g = (double)gf * (double)S->rate, ph = dmod(clk_get(S->clk_hi, S->clk_lo), g);
+        double fr = ph < g * 1e-6 ? 0.0 : (g - ph) / (double)S->rate;
+        return fr < (double)n ? (int)fr : -1;
+    }
+    float q = sph / gf - 1e-5f;
+    int k = (int)q;
+    if ((float)k < q)
+        k++;
+    float off = (float)k * gf - sph;
+    off = off < 0.f ? 0.f : off;
+    return off < (float)n ? (int)off : -1;
+}
+
+float looper_beat_frames(void)
+{
+    return S->magic == MAGIC ? beat_frames() : 24000.f;
+}
+
 /* Spare 32 KB effect memory block 9 + i (i = 0..2), zeroed at boot; 0 while the looper's memory is not up. */
 uint8_t *looper_scratch(int i)
 {
