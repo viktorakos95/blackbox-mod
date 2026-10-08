@@ -6,7 +6,9 @@ mkdir -p out
 arm-none-eabi-g++ -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -O2 -ffreestanding -nostdlib -fno-exceptions \
   -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit -fno-math-errno -std=gnu++17 -Wall -Werror -Wno-unused-function \
   -Wno-class-memaccess -Wno-unused-but-set-variable -Wno-unused-variable -Wno-unused-parameter -isystem src/munchi/sys -c -o out/munchi.o src/munchi.cpp
-arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestanding -nostdlib \
-  -fno-builtin -Wall -Wextra -Werror -T src/cave.ld -Wl,-e,0 -o out/cave.elf src/solo.c src/slice.c src/duck.c src/duck_thunk.S src/chord.c src/cond.c src/cond_thunk.S src/filter.c src/filter_thunk.S src/cpu.c src/od.c src/comp.c src/seqfix.c src/fx2.c src/fx2_thunk.S src/looper.c src/looper_page.c src/looper_thunk.S out/munchi.o
-arm-none-eabi-objcopy -O binary -j .cave out/cave.elf out/cave.bin
+LD=src/cave.ld; EXTRA=; OCJ="-j .cave"
+if [ -n "$BANK2" ]; then LD=src/cave_b2.ld; EXTRA="-DBANK2 src/bank2.S"; OCJ="-j .cave -j .bank2"; fi
+arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestanding -nostdlib $EXTRA \
+  -fno-builtin -Wall -Wextra -Werror -T $LD -Wl,-e,0 -o out/cave.elf src/solo.c src/slice.c src/duck.c src/duck_thunk.S src/chord.c src/cond.c src/cond_thunk.S src/filter.c src/filter_thunk.S src/cpu.c src/od.c src/comp.c src/seqfix.c src/fx2.c src/fx2_thunk.S src/looper.c src/looper_page.c src/looper_thunk.S out/munchi.o
+arm-none-eabi-objcopy -O binary $OCJ out/cave.elf out/cave.bin
 arm-none-eabi-size -A out/cave.elf | grep -E 'cave|data|bss'

@@ -389,6 +389,12 @@ int looper_page_hit(int x, int d, int *track, float *val)
         if (r == OPT_ROWS) {
             if (P->mode == M_SETUP)
                 return x >= OPT_X && x < OPT_X + 110 ? Z_CLEAR : Z_NONE;
+#ifdef BANK2
+            if (P->mode == M_MORE) {
+                *track = 93;
+                return Z_OPTC;
+            }
+#endif
             return Z_NONE;
         }
         if (r > OPT_ROWS)
@@ -1021,6 +1027,23 @@ static void draw_setup(const struct lay *L)
             *p++ = ' ';
             p = put_hex(p, P->scr_h[i], 2);
         }
+#ifdef BANK2
+        *p++ = ' ';
+        *p++ = 'B';
+        *p++ = '2';
+        *p++ = ' ';
+        if (!P->dropped) {
+            *p++ = '?';
+        } else if (P->dropped == 1) {
+            *p++ = 'O';
+            *p++ = 'K';
+        } else {
+            *p++ = 'B';
+            *p++ = 'A';
+            *p++ = 'D';
+            p = put_uint(p, P->dropped - 2u);
+        }
+#endif
         *p = 0;
         text(6, d + 2, b, C_GREY, 1);
     }
@@ -1345,6 +1368,15 @@ void looper_page_down(uint8_t *view, const int *pt)
             P->learn = P->learn == slot ? 0 : (uint8_t)slot;
         } else if (t == 94) {
             stock_fx();
+#ifdef BANK2
+        } else if (t == 93) {                                     /* size test: read back the pattern past the old end of the cave */
+            const volatile uint32_t *q = (const volatile uint32_t *)0x08100000u;
+            uint32_t bad = 0;
+            for (uint32_t i = 0; i < 16384u; i++)
+                bad += q[i] != i * 2654435761u;
+            P->dropped = bad ? 2u + bad : 1u;
+            P->entered = 0;
+#endif
         } else {
             looper_set_opt(t, v);
             P->entered = 0;                                       /* e.g. FULL SCREEN: repaint the whole background */

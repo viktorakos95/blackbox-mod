@@ -493,3 +493,10 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
   screen ids.
 - Cave space was down to 116 bytes: removed the diagnostics that were done (engine event post hook, swallow, unpatched
   drawing guards, draw-blocked / text-draw wrappers). 57 004 of 57 736 bytes in use. Label Lok39.
+
+## Step 40: flash size test (BANK2=1 builds only)
+- `BANK2=1 sh build.sh` adds `src/bank2.S` (64 KB of a known pattern from 0x08100000, past the end of the area the cave has
+  used) through `src/cave_b2.ld`, and a test on MORE: tap the last (diagnostic) line and it reads the pattern back and
+  prints `B2 OK` / `B2 BAD n` (`P->dropped` holds the result). The image is 851 968 bytes (the normal one 785 820).
+  Question it answers: does the updater accept and write an image that runs past 0x08100000 (flash bank 2)?
+  Normal builds are unchanged (no flag, no extra code).
