@@ -1058,6 +1058,30 @@ check("SMPLR: the TAPE button switches the mode", e.r8(e.uc.reg_read(A.UC_ARM_RE
 tab(0)
 check("SMPLR: leaving the tab releases the voices", True)
 
+# ---- page order: MIX opens the Looper first, SONG opens SMPLR first
+e.uc.mem_write(APP + 0x8CA4, b"\x25")
+screens.clear()
+e.call("solo_mix_pressed", APP, 0, 0, 0)
+check("MIX from another screen goes to the mixer's mute screen (0x2f) to open the Looper page", screens == [0x2F], screens)
+e.call("solo_set_mode", VIEW, 1)
+check("... and the page opens on MAIN", e.r8(PAGE + 76) == 0, e.r8(PAGE + 76))
+e.uc.mem_write(APP + 0x8CA4, b"\x25")
+screens.clear()
+e.call("solo_song_pressed", APP, 0, 0, 0)
+check("SONG from another screen: the mute screen again, for the SMPLR tab", screens == [0x2F], screens)
+e.call("solo_set_mode", VIEW, 1)
+check("... and the page opens on SMPLR (mode 4)", e.r8(PAGE + 76) == 4, e.r8(PAGE + 76))
+e.uc.mem_write(APP + 0x8CA4, b"\x2f")
+screens.clear()
+e.call("solo_song_pressed", APP, 0, 0, 0)
+check("SONG again on the SMPLR page: the stock song screen (0x2d)", screens == [0x2D], screens)
+tab(0)
+screens.clear()
+e.call("solo_song_pressed", APP, 0, 0, 0)
+check("SONG on another tab of the page: switches to SMPLR without leaving the screen", screens == [] and e.r8(PAGE + 76) == 4, (screens, e.r8(PAGE + 76)))
+e.uc.mem_write(APP + 0x8CA4, b"\x2f")
+tab(0)
+
 # leaving the page puts the child widgets back
 e.call("solo_set_mode", VIEW, 1)
 check("leaving the page: the children are restored (the one the firmware hid stays hidden)",

@@ -27,6 +27,9 @@ void looper_page_leave(uint8_t *view);
 void looper_page_down(uint8_t *view, const int *pt, int id);
 void looper_page_move(uint8_t *view, const int *pt, int id);
 void looper_page_up(uint8_t *view, const int *pt, int id);
+void looper_page_want(int tab);
+int looper_page_tab(void);
+void looper_page_goto(uint8_t *view, int tab);
 
 #define FN(addr) ((addr) | 1u)
 
@@ -255,7 +258,8 @@ void solo_touch_up(uint8_t *view, void *pt, void *arg)
     fw_touch_up(view, pt, arg);
 }
 
-/* Replaces the set-screen call in the MIX button handler. */
+/* Replaces the set-screen call in the MIX button handler. The Looper page is the first page of MIX: from any other screen MIX
+ * opens it (on its MAIN tab); then the stock mixer, mute, solo, and round to the Looper again. */
 void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
 {
     (void)computed;
@@ -268,9 +272,35 @@ void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
         next = SCREEN_MUTE;
     } else if (cur == SCREEN_MUTE && S->active && looper_ready()) {
         S->looper_pending = 1;
+        looper_page_want(0);
+        next = SCREEN_MUTE;
+    } else if (cur != SCREEN_MUTE && looper_ready()) {
+        S->looper_pending = 1;
+        looper_page_want(0);
         next = SCREEN_MUTE;
     }
     fw_set_screen(app, next, a, b);
+}
+
+/* Replaces the set-screen call in the SONG button handler (screen 0x2d). SAMPLR is the first page of SONG: the button opens the
+ * Looper page on its SMPLR tab (or switches to that tab when the page is up); pressed again it goes to the stock song screen. */
+void solo_song_pressed(uint8_t *app, int computed, int a, int b)
+{
+    (void)computed;
+    ensure();
+    int cur = app[APP_SCREEN];
+    if (!looper_ready()) {
+        fw_set_screen(app, 0x2d, a, b);
+    } else if (cur == SCREEN_MUTE && S->looper && S->view) {
+        if (looper_page_tab() == 5)
+            fw_set_screen(app, 0x2d, a, b);
+        else
+            looper_page_goto(S->view, 5);
+    } else {
+        S->looper_pending = 1;
+        looper_page_want(5);
+        fw_set_screen(app, SCREEN_MUTE, a, b);
+    }
 }
 
 /* Replaces the GUI's call to the mixer view's set-mode on every mixer (re)show. */

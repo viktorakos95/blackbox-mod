@@ -1411,6 +1411,7 @@ static void widen(uint8_t *view)
 /* The Looper page is no longer showing (the mixer view was shown in another mode). */
 void looper_page_leave(uint8_t *view)
 {
+    samplr_leave();
     looper_guard(0);
     hide_children(view, 0);
     if (P->rect_on) {
@@ -1425,11 +1426,36 @@ void looper_page_leave(uint8_t *view)
 void looper_page_enter(uint8_t *view)
 {
     hide_children(view, 1);
+    if (P->_r6[0]) {                                              /* opened by MIX (MAIN) or SONG (SMPLR) */
+        tab_select(P->_r6[0] - 1);
+        P->_r6[0] = 0;
+    }
     P->entered = 0;
     P->pressed = P_NONE;
     P->info_on = 0;
     P->sig = 0;
     P->force = 0;
+}
+
+/* The next time the page is shown it opens on this tab (0 MAIN ... 5 SMPLR). */
+void looper_page_want(int tab)
+{
+    P->_r6[0] = (uint8_t)(tab + 1);
+}
+
+int looper_page_tab(void)
+{
+    return P->mode == M_SMPLR ? 5 : P->mode;
+}
+
+/* Switch the tab of the page that is up. */
+void looper_page_goto(uint8_t *view, int tab)
+{
+    tab_select(tab);
+    P->info_on = 0;
+    P->entered = 0;
+    P->sig = 0;
+    dirty_now(view);
 }
 
 /* looper_boot: reset the page; the learned INFO button is kept while the backup SRAM is. (The cells are built at

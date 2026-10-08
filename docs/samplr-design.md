@@ -85,3 +85,11 @@ takes three overdub layers.
   slice starts (slice count: set in SLICER, k2). LATCH keeps spots (and grain clouds) after the finger lifts; LATCH off clears them.
 - GRAIN: SYNC / FREE button; free = grains per second (k2, 1..120, continuous); scatter default 0 (k3 to add it); LATCH holds the cloud.
 - ATTACK / RELEASE for SLICER, TAPE and ARP: k3 / k4 (A 1 5 20 80 300 ms, R 4 20 80 300 1000 ms), shown in the top bar.
+
+## Build 5 (page order)
+- SONG button (screen 0x2d, button index 3 of the 0xf9 message; hook at 0x080a329e in the stock button handler): opens the Looper page on its
+  SMPLR tab; on the page (SMPLR tab) it goes on to the stock song screen; on another tab of the page it just switches to SMPLR; on the stock
+  song screen it goes back to SMPLR.
+- MIX button: from any other screen it opens the Looper page (MAIN tab) first; then stock mixer, mute, solo, Looper again.
+- Leaving the page silences SAMPLR (held fingers, spots, clouds).
+- Needs hardware confirmation: setting screen 0x2f from a non-mixer screen (the GUI should build the mixer view in mute mode).
