@@ -63,14 +63,20 @@ static int sample_info(int id, int32_t *len, int32_t *hz, int *ch)
 static void scan(struct sm *s)
 {
     int n = 0;
+    s->dbg[0] = s->dbg[1] = s->dbg[2] = 0;
     for (int row = 0; row < 4; row++)
         for (int col = 0; col < 4; col++) {
             uint8_t *rec = (uint8_t *)(APPOBJ + 0x8a88u + row * 0x78u + col * 0x18u);
             uint32_t id = *(uint32_t *)(rec + 4) != 0xffffu ? *(uint32_t *)(rec + 4) : *(uint32_t *)rec;
             int32_t len, hz;
             int ch;
-            if (!rec[8] || id >= 0x240u || !sample_info((int)id, &len, &hz, &ch) || n >= SM_PADS)
+            s->dbg[0] += rec[8] != 0;
+            if (id >= 0x240u)
                 continue;
+            s->dbg[1]++;
+            if (!sample_info((int)id, &len, &hz, &ch) || n >= SM_PADS)
+                continue;
+            s->dbg[2]++;
             s->pad_row[n] = (uint8_t)row;
             s->pad_col[n] = (uint8_t)col;
             s->pad_id[n] = (uint16_t)id;

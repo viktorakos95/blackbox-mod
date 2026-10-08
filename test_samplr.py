@@ -81,8 +81,8 @@ e.call("samplr")
 off_id = None
 # struct sm: magic 0, mode 4, gate 5, nslice 6, npads 7, sel 8, ov_ok 9, mono 10, pad_row 12.., pad_col 28.., pad_id 44.., id 76
 check("pads: 1", sm(7, "B") == 1, sm(7, "B"))
-check("selected id 5", sm(76, "i") == 5, sm(76, "i"))
-check("length read from the slot", sm(80, "i") == LENF, sm(80, "i"))
+check("selected id 5", sm(80, "i") == 5, sm(80, "i"))
+check("length read from the slot", sm(84, "i") == LENF, sm(84, "i"))
 ovmin, ovmax = 0x0, 0x0
 ov = struct.unpack("<300b", e.uc.mem_read(SMP + 112 + 0, 300)) if False else None
 

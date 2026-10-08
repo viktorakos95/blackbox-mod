@@ -23,7 +23,8 @@ struct smvoice {
 struct sm {
     uint32_t magic;
     uint8_t mode, gate, nslice, npads;
-    uint8_t sel, ov_ok, mono, _p;
+    uint8_t sel, ov_ok, mono;
+    uint8_t dbg[3];                         /* pads with rec[8] set, with an id, with a live sample */
     uint8_t pad_row[SM_PADS], pad_col[SM_PADS];
     uint16_t pad_id[SM_PADS];
     int32_t id, len, hz;

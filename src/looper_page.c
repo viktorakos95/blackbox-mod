@@ -1125,6 +1125,16 @@ static void draw_samplr(void)
     frame(wx - 1, wy - 1, SM_W + 2, wh + 2, C_RAIL, 1);
     if (s->id < 0) {
         text_c(wx, cy - 4, SM_W, s->npads ? "SAMPLE NOT READY" : "NO SAMPLES ON THE PADS", C_GREY, 1);
+        if (!s->npads) {
+            char b[16], *q = b;
+            q = put_uint(q, s->dbg[0]);
+            *q++ = ' ';
+            q = put_uint(q, s->dbg[1]);
+            *q++ = ' ';
+            q = put_uint(q, s->dbg[2]);
+            *q = 0;
+            text_c(wx, cy + 8, SM_W, b, C_GREY, 1);
+        }
     } else {
         int half = wh / 2 - 2;
         for (int c = 0; c < SM_COLS; c++) {
