@@ -27,3 +27,23 @@ Kept in the order they came up. "Needs" says what is missing before it can be bu
 - **Monitor level / routing** polish (MONITOR INPUT exists; stock monitor lives on the pads).
 - **Map the three transport event ids** (0x49 / 0x4f / 0x70): no longer needed (the key scanner's second ring is
   filtered instead), kept for the notes.
+
+# Built but not yet confirmed on hardware (as of step 39)
+
+Everything below passes the emulator tests; none of it has a hardware report yet.
+
+- **Step 39**: SMOOTH (WSOLA) for SPEED / HALF / PTCH (CPU spikes with four tracks on SMOOTH?); INFO + FX and the footer
+  STOCK FX button (do they reach the stock FX page from every tab?); the diagnostics removed from the cave (the transport
+  buttons are filtered by the key ring only: re-check PLAY / STOP / REC on the looper page and on stock pages).
+- **Step 38**: FREE ignoring SYNC; STUT taking a new slice when the knob moves.
+- **Step 37**: a new FOLLOW track labelled REC / UNDO says DEL; MULT 1/2 1/4 1/8 from the hold (hold before the master loop
+  begins).
+- **Step 36**: MULT takes begin with the master loop and the playheads start together; PTCH (pitch without speed);
+  STAB noise level.
+- **Step 35**: MONITOR INPUT slider (MORE), SPEED PITCH TAPE / GRAIN, STUT, SCRM, input monitor level (x1.5 at 100 %).
+- **Steps 31-34**: the one pink square on the FX tabs (knobs 2 3 / 1 4 like the panel), FX button cycling MAIN -> FX ->
+  FX2, double tap = default, STAB / RPT / SPEED / DROP / TRIM behaviour, DROP random and pattern, RPT time based.
+- **Step 28**: PLAY after STOP realigns to the running sequencer (SYNC on). The sync from a random start (step 21) is still
+  unconfirmed: clock units / rate / `a+b` offset.
+- **Earlier**: stock FX route audibility (ROUTE = STOCK), BPM read, QUANT 1 BAR, bars rounding, half-time sync, loop gain,
+  undo / DEL labels, MIDI-free clock facts (CLK / R on MORE).
