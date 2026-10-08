@@ -231,7 +231,7 @@ struct dsp {
     uint32_t scr_n[LOOPER_TRACKS];               /* the slice the scrambler last decided on */
     uint8_t stut_on[LOOPER_TRACKS], gv[LOOPER_TRACKS], stut_mode_l[LOOPER_TRACKS];
     float stut_len_l[LOOPER_TRACKS];             /* the size and side the stutter's window was taken with */
-    uint32_t gst[LOOPER_TRACKS][2];              /* the keep-pitch grains: start, age (-1 = idle), direction */
+    float gpos[LOOPER_TRACKS][2];                /* the keep-pitch grains: read position, age (-1 = idle), direction */
     int32_t gag[LOOPER_TRACKS][2], ghc[LOOPER_TRACKS];
     int8_t gdir[LOOPER_TRACKS][2];
     float ph1[LOOPER_TRACKS], ph2[LOOPER_TRACKS];    /* wow and flutter phases */
@@ -241,6 +241,9 @@ struct dsp {
     int32_t dseg[LOOPER_TRACKS], xf[LOOPER_TRACKS];
     uint8_t mact[LOOPER_TRACKS], dmute[LOOPER_TRACKS];
     float dtarget[LOOPER_TRACKS];
+    float win[256];                              /* the grain window (smoothstep up, then down) */
+    int16_t ws[5120];                            /* WSOLA: the candidate region, mono */
+    uint8_t winok;
     float zero[MAXN];
 };
 _Static_assert(sizeof(struct dsp) <= 32768, "dsp state must fit in one 32 KB buffer");
@@ -999,35 +1002,78 @@ static inline float rnd01(uint32_t *s)
  * jumps, wow / flutter, the tape dulling and noise, dropouts, pitch shift. During the cross fade back to the plain read it
  * is mixed in. pos is the transport's place in the loop (what the scrambler's slices and sequence are counted on). */
 /* WSOLA: where a new grain should start, near the nominal place (the play head), so that its first hop matches what the
- * grain before it would have played next. A coarse search (every 8 frames, +-512) on a subsampled mono sum, then a fine one. */
-static inline int32_t wsmp(int t, vtrack *k, uint32_t len, int32_t idx)
+ * grain before it would have played next. The candidate region is copied once (mono) and searched there: every 16 frames over
+ * +-512, then every 2 frames around the best, on 64 points 16 frames apart (times the read rate). About 60 k instructions. */
+#define WS_PTS 64
+#define WS_STEP 16
+#define WS_RG 528                                 /* +-512 coarse, +-16 fine */
+
+static void ws_region(int t, vtrack *k, uint32_t len, int32_t start, int n, int16_t *out)
 {
-    int32_t m = idx % (int32_t)len;
-    if (m < 0)
-        m += (int32_t)len;
-    int16_t *a = frame_at(t, place(k, (uint32_t)m, len));
-    return (int32_t)a[0] + (int32_t)a[1];
+    int32_t f = start % (int32_t)len;
+    if (f < 0)
+        f += (int32_t)len;
+    int32_t chunk = -1;
+    const int16_t *base = 0;
+    int rev = k->rev;
+    for (int i = 0; i < n; i++) {
+        uint32_t ph = rev ? len - 1u - (uint32_t)f : (uint32_t)f;
+        int32_t c = (int32_t)(ph >> 13);
+        if (c != chunk) {
+            chunk = c;
+            uint8_t *e = entry(FIRST_ENTRY + t * TRACK_ENTRIES + (c >> 1));
+            base = *(int16_t **)(e + ((c & 1) ? ENTRY_RIGHT : ENTRY_LEFT));
+        }
+        const int16_t *sm = base + 2 * (ph & 8191u);
+        out[i] = (int16_t)(((int)sm[0] + (int)sm[1]) >> 1);
+        if (++f >= (int32_t)len)
+            f = 0;
+    }
 }
 
-static uint32_t wsola_start(int t, vtrack *k, uint32_t len, uint32_t pst, int pdir, int32_t page, uint32_t nominal, int dir, float rr)
+static uint32_t wsola_start(struct dsp *d, int t, vtrack *k, uint32_t len, float ppos, int pdir, int32_t page, uint32_t nominal,
+                            int dir, float rr)
 {
     if (page < 0)
         return nominal;                           /* no grain before it */
-    float tg[GH / 8];
-    for (int j = 0; j < GH / 8; j++)              /* what the grain before it plays next (the overlap) */
-        tg[j] = (float)wsmp(t, k, len, (int32_t)pst + pdir * (int32_t)((float)(page + j * 8) * rr));
+    int16_t off[WS_PTS];
+    int tg[WS_PTS];
+    for (int j = 0; j < WS_PTS; j++)
+        off[j] = (int16_t)((float)(j * WS_STEP) * rr);
+    int span = off[WS_PTS - 1] + 1;
+    int n = 2 * WS_RG + span + 1;
+    if (n > 5120)
+        return nominal;
+    for (int j = 0; j < WS_PTS; j++) {            /* what the grain before it plays next */
+        int16_t one;
+        ws_region(t, k, len, (int32_t)ppos + pdir * off[j], 1, &one);
+        tg[j] = (int)one >> 3;
+    }
+    int32_t b0 = dir > 0 ? (int32_t)nominal - WS_RG : (int32_t)nominal - WS_RG - span;
+    ws_region(t, k, len, b0, n, d->ws);
+    const int16_t *reg = d->ws;
     int best = 0;
     float bs = -1.f;
     for (int pass = 0; pass < 2; pass++) {
-        int lo = pass ? best - 6 : -512, hi = pass ? best + 6 : 512, st = pass ? 1 : 8;
+        int lo = pass ? best - 16 : -512, hi = pass ? best + 16 : 512, st = pass ? 2 : 16;
         for (int o = lo; o <= hi; o += st) {
-            float sx = 0.f, ee = 1.f;
-            for (int j = 0; j < GH / 8; j++) {
-                float b = (float)wsmp(t, k, len, (int32_t)nominal + o + dir * (int32_t)((float)(j * 8) * rr));
-                sx += tg[j] * b;
-                ee += b * b;
+            int sx = 0, ee = 1;
+            if (dir > 0) {
+                const int16_t *r = reg + o + WS_RG;
+                for (int j = 0; j < WS_PTS; j++) {
+                    int b = (int)r[off[j]] >> 3;
+                    sx += tg[j] * b;
+                    ee += b * b;
+                }
+            } else {
+                const int16_t *r = reg + o + WS_RG + span;
+                for (int j = 0; j < WS_PTS; j++) {
+                    int b = (int)r[-off[j]] >> 3;
+                    sx += tg[j] * b;
+                    ee += b * b;
+                }
             }
-            float sc = sx > 0.f ? sx * sx / ee : 0.f;
+            float sc = sx > 0 ? (float)sx * (float)sx / (float)ee : 0.f;
             if (sc > bs) {
                 bs = sc;
                 best = o;
@@ -1094,43 +1140,62 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
     } else if (i1 >= wlen) {
         i1 = 0;
     }
-    int16_t *a = frame_at(t, place(k, i0, len)), *b = frame_at(t, place(k, i1, len));
-    float ml = (float)a[0] * s16, mr = (float)a[1] * s16;
-    ml += ((float)b[0] * s16 - ml) * f;
-    mr += ((float)b[1] * s16 - mr) * f;
+    float ml = 0.f, mr = 0.f;
+    int grains = on && (p->ptch_on || (p->keep && (p->spd < .98f || p->spd > 1.02f)));
+    if (!grains) {
+        int16_t *a = frame_at(t, place(k, i0, len)), *b = frame_at(t, place(k, i1, len));
+        ml = (float)a[0] * s16;
+        mr = (float)a[1] * s16;
+        ml += ((float)b[0] * s16 - ml) * f;
+        mr += ((float)b[1] * s16 - mr) * f;
+    }
     float spd = on ? p->spd : (k->half ? .5f : 1.f);
-    if (on && (p->ptch_on || (p->keep && (p->spd < .98f || p->spd > 1.02f)))) {
+    if (grains) {
         /* grains of 2048 frames, a new one every 1024 at the play head, read at the pitch ratio (keep the pitch: 1; the tape's
          * own change when KEEP is off) and cross faded: speed and pitch apart */
+        if (!d->winok) {
+            for (int i = 0; i < 256; i++) {
+                float x = ((float)i + .5f) * (1.f / 256.f), q = x < .5f ? 2.f * x : 2.f * x - 1.f, sm = q * q * (3.f - 2.f * q);
+                d->win[i] = x < .5f ? sm : 1.f - sm;
+            }
+            d->winok = 1;
+        }
         float aspd = p->spd < 0.f ? -p->spd : p->spd;
         float rr = p->pratio * (p->keep ? 1.f : aspd);
         if (d->ghc[t] <= 0) {
             int v = d->gv[t] & 1;
             d->gv[t] ^= 1;
             int dirn = p->spd < 0.f ? -1 : 1;
-            d->gst[t][v] = p->smooth ? wsola_start(t, k, len, d->gst[t][v ^ 1], d->gdir[t][v ^ 1], d->gag[t][v ^ 1], i0, dirn, rr) : i0;
+            d->gpos[t][v] = (float)(p->smooth ? wsola_start(d, t, k, len, d->gpos[t][v ^ 1], d->gdir[t][v ^ 1], d->gag[t][v ^ 1], i0, dirn, rr) : i0);
             d->gag[t][v] = 0;
-            d->gdir[t][v] = p->spd < 0.f ? -1 : 1;
+            d->gdir[t][v] = (int8_t)dirn;
             d->ghc[t] = GH;
         }
         d->ghc[t]--;
-        ml = mr = 0.f;
+        float fl = (float)len;
         for (int v = 0; v < 2; v++) {
             int32_t ag = d->gag[t][v];
             if (ag < 0)
                 continue;
-            float x = (float)ag * (1.f / (float)GG);
-            float q = x < .5f ? 2.f * x : 2.f * x - 1.f;
-            float sm = q * q * (3.f - 2.f * q);
-            float w = x < .5f ? sm : 1.f - sm;
-            float off = (float)ag * rr;
-            uint32_t oi = (uint32_t)off;
-            float of = off - (float)oi;
-            uint32_t ia = d->gdir[t][v] > 0 ? (d->gst[t][v] + oi) % len : (d->gst[t][v] + len - (oi % len)) % len;
-            uint32_t ib = d->gdir[t][v] > 0 ? (ia + 1) % len : (ia + len - 1) % len;
-            int16_t *g0 = frame_at(t, place(k, ia, len)), *g1 = frame_at(t, place(k, ib, len));
-            ml += w * ((float)g0[0] + ((float)g1[0] - (float)g0[0]) * of) * s16;
-            mr += w * ((float)g0[1] + ((float)g1[1] - (float)g0[1]) * of) * s16;
+            float gp = d->gpos[t][v];
+            uint32_t ia = (uint32_t)gp;
+            float gf = gp - (float)ia;
+            uint32_t pa = k->rev ? len - 1u - ia : ia;                   /* the frame and its neighbour: one lookup unless a block ends */
+            int16_t *g0 = frame_at(t, pa), *g1;
+            uint32_t po = pa & (uint32_t)(HALF_FRAMES - 1);
+            if (k->rev ? po != 0u : (po != (uint32_t)(HALF_FRAMES - 1) && ia + 1 < len))
+                g1 = k->rev ? g0 - 2 : g0 + 2;
+            else
+                g1 = frame_at(t, place(k, ia + 1 >= len ? 0 : ia + 1, len));
+            float w = d->win[ag >> 3] * s16;
+            ml += w * ((float)g0[0] + ((float)g1[0] - (float)g0[0]) * gf);
+            mr += w * ((float)g0[1] + ((float)g1[1] - (float)g0[1]) * gf);
+            gp += d->gdir[t][v] > 0 ? rr : -rr;
+            if (gp >= fl)
+                gp -= fl;
+            else if (gp < 0.f)
+                gp += fl;
+            d->gpos[t][v] = gp;
             d->gag[t][v] = ag + 1 >= GG ? -1 : ag + 1;
         }
     }
@@ -1230,7 +1295,7 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
         d->stut_on[t] = 0;
         d->scr_n[t] = 0xffffffffu;
         d->gag[t][0] = d->gag[t][1] = -1;
-        d->ghc[t] = 0;
+        d->ghc[t] = t * 256;                          /* the tracks' grain hops land in different blocks */
         d->gv[t] = 0;
         if (!d->rnd[t])
             d->rnd[t] = 0x9e3779b9u * (uint32_t)(t + 1);
@@ -1984,8 +2049,8 @@ char *looper_status(char *p)
     if (S->ok) {
         *p++ = 'o';
         *p++ = 'k';
-        *p++ = '3';                                   /* the build: step 39 */
-        *p++ = '9';
+        *p++ = '4';                                   /* the build: step 40 */
+        *p++ = '0';
         return p;
     }
     *p++ = S->why == WHY_BUSY_AT_BOOT ? 'b' : 't';

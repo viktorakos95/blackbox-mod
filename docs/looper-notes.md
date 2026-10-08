@@ -508,3 +508,16 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
 - Touch probe on MORE's diagnostic line: ` T<most fingers at once> <3rd word> <4th word>` of the touch events, to see whether the
   panel reports several fingers and how to tell them apart (needed for SAMPLR). Page state lost its event-log fields
   (the page struct was full).
+
+## Step 40: CPU
+- Hardware report on the touch probe build: the screen flickered and, with SMOOTH, the LEDs flickered and there were
+  artifacts. Measured in the emulator (instructions in the cave per audio block): plain loop 73 k; GRAIN 204 k; SMOOTH
+  up to 1.1 M in the block where a grain starts (the correlation search read every sample through `frame_at` + `%`).
+  Now: the candidate region is copied once into the dsp buffer (mono) and searched there (64 points every 16 frames,
+  +-512 coarse, +-16 fine), grain reads keep a running float position, a window table and one lookup per frame pair, and the
+  tracks' grain hops are staggered (track t starts t x 256 frames apart). GRAIN 179 k, SMOOTH 205 k on average, 285 k at most.
+- Touch ids: the third argument of the stock touch down / move / up calls is the finger id (the stock Waveform view compares
+  it with the ids it stored for its two pinch fingers); the page now gets it (`looper_page_down(view, pt, id)`), and MORE's
+  diagnostic line shows the ids of the last four touch-downs.
+- docs/samplr-research.md (written by a research agent, not yet verified on hardware): pad sample records, PCM as 32-bit
+  float in 8192-frame blocks via the engine's block list, the stock reader 0x08074a01, waveform tiles 0x080c6340.
