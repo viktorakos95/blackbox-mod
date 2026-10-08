@@ -24,9 +24,9 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx);
 void looper_page_poke(uint8_t *view);
 void looper_page_enter(uint8_t *view);
 void looper_page_leave(uint8_t *view);
-void looper_page_down(uint8_t *view, const int *pt);
-void looper_page_move(uint8_t *view, const int *pt);
-void looper_page_up(uint8_t *view, const int *pt);
+void looper_page_down(uint8_t *view, const int *pt, int id);
+void looper_page_move(uint8_t *view, const int *pt, int id);
+void looper_page_up(uint8_t *view, const int *pt, int id);
 
 #define FN(addr) ((addr) | 1u)
 
@@ -249,7 +249,7 @@ void solo_touch_up(uint8_t *view, void *pt, void *arg)
 {
     ensure();
     if (S->looper && view[VIEW_MUTE]) {
-        looper_page_up(view, (const int *)pt);
+        looper_page_up(view, (const int *)pt, (int)(intptr_t)arg);
         return;
     }
     fw_touch_up(view, pt, arg);
@@ -312,7 +312,7 @@ void solo_touch_down(uint8_t *view, void *pt, void *arg)
 {
     ensure();
     if (S->looper && view[VIEW_MUTE]) {
-        looper_page_down(view, (const int *)pt);
+        looper_page_down(view, (const int *)pt, (int)(intptr_t)arg);
         return;
     }
     if (S->active && view[VIEW_MUTE]) {
@@ -330,7 +330,7 @@ void solo_touch_move(uint8_t *view, void *pt, void *arg)
 {
     ensure();
     if (S->looper && view[VIEW_MUTE]) {
-        looper_page_move(view, (const int *)pt);
+        looper_page_move(view, (const int *)pt, (int)(intptr_t)arg);
         return;
     }
     if (S->active && view[VIEW_MUTE])

@@ -1027,9 +1027,8 @@ static void draw_setup(const struct lay *L)
         *p++ = 'T';
         p = put_uint(p, P->tmax);
         *p++ = ' ';
-        p = put_hex(p, (uint32_t)P->tw2 & 0xffff, 4);
-        *p++ = ' ';
-        p = put_hex(p, (uint32_t)P->tw3 & 0xffff, 4);
+        p = put_hex(p, (uint32_t)P->tw2, 8);                      /* the ids of the last four touches, oldest first */
+        p = put_hex(p, (uint32_t)P->tw3, 8);
 #ifdef BANK2
         *p++ = ' ';
         *p++ = 'B';
@@ -1311,10 +1310,12 @@ void looper_page_boot(void)
 /* ---- touch and knobs */
 
 /* Touch points use the same space as the cells: convert to pixels from the page's left and top. */
-static void probe(const int *pt, int kind)                        /* kind 0 down, 1 move, 2 up */
+static void probe(int id, int kind)                               /* kind 0 down, 1 move, 2 up; id: the third argument of the touch calls */
 {
-    P->tw2 = pt[2];
-    P->tw3 = pt[3];
+    if (kind == 0) {                                              /* the ids of the last four touches, newest in the low half-word */
+        P->tw2 = (int32_t)(((uint32_t)P->tw2 << 16) | ((uint32_t)P->tw3 >> 16));
+        P->tw3 = (int32_t)(((uint32_t)P->tw3 << 16) | ((uint32_t)id & 0xffffu));
+    }
     if (kind == 0 && P->tcur < 255)
         P->tcur++;
     else if (kind == 2 && P->tcur)
@@ -1355,11 +1356,11 @@ static void set_fx(int t, int param, float v)
     looper_set_param(t, param, v);
 }
 
-void looper_page_down(uint8_t *view, const int *pt)
+void looper_page_down(uint8_t *view, const int *pt, int id)
 {
     int x, d, t = 0;
     float v = 0.f;
-    probe(pt, 0);
+    probe(id, 0);
     P->pressed = P_NONE;
     to_page(pt, &x, &d);
     int zone = looper_page_hit(x, d, &t, &v);
@@ -1464,9 +1465,9 @@ void looper_page_down(uint8_t *view, const int *pt)
     dirty_now(view);
 }
 
-void looper_page_move(uint8_t *view, const int *pt)
+void looper_page_move(uint8_t *view, const int *pt, int id)
 {
-    probe(pt, 1);
+    probe(id, 1);
     if (P->pressed != P_FADER && P->pressed != P_DIAL && P->pressed != P_SLIDER)
         return;
     int x, d;
@@ -1485,9 +1486,10 @@ void looper_page_move(uint8_t *view, const int *pt)
     dirty_now(view);
 }
 
-void looper_page_up(uint8_t *view, const int *pt)
+void looper_page_up(uint8_t *view, const int *pt, int id)
 {
-    probe(pt, 2);
+    (void)pt;
+    probe(id, 2);
     if (P->pressed == P_REC)
         looper_event(P->track, LOOPER_EV_REC_UP);
     else if (P->pressed == P_MUTE)
