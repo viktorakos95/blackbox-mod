@@ -6,6 +6,26 @@ import struct
 src = open("test_looper_v4.py").read().split("def flat2")[0]
 exec(src)
 
+import subprocess
+
+
+def struct_offsets(names):
+    """Offsets of struct sm members, from the compiler (the header is the single source)."""
+    src = '#include "src/samplr.h"\n' + "".join(f"char o_{n}[__builtin_offsetof(struct sm,{n})];\n" for n in names)
+    out = subprocess.run(["arm-none-eabi-gcc", "-I.", "-mthumb", "-S", "-x", "c", "-", "-o", "-"], input=src, capture_output=True, text=True, check=True).stdout.splitlines()
+    res, cur = {}, None
+    for l in out:
+        l = l.strip()
+        if l.startswith("o_") and l.endswith(":"):
+            cur = l[2:-1]
+        elif cur and l.startswith(".space"):
+            res[cur] = int(l.split()[1])
+            cur = None
+    return res
+
+
+OFF = struct_offsets(["id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "latch", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
+
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
 SLOTS, BL, ENT, BUFL = 0x24040000, 0x24050000, SE + 0x1C * 1, 0x24060000
@@ -91,8 +111,8 @@ e.call("samplr")
 off_id = None
 # struct sm: magic 0, mode 4, gate 5, nslice 6, npads 7, sel 8, ov_ok 9, mono 10, pad_row 12.., pad_col 28.., pad_id 44.., id 76
 check("pads: 1", sm(7, "B") == 1, sm(7, "B"))
-check("selected id 5", sm(80, "i") == 5, sm(80, "i"))
-check("length read from the slot", sm(84, "i") == LENF, sm(84, "i"))
+check("selected id 5", sm(OFF["id"], "i") == 5, sm(OFF["id"], "i"))
+check("length read from the slot", sm(OFF["len"], "i") == LENF, sm(OFF["len"], "i"))
 ovmin, ovmax = 0x0, 0x0
 ov = struct.unpack("<300b", e.uc.mem_read(SMP + 112 + 0, 300)) if False else None
 
@@ -112,14 +132,14 @@ asked = []
 e.stub(0x08074CE8, lambda: asked.append(e.arg(2)))
 e.uc.mem_write(BL, struct.pack("<HH", 1, 0xFFFF))
 e.call("samplr_enter", count=50_000_000)
-check("streamed: half the columns are filled, the rest wait", 70 <= sm(224, "H") <= 80 and sm(9, "B") == 0, (sm(224, "H"), sm(9, "B")))
+check("streamed: half the columns are filled, the rest wait", 70 <= sm(OFF["filled"], "H") <= 80 and sm(9, "B") == 0, (sm(OFF["filled"], "H"), sm(9, "B")))
 e.call("samplr_refresh", 1000)
 check("streamed: the missing block is asked for (prefetch at frame 8192)", 8192 in asked, asked)
 e.uc.mem_write(BL, struct.pack("<HH", 1, 2))
 e.call("samplr_refresh", 1000)
-check("streamed: no second try within half a second", sm(224, "H") < 150)
+check("streamed: no second try within half a second", sm(OFF["filled"], "H") < 150)
 e.call("samplr_refresh", 1200)
-check("streamed: once the block is there the waveform completes", sm(224, "H") == 150 and sm(9, "B") == 1, (sm(224, "H"), sm(9, "B")))
+check("streamed: once the block is there the waveform completes", sm(OFF["filled"], "H") == 150 and sm(9, "B") == 1, (sm(OFF["filled"], "H"), sm(9, "B")))
 
 
 def touch(kind, i, fx, fy):
@@ -151,7 +171,7 @@ exp = (3072 + 200) / LENF * 0.9
 check("slicer: no pitch from finger height by default", abs(o[200] - exp) < 0.01, f"{o[200]:.4f} vs {exp:.4f}")
 touch(2, 0, 0, 0)
 play(3)
-e.uc.mem_write(SMP + 3389, b"\x05")                    # YP on for the slicer
+e.uc.mem_write(SMP + OFF["ypit"], b"\x05")                    # YP on for the slicer
 # octave up (top of the area)
 touch(0, 0, 210, 0)
 o = play()[0]
@@ -160,7 +180,7 @@ check("slicer: top of the area = one octave up", abs(o[200] - exp) < 0.02, f"{o[
 touch(2, 0, 0, 0)
 play(2)
 
-e.uc.mem_write(SMP + 3389, b"\x04")                    # YP off again
+e.uc.mem_write(SMP + OFF["ypit"], b"\x04")                    # YP off again
 # transpose +12: the slice runs at double speed, with or without the finger height
 e.call("samplr_trans", 12)
 touch(0, 0, 3 * 64 + 10, 512)
@@ -171,17 +191,17 @@ touch(2, 0, 0, 0)
 play(3)
 for _ in range(5):
     e.call("samplr_trans", 12)
-check("transpose is limited to +48", struct.unpack("<b", e.uc.mem_read(SMP + 3388, 1))[0] == 48)
+check("transpose is limited to +48", struct.unpack("<b", e.uc.mem_read(SMP + OFF["trans"], 1))[0] == 48)
 touch(0, 0, 3 * 64 + 10, 512)
 o = play(2)[0]
 check("transpose +48: sounds, finite", 0 < max(abs(x) for x in o) < 2)
 touch(2, 0, 0, 0)
 play(3)
 e.call("samplr_trans", 0)
-check("transpose back to 0", struct.unpack("<b", e.uc.mem_read(SMP + 3388, 1))[0] == 0)
+check("transpose back to 0", struct.unpack("<b", e.uc.mem_read(SMP + OFF["trans"], 1))[0] == 0)
 
 # moving a slice point: grab the handle in the strip along the top, drag it
-cut = lambda i: e.r32(SMP + 3124 + 4 * i)
+cut = lambda i: e.r32(SMP + OFF["cut"] + 4 * i)
 check("slice points start equal (1024 frames apart)", cut(1) == 1024 and cut(2) == 2048, (cut(1), cut(2)))
 touch(0, 2, 60, 20)
 touch(1, 2, 400, 20)
@@ -263,7 +283,7 @@ e.call('samplr_enter', count=50_000_000)
 
 
 def sph():
-    return struct.unpack("<f", e.uc.mem_read(SMP + 132, 4))[0]
+    return struct.unpack("<f", e.uc.mem_read(SMP + OFF["sph"], 4))[0]
 
 
 def setb(off, v):
@@ -271,7 +291,7 @@ def setb(off, v):
 
 
 e.call("samplr_set_mode", 0)
-setb(112, 3)                                           # quantize 1/16 = 6000 frames at 120 bpm
+setb(OFF["qi"], 3)                                           # quantize 1/16 = 6000 frames at 120 bpm
 play(3)
 touch(0, 0, 3 * 64 + 10, 512)
 GF = 6000
@@ -287,15 +307,15 @@ nxt = math.ceil(t0 / GF - 1e-5) * GF - t0
 check("quantize: the slice starts at the next 1/16 line, not at the touch", found is not None and k > 0 and abs(found[1] - nxt) <= 2, (found, nxt, k))
 touch(2, 0, 0, 0)
 play(3)
-setb(112, 0)
+setb(OFF["qi"], 0)
 
 # arpeggiator: two spots (fingers 0 and 1), 1/8 steps (12000 frames), UP: the spots alternate
 e.call("samplr_set_mode", 2)
-setb(113, 1)                                           # div 1/8
-setb(114, 0)                                           # UP
+setb(OFF["div"], 1)                                           # div 1/8
+setb(OFF["pat"], 0)                                           # UP
 touch(0, 0, 100, 512)
 touch(0, 1, 700, 512)
-used = lambda: sum(e.r8(SMP + 148 + 8 * i + 5) for i in range(8))
+used = lambda: sum(e.r8(SMP + OFF["spot"] + 8 * i + 5) for i in range(8))
 check("arp: two fingers = two spots", used() == 2, used())
 allo = []
 for _ in range(240):
@@ -315,7 +335,7 @@ check("arp: a note on every 1/8 step", len(segs) >= 5 and all(abs(segs[i + 1][0]
 vals = [allo[a_ + 150] * LENF / 0.9 - 150 for a_, _ in segs[:5]]
 lo_, hi_ = 100 * 16, 700 * 16
 check("arp: the notes alternate between the two spots (1600 and 11200)", all(abs(v - (lo_ if k % 2 == 0 else hi_)) < 250 for k, v in enumerate(vals)) or all(abs(v - (hi_ if k % 2 == 0 else lo_)) < 250 for k, v in enumerate(vals)), vals)
-setb(114, 4)
+setb(OFF["pat"], 4)
 e.call("samplr_cycle", 2)                              # latch on
 touch(2, 1, 0, 0)
 check("arp: latch keeps the lifted finger's spot", used() == 2, used())
@@ -330,7 +350,7 @@ play(5)
 
 # a block that is not in the pool: no read call, silence, a load is asked for
 e.call("samplr_set_mode", 0)
-setb(112, 0)
+setb(OFF["qi"], 0)
 e.uc.mem_write(BL, struct.pack("<HH", 1, 0xFFFF))
 asked.clear()
 reads.clear()
@@ -344,18 +364,18 @@ touch(2, 0, 0, 0)
 play(5)
 
 # attack
-setb(116, 3)                                           # 80 ms
+setb(OFF["atk"], 3)                                           # 80 ms
 touch(0, 0, 4 * 64 + 10, 512)
 o = play(3)[0]
 full = (4096 + 3 * 256 - 256 + 100) / LENF * 0.9
 check("attack 80 ms: the note is still fading in after 600 frames", 0.05 < o[100] / full < 0.5, (o[100], full))
 touch(2, 0, 0, 0)
-setb(116, 0)
+setb(OFF["atk"], 0)
 play(40)
 
 # granular
 e.call("samplr_set_mode", 3)
-setb(113, 3)                                           # 1/32: a grain every 3000 frames
+setb(OFF["div"], 3)                                           # 1/32: a grain every 3000 frames
 touch(0, 1, 512, 512)
 mx, tot = 0.0, 0.0
 for _ in range(100):

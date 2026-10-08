@@ -62,7 +62,9 @@ struct sm {
     uint8_t gfree, a_last, sp_next, _q;     /* grain rate free (grains per second) instead of the grid; the spot played last; next spot to replace */
     uint16_t a_step, _q2;
     float scat, sph, dens;                  /* grain scatter 0..1; free-running phase in frames; free grain density per second */
-    uint32_t tick, pf_t;                    /* blocks run; when the last load was asked for */
+    uint32_t tick, pf_t;
+    uint32_t t_last, t_sum;                 /* cycle counter at the last run; cycles spent in this report */
+    uint16_t t_n, t_peak, t_avg_shown, t_peak_shown;   /* load of samplr_run in per mille of the block period */                    /* blocks run; when the last load was asked for */
     struct smspot spot[SM_SPOTS];
     uint32_t rnd;
     int16_t kacc[4];                        /* knob counts not yet turned into a step */

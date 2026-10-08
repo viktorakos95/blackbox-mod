@@ -104,3 +104,10 @@ takes three overdub layers.
   speed are supported (the read buffers moved to effect blocks 10 / 11, 16 KB each).
 - Next: the source abstraction (looper tracks as SAMPLR samples + record from SAMPLR), voices that keep their own sample while another is edited,
   effects, gesture recorder.
+
+## Build 7 (glitch hunt, page order fix)
+- The audio path no longer calls the engine's PCM reader: the floats are copied straight out of the resident pool blocks (same residency test as
+  before). Reason: glitches / artifacts with the pad sequence running; a lock or stall inside the stock reader is one suspect.
+- The top bar of the SMPLR tab shows `C avg/peak S avg/peak` (percent): the whole audio task (the CPU meter) and SAMPLR's own share (DWT cycles in
+  `samplr_run`, per block period). If it glitches again, the numbers say whether SAMPLR is the cause.
+- MIX on the SMPLR tab goes to the Looper's MAIN tab (no screen change); SONG on another Looper tab goes to SMPLR.

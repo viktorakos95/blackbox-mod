@@ -265,6 +265,10 @@ void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
     (void)computed;
     ensure();
     int cur = app[APP_SCREEN], next = SCREEN_MIXER;
+    if (cur == SCREEN_MUTE && S->looper && S->view && looper_page_tab() == 5) {
+        looper_page_goto(S->view, 0);                  /* from the SMPLR tab MIX goes to the Looper's own first page */
+        return;
+    }
     if (cur == SCREEN_MIXER) {
         next = SCREEN_MUTE;
     } else if (cur == SCREEN_MUTE && !S->active && !S->looper) {

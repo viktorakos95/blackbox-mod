@@ -13,8 +13,7 @@ float looper_beat_frames(void);
 
 #define ENGINE  ((void *)0x2400a9c0u)
 #define APPOBJ  0x24020088u
-typedef int (*pcm_read_fn)(void *eng, int unused, int64_t start, int id, float *l, float *r, int n);
-#define PCM_READ (*(pcm_read_fn *)(0x080e9604u + 8))
+#define DWT_CYCCNT (*(volatile uint32_t *)0xe0001004u)
 #define SMAGIC  0x534d5031u
 
 struct sm *samplr(void)
@@ -746,8 +745,8 @@ static float rnd01(struct sm *s)
     return (float)(rnd(s) >> 8) * (1.f / 16777216.f);
 }
 
-/* Is block blk of the selected sample in the pool right now? */
-static int resident(struct sm *s, int blk)
+/* The pool entry holding block blk of the selected sample, or 0 when it is not resident right now. */
+static uint8_t *block_entry(struct sm *s, int blk)
 {
     uint8_t *E = (uint8_t *)ENGINE;
     unsigned si = *(uint16_t *)(E + 0x434c + 2 * s->id);
@@ -760,13 +759,16 @@ static int resident(struct sm *s, int blk)
     if (e == 0xffffu)
         return 0;
     uint8_t *ent = E + 0x1c * e;
-    return *(uint32_t *)(ent + 0x18) == (uint32_t)s->id && *(uint32_t *)(ent + 0x0c) == (uint32_t)blk && ent[0x1f] && !ent[0x1e];
+    if (*(uint32_t *)(ent + 0x18) == (uint32_t)s->id && *(uint32_t *)(ent + 0x0c) == (uint32_t)blk && ent[0x1f] && !ent[0x1e])
+        return ent;
+    return 0;
 }
 
 /* Reads the source for m output samples that start at ip + fr and step r into tl / tr. *x0 = where the start lies inside
- * them. 0 when the span is too long or a block is not in the pool yet (it is asked for, at most every 128 ms, and the
- * stock reader is not called: on a miss it would queue a load request every block). Outside the sample it is silence;
- * a mono sample's right side is its left. */
+ * them. 0 when the span is too long or a block is not in the pool yet (it is asked for, at most every 128 ms). The floats are
+ * copied straight out of the pool blocks, no call into the engine's reader (its locks and bookkeeping are not needed for a
+ * block that is there, and a stall in the audio task is what must not happen). Outside the sample it is silence; a mono
+ * sample's right side is its left. */
 static int fetch(struct sm *s, int32_t ip, float fr, float r, int m, float *x0)
 {
     int32_t len = s->len;
@@ -781,22 +783,43 @@ static int fetch(struct sm *s, int32_t ip, float fr, float r, int m, float *x0)
             s->tl[i] = s->tr[i] = 0.f;
     } else {
         int b0 = (lo + a) >> 13, b1 = (lo + a + real - 1) >> 13;
-        for (int blk = b0; blk <= b1; blk++)
-            if (!resident(s, blk)) {
+        uint8_t *ents[4];
+        if (b1 - b0 >= 4)
+            return 0;
+        for (int blk = b0; blk <= b1; blk++) {
+            ents[blk - b0] = block_entry(s, blk);
+            if (!ents[blk - b0]) {
                 if (s->tick - s->pf_t > 24) {
                     s->pf_t = s->tick;
                     PREFETCH(ENGINE, s->id, (int64_t)blk << 13);
                 }
                 return 0;
             }
+        }
         for (int i = 0; i < a; i++)
             s->tl[i] = s->tr[i] = 0.f;
         for (int i = cnt - b; i < cnt; i++)
             s->tl[i] = s->tr[i] = 0.f;
-        PCM_READ(ENGINE, 0, (int64_t)(lo + a), s->id, s->tl + a, s->mono ? 0 : s->tr + a, real);
-        if (s->mono)
-            for (int i = a; i < a + real; i++)
-                s->tr[i] = s->tl[i];
+        int32_t f = lo + a;
+        int out = a;
+        while (out < a + real) {
+            int blk = f >> 13, o = f & 8191, k = 8192 - o;
+            k = k > a + real - out ? a + real - out : k;
+            uint8_t *ent = ents[blk - b0];
+            int valid = (int)*(uint32_t *)(ent + 0x14) - o;
+            valid = valid < 0 ? 0 : valid > k ? k : valid;
+            const float *L = (const float *)*(uint32_t *)(ent + 4) + o, *R = (const float *)*(uint32_t *)(ent + 8) + o;
+            if (s->mono)
+                R = L;
+            for (int i = 0; i < valid; i++) {
+                s->tl[out + i] = L[i];
+                s->tr[out + i] = R[i];
+            }
+            for (int i = valid; i < k; i++)
+                s->tl[out + i] = s->tr[out + i] = 0.f;
+            f += k;
+            out += k;
+        }
     }
     *x0 = (float)(ip - lo) + fr;
     return 1;
@@ -1052,7 +1075,21 @@ void samplr_run(float *bl, float *br, int n)
     struct sm *s = samplr();
     if (!s || n <= 0 || n > 256)
         return;
+    uint32_t c0 = DWT_CYCCNT;
     run_voices(s, bl, br, n);
+    uint32_t c1 = DWT_CYCCNT, period = c0 - s->t_last;
+    if (s->t_last && period > 1000u && period < 100000000u) {
+        uint32_t load = (c1 - c0) / (period / 1000u + 1u);        /* per mille of the block period */
+        load = load > 9990u ? 9990u : load;
+        s->t_sum += load;
+        s->t_peak = load > s->t_peak ? (uint16_t)load : s->t_peak;
+        if (++s->t_n >= 188) {
+            s->t_avg_shown = (uint16_t)(s->t_sum / s->t_n);
+            s->t_peak_shown = s->t_peak;
+            s->t_sum = s->t_n = s->t_peak = 0;
+        }
+    }
+    s->t_last = c0;
     s->tick++;
     s->sph += (float)n;                                           /* the free-running grid (used while the sequencer is stopped) */
     float w = 16.f * looper_beat_frames();

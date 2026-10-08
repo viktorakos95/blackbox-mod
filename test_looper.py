@@ -16,6 +16,7 @@ from emu import STACK, Emu
 e = Emu("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+cave/BLACKBOX.bin", "out/cave.elf")
 e.uc.mem_map(0x38800000, 0x1000)                     # backup SRAM
 e.uc.mem_map(0x58024000, 0x1000)                     # RCC / PWR
+e.uc.mem_map(0xE0001000, 0x1000)                     # DWT cycle counter
 e.uc.mem_map(0xC0000000, 0x1400000)                  # SDRAM: the pool's buffers
 e.uc.mem_map(0x30000000, 0x40000)                    # fake engine + buffers
 ENGINE = 0x30000000
@@ -1080,6 +1081,9 @@ screens.clear()
 e.call("solo_song_pressed", APP, 0, 0, 0)
 check("SONG on another tab of the page: switches to SMPLR without leaving the screen", screens == [] and e.r8(PAGE + 76) == 4, (screens, e.r8(PAGE + 76)))
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
+screens.clear()
+e.call("solo_mix_pressed", APP, 0, 0, 0)
+check("MIX on the SMPLR tab goes to the Looper's MAIN tab (no screen change)", screens == [] and e.r8(PAGE + 76) == 0, (screens, e.r8(PAGE + 76)))
 tab(0)
 
 # leaving the page puts the child widgets back

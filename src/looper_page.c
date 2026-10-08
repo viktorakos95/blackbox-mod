@@ -1120,12 +1120,26 @@ static void draw_samplr(void)
     samplr_name(nm, 22);
     samplr_info(info);
     text(6, 4, info, C_CYAN, 1);
+    {
+        char b[24], *q = b;                                       /* C: the whole audio task, S: SAMPLR's share (percent, average / peak) */
+        *q++ = 'C';
+        q = put_uint(q, (*(volatile uint16_t *)0x2405ffe2u + 5u) / 10u);
+        *q++ = '/';
+        q = put_uint(q, (*(volatile uint16_t *)0x2405ffe4u + 5u) / 10u);
+        *q++ = ' ';
+        *q++ = 'S';
+        q = put_uint(q, (s->t_avg_shown + 5u) / 10u);
+        *q++ = '/';
+        q = put_uint(q, (s->t_peak_shown + 5u) / 10u);
+        *q = 0;
+        text(P->w - 6 - 6 * 14, 4, b, C_GREY, 1);
+    }
     if (!s->ov_ok && s->id >= 0) {
         char b[12], *q = b;
         q = put_uint(q, s->filled * 100u / SM_COLS);
         *q++ = '%';
         *q = 0;
-        text(P->w - 6 - 6 * 5, 4, b, C_YELLOW, 1);
+        text(P->w - 6 - 6 * 14 - 6 * 5, 4, b, C_YELLOW, 1);
     }
     int cy = wy + wh / 2;
     frame(wx - 1, wy - 1, SM_W + 2, wh + 2, C_RAIL, 1);
