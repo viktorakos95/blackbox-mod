@@ -1,0 +1,49 @@
+# SAMPLR on the Blackbox: design draft
+
+Sources: App Store listing and reviews (no full manual found). The user's priorities: Slicer first, then Tape; Arpeggiator and
+Granular (E-bow) matter most after that; everything synced to the Blackbox tempo; a gesture recorder that records touches and
+takes three overdub layers.
+
+## Facts so far
+- Flash: the updater writes past 0x08100000 (size test `B2 OK`), the cave may use up to 0x08140000.
+- Touch: the panel reports at least 4 fingers at once (probe `T4`). Not yet known: how the fingers are told apart in move
+  events (the probe also shows the 3rd and 4th words of the touch event).
+- A custom full-screen page, its drawing, touch and knob handling exist (the looper page); audio is mixed into the Out 1 stage
+  (`looper_stage_thunk`), the sequencer clock reaches us through `seq_play` (`looper_clock`).
+
+## Shape of it
+- A new MIX mode after Looper ("SAMPLR"): full-screen page. Top: the sample's waveform (min / max per column, zoom and scroll
+  with pinch, the playheads of the voices drawn on it). Bottom: mode buttons, the sample slot (6), effect buttons.
+- Samples: the ones loaded on pads (no importer); a slot = a pad.
+- Voices: 8 (SAMPLR has 16) reading the pad's PCM through the pool blocks, linear interpolation, own envelope; a voice =
+  position, rate, gain, grain state.
+
+## Modes (first versions)
+1. SLICER: the waveform is cut into 16 (or the pad's own) slices; a touch plays that slice (from its start) with 4 fingers
+   polyphonic; touch height = pitch or volume; quantized to the grid when SYNC is on.
+2. TAPE: a finger holds a playhead; x position sets where, dragging sets the speed and direction (scratch); lift = stop or
+   free-run at the last speed.
+3. ARPEGGIATOR: a touch fixes the start point; steps at the tempo's division, each step plays a short slice from that start,
+   pitch walks a scale (up / down / updown / random, 1-3 octaves), the vertical position sets the rate or the pattern.
+4. GRANULAR (E-bow): a touch sets the centre; grain size from y, density by a knob, 2048-frame class grains, pitch by x spread;
+   several fingers = several clouds.
+5. LOOPER: two fingers = start and end of a loop; spreading = length; flipping = reverse; a second pair = a second loop.
+6. KEYBOARD / LOOP PLAYER later.
+
+## Sync
+- Tempo: the Blackbox BPM (`looper_bpm`); steps (arp), quantized touch starts and the gesture recorder's loop length run on a
+  beat grid. With the sequencer running, positions come from its clock (as the looper's sync does); without it, an own grid
+  at the BPM (the stock clock only runs with a selected sequence).
+
+## Gesture recorder
+- Records touch events (down / move / up with finger slot, position, time in 1/96 beat) into a ring for a loop of 1-8 bars; plays
+  them back through the same mode engine; three overdub layers (each layer its own event list; clear / undo per layer).
+
+## Effects (later)
+- Per slot: filter, drive (crunch), delay, reverb sends and a tremolo (AM): the looper's own DSP is reused.
+
+## Order of work
+1. Wait for the research on how a pad's PCM is addressed (docs/samplr-research.md).
+2. Page skeleton + waveform drawing + slot picker (reads only).
+3. Voice engine + SLICER with 4 fingers, then TAPE.
+4. ARPEGGIATOR, GRANULAR, LOOPER; sync grid; gesture recorder; effects.
