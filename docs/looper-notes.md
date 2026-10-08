@@ -500,3 +500,11 @@ step drops those events while the page is up (HW STOP PLAY = LOOPER). Label: Lok
   prints `B2 OK` / `B2 BAD n` (`P->dropped` holds the result). The image is 851 968 bytes (the normal one 785 820).
   Question it answers: does the updater accept and write an image that runs past 0x08100000 (flash bank 2)?
   Normal builds are unchanged (no flag, no extra code).
+
+## Step 41: the size test says B2 OK
+- The unit accepted the 851 968 byte image and read the pattern at 0x08100000 back (`B2 OK`): the updater writes into flash
+  bank 2. `cave.ld` now lets the cave run on to 0x08140000 (the old limit was 0x08100000). 0x081E0000 and up are left alone.
+  Code that actually runs from bank 2 is still to be seen (the first build whose cave passes 57 736 bytes will do it).
+- Touch probe on MORE's diagnostic line: ` T<most fingers at once> <3rd word> <4th word>` of the touch events, to see whether the
+  panel reports several fingers and how to tell them apart (needed for SAMPLR). Page state lost its event-log fields
+  (the page struct was full).

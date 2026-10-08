@@ -157,18 +157,14 @@ struct page {
     uint8_t bset[BTNS], bidx[BTNS];                 /* learned hardware buttons: set, button index ... */
     uint16_t bid[BTNS];                             /* ... and message id, per slot */
     uint32_t rec_t, btn_t, paint_t, dropped;
-    uint32_t ev0[4], ev1[4];                         /* the last distinct engine events queued (diagnostic, shown on MORE) */
     uint8_t paint_req, _r6[3];
     int16_t touch_x, touch_y;
     uint32_t clear_t;                               /* when CLEAR ALL was asked */
     uint32_t dtap_t;                                /* the last tap on an FX tile: when, and which (control + 1, track) */
-    uint8_t dtap_c, dtap_trk, _r7[2];
+    uint8_t dtap_c, dtap_trk, tcur, tmax;           /* touch probe: fingers down now / most at once */
+    int32_t tw2, tw3;                               /* the touch event's third and fourth words (a finger id?) */
     int32_t vrect[4];                               /* the mixer view's own rectangle, while the page widens it */
     uint8_t scr_h[8];                               /* the last distinct screen ids the app showed (newest first) */
-    uint32_t h0[6];                                 /* the last distinct engine events, whole first word, newest first */
-    uint16_t h1[6];
-    uint8_t swallow, sw_n;                          /* a transport button's message is in the stock handler: its engine events are dropped */
-    uint16_t sw_id[3];                              /* the ids of the events it tried to post (newest first) */
 };
 #define P ((volatile struct page *)0x38800f00u)
 #define PMAGIC 0x50414732u
@@ -1027,6 +1023,13 @@ static void draw_setup(const struct lay *L)
             *p++ = ' ';
             p = put_hex(p, P->scr_h[i], 2);
         }
+        *p++ = ' ';
+        *p++ = 'T';
+        p = put_uint(p, P->tmax);
+        *p++ = ' ';
+        p = put_hex(p, (uint32_t)P->tw2 & 0xffff, 4);
+        *p++ = ' ';
+        p = put_hex(p, (uint32_t)P->tw3 & 0xffff, 4);
 #ifdef BANK2
         *p++ = ' ';
         *p++ = 'B';
@@ -1285,8 +1288,6 @@ void looper_page_boot(void)
     }
     P->paint_req = 0;
     P->dropped = 0;
-    for (int i = 0; i < 4; i++)
-        P->ev0[i] = P->ev1[i] = 0;
     P->learn = 0;
     P->touches = 0;
     P->sel = 0;
@@ -1310,6 +1311,18 @@ void looper_page_boot(void)
 /* ---- touch and knobs */
 
 /* Touch points use the same space as the cells: convert to pixels from the page's left and top. */
+static void probe(const int *pt, int kind)                        /* kind 0 down, 1 move, 2 up */
+{
+    P->tw2 = pt[2];
+    P->tw3 = pt[3];
+    if (kind == 0 && P->tcur < 255)
+        P->tcur++;
+    else if (kind == 2 && P->tcur)
+        P->tcur--;
+    if (P->tcur > P->tmax)
+        P->tmax = P->tcur;
+}
+
 static void to_page(const int *pt, int *x, int *d)
 {
     *x = P->sx > 0 ? pt[0] - P->x0 : P->x0 + P->w - pt[0];
@@ -1346,6 +1359,7 @@ void looper_page_down(uint8_t *view, const int *pt)
 {
     int x, d, t = 0;
     float v = 0.f;
+    probe(pt, 0);
     P->pressed = P_NONE;
     to_page(pt, &x, &d);
     int zone = looper_page_hit(x, d, &t, &v);
@@ -1452,6 +1466,7 @@ void looper_page_down(uint8_t *view, const int *pt)
 
 void looper_page_move(uint8_t *view, const int *pt)
 {
+    probe(pt, 1);
     if (P->pressed != P_FADER && P->pressed != P_DIAL && P->pressed != P_SLIDER)
         return;
     int x, d;
@@ -1472,7 +1487,7 @@ void looper_page_move(uint8_t *view, const int *pt)
 
 void looper_page_up(uint8_t *view, const int *pt)
 {
-    (void)pt;
+    probe(pt, 2);
     if (P->pressed == P_REC)
         looper_event(P->track, LOOPER_EV_REC_UP);
     else if (P->pressed == P_MUTE)
