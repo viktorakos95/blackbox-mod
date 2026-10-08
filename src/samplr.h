@@ -5,9 +5,10 @@
 
 #define SM_COLS   150            /* waveform overview columns */
 #define SM_VOICES 4              /* one per finger */
+#define SM_ARPV   4              /* voices of the arpeggiator's own notes (after the fingers') */
+#define SM_NV     (SM_VOICES + SM_ARPV)
 #define SM_GRAINS 6              /* per finger */
 #define SM_SPOTS  8              /* arpeggiator spots */
-#define SM_TMP    4096           /* source frames one read takes per block (15x pitch up of 256 frames + margin); tl / tr live in effect blocks 10 / 11 */
 #define SM_CUTS   64             /* slice points: up to 64 slices */
 #define SM_OWIN   2048           /* transient search windows */
 #define SM_PADS   16
@@ -18,7 +19,8 @@ enum { SM_PAT_UP, SM_PAT_DOWN, SM_PAT_UPDN, SM_PAT_RND, SM_PAT_ORDER, SM_PATS };
 struct smspot {
     int32_t pos;
     int8_t st;
-    uint8_t used, owner, _p;                /* owner: the finger holding it, or 0xff once latched */
+    uint8_t used, owner, vol;               /* owner: the finger holding it, or 0xff once latched; vol: from the finger's height */
+    int32_t end;                            /* with SNAP: the end of its slice (a note never runs into the next slice), else 0 */
 };
 
 struct smgrain {
@@ -64,7 +66,9 @@ struct sm {
     float scat, sph, dens;                  /* grain scatter 0..1; free-running phase in frames; free grain density per second */
     uint32_t tick, pf_t;
     uint32_t t_last, t_sum;                 /* cycle counter at the last run; cycles spent in this report */
-    uint16_t t_n, t_peak, t_avg_shown, t_peak_shown;   /* load of samplr_run in per mille of the block period */                    /* blocks run; when the last load was asked for */
+    uint16_t t_n, t_peak, t_avg_shown, t_peak_shown, load;   /* load: the last block alone */
+    uint32_t auto_t;                        /* when AUTO last ran */
+    uint8_t auto_found, _a2[3];   /* load of samplr_run in per mille of the block period */                    /* blocks run; when the last load was asked for */
     struct smspot spot[SM_SPOTS];
     uint32_t rnd;
     int16_t kacc[4];                        /* knob counts not yet turned into a step */
@@ -72,13 +76,13 @@ struct sm {
     uint8_t ofill[SM_COLS];
     float omn[SM_COLS], omx[SM_COLS];
     int8_t ov[2][SM_COLS];                  /* per column: lowest and highest sample, -127..127 */
-    struct smvoice v[SM_VOICES];
+    struct smvoice v[SM_NV];
     int32_t cut[SM_CUTS + 1];               /* slice i = frames cut[i] .. cut[i + 1] */
     int8_t drag[SM_VOICES];                 /* finger -> the slice point it moves (-1 none) */
     int8_t trans;                           /* transpose, semitones -48..48 */
     uint8_t ypit;                           /* bit per mode: finger height = pitch */
     uint8_t _t[2];
-    float *tl, *tr;                         /* read buffers (SM_TMP floats each) */
+    float il[256], ir[256];                 /* one block of the source, interpolated at the voice's positions */
     float oenv[SM_OWIN];                    /* transient search scratch (GUI task only) */
 };
 

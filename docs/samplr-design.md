@@ -111,3 +111,17 @@ takes three overdub layers.
 - The top bar of the SMPLR tab shows `C avg/peak S avg/peak` (percent): the whole audio task (the CPU meter) and SAMPLR's own share (DWT cycles in
   `samplr_run`, per block period). If it glitches again, the numbers say whether SAMPLR is the cause.
 - MIX on the SMPLR tab goes to the Looper's MAIN tab (no screen change); SONG on another Looper tab goes to SMPLR.
+
+## Build 8 (fixes from the +48 grain / pads glitch report)
+- Measured on hardware (build 7 readout): GRAIN, 4 fingers, +48, latch: S 89/97 % (SAMPLR alone), C 79/100. Cause: every grain copied the whole span
+  it covers (thousands of frames per block at 16x) out of the external pool. Now only the frames the interpolation touches are read
+  (`sample_block`, 2 reads per output sample); emulator: that worst case is 450k instructions per block (the old copy path read ~64 KB per
+  block per grain). Also: no new grains while SAMPLR's last block alone was above 65 %.
+- Pads + sequence: C 70-93 / S 3: SAMPLR is not the load there (the stock engine with streaming pads plus the looper is).
+- Height of the finger: YP on = pitch (full volume); YP off = volume (top = full). ARP spots and SLICER notes follow this; TAPE always volume.
+- SNAP (ARP) uses the slicer's own slice points (auto or by hand) and a snapped note never runs into the next slice.
+- A one-shot slice ends exactly at its end (48-frame fade, then silence); no tail of the next slice's attack.
+- AUTO: threshold relative to the sample's loudest window (it did nothing on quiet samples); on a streamed sample that is not fully in memory it asks for
+  the missing part and shows "AUTO WAIT"; the top bar shows "AUTO n" (n = slices found).
+- LATCH (spots, grain clouds) and everything that is playing survive tab changes and leaving the page; only held fingers are released. Arp notes have their own
+  4 voices. (A separate page is not needed: the engine does not depend on the page.)

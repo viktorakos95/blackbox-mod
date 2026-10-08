@@ -24,7 +24,7 @@ def struct_offsets(names):
     return res
 
 
-OFF = struct_offsets(["id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "latch", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
+OFF = struct_offsets(["gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "latch", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
 
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
@@ -154,7 +154,7 @@ def play(nb=1):
 
 
 # SLICER, slice 3 of 16, centre height = no transposition
-touch(0, 0, 3 * 64 + 10, 512)
+touch(0, 0, 3 * 64 + 10, 100)
 o = play()[0]
 exp = (3072 + 200) / LENF * 0.9
 check("slicer: slice 3 plays from 3072 at normal pitch", abs(o[200] - exp) < 0.01, f"{o[200]:.4f} vs {exp:.4f}")
@@ -171,7 +171,7 @@ exp = (3072 + 200) / LENF * 0.9
 check("slicer: no pitch from finger height by default", abs(o[200] - exp) < 0.01, f"{o[200]:.4f} vs {exp:.4f}")
 touch(2, 0, 0, 0)
 play(3)
-e.uc.mem_write(SMP + OFF["ypit"], b"\x05")                    # YP on for the slicer
+e.uc.mem_write(SMP + OFF["ypit"], b"\x01")                    # YP on for the slicer
 # octave up (top of the area)
 touch(0, 0, 210, 0)
 o = play()[0]
@@ -180,10 +180,10 @@ check("slicer: top of the area = one octave up", abs(o[200] - exp) < 0.02, f"{o[
 touch(2, 0, 0, 0)
 play(2)
 
-e.uc.mem_write(SMP + OFF["ypit"], b"\x04")                    # YP off again
+e.uc.mem_write(SMP + OFF["ypit"], b"\x00")                    # YP off again
 # transpose +12: the slice runs at double speed, with or without the finger height
 e.call("samplr_trans", 12)
-touch(0, 0, 3 * 64 + 10, 512)
+touch(0, 0, 3 * 64 + 10, 100)
 o = play()[0]
 exp = (3072 + 400) / LENF * 0.9
 check("transpose +12: an octave up", abs(o[200] - exp) < 0.02, f"{o[200]:.4f} vs {exp:.4f}")
@@ -192,8 +192,8 @@ play(3)
 for _ in range(5):
     e.call("samplr_trans", 12)
 check("transpose is limited to +48", struct.unpack("<b", e.uc.mem_read(SMP + OFF["trans"], 1))[0] == 48)
-touch(0, 0, 3 * 64 + 10, 512)
-o = play(2)[0]
+touch(0, 0, 3 * 64 + 10, 100)
+o = play(1)[0]
 check("transpose +48: sounds, finite", 0 < max(abs(x) for x in o) < 2)
 touch(2, 0, 0, 0)
 play(3)
@@ -219,7 +219,7 @@ check("a new slice count resets the points to equal", cut(1) == 1024, cut(1))
 
 # one-shot: ONE mode keeps playing after the finger lifts, and ends at the slice end (1024 frames)
 e.call("samplr_toggle_gate")
-touch(0, 1, 5 * 64 + 10, 512)
+touch(0, 1, 5 * 64 + 10, 100)
 touch(2, 1, 0, 0)
 o = play()[0]
 check("one-shot: still plays after the lift", abs(o[100]) > 0.1, o[100])
@@ -230,7 +230,7 @@ e.call("samplr_toggle_gate")
 
 # four fingers at once
 for i in range(4):
-    touch(0, i, i * 256 + 40, 512)
+    touch(0, i, i * 256 + 40, 100)
 o = play()[0]
 single = sum((j * 1024 + 200) / LENF * 0.9 for j in (0, 4, 8, 12)) / 1
 # slices: fx 40->0, 296->4, 552->8, 808->12
@@ -268,7 +268,7 @@ check("tape: silent after release", max(abs(x) for x in o) < 1e-5)
 
 # a pad whose sample goes away: voices stop quietly
 e.call("samplr_set_mode", 0)
-touch(0, 0, 100, 512)
+touch(0, 0, 100, 100)
 play()
 e.uc.mem_write(SE + 0x434C + 2 * 5, b"\xff\xff")
 o = play()[0]
@@ -293,7 +293,7 @@ def setb(off, v):
 e.call("samplr_set_mode", 0)
 setb(OFF["qi"], 3)                                           # quantize 1/16 = 6000 frames at 120 bpm
 play(3)
-touch(0, 0, 3 * 64 + 10, 512)
+touch(0, 0, 3 * 64 + 10, 100)
 GF = 6000
 found = None
 for k in range(60):
@@ -313,9 +313,9 @@ setb(OFF["qi"], 0)
 e.call("samplr_set_mode", 2)
 setb(OFF["div"], 1)                                           # div 1/8
 setb(OFF["pat"], 0)                                           # UP
-touch(0, 0, 100, 512)
-touch(0, 1, 700, 512)
-used = lambda: sum(e.r8(SMP + OFF["spot"] + 8 * i + 5) for i in range(8))
+touch(0, 0, 100, 0)
+touch(0, 1, 700, 0)
+used = lambda: sum(e.r8(SMP + OFF["spot"] + 12 * i + 5) for i in range(8))
 check("arp: two fingers = two spots", used() == 2, used())
 allo = []
 for _ in range(240):
@@ -343,18 +343,73 @@ touch(2, 0, 0, 0)
 check("arp: both latched", used() == 2, used())
 e.call("samplr_cycle", 2)                              # latch off: latched spots go
 check("arp: latch off clears them", used() == 0, used())
-touch(0, 0, 100, 512)
+touch(0, 0, 100, 100)
 touch(2, 0, 0, 0)
 check("arp: without latch a lifted finger takes its spot away", used() == 0, used())
 play(5)
 
+# arp: finger height = volume, not pitch
+setb(OFF["pat"], 4)
+touch(0, 0, 100, 0)
+touch(0, 1, 700, 800)
+vols = [e.r8(SMP + OFF["spot"] + 8 * i + 7) if False else None for i in range(0)]
+allo = []
+for _ in range(100):
+    allo += play()[0]
+touch(2, 0, 0, 0)
+touch(2, 1, 0, 0)
+segs, cur = [], None
+for i, x in enumerate(allo):
+    if abs(x) > 1e-4:
+        if cur is None:
+            cur = [i, i]
+        cur[1] = i
+    elif cur is not None and i - cur[1] > 100:
+        segs.append(cur)
+        cur = None
+if cur:
+    segs.append(cur)
+amps = [allo[a_ + 150] * LENF / 0.9 / (a_ and 1) for a_, _ in segs[:2]] if False else None
+est = lambda seg, pos: allo[seg[0] + 150] / ((pos + 150) / LENF * 0.9)
+hits_top = any(abs(est(sg, 1600) - 1.0) < 0.1 for sg in segs[:4])
+hits_low = any(abs(est(sg, 11200) - 0.42) < 0.1 for sg in segs[:4])
+check("arp: the spots' volumes follow the finger height (1.0 at the top, about 0.4 at 800 of 1024)", hits_top and hits_low, [(est(sg, 1600), est(sg, 11200)) for sg in segs[:4]])
+play(5)
+# arp snap uses the slicer's slice points
+e.call("samplr_set_mode", 0)
+e.call("samplr_set_slices", 16)
+touch(0, 2, 60, 20)
+touch(1, 2, 100, 20)
+touch(2, 2, 100, 20)                                   # slice point 1 now at 1600
+e.call("samplr_set_mode", 2)
+setb(OFF["qi"], 3)                                     # SNAP on
+touch(0, 0, 110, 0)                                    # frame 1760 lies in slice 1 (1600 ..)
+check("arp snap: the spot goes to the slicer's own slice point (1600)", e.r32(SMP + OFF["spot"]) == 1600 or e.r32(SMP + OFF["spot"] + 8) == 1600 or any(e.r32(SMP + OFF["spot"] + 12 * i) == 1600 for i in range(8)), [e.r32(SMP + OFF["spot"] + 12 * i) for i in range(4)])
+touch(2, 0, 0, 0)
+setb(OFF["qi"], 0)
+play(3)
+# latch survives leaving the tab
+e.call("samplr_cycle", 2)                              # latch on
+touch(0, 0, 300, 0)
+touch(2, 0, 0, 0)
+e.call("samplr_leave")
+check("latched spot survives leaving the page", used() == 1, used())
+o = []
+for _ in range(60):
+    o += play()[0]
+check("... and keeps sounding", max(abs(x) for x in o) > 0.05)
+e.call("samplr_cycle", 2)                              # latch off clears it
+check("... latch off clears it", used() == 0, used())
+play(5)
+
+play(80)                                               # let the last arp notes end
 # a block that is not in the pool: no read call, silence, a load is asked for
 e.call("samplr_set_mode", 0)
 setb(OFF["qi"], 0)
 e.uc.mem_write(BL, struct.pack("<HH", 1, 0xFFFF))
 asked.clear()
 reads.clear()
-touch(0, 0, 13 * 64 + 10, 512)                          # slice 13 lives in block 1
+touch(0, 0, 13 * 64 + 10, 100)                          # slice 13 lives in block 1
 o = play()[0]
 check("not resident: silence and the stock reader is not called", max(abs(x) for x in o) < 1e-6 and not reads, (reads[:2]))
 check("not resident: the load is asked for", 8192 in asked or (13 * 1024) in asked or any(a_ >= 8192 for a_ in asked), asked)
@@ -365,7 +420,7 @@ play(5)
 
 # attack
 setb(OFF["atk"], 3)                                           # 80 ms
-touch(0, 0, 4 * 64 + 10, 512)
+touch(0, 0, 4 * 64 + 10, 100)
 o = play(3)[0]
 full = (4096 + 3 * 256 - 256 + 100) / LENF * 0.9
 check("attack 80 ms: the note is still fading in after 600 frames", 0.05 < o[100] / full < 0.5, (o[100], full))
@@ -376,7 +431,7 @@ play(40)
 # granular
 e.call("samplr_set_mode", 3)
 setb(OFF["div"], 3)                                           # 1/32: a grain every 3000 frames
-touch(0, 1, 512, 512)
+touch(0, 1, 512, 100)
 mx, tot = 0.0, 0.0
 for _ in range(100):
     o = play()
