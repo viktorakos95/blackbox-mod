@@ -24,7 +24,7 @@ def struct_offsets(names):
     return res
 
 
-OFF = struct_offsets(["gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "latch", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
+OFF = struct_offsets(["loopm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "latch", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
 
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
@@ -442,6 +442,47 @@ touch(2, 1, 0, 0)
 play(100)
 check("grain: silent once the grains have ended", max(abs(x) for x in play()[0]) < 1e-5)
 
+# slicer LOOP: the slice repeats while held; with LATCH after the lift too; with Q the slice restarts on the grid
+e.call("samplr_set_mode", 0)
+setb(OFF["qi"], 0)
+setb(OFF["loopm"], 1)
+touch(0, 0, 5 * 64 + 10, 100)
+o = []
+for _ in range(40):
+    o += play()[0]
+check("loop: still sounding after ten slice lengths", max(abs(x) for x in o[-512:]) > 0.05)
+check("loop: the slice repeats with its own length (1024 frames)", abs(o[5000] - o[5000 + 1024]) < 0.01 and abs(o[5000] - o[5000 + 100]) > 0.003, (o[5000], o[6024], o[5100]))
+touch(2, 0, 0, 0)
+play(3)
+check("loop: silent after the lift", max(abs(x) for x in play(20)[0]) < 1e-4)
+e.call("samplr_cycle", 2)                                      # latch on
+touch(0, 0, 5 * 64 + 10, 100)
+touch(2, 0, 0, 0)
+play(40)
+check("loop + latch: keeps looping after the lift", max(abs(x) for x in play()[0]) > 0.05)
+e.call("samplr_cycle", 2)                                      # latch off: the loop stops
+play(30)
+check("latch off stops the loop", max(abs(x) for x in play()[0]) < 1e-4)
+setb(OFF["qi"], 3)                                             # Q 1/16 = 6000 frames: a repeat on every grid line
+touch(0, 0, 5 * 64 + 10, 100)
+rec = []
+for _ in range(120):
+    rec += play()[0]
+touch(2, 0, 0, 0)
+play(30)
+starts, cur = [], False
+for i, x in enumerate(rec):
+    if abs(x) > 1e-4 and not cur:
+        starts.append(i)
+        cur = True
+    elif abs(x) <= 1e-6 and cur and i - starts[-1] > 1200:
+        cur = False
+gaps = [starts[k + 1] - starts[k] for k in range(len(starts) - 1)]
+check("repeat on the grid: the slice starts again every 6000 frames", len(starts) >= 4 and all(abs(g - 6000) < 30 for g in gaps), (starts, gaps))
+setb(OFF["qi"], 0)
+setb(OFF["loopm"], 0)
+play(10)
+
 # find transients: four bursts
 BURST[0] = True
 for b in range(2):
@@ -452,7 +493,7 @@ e.call("samplr_cycle", 4, count=50_000_000)
 ns = e.r8(SMP + 6)
 cuts = [cut(i) for i in range(ns + 1)]
 check("transients: four bursts give five slices", ns == 5, (ns, cuts))
-check("transients: the slice points sit just before the bursts", all(abs(c - (b_ - 96)) < 400 for c, b_ in zip(cuts[1:5], (2000, 6000, 10000, 14000))), cuts)
+check("transients: each slice point sits just before its burst, never inside it", all(b_ - 200 < c <= b_ for c, b_ in zip(cuts[1:5], (2000, 6000, 10000, 14000))), cuts)
 check("transients: first point 0, last point the end", cuts[0] == 0 and cuts[ns] == LENF, cuts)
 
 print(f"\n{fails} failure(s)")

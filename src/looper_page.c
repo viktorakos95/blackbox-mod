@@ -1121,7 +1121,7 @@ static void draw_samplr(void)
     samplr_info(info);
     text(6, 4, info, C_CYAN, 1);
     {
-        char b[24], *q = b;                                       /* C: the whole audio task, S: SAMPLR's share (percent, average / peak) */
+        char b[32], *q = b;                                       /* C: the whole audio task, S: SAMPLR's share (percent, average / peak) */
         *q++ = 'C';
         q = put_uint(q, (*(volatile uint16_t *)0x2405ffe2u + 5u) / 10u);
         *q++ = '/';
@@ -1131,15 +1131,21 @@ static void draw_samplr(void)
         q = put_uint(q, (s->t_avg_shown + 5u) / 10u);
         *q++ = '/';
         q = put_uint(q, (s->t_peak_shown + 5u) / 10u);
+        *q++ = ' ';
+        *q++ = 'V';
+        q = put_uint(q, s->n_voices);
+        *q++ = ' ';
+        *q++ = 'G';
+        q = put_uint(q, s->n_grains);
         *q = 0;
-        text(P->w - 6 - 6 * 14, 4, b, C_GREY, 1);
+        text(P->w - 6 - 6 * 21, 4, b, C_GREY, 1);
     }
     if (!s->ov_ok && s->id >= 0) {
         char b[12], *q = b;
         q = put_uint(q, s->filled * 100u / SM_COLS);
         *q++ = '%';
         *q = 0;
-        text(P->w - 6 - 6 * 14 - 6 * 5, 4, b, C_YELLOW, 1);
+        text(P->w - 6 - 6 * 21 - 6 * 5, 4, b, C_YELLOW, 1);
     }
     int cy = wy + wh / 2;
     frame(wx - 1, wy - 1, SM_W + 2, wh + 2, C_RAIL, 1);
@@ -1202,23 +1208,22 @@ static void draw_samplr(void)
         }
     }
     for (int i = 0; i < SM_MODES; i++)
-        sm_button(3 + 37 * i, ba, 35, sm_mode_name[i], s->mode == i);
+        sm_button(3 + 33 * i, ba, 31, sm_mode_name[i], s->mode == i);
     if (s->mode == SM_SLICER)
-        sm_button(152, ba, 44, sm_q_name[s->qi & 3], s->qi != 0);
+        sm_button(136, ba, 34, sm_q_name[s->qi & 3], s->qi != 0);
     else if (s->mode == SM_ARP)
-        sm_button(152, ba, 44, "SNAP", s->qi != 0);
+        sm_button(136, ba, 34, "SNAP", s->qi != 0);
     else if (s->mode == SM_GRAIN)
-        sm_button(152, ba, 44, s->gfree ? "FREE" : "SYNC", 1);
+        sm_button(136, ba, 34, s->gfree ? "FREE" : "SYNC", 1);
     if (s->mode == SM_SLICER)
-        sm_button(198, ba, 44, s->gate ? "GATE" : "ONE", 1);
-    else if (s->mode == SM_ARP || s->mode == SM_GRAIN)
-        sm_button(198, ba, 44, "LATCH", s->latch);
+        sm_button(172, ba, 34, s->loopm ? "LOOP" : s->gate ? "GATE" : "ONE", s->loopm);
+    sm_button(208, ba, 36, "LATCH", s->latch);
     if (s->mode == SM_SLICER)
-        sm_button(244, ba, 34, "AUTO", 0);
+        sm_button(246, ba, 33, "AUTO", 0);
     else if (s->mode == SM_ARP)
-        sm_button(244, ba, 34, samplr_pat_name(s->pat), 1);
+        sm_button(246, ba, 33, samplr_pat_name(s->pat), 1);
     if (s->mode == SM_SLICER || s->mode == SM_ARP)
-        sm_button(280, ba, 31, "YP", (s->ypit >> s->mode) & 1);
+        sm_button(281, ba, 30, "YP", (s->ypit >> s->mode) & 1);
     sm_button(3, bb, 22, "<", 0);
     frame(27, bb, 70, SM_BH, C_RAIL, 1);
     text_c(27, bb + 6, 70, nm[0] ? nm : "-", C_LIGHT, 1);
@@ -1262,18 +1267,18 @@ static int sm_touch(int kind, int id, int x, int d)
                 samplr_trans(1);
             else if (x >= 261 && x < 291)
                 samplr_trans(12);
-        } else if (x >= 3 && x < 3 + 37 * SM_MODES) {
-            samplr_set_mode((x - 3) / 37);
-        } else if (x >= 152 && x < 196) {
+        } else if (x >= 3 && x < 3 + 33 * SM_MODES) {
+            samplr_set_mode((x - 3) / 33);
+        } else if (x >= 136 && x < 170) {
             samplr_cycle(0);
-        } else if (x >= 198 && x < 242) {
+        } else if (x >= 172 && x < 206) {
             if (s && s->mode == SM_SLICER)
                 samplr_toggle_gate();
-            else
-                samplr_cycle(2);
-        } else if (x >= 244 && x < 278) {
+        } else if (x >= 208 && x < 244) {
+            samplr_cycle(2);
+        } else if (x >= 246 && x < 279) {
             samplr_cycle(s && s->mode == SM_SLICER ? 4 : 1);
-        } else if (x >= 280 && x < 311) {
+        } else if (x >= 281 && x < 311) {
             samplr_cycle(3);
         }
         P->sig = 0;

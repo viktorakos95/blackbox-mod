@@ -125,3 +125,15 @@ takes three overdub layers.
   the missing part and shows "AUTO WAIT"; the top bar shows "AUTO n" (n = slices found).
 - LATCH (spots, grain clouds) and everything that is playing survive tab changes and leaving the page; only held fingers are released. Arp notes have their own
   4 voices. (A separate page is not needed: the engine does not depend on the page.)
+
+## Build 9 (slice loop / repeat, cleaner AUTO cuts, readout)
+- SLICER play button cycles GATE -> ONE -> LOOP. LOOP without Q: the slice loops seamlessly while held (24-frame fades at the wrap); LOOP with Q: the slice
+  restarts on every Q grid line (a repeat / stutter, a longer slice is cut at the next line). LATCH (now on every mode's row) keeps a loop or repeat (and the
+  tape hold) going after the finger lifts; LATCH off stops it. Voices split the block exactly at the loop point / restart (`voice_part`).
+- AUTO: each hit found by the window search is refined at sample level (block maxima, the sharpest rise = the attack; the cut sits 24 frames before it on a zero
+  crossing), so the slice before no longer ends inside the next hit. The firmware (3.1.9) has no transient detection of its own (no such strings, only
+  "Slices:" with equal division and manual points), so this is SAMPLR's own.
+- Normal-pitch voices copy the pool straight (no interpolation) - cheaper.
+- Readout: S is now this function's cycles over the average block period (the old per-block period made S look like 313 % when the audio task was
+  catching up after an overrun); V = voices playing, G = grains playing.
+- Row A (buttons) re-laid: modes 31 px wide, Q/SNAP/SYNC, GATE|ONE|LOOP, LATCH, AUTO|PAT, YP.

@@ -33,6 +33,7 @@ struct smvoice {
     volatile uint32_t cmd, seen;            /* trigger sequence: the GUI task bumps cmd after writing the c_ fields */
     int32_t c_pos, c_start, c_end;
     float c_rate, c_gain, c_q;              /* c_q: start on the next grid line of this many beats (0 = at once) */
+    float c_rep, rep;                       /* rep: restart the slice on every grid line of this many beats while held (0 = no) */
     uint8_t c_loop, c_gate, held, rel;
     uint8_t on, loop, slice, wait_hi;
     int32_t ipos, start, end;
@@ -61,11 +62,12 @@ struct sm {
     uint32_t ov_t;
     int16_t fx0[SM_VOICES];                 /* GUI: where each finger went down (tape) */
     uint8_t qi, div, pat, latch, atk, rel;  /* quantize (0 off, 1 1/4, 2 1/8, 3 1/16; in ARP: snap to slices), arp / grain rate, arp pattern, hold, attack / release choice */
-    uint8_t gfree, a_last, sp_next, _q;     /* grain rate free (grains per second) instead of the grid; the spot played last; next spot to replace */
+    uint8_t gfree, a_last, sp_next, loopm;  /* loopm: SLICER loops its slice while held (or latched) */     /* grain rate free (grains per second) instead of the grid; the spot played last; next spot to replace */
     uint16_t a_step, _q2;
     float scat, sph, dens;                  /* grain scatter 0..1; free-running phase in frames; free grain density per second */
     uint32_t tick, pf_t;
-    uint32_t t_last, t_sum;                 /* cycle counter at the last run; cycles spent in this report */
+    uint32_t t_last, t_sum, t_psum, t_pmax, t_per; /* cycle counter at the last run; cycles spent in this report, the block periods summed, the longest run */
+    uint8_t n_voices, n_grains;             /* playing now (for the readout) */
     uint16_t t_n, t_peak, t_avg_shown, t_peak_shown, load;   /* load: the last block alone */
     uint32_t auto_t;                        /* when AUTO last ran */
     uint8_t auto_found, _a2[3];   /* load of samplr_run in per mille of the block period */                    /* blocks run; when the last load was asked for */

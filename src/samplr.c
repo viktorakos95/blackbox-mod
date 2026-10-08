@@ -283,11 +283,20 @@ void samplr_set_mode(int m)
     }
 }
 
-void samplr_toggle_gate(void)
+void samplr_toggle_gate(void)                                    /* GATE -> ONE -> LOOP */
 {
     struct sm *s = samplr();
-    if (s)
-        s->gate ^= 1;
+    if (!s)
+        return;
+    if (s->loopm) {
+        s->loopm = 0;
+        s->gate = 1;
+    } else if (s->gate) {
+        s->gate = 0;
+    } else {
+        s->loopm = 1;
+        s->gate = 1;
+    }
 }
 
 static const float qbeats[4] = {0.f, 1.f, .5f, .25f};             /* the quantize choices, in beats */
@@ -297,6 +306,59 @@ static const char *const pat_name[SM_PATS] = {"UP", "DOWN", "UP-DN", "RND", "ORD
 static const int32_t atk_frames[5] = {64, 240, 960, 3840, 14400};   /* 1.3 5 20 80 300 ms */
 static const int32_t rel_frames[5] = {192, 960, 3840, 14400, 48000}; /* 4 20 80 300 1000 ms */
 static const uint16_t atk_ms[5] = {1, 5, 20, 80, 300}, rel_ms[5] = {4, 20, 80, 300, 1000};
+
+static uint8_t *block_entry(struct sm *s, int blk);
+
+/* Where does the hit that the search window at pos really begin? Block maxima (16 frames) over 1536 frames before and 512 after pos, the
+ * sharpest rise within `back` frames before pos is the attack; the cut goes just before it, on a zero crossing, so the slice before
+ * it ends cleanly and the slice itself starts with the attack. Falls back to pos - 96. */
+static int32_t refine_cut(struct sm *s, int32_t pos, int32_t back, int32_t prev)
+{
+    enum { BEFORE = 1536, AFTER = 512, B = 16, NB = (BEFORE + AFTER) / B };
+    float *buf = s->oenv, m[NB];
+    int32_t base = pos - BEFORE, len = s->len;
+    for (int i = 0; i < BEFORE + AFTER; i++) {
+        int32_t f = base + i;
+        float v = 0.f;
+        if (f >= 0 && f < len) {
+            uint8_t *ent = block_entry(s, f >> 13);
+            if (ent && (uint32_t)(f & 8191) < *(uint32_t *)(ent + 0x14))
+                v = ((const float *)*(uint32_t *)(ent + 4))[f & 8191];
+        }
+        buf[i] = v;
+    }
+    float peak = 0.f;
+    for (int j = 0; j < NB; j++) {
+        float mx = 0.f;
+        for (int i = 0; i < B; i++) {
+            float a = buf[j * B + i] < 0.f ? -buf[j * B + i] : buf[j * B + i];
+            mx = a > mx ? a : mx;
+        }
+        m[j] = mx;
+        peak = mx > peak ? mx : peak;
+    }
+    int j0 = (BEFORE - (back < BEFORE - 2 * B ? back : BEFORE - 2 * B)) / B, j1 = BEFORE / B + 16, best = -1;
+    float br = 0.f;
+    for (int j = j0; j < j1 && j + 1 < NB; j++) {
+        float rise = m[j + 1] - m[j];
+        if (rise > br) {
+            br = rise;
+            best = j;
+        }
+    }
+    int32_t cut = pos - 96;
+    if (best >= 0 && br > 0.15f * peak) {
+        int idx = (best + 1) * B - 24;
+        for (int i = idx; i > idx - 64 && i > 0; i--)             /* the nearest zero crossing before it */
+            if (buf[i] * buf[i + 1] <= 0.f) {
+                idx = i;
+                break;
+            }
+        cut = base + idx;
+    }
+    cut = cut < prev + 64 ? prev + 64 : cut;
+    return cut < 0 ? 0 : cut;
+}
 
 /* Slice points at the transients: RMS per window over the resident blocks, onset = a window louder than the few before it; the
  * strongest nslice - 1 onsets (spaced apart) become the slice points, the slice count follows what was found. */
@@ -383,7 +445,7 @@ static void find_transients(struct sm *s)
             }
         if (best < 0)
             break;
-        pts[found++] = best * win - 96 < 0 ? 0 : best * win - 96;
+        pts[found++] = best * win;
         for (int w = best - space; w <= best + space; w++)
             if (w >= 0 && w < nw)
                 fx[w] = 0.f;
@@ -391,7 +453,7 @@ static void find_transients(struct sm *s)
     s->auto_found = (uint8_t)found;
     if (!found)
         return;
-    for (int i = 1; i < found; i++) {                             /* sort */
+    for (int i = 1; i < found; i++) {                             /* sort the windows */
         int32_t v = pts[i];
         int j = i - 1;
         while (j >= 0 && pts[j] > v) {
@@ -403,7 +465,7 @@ static void find_transients(struct sm *s)
     s->nslice = (uint8_t)(found + 1);
     s->cut[0] = 0;
     for (int i = 0; i < found; i++)
-        s->cut[i + 1] = pts[i] > s->cut[i] + 64 ? pts[i] : s->cut[i] + 64;
+        s->cut[i + 1] = refine_cut(s, pts[i], win + 256, s->cut[i]);
     s->cut[found + 1] = len;
 }
 
@@ -414,8 +476,13 @@ static void unlatch(struct sm *s)
         if (s->spot[i].owner == 0xff)
             s->spot[i].used = 0;
     for (int f = 0; f < SM_VOICES; f++)
-        if (!s->v[f].held)
+        if (!s->v[f].held) {
             s->v[f].g_on = 0;
+            if (s->v[f].loop || s->v[f].rep > 0.f) {              /* a latched slice loop / repeat / tape hold */
+                s->v[f].rel = 1;
+                s->v[f].rep = 0.f;
+            }
+        }
 }
 
 void samplr_trans(int what)
@@ -591,8 +658,9 @@ static float pitch_ratio(int st)
     return r * semi[st];
 }
 
-static void fire(struct smvoice *v, int32_t pos, int32_t start, int32_t end, float rate, float gain, int loop, int gate, float q)
+static void fire(struct smvoice *v, int32_t pos, int32_t start, int32_t end, float rate, float gain, int loop, int gate, float q, float rep)
 {
+    v->c_rep = rep;
     v->c_pos = pos;
     v->c_start = start;
     v->c_end = end;
@@ -680,8 +748,10 @@ static void release_finger(struct sm *s, int id)
     v->a_sp = -1;
     if (v->g_on && !s->latch)
         v->g_on = 0;
-    if (was && v->c_gate)
+    if (was && v->c_gate && !(s->latch && (v->loop || v->rep > 0.f))) {
         v->rel = 1;
+        v->rep = 0.f;
+    }
 }
 
 void samplr_touch(int kind, int id, int fx, int fy)
@@ -729,14 +799,14 @@ void samplr_touch(int kind, int id, int fx, int fy)
         int32_t start = s->cut[sl], end = s->cut[sl + 1];
         v->slice = (uint8_t)sl;
         ask(s, start);
-        fire(v, start, start, end, pitch_ratio(ysemi(s, fy) + s->trans), yvol(s, fy), 0, s->gate, qbeats[s->qi & 3]);
+        fire(v, start, start, end, pitch_ratio(ysemi(s, fy) + s->trans), yvol(s, fy), s->loopm && !s->qi, s->gate || s->loopm, qbeats[s->qi & 3], s->loopm ? qbeats[s->qi & 3] : 0.f);
     } else if (s->mode == SM_TAPE) {
         float g = 1.2f - (float)fy * (1.f / 1024.f);
         g = g > 1.f ? 1.f : g < .2f ? .2f : g;
         if (kind == 0) {
             s->fx0[id] = (int16_t)fx;
             ask(s, (s->len >> 10) * fx);
-            fire(v, (s->len >> 10) * fx, 0, s->len, pitch_ratio(s->trans), g, 1, 1, 0.f);
+            fire(v, (s->len >> 10) * fx, 0, s->len, pitch_ratio(s->trans), g, 1, 1, 0.f, 0.f);
         } else if (v->held) {
             float r = 1.f + (float)(fx - s->fx0[id]) * (1.f / 100.f);
             v->rate = (r > 4.f ? 4.f : r < -4.f ? -4.f : r) * pitch_ratio(s->trans);
@@ -832,6 +902,30 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
             valid[blk - b0] = (int)*(uint32_t *)(ent + 0x14);
         }
     }
+    if (r == 1.f && fr == 0.f) {                                  /* normal pitch: a plain copy */
+        int i = 0;
+        while (i < m) {
+            int32_t f = ip + i;
+            if (f < 0 || f >= len) {
+                s->il[i] = s->ir[i] = 0.f;
+                i++;
+                continue;
+            }
+            int bi = (f >> 13) - b0, o = f & 8191, k = 8192 - o;
+            k = k > m - i ? m - i : k;
+            k = k > len - f ? len - f : k;
+            int vk = valid[bi] - o;
+            vk = vk < 0 ? 0 : vk > k ? k : vk;
+            for (int q = 0; q < vk; q++) {
+                s->il[i + q] = Lp[bi][o + q];
+                s->ir[i + q] = Rp[bi][o + q];
+            }
+            for (int q = vk; q < k; q++)
+                s->il[i + q] = s->ir[i + q] = 0.f;
+            i += k;
+        }
+        return 1;
+    }
     int32_t cf = -0x40000000;
     float l0 = 0.f, r0 = 0.f, l1 = 0.f, r1 = 0.f;
     for (int i = 0; i < m; i++) {
@@ -869,43 +963,17 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
     return 1;
 }
 
-static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
+/* Renders frames i0..ie of the block for a voice from its position (no loop wrap or restart inside: the caller splits there).
+ * fi / fo: a short fade in at the start / out at the end of the piece (a loop wrap or a repeat). 0 when a block is missing. */
+static int voice_part(struct sm *s, struct smvoice *v, float *bl, float *br, int i0, int ie, int fi, int fo)
 {
-    int idle = !v->on && v->env <= .0005f;
-    if (v->seen != v->cmd) {
-        int off = v->c_q > 0.f ? grid(s, v->c_q, n) : v->c_wait;
-        if (off >= 0) {                                           /* (else the note waits for its grid line) */
-            v->seen = v->cmd;
-            v->c_wait = 0;
-            if (v->held || !v->c_gate) {
-                v->start = v->c_start;
-                v->ipos = v->c_pos;
-                v->end = v->c_end;
-                v->frac = 0.f;
-                v->rate = v->c_rate;
-                v->gain = v->c_gain;
-                v->loop = v->c_loop;
-                v->on = 1;
-                v->rel = 0;
-                v->wait = idle ? off : 0;
-                idle = 0;
-            }
-        }
-    }
-    if (v->rel) {
-        v->rel = 0;
-        v->on = 0;
-    }
-    if (!v->on && v->env <= 0.f)
-        return;
-    int i0 = v->wait < n ? v->wait : 0, m = n - i0;
-    v->wait = 0;
+    int m = ie - i0;
     float r = v->rate * s->ratio;
     r = r > 15.5f ? 15.5f : r < -15.5f ? -15.5f : r;
     int32_t ip = v->ipos;
     float fr = v->frac, span = r * (float)m;
     if (!sample_block(s, ip, fr, r, m))
-        return;
+        return 0;
     int stop_at = m, ends = 0;                                    /* a one-shot ends exactly at its slice's end */
     if (!v->loop && r > 0.f) {
         float left = (float)(v->end - ip) - fr;
@@ -920,8 +988,7 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     float env = v->env, g0 = v->gain * s->vol * .9f;
     float eu = 1.f / (float)atk_frames[s->atk % 5], ed = 1.f / (float)rel_frames[s->rel % 5];
     int on = v->on;
-    for (int i = i0; i < n; i++) {
-        int k = i - i0;
+    for (int k = 0; k < m; k++) {
         float l = s->il[k], rr = s->ir[k];
         if (ends) {
             int rem = stop_at - k;                                /* nothing of the next slice is ever heard: a short fade, then silence */
@@ -934,6 +1001,14 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
                 rr *= (float)rem * (1.f / 48.f);
             }
         }
+        if (fi && k < 24) {
+            l *= (float)k * (1.f / 24.f);
+            rr *= (float)k * (1.f / 24.f);
+        }
+        if (fo && m - k <= 24) {
+            l *= (float)(m - k) * (1.f / 24.f);
+            rr *= (float)(m - k) * (1.f / 24.f);
+        }
         if (on) {
             env += eu;
             env = env > 1.f ? 1.f : env;
@@ -941,26 +1016,100 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
             env -= ed;
             env = env < 0.f ? 0.f : env;
         }
-        bl[i] += l * g0 * env;
-        br[i] += rr * g0 * env;
+        bl[i0 + k] += l * g0 * env;
+        br[i0 + k] += rr * g0 * env;
     }
     float np = fr + span;
     int k = fl(np);
     ip += k;
     fr = np - (float)k;
-    int32_t span_l = v->end - v->start;
-    if (v->loop && span_l > 0) {
-        for (int q = 0; q < 16 && ip >= v->end; q++)
-            ip -= span_l;
-        for (int q = 0; q < 16 && ip < v->start; q++)
-            ip += span_l;
-    } else if (ip >= v->end) {
+    if (!v->loop && ip >= v->end)
         on = 0;
-    }
     v->ipos = ip;
     v->frac = fr;
     v->env = env;
     v->on = (uint8_t)on;
+    return 1;
+}
+
+static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
+{
+    int idle = !v->on && v->env <= .0005f, started = 0;
+    if (v->seen != v->cmd) {
+        int off = v->c_q > 0.f ? grid(s, v->c_q, n) : v->c_wait;
+        if (off >= 0) {                                           /* (else the note waits for its grid line) */
+            v->seen = v->cmd;
+            v->c_wait = 0;
+            if (v->held || !v->c_gate || s->latch) {
+                v->start = v->c_start;
+                v->ipos = v->c_pos;
+                v->end = v->c_end;
+                v->frac = 0.f;
+                v->rate = v->c_rate;
+                v->gain = v->c_gain;
+                v->loop = v->c_loop;
+                v->rep = v->c_rep;
+                v->on = 1;
+                v->rel = 0;
+                v->wait = idle ? off : 0;
+                idle = 0;
+                started = 1;
+            }
+        }
+    }
+    if (v->rel) {
+        v->rel = 0;
+        v->on = 0;
+    }
+    if (!v->on && v->env <= 0.f && !(v->rep > 0.f))
+        return;
+    int i = v->wait < n ? v->wait : 0;
+    v->wait = 0;
+    int roff = -1;
+    if (v->rep > 0.f && !started)
+        roff = grid(s, v->rep, n);                                /* a repeating slice starts over on every grid line */
+    int fi = 0;
+    for (int guard = 0; i < n && guard < 8; guard++) {
+        if (roff >= 0 && roff <= i) {
+            v->ipos = v->start;
+            v->frac = 0.f;
+            v->on = 1;
+            roff = -1;
+            fi = 1;
+        }
+        int ie = n, fo = 0;
+        if (roff > i && roff < n) {
+            ie = roff;
+            fo = 1;
+        }
+        float r = v->rate * s->ratio;
+        if (v->loop && r > 0.f && v->end > v->start) {            /* the loop point inside this piece: split there */
+            float left = (float)(v->end - v->ipos) - v->frac;
+            if (left <= 0.f) {
+                v->ipos = v->start + (v->ipos - v->end);
+                fi = 1;
+            } else if (left < r * (float)(ie - i)) {
+                int c = i + (int)(left / r) + 1;
+                if (c < ie) {
+                    ie = c;
+                    fo = 1;
+                }
+            }
+        }
+        if (!v->on && v->env <= 0.f && !(v->rep > 0.f))
+            break;
+        if (!voice_part(s, v, bl, br, i, ie, fi, fo))
+            return;
+        fi = fo;
+        if (v->loop && v->end > v->start) {
+            int32_t span_l = v->end - v->start;
+            for (int q = 0; q < 16 && v->ipos >= v->end; q++)
+                v->ipos -= span_l;
+            for (int q = 0; q < 16 && v->ipos < v->start; q++)
+                v->ipos += span_l;
+        }
+        i = ie;
+    }
 }
 
 /* One arpeggiator step on a grid line: the next spot (in the pattern's order) plays from its place for one step. */
@@ -1008,7 +1157,7 @@ static void arp_step(struct sm *s, int off)
         return;
     struct smvoice *v = &s->v[SM_VOICES + s->a_step % SM_ARPV];
     v->c_wait = off;
-    fire(v, start, start, end, rate, (float)sp->vol * (1.f / 255.f), 0, 0, 0.f);
+    fire(v, start, start, end, rate, (float)sp->vol * (1.f / 255.f), 0, 0, 0.f, 0.f);
 }
 
 static void grain_spawn(struct sm *s, struct smvoice *v, int off)
@@ -1091,7 +1240,7 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
         any |= s->spot[i].used;
     for (int f = 0; f < SM_NV; f++) {
         struct smvoice *v = &s->v[f];
-        any |= v->on | (v->env > 0.f) | (v->seen != v->cmd) | v->g_on;
+        any |= v->on | (v->env > 0.f) | (v->seen != v->cmd) | v->g_on | (v->rep > 0.f);
         for (int i = 0; i < SM_GRAINS; i++)
             any |= v->g[i].on;
     }
@@ -1119,10 +1268,16 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
         if (off >= 0)
             arp_step(s, off);
     }
+    int nv = 0, ng = 0;
     for (int f = 0; f < SM_NV; f++) {
         render(s, &s->v[f], bl, br, n);
         grains(s, &s->v[f], bl, br, n);
+        nv += s->v[f].on;
+        for (int i = 0; i < SM_GRAINS; i++)
+            ng += s->v[f].g[i].on;
     }
+    s->n_voices = (uint8_t)nv;
+    s->n_grains = (uint8_t)ng;
 }
 
 void samplr_run(float *bl, float *br, int n)
@@ -1132,17 +1287,20 @@ void samplr_run(float *bl, float *br, int n)
         return;
     uint32_t c0 = DWT_CYCCNT;
     run_voices(s, bl, br, n);
-    uint32_t c1 = DWT_CYCCNT, period = c0 - s->t_last;
+    uint32_t c1 = DWT_CYCCNT, period = c0 - s->t_last, dur = c1 - c0;
     if (s->t_last && period > 1000u && period < 100000000u) {
-        uint32_t load = (c1 - c0) / (period / 1000u + 1u);        /* per mille of the block period */
-        load = load > 9990u ? 9990u : load;
-        s->load = (uint16_t)load;
-        s->t_sum += load;
-        s->t_peak = load > s->t_peak ? (uint16_t)load : s->t_peak;
+        s->t_sum += dur;                                          /* load = cycles in this function / the (average) block period */
+        s->t_psum += period;
+        s->t_pmax = dur > s->t_pmax ? dur : s->t_pmax;
+        if (s->t_per)
+            s->load = (uint16_t)(dur / (s->t_per / 1000u + 1u) > 9990u ? 9990u : dur / (s->t_per / 1000u + 1u));
         if (++s->t_n >= 188) {
-            s->t_avg_shown = (uint16_t)(s->t_sum / s->t_n);
-            s->t_peak_shown = s->t_peak;
-            s->t_sum = s->t_n = s->t_peak = 0;
+            uint32_t per = s->t_psum / s->t_n;
+            s->t_per = per;
+            s->t_avg_shown = (uint16_t)(s->t_sum / (s->t_psum / 1000u + 1u));
+            s->t_peak_shown = (uint16_t)(s->t_pmax / (per / 1000u + 1u) > 9990u ? 9990u : s->t_pmax / (per / 1000u + 1u));
+            s->t_sum = s->t_psum = s->t_pmax = 0;
+            s->t_n = 0;
         }
     }
     s->t_last = c0;
