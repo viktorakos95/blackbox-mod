@@ -7,7 +7,9 @@
 #define SM_VOICES 4              /* one per finger */
 #define SM_GRAINS 6              /* per finger */
 #define SM_SPOTS  8              /* arpeggiator spots */
-#define SM_TMP    2112           /* source frames one read takes per block (8x pitch up of 256 frames + margin) */
+#define SM_TMP    4096           /* source frames one read takes per block (15x pitch up of 256 frames + margin); tl / tr live in effect blocks 10 / 11 */
+#define SM_CUTS   64             /* slice points: up to 64 slices */
+#define SM_OWIN   2048           /* transient search windows */
 #define SM_PADS   16
 
 enum { SM_SLICER, SM_TAPE, SM_ARP, SM_GRAIN, SM_MODES };
@@ -69,7 +71,13 @@ struct sm {
     float omn[SM_COLS], omx[SM_COLS];
     int8_t ov[2][SM_COLS];                  /* per column: lowest and highest sample, -127..127 */
     struct smvoice v[SM_VOICES];
-    float tl[SM_TMP], tr[SM_TMP];
+    int32_t cut[SM_CUTS + 1];               /* slice i = frames cut[i] .. cut[i + 1] */
+    int8_t drag[SM_VOICES];                 /* finger -> the slice point it moves (-1 none) */
+    int8_t trans;                           /* transpose, semitones -48..48 */
+    uint8_t ypit;                           /* bit per mode: finger height = pitch */
+    uint8_t _t[2];
+    float *tl, *tr;                         /* read buffers (SM_TMP floats each) */
+    float oenv[SM_OWIN];                    /* transient search scratch (GUI task only) */
 };
 
 struct sm *samplr(void);                    /* 0 until the looper's memory is up */
@@ -81,7 +89,8 @@ void samplr_select(int delta);              /* previous / next loaded pad sample
 void samplr_set_mode(int m);
 void samplr_toggle_gate(void);
 void samplr_set_slices(int n);
-void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch */
+void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch, 3 height = pitch, 4 find transients */
+void samplr_trans(int what);                /* transpose: +-1, +-12, 0 = back to 0 */
 void samplr_knob(int knob, int counts);     /* knobs 1..3 per mode (the page handles knob 0 = volume) */
 void samplr_touch(int kind, int id, int fx, int fy);   /* kind 0 down, 1 move, 2 up; fx, fy 0..1023 inside the waveform */
 void samplr_name(char *out, int max);       /* the selected sample's name for the page */

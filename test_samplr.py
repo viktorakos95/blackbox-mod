@@ -12,7 +12,17 @@ SLOTS, BL, ENT, BUFL = 0x24040000, 0x24050000, SE + 0x1C * 1, 0x24060000
 APPO = 0x24020088
 
 
+BURST = [False]
+
+
 def sample(f):
+    if BURST[0]:
+        if not 0 <= f < LENF:
+            return 0.0
+        for c in (2000, 6000, 10000, 14000):
+            if c <= f < c + 800:
+                return 0.5 * (-1) ** (f % 2) * (1 - (f - c) / 800.0)
+        return 0.002 * (-1) ** (f % 3)
     return f / LENF if 0 <= f < LENF else 0.0
 
 
@@ -134,13 +144,58 @@ play()
 o = play()[0]
 check("slicer gate: silent after release", max(abs(x) for x in o) < 1e-5)
 
+# height = pitch is off for the slicer by default: the top of the area plays at normal pitch
+touch(0, 0, 210, 0)
+o = play()[0]
+exp = (3072 + 200) / LENF * 0.9
+check("slicer: no pitch from finger height by default", abs(o[200] - exp) < 0.01, f"{o[200]:.4f} vs {exp:.4f}")
+touch(2, 0, 0, 0)
+play(3)
+e.uc.mem_write(SMP + 3389, b"\x05")                    # YP on for the slicer
 # octave up (top of the area)
-touch(0, 0, 3 * 64 + 10, 0)
+touch(0, 0, 210, 0)
 o = play()[0]
 exp = (3072 + 400) / LENF * 0.9
 check("slicer: top of the area = one octave up", abs(o[200] - exp) < 0.02, f"{o[200]:.4f} vs {exp:.4f}")
 touch(2, 0, 0, 0)
 play(2)
+
+e.uc.mem_write(SMP + 3389, b"\x04")                    # YP off again
+# transpose +12: the slice runs at double speed, with or without the finger height
+e.call("samplr_trans", 12)
+touch(0, 0, 3 * 64 + 10, 512)
+o = play()[0]
+exp = (3072 + 400) / LENF * 0.9
+check("transpose +12: an octave up", abs(o[200] - exp) < 0.02, f"{o[200]:.4f} vs {exp:.4f}")
+touch(2, 0, 0, 0)
+play(3)
+for _ in range(5):
+    e.call("samplr_trans", 12)
+check("transpose is limited to +48", struct.unpack("<b", e.uc.mem_read(SMP + 3388, 1))[0] == 48)
+touch(0, 0, 3 * 64 + 10, 512)
+o = play(2)[0]
+check("transpose +48: sounds, finite", 0 < max(abs(x) for x in o) < 2)
+touch(2, 0, 0, 0)
+play(3)
+e.call("samplr_trans", 0)
+check("transpose back to 0", struct.unpack("<b", e.uc.mem_read(SMP + 3388, 1))[0] == 0)
+
+# moving a slice point: grab the handle in the strip along the top, drag it
+cut = lambda i: e.r32(SMP + 3124 + 4 * i)
+check("slice points start equal (1024 frames apart)", cut(1) == 1024 and cut(2) == 2048, (cut(1), cut(2)))
+touch(0, 2, 60, 20)
+touch(1, 2, 400, 20)
+check("a slice point cannot pass its neighbour (stops 64 frames before it)", cut(1) == 1984, cut(1))
+touch(1, 2, 100, 20)
+touch(2, 2, 100, 20)
+check("a slice point dragged from x 60 to x 100 lands at frame 1600", cut(1) == 1600, cut(1))
+touch(0, 0, 20, 500)
+o = play(5)[0]
+check("slice 0 is now 1600 frames long (still sounding at frame 1200)", max(abs(x) for x in o) > 0.05)
+touch(2, 0, 0, 0)
+play(20)
+e.call("samplr_set_slices", 16)
+check("a new slice count resets the points to equal", cut(1) == 1024, cut(1))
 
 # one-shot: ONE mode keeps playing after the finger lifts, and ends at the slice end (1024 frames)
 e.call("samplr_toggle_gate")
@@ -311,5 +366,18 @@ check("grain: a cloud sounds, bounded", 0.01 < mx < 1.5, mx)
 touch(2, 1, 0, 0)
 play(100)
 check("grain: silent once the grains have ended", max(abs(x) for x in play()[0]) < 1e-5)
+
+# find transients: four bursts
+BURST[0] = True
+for b in range(2):
+    e.uc.mem_write(BUFL + b * 0x8000, struct.pack("<8192f", *[sample(b * 8192 + i) for i in range(8192)]))
+e.call("samplr_enter", count=50_000_000)
+e.call("samplr_set_slices", 16)
+e.call("samplr_cycle", 4, count=50_000_000)
+ns = e.r8(SMP + 6)
+cuts = [cut(i) for i in range(ns + 1)]
+check("transients: four bursts give five slices", ns == 5, (ns, cuts))
+check("transients: the slice points sit just before the bursts", all(abs(c - (b_ - 96)) < 400 for c, b_ in zip(cuts[1:5], (2000, 6000, 10000, 14000))), cuts)
+check("transients: first point 0, last point the end", cuts[0] == 0 and cuts[ns] == LENF, cuts)
 
 print(f"\n{fails} failure(s)")

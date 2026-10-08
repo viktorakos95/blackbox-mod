@@ -1142,18 +1142,25 @@ static void draw_samplr(void)
             text_c(wx, cy + 8, SM_W, b, C_GREY, 1);
         }
     } else {
-        int half = wh / 2 - 2;
+        int half = wh / 2 - 2, sl_c = 0;
         for (int c = 0; c < SM_COLS; c++) {
             int hi = s->ov[1][c] * half / 127, lo = -s->ov[0][c] * half / 127;
-            int slice = s->mode == SM_SLICER ? (c * s->nslice) / SM_COLS : -1, col = C_LIGHT;
+            int32_t fpos = (s->len / SM_COLS) * c;
+            while (s->mode == SM_SLICER && sl_c < s->nslice - 1 && fpos >= s->cut[sl_c + 1])
+                sl_c++;
+            int slice = s->mode == SM_SLICER ? sl_c : -1, col = C_LIGHT;
             for (int f = 0; f < SM_VOICES; f++)
                 if (slice >= 0 && (s->v[f].on || s->v[f].env > 0.f) && s->v[f].slice == slice)
                     col = track_colour[f];
             box(wx + 2 * c, cy - hi, 2, hi + lo + 1, s->ofill[c] ? col : C_DARK);
         }
         if (s->mode == SM_SLICER)
-            for (int i = 1; i < s->nslice; i++)
-                vline(wx + (i * SM_W) / s->nslice, wy, wh, C_GREY);
+            for (int i = 1; i < s->nslice; i++) {
+                int x = s->cut[i] / (s->len / SM_W + 1);
+                x = x >= SM_W - 1 ? SM_W - 2 : x;
+                vline(wx + x, wy, wh, C_GREY);
+                box(wx + x - 1, wy, 3, 7, C_YELLOW);                  /* the handle: grab it in the strip along the top */
+            }
         if (s->mode == SM_ARP)
             for (int i = 0; i < SM_SPOTS; i++) {
                 if (!s->spot[i].used)
@@ -1181,23 +1188,40 @@ static void draw_samplr(void)
         }
     }
     for (int i = 0; i < SM_MODES; i++)
-        sm_button(3 + 42 * i, ba, 40, sm_mode_name[i], s->mode == i);
+        sm_button(3 + 37 * i, ba, 35, sm_mode_name[i], s->mode == i);
     if (s->mode == SM_SLICER)
-        sm_button(173, ba, 46, sm_q_name[s->qi & 3], s->qi != 0);
+        sm_button(152, ba, 44, sm_q_name[s->qi & 3], s->qi != 0);
     else if (s->mode == SM_ARP)
-        sm_button(173, ba, 46, "SNAP", s->qi != 0);
+        sm_button(152, ba, 44, "SNAP", s->qi != 0);
     else if (s->mode == SM_GRAIN)
-        sm_button(173, ba, 46, s->gfree ? "FREE" : "SYNC", 1);
+        sm_button(152, ba, 44, s->gfree ? "FREE" : "SYNC", 1);
     if (s->mode == SM_SLICER)
-        sm_button(221, ba, 46, s->gate ? "GATE" : "ONE", 1);
+        sm_button(198, ba, 44, s->gate ? "GATE" : "ONE", 1);
     else if (s->mode == SM_ARP || s->mode == SM_GRAIN)
-        sm_button(221, ba, 46, "LATCH", s->latch);
-    if (s->mode == SM_ARP)
-        sm_button(269, ba, 42, samplr_pat_name(s->pat), 1);
+        sm_button(198, ba, 44, "LATCH", s->latch);
+    if (s->mode == SM_SLICER)
+        sm_button(244, ba, 34, "AUTO", 0);
+    else if (s->mode == SM_ARP)
+        sm_button(244, ba, 34, samplr_pat_name(s->pat), 1);
+    if (s->mode == SM_SLICER || s->mode == SM_ARP)
+        sm_button(280, ba, 31, "YP", (s->ypit >> s->mode) & 1);
     sm_button(3, bb, 22, "<", 0);
-    frame(27, bb, 160, SM_BH, C_RAIL, 1);
-    text_c(27, bb + 6, 160, nm[0] ? nm : "-", C_LIGHT, 1);
-    sm_button(189, bb, 22, ">", 0);
+    frame(27, bb, 70, SM_BH, C_RAIL, 1);
+    text_c(27, bb + 6, 70, nm[0] ? nm : "-", C_LIGHT, 1);
+    sm_button(99, bb, 22, ">", 0);
+    sm_button(125, bb, 30, "-12", 0);
+    sm_button(157, bb, 24, "-1", 0);
+    {
+        char b[8], *q = b;
+        int tv = s->trans;
+        *q++ = tv < 0 ? '-' : '+';
+        q = put_uint(q, (unsigned)(tv < 0 ? -tv : tv));
+        *q = 0;
+        frame(183, bb, 50, SM_BH, tv ? C_CYAN : C_RAIL, 1);
+        text_c(183, bb + 6, 50, b, tv ? C_CYAN : C_LIGHT, 1);
+    }
+    sm_button(235, bb, 24, "+1", 0);
+    sm_button(261, bb, 30, "+12", 0);
 }
 
 /* A touch on the SMPLR tab above the footer. Returns 1 when it was used. */
@@ -1208,23 +1232,35 @@ static int sm_touch(int kind, int id, int x, int d)
     if (d >= ba) {
         if (kind != 0)
             return 1;
+        struct sm *s = samplr();
         if (d >= bb) {
             if (x >= 3 && x < 25)
                 samplr_select(-1);
-            else if (x >= 189 && x < 211)
+            else if (x >= 99 && x < 121)
                 samplr_select(1);
-        } else if (x >= 3 && x < 3 + 42 * SM_MODES) {
-            samplr_set_mode((x - 3) / 42);
-        } else if (x >= 173 && x < 219) {
+            else if (x >= 125 && x < 155)
+                samplr_trans(-12);
+            else if (x >= 157 && x < 181)
+                samplr_trans(-1);
+            else if (x >= 183 && x < 233)
+                samplr_trans(0);
+            else if (x >= 235 && x < 259)
+                samplr_trans(1);
+            else if (x >= 261 && x < 291)
+                samplr_trans(12);
+        } else if (x >= 3 && x < 3 + 37 * SM_MODES) {
+            samplr_set_mode((x - 3) / 37);
+        } else if (x >= 152 && x < 196) {
             samplr_cycle(0);
-        } else if (x >= 221 && x < 267) {
-            struct sm *s = samplr();
+        } else if (x >= 198 && x < 242) {
             if (s && s->mode == SM_SLICER)
                 samplr_toggle_gate();
             else
                 samplr_cycle(2);
-        } else if (x >= 269 && x < 311) {
-            samplr_cycle(1);
+        } else if (x >= 244 && x < 278) {
+            samplr_cycle(s && s->mode == SM_SLICER ? 4 : 1);
+        } else if (x >= 280 && x < 311) {
+            samplr_cycle(3);
         }
         P->sig = 0;
         return 1;

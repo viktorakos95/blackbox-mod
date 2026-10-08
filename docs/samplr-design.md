@@ -93,3 +93,14 @@ takes three overdub layers.
 - MIX button: from any other screen it opens the Looper page (MAIN tab) first; then stock mixer, mute, solo, Looper again.
 - Leaving the page silences SAMPLR (held fingers, spots, clouds).
 - Needs hardware confirmation: setting screen 0x2f from a non-mixer screen (the GUI should build the mixer view in mute mode).
+
+## Build 6 (slice points, pitch options, transpose, transients)
+- SLICER: slice points are real positions (`cut[]`); drag a yellow handle in the strip along the top of the waveform (grab within ~8 px);
+  a point stops 64 frames short of its neighbours; changing the slice count (knob 2) puts them back at equal spacing; AUTO finds the transients
+  (RMS per window over the resident blocks, onset = louder than 1.4x the mean of the 6 windows before; the strongest nslice-1 onsets, spaced
+  apart; slice count follows what was found; each point 96 frames before the onset).
+- YP button (SLICER, ARP): finger height = pitch on/off per mode (default: off for SLICER, on for ARP).
+- Transpose for every mode (-12, -1, value = back to 0, +1, +12; range +-48): slicer / arp notes, tape speed, grain pitch. Reads of up to 15.5x
+  speed are supported (the read buffers moved to effect blocks 10 / 11, 16 KB each).
+- Next: the source abstraction (looper tracks as SAMPLR samples + record from SAMPLR), voices that keep their own sample while another is edited,
+  effects, gesture recorder.
