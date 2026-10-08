@@ -1019,7 +1019,7 @@ static void draw_setup(const struct lay *L)
         p = put_uint(p, (unsigned)(looper_rate() * 1000.f));
         for (const char *q = " S"; *q; q++)
             *p++ = *q;
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 2; i++) {
             *p++ = ' ';
             p = put_hex(p, P->scr_h[i], 2);
         }
@@ -1027,8 +1027,14 @@ static void draw_setup(const struct lay *L)
         *p++ = 'T';
         p = put_uint(p, P->tmax);
         *p++ = ' ';
-        p = put_hex(p, (uint32_t)P->tw2, 8);                      /* the ids of the last four touches, oldest first */
-        p = put_hex(p, (uint32_t)P->tw3, 8);
+        *p++ = 'I';
+        for (int i = 3; i >= 0; i--)                              /* the finger ids of the last four touch-downs, oldest first */
+            p = put_hex(p, ((uint32_t)P->tw3 >> (4 * i)) & 0xfu, 1);
+        *p++ = ' ';
+        *p++ = 'C';                                               /* the audio task's load, average / worst block (cpu.c) */
+        p = put_uint(p, (*(volatile uint16_t *)0x2405ffe2u + 5u) / 10u);
+        *p++ = '/';
+        p = put_uint(p, (*(volatile uint16_t *)0x2405ffe4u + 5u) / 10u);
 #ifdef BANK2
         *p++ = ' ';
         *p++ = 'B';
