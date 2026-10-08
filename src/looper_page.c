@@ -41,6 +41,7 @@
 #include <stdint.h>
 
 #include "looper.h"
+#include "samplr.h"
 
 #define FN(addr) ((addr) | 1u)
 
@@ -125,12 +126,12 @@ static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> til
 
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
 enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
-enum { M_MAIN, M_FX, M_SETUP, M_MORE, MODES };
-#define NTABS 5                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
+enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, MODES };
+#define NTABS 6                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
 /* hardware buttons the page can take over: slot numbers */
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
 
-#define TAB_W      38
+#define TAB_W      34
 #define ROW_H      22                      /* SETUP: one option per row */
 #define OPT_X      84                      /* SETUP: where the choices start */
 #define CHOICE_W   52
@@ -908,7 +909,11 @@ static void stock_fx(void)
 /* A tab of the footer (0 MAIN, 1 FX, 2 FX2, 3 SETUP, 4 MORE). FX / FX2 keep the square where it is when it is on that page. */
 static void tab_select(int i)
 {
-    P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : M_MORE);
+    if (P->mode == M_SMPLR && i != 5)
+        samplr_leave();
+    if (i == 5 && P->mode != M_SMPLR)
+        samplr_enter();
+    P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : i == 4 ? M_MORE : M_SMPLR);
     if (i == 1 && FX_GROUP >= 2)
         set_fx_sel(0);
     else if (i == 2 && FX_GROUP < 2)
@@ -1060,10 +1065,10 @@ static void draw_setup(const struct lay *L)
 static void draw_footer(const struct lay *L)
 {
     box(1, L->foot_y + 1, P->w - 2, FOOT - 1, C_BG);
-    static const char *const tab[NTABS] = {"MAIN", "FX", "FX2", "SETUP", "MORE"};
+    static const char *const tab[NTABS] = {"MAIN", "FX", "FX2", "SETUP", "MORE", "SMPLR"};
     for (int i = 0; i < NTABS; i++) {
         int on = i == 0 ? P->mode == M_MAIN : i == 1 ? P->mode == M_FX && FX_GROUP < 2 : i == 2 ? P->mode == M_FX && FX_GROUP >= 2 :
-                 i == 3 ? P->mode == M_SETUP : P->mode == M_MORE;
+                 i == 3 ? P->mode == M_SETUP : i == 4 ? P->mode == M_MORE : P->mode == M_SMPLR;
         frame(3 + i * (TAB_W + 2), L->foot_y + 2, TAB_W, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
         text_c(3 + i * (TAB_W + 2), L->foot_y + 4, TAB_W, tab[i], on ? C_CYAN : C_GREY, 1);
     }
@@ -1071,9 +1076,112 @@ static void draw_footer(const struct lay *L)
     frame(P->w - 58, L->foot_y + 2, 54, FOOT - 3, C_RAIL, 1);
     text_c(P->w - 58, L->foot_y + 4, 54, "STOCK FX", C_LIGHT, 1);
     if (looper_paused())
-        text(x0, L->foot_y + 4, "PAUSED", C_RED, 1);
+        text(x0, L->foot_y + 4, "PAUSE", C_RED, 1);
     else if (P->info_on)
-        text(x0, L->foot_y + 4, "SHIFT ON", C_RED, 1);
+        text(x0, L->foot_y + 4, "SHIFT", C_RED, 1);
+}
+
+/* ---- SMPLR tab: the sample's waveform on top (touch it), the buttons below. */
+#define SM_W 300                                                  /* waveform: SM_COLS columns of 2 px */
+#define SM_BH 26
+static void sm_geom(int *wx, int *wy, int *wh, int *by)
+{
+    struct lay L;
+    layout(0, &L);
+    *wx = (P->w - SM_W) / 2;
+    *wy = TOPBAR + 4;
+    *by = L.foot_y - SM_BH - 3;
+    *wh = *by - 4 - *wy;
+}
+
+static void sm_button(int x, int by, int w, const char *s, int on)
+{
+    frame(x, by, w, SM_BH, on ? C_CYAN : C_RAIL, 1);
+    text_c(x, by + 9, w, s, on ? C_CYAN : C_LIGHT, 1);
+}
+
+static void draw_samplr(void)
+{
+    struct sm *s = samplr();
+    int wx, wy, wh, by;
+    sm_geom(&wx, &wy, &wh, &by);
+    box(1, 1, P->w - 2, TOPBAR, C_BG);
+    box(1, wy - 1, P->w - 2, by - wy + SM_BH + 3, C_BG);
+    if (!s) {
+        text(6, 4, "SAMPLR: LOOPER MEMORY NOT READY", C_RED, 1);
+        return;
+    }
+    char nm[24];
+    samplr_name(nm, 22);
+    text(6, 4, s->mode == SM_SLICER ? "SLICER" : "TAPE", C_CYAN, 1);
+    if (s->mode == SM_SLICER) {
+        char b[4], *q = b;
+        q = put_uint(q, s->nslice);
+        *q = 0;
+        text(6 + 7 * 6, 4, b, C_LIGHT, 1);
+    }
+    text(P->w - 6 - 6 * 12, 4, s->ov_ok ? "" : "LOADING", C_YELLOW, 1);
+    int cy = wy + wh / 2;
+    frame(wx - 1, wy - 1, SM_W + 2, wh + 2, C_RAIL, 1);
+    if (s->id < 0) {
+        text_c(wx, cy - 4, SM_W, s->npads ? "SAMPLE NOT READY" : "NO SAMPLES ON THE PADS", C_GREY, 1);
+    } else {
+        int half = wh / 2 - 2;
+        for (int c = 0; c < SM_COLS; c++) {
+            int hi = s->ov[1][c] * half / 127, lo = -s->ov[0][c] * half / 127;
+            int slice = s->mode == SM_SLICER ? (c * s->nslice) / SM_COLS : -1, col = C_LIGHT;
+            for (int f = 0; f < SM_VOICES; f++)
+                if (slice >= 0 && (s->v[f].on || s->v[f].env > 0.f) && s->v[f].slice == slice)
+                    col = track_colour[f];
+            box(wx + 2 * c, cy - hi, 2, hi + lo + 1, col);
+        }
+        if (s->mode == SM_SLICER)
+            for (int i = 1; i < s->nslice; i++)
+                vline(wx + (i * SM_W) / s->nslice, wy, wh, C_GREY);
+        for (int f = 0; f < SM_VOICES; f++) {
+            struct smvoice *v = &s->v[f];
+            if (v->on || v->env > 0.f) {
+                int x = wx + v->ipos / (s->len / SM_W + 1);
+                vline(x < wx ? wx : x >= wx + SM_W ? wx + SM_W - 1 : x, wy, wh, C_WHITE);
+            }
+        }
+    }
+    sm_button(3, by, 46, "SLICE", s->mode == SM_SLICER);
+    sm_button(51, by, 46, "TAPE", s->mode == SM_TAPE);
+    sm_button(99, by, 22, "<", 0);
+    frame(123, by, 94, SM_BH, C_RAIL, 1);
+    text_c(123, by + 9, 94, nm[0] ? nm : "-", C_LIGHT, 1);
+    sm_button(219, by, 22, ">", 0);
+    sm_button(243, by, 46, s->mode == SM_TAPE || s->gate ? "GATE" : "ONE", s->gate || s->mode == SM_TAPE);
+}
+
+/* A touch on the SMPLR tab above the footer. Returns 1 when it was used. */
+static int sm_touch(int kind, int id, int x, int d)
+{
+    int wx, wy, wh, by;
+    sm_geom(&wx, &wy, &wh, &by);
+    if (d >= by) {
+        if (kind != 0)
+            return 1;
+        if (x < 49)
+            samplr_set_mode(SM_SLICER);
+        else if (x < 97)
+            samplr_set_mode(SM_TAPE);
+        else if (x >= 99 && x < 121)
+            samplr_select(-1);
+        else if (x >= 219 && x < 241)
+            samplr_select(1);
+        else if (x >= 243 && x < 289)
+            samplr_toggle_gate();
+        P->sig = 0;
+        return 1;
+    }
+    int fx = (x - wx) * 1024 / SM_W, fy = (d - wy) * 1024 / (wh > 0 ? wh : 1);
+    if (kind == 0 && (d < wy || x < wx - 2 || x > wx + SM_W + 2))
+        return 1;
+    samplr_touch(kind, id & 3, fx, fy);
+    P->sig = 0;
+    return 1;
 }
 
 /* A number that changes whenever something the page shows changes. */
@@ -1099,7 +1207,7 @@ static uint32_t signature(void)
               (uint32_t)(P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) << 29 | (uint32_t)(P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW) << 28)) * 16777619u;
     for (int o = 0; o < LOOPER_OPTS; o++)
         h = (h ^ (uint32_t)(looper_get_opt(o) * 1000.f + .5f)) * 16777619u;
-    return h ^ looper_len();
+    return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : 0u);
 }
 
 /* Called for every mixer cell while the page shows: the first cell draws the whole page, the others nothing.
@@ -1134,7 +1242,7 @@ static void paint(uint8_t *view)
     frame(0, 0, P->w, P->hg, fc, 1);
     hline(1, TOPBAR + 1, P->w - 2, C_RAIL);
     hline(1, L.foot_y, P->w - 2, C_RAIL);
-    for (int t = 0; t < LOOPER_TRACKS; t++) {
+    for (int t = 0; t < LOOPER_TRACKS && P->mode != M_SMPLR; t++) {
         struct looper_info k;
         looper_track(t, &k);
         layout(t, &L);
@@ -1149,6 +1257,8 @@ static void paint(uint8_t *view)
     layout(0, &L);
     if (P->mode == M_SETUP || P->mode == M_MORE)
         draw_setup(&L);
+    else if (P->mode == M_SMPLR)
+        draw_samplr();
     draw_footer(&L);
     P->sig = signature();
     looper_guard_drawing(0);
@@ -1369,6 +1479,15 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
     probe(id, 0);
     P->pressed = P_NONE;
     to_page(pt, &x, &d);
+    if (P->mode == M_SMPLR) {
+        struct lay L;
+        layout(0, &L);
+        if (d < L.foot_y) {
+            sm_touch(0, id, x, d);
+            dirty_now(view);
+            return;
+        }
+    }
     int zone = looper_page_hit(x, d, &t, &v);
     if (zone == Z_NONE)
         return;
@@ -1474,6 +1593,13 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
 void looper_page_move(uint8_t *view, const int *pt, int id)
 {
     probe(id, 1);
+    if (P->mode == M_SMPLR) {
+        int x, d;
+        to_page(pt, &x, &d);
+        sm_touch(1, id, x, d);
+        dirty_now(view);
+        return;
+    }
     if (P->pressed != P_FADER && P->pressed != P_DIAL && P->pressed != P_SLIDER)
         return;
     int x, d;
@@ -1496,6 +1622,7 @@ void looper_page_up(uint8_t *view, const int *pt, int id)
 {
     (void)pt;
     probe(id, 2);
+    samplr_touch(2, id & 3, 0, 0);
     if (P->pressed == P_REC)
         looper_event(P->track, LOOPER_EV_REC_UP);
     else if (P->pressed == P_MUTE)
@@ -1516,9 +1643,24 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             struct looper_info k;
             looper_track(knob, &k);
             float step = (float)counts * KNOB_SCALE;
-            if (P->mode == M_MAIN)
+            if (P->mode == M_SMPLR) {
+                struct sm *sm = samplr();
+                if (sm && knob == 0) {
+                    float vv = sm->vol + step * 2.f;
+                    sm->vol = vv < 0.f ? 0.f : vv > 2.f ? 2.f : vv;
+                } else if (sm && knob == 1 && counts) {
+                    static const uint8_t ns[5] = {4, 8, 16, 32, 64};
+                    int i = 0;
+                    for (int q = 0; q < 5; q++)
+                        if (ns[q] == sm->nslice)
+                            i = q;
+                    i += counts > 0 ? 1 : -1;
+                    samplr_set_slices(ns[i < 0 ? 0 : i > 4 ? 4 : i]);
+                }
+            } else if (P->mode == M_MAIN)
                 P->sel = (uint8_t)knob;                                   /* altering a track's setting selects it */
-            if (P->mode == M_SETUP || P->mode == M_MORE) {
+            if (P->mode == M_SMPLR) {
+            } else if (P->mode == M_SETUP || P->mode == M_MORE) {
                 static const uint8_t op_s[4] = {LOOPER_O_GAIN, 0, 0, 0};
                 static const uint8_t op_m[4] = {LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET};
                 if (P->mode == M_MORE)

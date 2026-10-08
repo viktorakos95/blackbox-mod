@@ -47,3 +47,16 @@ takes three overdub layers.
 2. Page skeleton + waveform drawing + slot picker (reads only).
 3. Voice engine + SLICER with 4 fingers, then TAPE.
 4. ARPEGGIATOR, GRANULAR, LOOPER; sync grid; gesture recorder; effects.
+
+## Build 1 (SMPLR tab, SLICER + TAPE)  -- done, awaiting hardware
+- 6th tab "SMPLR" of the looper page (tabs are 34 px wide now; footer state text is PAUSE / SHIFT).
+- Code: `src/samplr.c` / `samplr.h`; state in the looper's spare effect block 9 (`looper_scratch(9)`); voices mixed into the Out 1
+  bus right after the looper (`looper_stage` -> `samplr_run`). The sample is read with the stock reader (engine vtable method 2).
+- Page: waveform (150 columns x 2 px from the resident pool blocks, normalised), buttons SLICE / TAPE, < name >, GATE / ONE.
+  Pads with a sample (4x4 grid) are the sample list; knob 1 (left bottom) = volume, knob 2 (left top) = slices 4/8/16/32/64.
+- SLICER: touch = the slice under the finger; height = pitch (+-12 semitones, middle = none); sliding to another slice retriggers;
+  GATE = stops at lift, ONE = plays to the slice end. 4 fingers = 4 voices (finger id = touch slot).
+- TAPE: touch puts the play head there; dragging sideways = speed (1x +- 1 per 30 px, -4..+4, reverse); height = volume; loops.
+- Not yet: tempo sync / quantised starts, arpeggiator, granular (E-bow), looper mode, gesture recorder (3 layers), effects,
+  stereo level of the voice (pan), sample-rate conversion is only the file/48k ratio (linear interpolation).
+- First build whose code runs from flash bank 2 (image 791,156 bytes).

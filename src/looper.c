@@ -65,6 +65,7 @@ typedef void (*pool_fn)(void *engine);
 
 void bkp_enable(void);
 void looper_ui_poke(void);
+void samplr_run(float *bl, float *br, int n);
 void solo_boot_reset(void);
 void looper_page_boot(void);
 
@@ -1853,7 +1854,14 @@ void looper_stage(uint8_t *obj, void *bufs)
     if (l && r && n > 0) {
         read_bpm(bufs);
         run(l, r, n);
+        samplr_run(l, r, n);
     }
+}
+
+/* Spare 32 KB effect memory block 9 + i (i = 0..2), zeroed at boot; 0 while the looper's memory is not up. */
+uint8_t *looper_scratch(int i)
+{
+    return S->magic == MAGIC && S->ok && i >= 9 && i <= 11 ? fxbuf(i) : 0;
 }
 
 /* The Blackbox's own delay and reverb: add the last block's sends to an FX node's bus before the node runs. obj is

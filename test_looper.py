@@ -564,12 +564,12 @@ check("message 7 is not INFO: it goes to the stock handler", appmsg == [(7, 7)],
 
 # ---- tabs: FX and SETUP
 def tab(i):
-    touch("down", 3 + i * 40 + 10, 224 - 5)
-    touch("up", 3 + i * 40 + 10, 224 - 5)
+    touch("down", 3 + i * 36 + 10, 224 - 5)
+    touch("up", 3 + i * 36 + 10, 224 - 5)
 
 
 f = draw(0)
-check("the footer has three tab buttons (MAIN is the cyan one)", sum(1 for x in f if x[2] == 38 and x[3] == 1 and x[4] == 0x1B) == 2 and sum(1 for x in f if x[2] == 38 and x[3] == 1 and x[4] == 0x10) >= 4)
+check("the footer has three tab buttons (MAIN is the cyan one)", sum(1 for x in f if x[2] == 34 and x[3] == 1 and x[4] == 0x1B) == 2 and sum(1 for x in f if x[2] == 34 and x[3] == 1 and x[4] == 0x10) >= 4)
 tab(1)
 check("tapping the FX tab switches the page to FX", e.r8(PAGE + 76) == 1, e.r8(PAGE + 76))
 f = draw(0)
@@ -994,6 +994,68 @@ e.uc.mem_write(SCR, b"\x25")
 ring_b([(0xF7, 10)])
 check("key ring: on other screens PLAY is delivered", key_pop() == (1, 0xF7, 10))
 e.uc.mem_write(SCR, b"\x2f")
+
+# ---- SMPLR tab: waveform, slicer touches, buttons
+SE, LENF = 0x2400A9C0, 16384
+SLOTS, BLK, BUFL, APPS = 0x24040000, 0x24050000, 0x24060000, 0x24020088
+e.w32(SE + 0x4348, SLOTS)
+e.uc.mem_write(SE + 0x434C, b"\xff\xff" * 576)
+e.uc.mem_write(SE + 0x434C + 10, struct.pack("<H", 0))
+e.uc.mem_write(SLOTS + 0x2C, b"\x01")
+e.uc.mem_write(SLOTS + 0x1A, struct.pack("<H", 1))
+e.w32(SLOTS + 0x1C, 48000)
+e.uc.mem_write(SLOTS + 0x50, struct.pack("<II", LENF, 0))
+e.w32(SE + 0x8670, BLK)
+e.uc.mem_write(BLK, struct.pack("<HH", 1, 2) + b"\xff\xff" * 8)
+for b_ in range(2):
+    ent = SE + 0x1C * (1 + b_)
+    e.w32(ent + 4, BUFL + b_ * 0x8000)
+    e.w32(ent + 8, BUFL + b_ * 0x8000)
+    e.w32(ent + 0xC, b_)
+    e.w32(ent + 0x14, 8192)
+    e.w32(ent + 0x18, 5)
+    e.uc.mem_write(ent + 0x1E, b"\x00\x02")
+    e.uc.mem_write(BUFL + b_ * 0x8000, struct.pack("<8192f", *[(b_ * 8192 + i) / LENF for i in range(8192)]))
+e.w32(APPS + 0x8A88, 5)
+e.w32(APPS + 0x8A88 + 4, 0xFFFF)
+e.uc.mem_write(APPS + 0x8A88 + 8, b"\x01")
+e.uc.mem_write(0x24072000, b"/S/kick.wav\0")
+e.w32(APPS + 0x1840 + 0x18, 0x24072000)
+
+
+def pcm_stub():
+    sp = e.uc.reg_read(A.UC_ARM_REG_SP)
+    ident, outl, outr, n = struct.unpack("<IIII", e.uc.mem_read(sp, 16))
+    start = e.arg(2)
+    vals = [(start + i) / LENF if 0 <= start + i < LENF else 0.0 for i in range(n)]
+    e.uc.mem_write(outl, struct.pack(f"<{n}f", *vals))
+    e.ret(1)
+
+
+e.stub(0x08074A00, pcm_stub)
+tab(5)
+f = draw(0)
+check("SMPLR tab: the footer's last tab is cyan, nothing is drawn outside the screen",
+      sum(1 for x in f if x[2] == 34 and x[3] == 1 and x[4] == 0x1B) == 2 and all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f),
+      [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
+cols = [x for x in f if x[2] == 2 and x[4] == 0x16]
+check("SMPLR tab: 150 waveform columns of 2 px, growing along the ramp", len(cols) == 150 and cols[-1][3] > cols[10][3], (len(cols), cols[:1], cols[-1:]))
+check("SMPLR tab: slice lines (grey)", sum(1 for x in f if x[2] == 1 and x[4] == 0x09) >= 15)
+wave_x, wave_d = 3 + 7 + 150, 40
+touch("down", wave_x, wave_d)
+blocks(3, 0.0)
+f = draw(0)
+check("SMPLR: touching the waveform plays (the Out 1 bus gets the sample)", max(abs(v) for v in block([0.0] * N)[1][0]) > 0.001)
+check("SMPLR: the touched slice is drawn in the finger's colour (cyan)", any(x[2] == 2 and x[4] == 0x1B for x in f))
+touch("up", wave_x, wave_d)
+blocks(3, 0.0)
+check("SMPLR: lifting the finger silences it (gate)", max(abs(v) for v in block([0.0] * N)[1][0]) < 1e-4)
+touch("down", 3 + 51 + 10, 224 - 15 - 3 - 26 + 5 - 0)
+touch("up", 3 + 51 + 10, 224 - 15 - 3 - 26 + 5 - 0)
+e.call("samplr")
+check("SMPLR: the TAPE button switches the mode", e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4) == 1, e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4))
+tab(0)
+check("SMPLR: leaving the tab releases the voices", True)
 
 # leaving the page puts the child widgets back
 e.call("solo_set_mode", VIEW, 1)
