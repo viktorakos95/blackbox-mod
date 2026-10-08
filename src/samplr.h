@@ -80,7 +80,8 @@ struct sm {
     int8_t ov[2][SM_COLS];                  /* per column: lowest and highest sample, -127..127 */
     struct smvoice v[SM_NV];
     int32_t cut[SM_CUTS + 1];               /* slice i = frames cut[i] .. cut[i + 1] */
-    int8_t drag[SM_VOICES];                 /* finger -> the slice point it moves (-1 none) */
+    int8_t drag[SM_VOICES];                 /* finger -> the slice point it moves (-1 none; 100: the press removed a latched spot, ignore the finger) */
+    uint8_t dmoved[SM_VOICES];              /* the dragged point moved (else a tap on it deletes it) */
     int8_t trans;                           /* transpose, semitones -48..48 */
     uint8_t ypit;                           /* bit per mode: finger height = pitch */
     uint8_t _t[2];

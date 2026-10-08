@@ -675,8 +675,15 @@ static void fire(struct smvoice *v, int32_t pos, int32_t start, int32_t end, flo
 
 static int height_semitones(int fy)
 {
-    int n = 512 - fy;                                             /* +-512 around the middle */
-    return (n < 77 && n > -77) ? 0 : (n * 12) / 512;
+    int n = 512 - fy;                                             /* +-412 around the middle (the strip along the top is for the slice points) */
+    n = n > 412 ? 412 : n < -412 ? -412 : n;
+    return (n < 60 && n > -60) ? 0 : (n * 12) / 412;
+}
+
+static inline int pos_fx(struct sm *s, int32_t pos)                /* the inverse of fx -> frame, 0..1023 */
+{
+    int d = s->len >> 10;
+    return d ? pos / d : 0;
 }
 
 /* Finger height: pitch when YP is on for this mode, otherwise volume (top = full). */
@@ -735,7 +742,13 @@ static void release_finger(struct sm *s, int id)
     int was = v->held;
     v->held = 0;
     if (s->drag[id] >= 0) {
+        int di = s->drag[id];
         s->drag[id] = -1;
+        if (di > 0 && di < 100 && !s->dmoved[id] && s->mode == SM_SLICER && s->nslice > 2 && di < s->nslice) {
+            for (int q = di; q < s->nslice; q++)                  /* a tap on a handle takes the slice point away */
+                s->cut[q] = s->cut[q + 1];
+            s->nslice--;
+        }
         return;
     }
     int k = v->a_sp;
@@ -768,12 +781,33 @@ void samplr_touch(int kind, int id, int fx, int fy)
         return;
     fx = fx < 0 ? 0 : fx > 1023 ? 1023 : fx;
     fy = fy < 0 ? 0 : fy > 1023 ? 1023 : fy;
+    if (s->drag[id] == 100)
+        return;                                                   /* this press already took a latched spot / cloud away */
+    if (kind == 0 && s->mode == SM_ARP) {
+        for (int i = 0; i < SM_SPOTS; i++)                        /* a press on a latched spot removes it */
+            if (s->spot[i].used && s->spot[i].owner == 0xff && pos_fx(s, s->spot[i].pos) - fx < 28 && fx - pos_fx(s, s->spot[i].pos) < 28) {
+                s->spot[i].used = 0;
+                s->drag[id] = 100;
+                return;
+            }
+    }
+    if (kind == 0 && s->mode == SM_GRAIN) {
+        for (int f = 0; f < SM_VOICES; f++) {
+            struct smvoice *c = &s->v[f];
+            int cx = pos_fx(s, c->g_centre);
+            if (c->g_on && !c->held && cx - fx < 28 && fx - cx < 28) {
+                c->g_on = 0;
+                s->drag[id] = 100;
+                return;
+            }
+        }
+    }
     if (s->mode == SM_SLICER) {
         int32_t pos = (s->len >> 10) * fx;
-        if (kind == 0 && fy < 100) {                              /* the strip along the top grabs a slice point */
+        if (kind == 0 && fy < 100) {                              /* the strip along the top: grab a slice point, or add one */
             int best = -1, bd = 1 << 30;
             for (int i = 1; i < s->nslice; i++) {
-                int d = s->cut[i] / ((s->len >> 10) + 1) - fx;
+                int d = pos_fx(s, s->cut[i]) - fx;
                 d = d < 0 ? -d : d;
                 if (d < bd) {
                     bd = d;
@@ -782,12 +816,28 @@ void samplr_touch(int kind, int id, int fx, int fy)
             }
             if (best > 0 && bd < 28) {
                 s->drag[id] = (int8_t)best;
+                s->dmoved[id] = 0;
+                s->fx0[id] = (int16_t)fx;
+                return;
+            }
+            int at = slice_at(s, pos) + 1;                        /* no handle there: a new slice point, which can be dragged on */
+            if (s->nslice < SM_CUTS && pos > s->cut[at - 1] + 64 && pos < s->cut[at] - 64) {
+                for (int q = s->nslice + 1; q > at; q--)
+                    s->cut[q] = s->cut[q - 1];
+                s->cut[at] = pos;
+                s->nslice++;
+                s->drag[id] = (int8_t)at;
+                s->dmoved[id] = 1;
                 return;
             }
         }
         if (s->drag[id] > 0) {
             if (kind == 1) {
                 int i = s->drag[id];
+                if ((fx - s->fx0[id]) > 6 || (s->fx0[id] - fx) > 6)
+                    s->dmoved[id] = 1;
+                if (!s->dmoved[id])
+                    return;
                 int32_t lo = s->cut[i - 1] + 64, hi = s->cut[i + 1] - 64;
                 s->cut[i] = pos < lo ? lo : pos > hi ? hi : pos;
             }

@@ -9,6 +9,20 @@ exec(src)
 import subprocess
 
 
+def voice_offsets(names):
+    src = '#include "src/samplr.h"\n' + "".join(f"char o_{n}[__builtin_offsetof(struct smvoice,{n})];\n" for n in names)
+    out = subprocess.run(["arm-none-eabi-gcc", "-I.", "-mthumb", "-S", "-x", "c", "-", "-o", "-"], input=src, capture_output=True, text=True, check=True).stdout.splitlines()
+    res, cur = {}, None
+    for l in out:
+        l = l.strip()
+        if l.startswith("o_") and l.endswith(":"):
+            cur = l[2:-1]
+        elif cur and l.startswith(".space"):
+            res[cur] = int(l.split()[1])
+            cur = None
+    return res
+
+
 def struct_offsets(names):
     """Offsets of struct sm members, from the compiler (the header is the single source)."""
     src = '#include "src/samplr.h"\n' + "".join(f"char o_{n}[__builtin_offsetof(struct sm,{n})];\n" for n in names)
@@ -165,7 +179,7 @@ o = play()[0]
 check("slicer gate: silent after release", max(abs(x) for x in o) < 1e-5)
 
 # height = pitch is off for the slicer by default: the top of the area plays at normal pitch
-touch(0, 0, 210, 0)
+touch(0, 0, 210, 150)
 o = play()[0]
 exp = (3072 + 200) / LENF * 0.9
 check("slicer: no pitch from finger height by default", abs(o[200] - exp) < 0.01, f"{o[200]:.4f} vs {exp:.4f}")
@@ -173,7 +187,7 @@ touch(2, 0, 0, 0)
 play(3)
 e.uc.mem_write(SMP + OFF["ypit"], b"\x01")                    # YP on for the slicer
 # octave up (top of the area)
-touch(0, 0, 210, 0)
+touch(0, 0, 210, 100)
 o = play()[0]
 exp = (3072 + 400) / LENF * 0.9
 check("slicer: top of the area = one octave up", abs(o[200] - exp) < 0.02, f"{o[200]:.4f} vs {exp:.4f}")
@@ -216,6 +230,42 @@ touch(2, 0, 0, 0)
 play(20)
 e.call("samplr_set_slices", 16)
 check("a new slice count resets the points to equal", cut(1) == 1024, cut(1))
+
+# adding and removing slice points
+used = lambda: sum(e.r8(SMP + OFF["spot"] + 12 * i + 5) for i in range(8))
+e.call("samplr_set_slices", 16)
+ns0 = e.r8(SMP + OFF["nslice"])
+touch(0, 2, 96, 20)                                    # strip along the top, away from handles (frame 1440)
+touch(2, 2, 96, 20)
+check("a tap in the strip adds a slice point", e.r8(SMP + OFF["nslice"]) == ns0 + 1 and cut(2) == 16 * 96, (e.r8(SMP + OFF["nslice"]), cut(2)))
+check("... in order", all(cut(i) < cut(i + 1) for i in range(0, ns0 + 1)))
+touch(0, 2, 96, 20)                                    # a tap on that handle again
+touch(2, 2, 96, 20)
+check("a tap on a handle takes it away", e.r8(SMP + OFF["nslice"]) == ns0 and cut(2) == 2048, (e.r8(SMP + OFF["nslice"]), cut(2)))
+e.call("samplr_set_slices", 16)
+
+# a press on a latched arp spot / grain cloud removes it
+e.call("samplr_set_mode", 2)
+e.call("samplr_cycle", 2)                              # latch on
+touch(0, 0, 300, 0)
+touch(2, 0, 0, 0)
+check("arp: a latched spot is there", used() == 1, used())
+touch(0, 1, 305, 0)                                    # a press right on it
+touch(2, 1, 0, 0)
+check("arp: a press on a latched spot removes it (and adds none)", used() == 0, used())
+e.call("samplr_cycle", 2)                              # latch off
+e.call("samplr_set_mode", 3)
+e.call("samplr_cycle", 2)                              # latch on
+touch(0, 0, 400, 500)
+touch(2, 0, 0, 0)
+gon = lambda: e.r8(SMP + struct_offsets(["v"])["v"] + voice_offsets(["g_on"])["g_on"])
+check("grain: a latched cloud is there", gon() == 1, gon())
+touch(0, 1, 410, 500)
+touch(2, 1, 0, 0)
+check("grain: a press on a latched cloud removes it", gon() == 0, gon())
+e.call("samplr_cycle", 2)
+play(60)
+e.call("samplr_set_mode", 0)
 
 # one-shot: ONE mode keeps playing after the finger lifts, and ends at the slice end (1024 frames)
 e.call("samplr_toggle_gate")
