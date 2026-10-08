@@ -72,3 +72,16 @@ takes three overdub layers.
   (knob 2: rate), position and pan scatter with knob 3 (left top = rate, right top = scatter). 8 grains per finger, parabola window.
 - Knob map (knob 1 = left bottom is always volume): SLICER k2 slices; ARP k2 rate, k3 chord, k4 octaves; GRAIN k2 rate, k3 scatter.
 - Not yet: gesture recorder (3 layers), looper mode, effects, pan of voices, grain pitch, sync of tape.
+
+## Build 4 (robustness, ARP redone, GRAIN free, attack / release)
+- Artifacts report ("c86/100 79/100", flashing, with the pad sequence running): two protections. (1) The stock reader is only called when every
+  block it needs is resident (own check); on a miss the voice stays silent, the load is asked for at most every 128 ms (the reader
+  would queue a request every block). (2) While the SMPLR tab shows, the page checks for changes only every 8th block (it used to repaint
+  at up to 188 fps while a finger was down). Not proven to be the cause; the real cause could also be the stock engine's load.
+- CPU in the emulator (instructions per 256-frame block, looper idle = 13k): tape with 4 fast fingers 62k; GRAIN with 4 fingers at 100 grains/s and
+  400 ms grains (24 grains) about 290k (it was 484k with 10 grains per finger).
+- ARP as in SAMPLR: every touch is a spot on the waveform (up to 8, finger colour, white once latched); the steps on the grid (rate k2) play the
+  spots in turn (PAT: UP DOWN UP-DN RND ORDER = touch order), each from its place for one step, pitch by finger height. SNAP puts spots on
+  slice starts (slice count: set in SLICER, k2). LATCH keeps spots (and grain clouds) after the finger lifts; LATCH off clears them.
+- GRAIN: SYNC / FREE button; free = grains per second (k2, 1..120, continuous); scatter default 0 (k3 to add it); LATCH holds the cloud.
+- ATTACK / RELEASE for SLICER, TAPE and ARP: k3 / k4 (A 1 5 20 80 300 ms, R 4 20 80 300 1000 ms), shown in the top bar.

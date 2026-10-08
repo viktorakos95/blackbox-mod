@@ -102,14 +102,14 @@ asked = []
 e.stub(0x08074CE8, lambda: asked.append(e.arg(2)))
 e.uc.mem_write(BL, struct.pack("<HH", 1, 0xFFFF))
 e.call("samplr_enter", count=50_000_000)
-check("streamed: half the columns are filled, the rest wait", 70 <= sm(140, "H") <= 80 and sm(9, "B") == 0, (sm(140, "H"), sm(9, "B")))
+check("streamed: half the columns are filled, the rest wait", 70 <= sm(224, "H") <= 80 and sm(9, "B") == 0, (sm(224, "H"), sm(9, "B")))
 e.call("samplr_refresh", 1000)
 check("streamed: the missing block is asked for (prefetch at frame 8192)", 8192 in asked, asked)
 e.uc.mem_write(BL, struct.pack("<HH", 1, 2))
 e.call("samplr_refresh", 1000)
-check("streamed: no second try within half a second", sm(140, "H") < 150)
+check("streamed: no second try within half a second", sm(224, "H") < 150)
 e.call("samplr_refresh", 1200)
-check("streamed: once the block is there the waveform completes", sm(140, "H") == 150 and sm(9, "B") == 1, (sm(140, "H"), sm(9, "B")))
+check("streamed: once the block is there the waveform completes", sm(224, "H") == 150 and sm(9, "B") == 1, (sm(224, "H"), sm(9, "B")))
 
 
 def touch(kind, i, fx, fy):
@@ -208,7 +208,7 @@ e.call('samplr_enter', count=50_000_000)
 
 
 def sph():
-    return struct.unpack("<f", e.uc.mem_read(SMP + 124, 4))[0]
+    return struct.unpack("<f", e.uc.mem_read(SMP + 132, 4))[0]
 
 
 def setb(off, v):
@@ -234,17 +234,17 @@ touch(2, 0, 0, 0)
 play(3)
 setb(112, 0)
 
-# arpeggiator: 1/8 steps (12000 frames), MAJ7, 2 octaves, UP
+# arpeggiator: two spots (fingers 0 and 1), 1/8 steps (12000 frames), UP: the spots alternate
 e.call("samplr_set_mode", 2)
-setb(113, 1)
-setb(114, 0)
-setb(115, 0)
-setb(116, 2)
-touch(0, 0, 512, 512)
+setb(113, 1)                                           # div 1/8
+setb(114, 0)                                           # UP
+touch(0, 0, 100, 512)
+touch(0, 1, 700, 512)
+used = lambda: sum(e.r8(SMP + 148 + 8 * i + 5) for i in range(8))
+check("arp: two fingers = two spots", used() == 2, used())
 allo = []
-for _ in range(190):
+for _ in range(240):
     allo += play()[0]
-touch(2, 0, 0, 0)
 segs, cur = [], None
 for i, x in enumerate(allo):
     if abs(x) > 1e-4:
@@ -256,16 +256,47 @@ for i, x in enumerate(allo):
         cur = None
 if cur:
     segs.append(cur)
-slopes = []
-for a_, b_ in segs[:4]:
-    m = (a_ + b_) // 2
-    slopes.append((allo[m + 40] - allo[m]) / 40.0 * LENF / 0.9)
-check("arp: four notes in four steps", len(segs) >= 4, segs)
-gaps = [segs[i + 1][0] - segs[i][0] for i in range(min(3, len(segs) - 1))]
-check("arp: the notes start 12000 frames apart (1/8 at 120 bpm)", all(abs(g - 12000) < 300 for g in gaps), gaps)
-exp = [1.0, 1.2599, 1.4983, 1.8877]
-check("arp: the pitch walks the MAJ7 chord (0 4 7 11 semitones)", len(slopes) >= 4 and all(abs(a_ - b_) < 0.06 for a_, b_ in zip(slopes, exp)), slopes)
-play(3)
+check("arp: a note on every 1/8 step", len(segs) >= 5 and all(abs(segs[i + 1][0] - segs[i][0] - 12000) < 300 for i in range(4)), segs[:6])
+vals = [allo[a_ + 150] * LENF / 0.9 - 150 for a_, _ in segs[:5]]
+lo_, hi_ = 100 * 16, 700 * 16
+check("arp: the notes alternate between the two spots (1600 and 11200)", all(abs(v - (lo_ if k % 2 == 0 else hi_)) < 250 for k, v in enumerate(vals)) or all(abs(v - (hi_ if k % 2 == 0 else lo_)) < 250 for k, v in enumerate(vals)), vals)
+setb(114, 4)
+e.call("samplr_cycle", 2)                              # latch on
+touch(2, 1, 0, 0)
+check("arp: latch keeps the lifted finger's spot", used() == 2, used())
+touch(2, 0, 0, 0)
+check("arp: both latched", used() == 2, used())
+e.call("samplr_cycle", 2)                              # latch off: latched spots go
+check("arp: latch off clears them", used() == 0, used())
+touch(0, 0, 100, 512)
+touch(2, 0, 0, 0)
+check("arp: without latch a lifted finger takes its spot away", used() == 0, used())
+play(5)
+
+# a block that is not in the pool: no read call, silence, a load is asked for
+e.call("samplr_set_mode", 0)
+setb(112, 0)
+e.uc.mem_write(BL, struct.pack("<HH", 1, 0xFFFF))
+asked.clear()
+reads.clear()
+touch(0, 0, 13 * 64 + 10, 512)                          # slice 13 lives in block 1
+o = play()[0]
+check("not resident: silence and the stock reader is not called", max(abs(x) for x in o) < 1e-6 and not reads, (reads[:2]))
+check("not resident: the load is asked for", 8192 in asked or (13 * 1024) in asked or any(a_ >= 8192 for a_ in asked), asked)
+e.uc.mem_write(BL, struct.pack("<HH", 1, 2))
+check("resident again: it plays", max(abs(x) for x in play()[0]) > 0.05)
+touch(2, 0, 0, 0)
+play(5)
+
+# attack
+setb(116, 3)                                           # 80 ms
+touch(0, 0, 4 * 64 + 10, 512)
+o = play(3)[0]
+full = (4096 + 3 * 256 - 256 + 100) / LENF * 0.9
+check("attack 80 ms: the note is still fading in after 600 frames", 0.05 < o[100] / full < 0.5, (o[100], full))
+touch(2, 0, 0, 0)
+setb(116, 0)
+play(40)
 
 # granular
 e.call("samplr_set_mode", 3)

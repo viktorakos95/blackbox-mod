@@ -29,9 +29,9 @@ struct sm *samplr(void)
         s->vol = 1.f;
         s->id = -1;
         s->rnd = 2463534242u;
-        s->oct = 2;
         s->div = 2;
-        s->scat = .3f;
+        s->scat = 0.f;
+        s->dens = 20.f;
     }
     return s;
 }
@@ -91,13 +91,13 @@ static void scan(struct sm *s)
     s->npads = (uint8_t)n;
 }
 
+typedef void (*prefetch_fn)(void *eng, int id, int64_t pos);
+#define PREFETCH (*(prefetch_fn *)(0x080e9604u + 16))
+
 /* min / max per column from the resident pool blocks (floats), straight from the entries as the stock waveform does.
  * A long sample is streamed from the card and only part of it is resident: a column is filled once every block it covers
  * has been seen, the first missing block of the first unfilled column is asked for (prefetch, vtable method 4), and the
  * page calls this again twice a second until all columns are filled. */
-typedef void (*prefetch_fn)(void *eng, int id, int64_t pos);
-#define PREFETCH (*(prefetch_fn *)(0x080e9604u + 16))
-
 static void overview(struct sm *s, int reset)
 {
     uint8_t *E = (uint8_t *)ENGINE;
@@ -224,9 +224,11 @@ static void silence(struct sm *s)
     for (int f = 0; f < SM_VOICES; f++) {
         s->v[f].held = 0;
         s->v[f].rel = 1;
-        s->v[f].a_on = 0;
         s->v[f].g_on = 0;
+        s->v[f].a_sp = -1;
     }
+    for (int i = 0; i < SM_SPOTS; i++)
+        s->spot[i].used = 0;
 }
 
 void samplr_leave(void)
@@ -265,24 +267,45 @@ void samplr_toggle_gate(void)
         s->gate ^= 1;
 }
 
+static const float qbeats[4] = {0.f, 1.f, .5f, .25f};             /* the quantize choices, in beats */
+static const float dbeats[4] = {1.f, .5f, .25f, .125f};           /* arp / grain rate: 1/4 1/8 1/16 1/32 */
+static const char *const div_name[4] = {"1/4", "1/8", "1/16", "1/32"};
+static const char *const pat_name[SM_PATS] = {"UP", "DOWN", "UP-DN", "RND", "ORDER"};
+static const int32_t atk_frames[5] = {64, 240, 960, 3840, 14400};   /* 1.3 5 20 80 300 ms */
+static const int32_t rel_frames[5] = {192, 960, 3840, 14400, 48000}; /* 4 20 80 300 1000 ms */
+static const uint16_t atk_ms[5] = {1, 5, 20, 80, 300}, rel_ms[5] = {4, 20, 80, 300, 1000};
+
+/* Latch off: whatever was only held by the latch is let go. */
+static void unlatch(struct sm *s)
+{
+    for (int i = 0; i < SM_SPOTS; i++)
+        if (s->spot[i].owner == 0xff)
+            s->spot[i].used = 0;
+    for (int f = 0; f < SM_VOICES; f++)
+        if (!s->v[f].held)
+            s->v[f].g_on = 0;
+}
+
 void samplr_cycle(int what)
 {
     struct sm *s = samplr();
     if (!s)
         return;
-    if (what == 0)
-        s->qi = (uint8_t)((s->qi + 1) & 3);
-    else
+    if (what == 0) {
+        if (s->mode == SM_GRAIN)
+            s->gfree ^= 1;
+        else if (s->mode == SM_ARP)
+            s->qi = s->qi ? 0 : 3;                                  /* snap the spots to the slices */
+        else
+            s->qi = (uint8_t)((s->qi + 1) & 3);
+    } else if (what == 1) {
         s->pat = (uint8_t)((s->pat + 1) % SM_PATS);
+    } else {
+        s->latch ^= 1;
+        if (!s->latch)
+            unlatch(s);
+    }
 }
-
-static const float qbeats[4] = {0.f, 1.f, .5f, .25f};             /* the quantize choices, in beats */
-static const float dbeats[4] = {1.f, .5f, .25f, .125f};           /* arp / grain rate: 1/4 1/8 1/16 1/32 */
-static const int8_t scales[4][5] = {{0, 4, 7, 11, 0}, {0, 3, 7, 10, 0}, {0, 2, 4, 7, 9}, {0, 7, 0, 0, 0}};
-static const uint8_t scale_n[4] = {4, 4, 5, 2};
-static const char *const scale_name[4] = {"MAJ7", "MIN7", "PENT", "5THS"};
-static const char *const div_name[4] = {"1/4", "1/8", "1/16", "1/32"};
-static const char *const pat_name[SM_PATS] = {"UP", "DOWN", "UP-DN", "RND"};
 
 void samplr_set_slices(int n)
 {
@@ -291,12 +314,18 @@ void samplr_set_slices(int n)
         s->nslice = (uint8_t)n;
 }
 
-/* Knobs 1..3 (0 is the volume, on the page): one step per ~300 counts. */
+/* Knobs 1..3 (0 is the volume, on the page): one step per ~300 counts, or continuous for the free grain rate. */
 void samplr_knob(int knob, int counts)
 {
     struct sm *s = samplr();
     if (!s || knob < 1 || knob > 3)
         return;
+    int m = s->mode;
+    if (m == SM_GRAIN && knob == 1 && s->gfree) {
+        float d = s->dens * (1.f + (float)counts * (1.f / 3200.f));
+        s->dens = d < 1.f ? 1.f : d > 120.f ? 120.f : d;
+        return;
+    }
     int a = s->kacc[knob] + counts, dir = 0;
     if (a >= 300)
         dir = 1, a = 0;
@@ -305,7 +334,6 @@ void samplr_knob(int knob, int counts)
     s->kacc[knob] = (int16_t)a;
     if (!dir)
         return;
-    int m = s->mode;
     if (m == SM_SLICER && knob == 1) {
         static const uint8_t ns[5] = {4, 8, 16, 32, 64};
         int i = 2;
@@ -317,14 +345,15 @@ void samplr_knob(int knob, int counts)
     } else if ((m == SM_ARP || m == SM_GRAIN) && knob == 1) {
         int d = s->div + dir;
         s->div = (uint8_t)(d < 0 ? 0 : d > 3 ? 3 : d);
-    } else if (m == SM_ARP && knob == 2) {
-        s->scale = (uint8_t)((s->scale + 4 + dir) & 3);
-    } else if (m == SM_ARP && knob == 3) {
-        int o = s->oct + dir;
-        s->oct = (uint8_t)(o < 1 ? 1 : o > 3 ? 3 : o);
     } else if (m == SM_GRAIN && knob == 2) {
         float v = s->scat + .1f * (float)dir;
         s->scat = v < 0.f ? 0.f : v > 1.f ? 1.f : v;
+    } else if (m != SM_GRAIN && knob == 2) {
+        int v = s->atk + dir;
+        s->atk = (uint8_t)(v < 0 ? 0 : v > 4 ? 4 : v);
+    } else if (m != SM_GRAIN && knob == 3) {
+        int v = s->rel + dir;
+        s->rel = (uint8_t)(v < 0 ? 0 : v > 4 ? 4 : v);
     }
 }
 
@@ -332,6 +361,19 @@ static char *cat(char *p, const char *q)
 {
     while (*q)
         *p++ = *q++;
+    return p;
+}
+
+static char *num(char *p, unsigned v)
+{
+    char tmp[6];
+    int n = 0;
+    do {
+        tmp[n++] = (char)('0' + v % 10);
+        v /= 10;
+    } while (v && n < 6);
+    while (n)
+        *p++ = tmp[--n];
     return p;
 }
 
@@ -346,30 +388,31 @@ void samplr_info(char *out)
     }
     if (s->mode == SM_SLICER) {
         p = cat(p, "SLICER ");
-        if (s->nslice >= 10)
-            *p++ = (char)('0' + s->nslice / 10);
-        *p++ = (char)('0' + s->nslice % 10);
+        p = num(p, s->nslice);
     } else if (s->mode == SM_TAPE) {
         p = cat(p, "TAPE");
     } else if (s->mode == SM_ARP) {
         p = cat(p, "ARP ");
         p = cat(p, div_name[s->div & 3]);
         *p++ = ' ';
-        p = cat(p, scale_name[s->scale & 3]);
-        *p++ = ' ';
-        *p++ = (char)('0' + s->oct);
-        p = cat(p, "OCT");
+        p = cat(p, pat_name[s->pat % SM_PATS]);
     } else {
         p = cat(p, "GRAIN ");
-        p = cat(p, div_name[s->div & 3]);
+        if (s->gfree) {
+            p = num(p, (unsigned)(s->dens + .5f));
+            p = cat(p, "/S");
+        } else {
+            p = cat(p, div_name[s->div & 3]);
+        }
         p = cat(p, " SCAT ");
-        int pc = (int)(s->scat * 100.f + .5f);
-        if (pc >= 100)
-            *p++ = '1';
-        if (pc >= 10)
-            *p++ = (char)('0' + (pc / 10) % 10);
-        *p++ = (char)('0' + pc % 10);
+        p = num(p, (unsigned)(s->scat * 100.f + .5f));
         *p++ = '%';
+    }
+    if (s->mode != SM_GRAIN) {
+        p = cat(p, " A");
+        p = num(p, atk_ms[s->atk % 5]);
+        p = cat(p, " R");
+        p = num(p, rel_ms[s->rel % 5]);
     }
     *p = 0;
 }
@@ -413,6 +456,38 @@ static int height_semitones(int fy)
     return (n < 77 && n > -77) ? 0 : (n * 12) / 512;
 }
 
+/* Ask the engine to load the block with frame f. */
+static void ask(struct sm *s, int32_t f)
+{
+    if (s->id >= 0 && f >= 0 && f < s->len)
+        PREFETCH(ENGINE, s->id, (int64_t)f);
+}
+
+/* An arpeggiator spot at fx, fy for finger f (a held finger's spot follows it). */
+static void spot_set(struct sm *s, struct smvoice *v, int f, int fx, int fy, int fresh)
+{
+    int32_t pos = (s->len >> 10) * fx;
+    if (s->qi) {                                                  /* snapped to the start of its slice */
+        int sl = fx * s->nslice >> 10;
+        pos = (s->len / s->nslice) * sl;
+    }
+    int k = v->a_sp;
+    if (fresh || k < 0 || !s->spot[k].used || s->spot[k].owner != f) {
+        k = s->sp_next++ % SM_SPOTS;
+        for (int i = 0; i < SM_SPOTS; i++)                        /* a free one first */
+            if (!s->spot[i].used) {
+                k = i;
+                break;
+            }
+        v->a_sp = (int8_t)k;
+    }
+    s->spot[k].pos = pos;
+    s->spot[k].st = (int8_t)height_semitones(fy);
+    s->spot[k].owner = (uint8_t)f;
+    s->spot[k].used = 1;
+    ask(s, pos);
+}
+
 void samplr_touch(int kind, int id, int fx, int fy)
 {
     struct sm *s = samplr();
@@ -421,10 +496,22 @@ void samplr_touch(int kind, int id, int fx, int fy)
     struct smvoice *v = &s->v[id];
     if (kind == 2) {
         v->held = 0;
-        v->a_on = 0;
-        v->g_on = 0;
-        if (s->gate || s->mode != SM_SLICER)
-            v->rel = 1;
+        if (s->mode == SM_ARP) {
+            int k = v->a_sp;
+            if (k >= 0 && s->spot[k].used && s->spot[k].owner == id) {
+                if (s->latch)
+                    s->spot[k].owner = 0xff;
+                else
+                    s->spot[k].used = 0;
+            }
+            v->a_sp = -1;
+        } else if (s->mode == SM_GRAIN) {
+            if (!s->latch)
+                v->g_on = 0;
+        } else {
+            if (s->gate || s->mode != SM_SLICER)
+                v->rel = 1;
+        }
         return;
     }
     if (s->id < 0 || s->len <= 0)
@@ -437,12 +524,14 @@ void samplr_touch(int kind, int id, int fx, int fy)
             return;
         int32_t per = s->len / ns, start = per * sl, end = sl == ns - 1 ? s->len : start + per;
         v->slice = (uint8_t)sl;
+        ask(s, start);
         fire(v, start, start, end, pitch_ratio(height_semitones(fy)), 1.f, 0, s->gate, qbeats[s->qi & 3]);
     } else if (s->mode == SM_TAPE) {
         float g = 1.2f - (float)fy * (1.f / 1024.f);
         g = g > 1.f ? 1.f : g < .2f ? .2f : g;
         if (kind == 0) {
             s->fx0[id] = (int16_t)fx;
+            ask(s, (s->len >> 10) * fx);
             fire(v, (s->len >> 10) * fx, 0, s->len, 1.f, g, 1, 1, 0.f);
         } else if (v->held) {
             float r = 1.f + (float)(fx - s->fx0[id]) * (1.f / 100.f);
@@ -450,13 +539,9 @@ void samplr_touch(int kind, int id, int fx, int fy)
             v->gain = g;
         }
     } else if (s->mode == SM_ARP) {
-        v->a_start = (s->len >> 10) * fx;
-        v->a_root = (int8_t)height_semitones(fy);
-        if (kind == 0) {
-            v->a_step = 0;
+        if (kind == 0)
             v->held = 1;
-            v->a_on = 1;
-        }
+        spot_set(s, v, id, fx, fy, kind == 0);
     } else {
         v->g_centre = (s->len >> 10) * fx;
         v->g_size = 960 + fy * 18;                                /* top: 20 ms, bottom: 400 ms */
@@ -464,6 +549,8 @@ void samplr_touch(int kind, int id, int fx, int fy)
         if (kind == 0) {
             v->held = 1;
             v->g_on = 1;
+            v->g_acc = 1.f;                                       /* the first grain at once */
+            ask(s, v->g_centre);
         }
     }
 }
@@ -490,8 +577,27 @@ static float rnd01(struct sm *s)
     return (float)(rnd(s) >> 8) * (1.f / 16777216.f);
 }
 
+/* Is block blk of the selected sample in the pool right now? */
+static int resident(struct sm *s, int blk)
+{
+    uint8_t *E = (uint8_t *)ENGINE;
+    unsigned si = *(uint16_t *)(E + 0x434c + 2 * s->id);
+    if (si >= 0x240u || blk < 0 || blk > 0x5db)
+        return 0;
+    uint16_t *bl = (uint16_t *)*(uint32_t *)(E + 0x8670 + 4 * si);
+    if ((uint32_t)bl < 0x20000000u)
+        return 0;
+    unsigned e = bl[blk];
+    if (e == 0xffffu)
+        return 0;
+    uint8_t *ent = E + 0x1c * e;
+    return *(uint32_t *)(ent + 0x18) == (uint32_t)s->id && *(uint32_t *)(ent + 0x0c) == (uint32_t)blk && ent[0x1f] && !ent[0x1e];
+}
+
 /* Reads the source for m output samples that start at ip + fr and step r into tl / tr. *x0 = where the start lies inside
- * them. 0 when the span is too long. Outside the sample it is silence; a mono sample's right side is its left. */
+ * them. 0 when the span is too long or a block is not in the pool yet (it is asked for, at most every 128 ms, and the
+ * stock reader is not called: on a miss it would queue a load request every block). Outside the sample it is silence;
+ * a mono sample's right side is its left. */
 static int fetch(struct sm *s, int32_t ip, float fr, float r, int m, float *x0)
 {
     int32_t len = s->len;
@@ -505,6 +611,15 @@ static int fetch(struct sm *s, int32_t ip, float fr, float r, int m, float *x0)
         for (int i = 0; i < cnt; i++)
             s->tl[i] = s->tr[i] = 0.f;
     } else {
+        int b0 = (lo + a) >> 13, b1 = (lo + a + real - 1) >> 13;
+        for (int blk = b0; blk <= b1; blk++)
+            if (!resident(s, blk)) {
+                if (s->tick - s->pf_t > 24) {
+                    s->pf_t = s->tick;
+                    PREFETCH(ENGINE, s->id, (int64_t)blk << 13);
+                }
+                return 0;
+            }
         for (int i = 0; i < a; i++)
             s->tl[i] = s->tr[i] = 0.f;
         for (int i = cnt - b; i < cnt; i++)
@@ -564,6 +679,7 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
             stop_at = (int)(left / r);
     }
     float env = v->env, g0 = v->gain * s->vol * .9f;
+    float eu = 1.f / (float)atk_frames[s->atk % 5], ed = 1.f / (float)rel_frames[s->rel % 5];
     int on = v->on;
     for (int i = i0; i < n; i++) {
         if (i - i0 == stop_at)
@@ -572,10 +688,10 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         float f = x - (float)j;
         float l = s->tl[j] + f * (s->tl[j + 1] - s->tl[j]), rr = s->tr[j] + f * (s->tr[j + 1] - s->tr[j]);
         if (on) {
-            env += 1.f / 64.f;
+            env += eu;
             env = env > 1.f ? 1.f : env;
         } else {
-            env -= 1.f / 192.f;
+            env -= ed;
             env = env < 0.f ? 0.f : env;
         }
         bl[i] += l * g0 * env;
@@ -601,34 +717,50 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     v->on = (uint8_t)on;
 }
 
-/* One arpeggiator step on a grid line: the same start point each time, the pitch walks the chord. */
-static void arp_step(struct sm *s, struct smvoice *v, int off)
+/* One arpeggiator step on a grid line: the next spot (in the pattern's order) plays from its place for one step. */
+static void arp_step(struct sm *s, int off)
 {
-    int cnt = scale_n[s->scale & 3], total = cnt * (s->oct ? s->oct : 1), k = v->a_step++, idx;
+    int idx[SM_SPOTS], cnt = 0;
+    for (int i = 0; i < SM_SPOTS; i++)
+        if (s->spot[i].used)
+            idx[cnt++] = i;
+    if (!cnt)
+        return;
+    if (s->pat != SM_PAT_ORDER)                                   /* by position (insertion sort; ORDER keeps the slot order) */
+        for (int i = 1; i < cnt; i++) {
+            int k = idx[i], j = i - 1;
+            while (j >= 0 && s->spot[idx[j]].pos > s->spot[k].pos) {
+                idx[j + 1] = idx[j];
+                j--;
+            }
+            idx[j + 1] = k;
+        }
+    int k = s->a_step++, pick;
     switch (s->pat) {
     case SM_PAT_DOWN:
-        idx = total - 1 - k % total;
+        pick = cnt - 1 - k % cnt;
         break;
     case SM_PAT_UPDN: {
-        int per = total > 1 ? 2 * total - 2 : 1, q = k % per;
-        idx = q < total ? q : per - q;
+        int per = cnt > 1 ? 2 * cnt - 2 : 1, q = k % per;
+        pick = q < cnt ? q : per - q;
         break;
     }
     case SM_PAT_RND:
-        idx = (int)(rnd(s) >> 8) % total;
+        pick = (int)(rnd(s) >> 8) % cnt;
         break;
     default:
-        idx = k % total;
+        pick = k % cnt;
     }
-    int st = v->a_root + scales[s->scale & 3][idx % cnt] + 12 * (idx / cnt);
-    float rate = pitch_ratio(st), step = looper_beat_frames() * dbeats[s->div & 3];
-    int32_t span = (int32_t)(step * .9f * rate * s->ratio), start = v->a_start, end = start + span;
+    struct smspot *sp = &s->spot[idx[pick]];
+    s->a_last = (uint8_t)idx[pick];
+    float rate = pitch_ratio(sp->st), step = looper_beat_frames() * dbeats[s->div & 3];
+    int32_t span = (int32_t)(step * .9f * rate * s->ratio), start = sp->pos, end = start + span;
     end = end > s->len ? s->len : end;
     if (start >= end)
         return;
+    struct smvoice *v = &s->v[s->a_step % SM_VOICES];
     v->c_wait = off;
     fire(v, start, start, end, rate, 1.f, 0, 0, 0.f);
-    v->held = 1;
 }
 
 static void grain_spawn(struct sm *s, struct smvoice *v, int off)
@@ -655,9 +787,25 @@ static void grain_spawn(struct sm *s, struct smvoice *v, int off)
 static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
 {
     if (v->g_on) {
-        int off = grid(s, dbeats[s->div & 3], n);
-        if (off >= 0)
-            grain_spawn(s, v, off);
+        if (s->gfree) {
+            float inc = s->dens * (1.f / 48000.f);
+            if (v->g_acc >= 1.f) {
+                grain_spawn(s, v, 0);
+                v->g_acc -= 1.f;
+            }
+            float t = (1.f - v->g_acc) / inc;                     /* frames until the next one is due */
+            for (int q = 0; q < 2 && t < (float)n; q++) {
+                grain_spawn(s, v, (int)t);
+                t += 1.f / inc;
+            }
+            v->g_acc += inc * (float)n;
+            while (v->g_acc >= 1.f)
+                v->g_acc -= 1.f;
+        } else {
+            int off = grid(s, dbeats[s->div & 3], n);
+            if (off >= 0)
+                grain_spawn(s, v, off);
+        }
     }
     float gain = v->gain * s->vol;
     for (int i = 0; i < SM_GRAINS; i++) {
@@ -695,9 +843,11 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
     if (s->id < 0)
         return;
     int any = 0;
+    for (int i = 0; i < SM_SPOTS; i++)
+        any |= s->spot[i].used;
     for (int f = 0; f < SM_VOICES; f++) {
         struct smvoice *v = &s->v[f];
-        any |= v->on | (v->env > 0.f) | (v->seen != v->cmd) | v->a_on | v->g_on;
+        any |= v->on | (v->env > 0.f) | (v->seen != v->cmd) | v->g_on;
         for (int i = 0; i < SM_GRAINS; i++)
             any |= v->g[i].on;
     }
@@ -708,22 +858,23 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
     if (!sample_info(s->id, &len, &hz, &ch) || len != s->len) {      /* the pad's sample went away or changed */
         s->id = -1;
         for (int f = 0; f < SM_VOICES; f++) {
-            s->v[f].on = s->v[f].a_on = s->v[f].g_on = 0;
+            s->v[f].on = s->v[f].g_on = 0;
             s->v[f].env = 0.f;
             for (int i = 0; i < SM_GRAINS; i++)
                 s->v[f].g[i].on = 0;
         }
+        for (int i = 0; i < SM_SPOTS; i++)
+            s->spot[i].used = 0;
         return;
     }
+    if (s->mode == SM_ARP) {
+        int off = grid(s, dbeats[s->div & 3], n);
+        if (off >= 0)
+            arp_step(s, off);
+    }
     for (int f = 0; f < SM_VOICES; f++) {
-        struct smvoice *v = &s->v[f];
-        if (v->a_on) {
-            int off = grid(s, dbeats[s->div & 3], n);
-            if (off >= 0)
-                arp_step(s, v, off);
-        }
-        render(s, v, bl, br, n);
-        grains(s, v, bl, br, n);
+        render(s, &s->v[f], bl, br, n);
+        grains(s, &s->v[f], bl, br, n);
     }
 }
 
@@ -733,6 +884,7 @@ void samplr_run(float *bl, float *br, int n)
     if (!s || n <= 0 || n > 256)
         return;
     run_voices(s, bl, br, n);
+    s->tick++;
     s->sph += (float)n;                                           /* the free-running grid (used while the sequencer is stopped) */
     float w = 16.f * looper_beat_frames();
     if (s->sph >= w)
@@ -746,14 +898,16 @@ uint32_t samplr_sig(void)
         return 0;
     uint32_t h = (uint32_t)s->mode | (uint32_t)s->gate << 2 | (uint32_t)s->nslice << 3 | (uint32_t)s->sel << 10 | (uint32_t)s->filled << 15 |
                  (uint32_t)(s->vol * 20.f) << 24;
-    h = h * 31u + ((uint32_t)s->qi | (uint32_t)s->div << 2 | (uint32_t)s->pat << 4 | (uint32_t)s->scale << 6 | (uint32_t)s->oct << 8 |
-                   (uint32_t)(s->scat * 10.f) << 12);
+    h = h * 31u + ((uint32_t)s->qi | (uint32_t)s->div << 2 | (uint32_t)s->pat << 4 | (uint32_t)s->latch << 7 | (uint32_t)s->atk << 8 |
+                   (uint32_t)s->rel << 11 | (uint32_t)s->gfree << 14 | (uint32_t)(s->scat * 10.f) << 15 | (uint32_t)(s->dens + .5f) << 20);
+    for (int i = 0; i < SM_SPOTS; i++)
+        h = h * 31u + (s->spot[i].used ? 1u + (uint32_t)(s->spot[i].pos / (s->len / 150 + 1)) + ((uint32_t)(s->a_last == i) << 9) : 0u);
     for (int f = 0; f < SM_VOICES; f++) {
         struct smvoice *v = &s->v[f];
         uint32_t p = s->len > 0 ? (uint32_t)(v->ipos / (s->len / 150 + 1)) : 0;
         h = h * 31u + ((v->on || v->env > 0.f) ? 1u + p : 0u);
         if (v->g_on)
-            h = h * 31u + (uint32_t)(v->g_centre / (s->len / 150 + 1));
+            h = h * 31u + (uint32_t)(v->g_centre / (s->len / 150 + 1)) + (uint32_t)v->g_size;
     }
     return h;
 }

@@ -1033,6 +1033,7 @@ def pcm_stub():
 
 
 e.stub(0x08074A00, pcm_stub)
+e.stub(0x08074CE8)
 tab(5)
 f = draw(0)
 check("SMPLR tab: the footer's last tab is cyan, nothing is drawn outside the screen",

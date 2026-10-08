@@ -1154,18 +1154,25 @@ static void draw_samplr(void)
         if (s->mode == SM_SLICER)
             for (int i = 1; i < s->nslice; i++)
                 vline(wx + (i * SM_W) / s->nslice, wy, wh, C_GREY);
+        if (s->mode == SM_ARP)
+            for (int i = 0; i < SM_SPOTS; i++) {
+                if (!s->spot[i].used)
+                    continue;
+                int x = s->spot[i].pos / (s->len / SM_W + 1);
+                x = x >= SM_W - 1 ? SM_W - 2 : x;
+                int col = s->spot[i].owner < SM_VOICES ? track_colour[s->spot[i].owner] : C_WHITE;
+                box(wx + x, wy, s->a_last == i ? 3 : 1, wh, col);
+            }
         for (int f = 0; f < SM_VOICES; f++) {
             struct smvoice *v = &s->v[f];
             int x = -1;
-            if (s->mode == SM_ARP && v->a_on)
-                x = v->a_start / (s->len / SM_W + 1);
-            else if (s->mode == SM_GRAIN && v->g_on)
+            if (s->mode == SM_GRAIN && v->g_on)
                 x = v->g_centre / (s->len / SM_W + 1);
             else if (s->mode != SM_ARP && s->mode != SM_GRAIN && (v->on || v->env > 0.f))
                 x = v->ipos / (s->len / SM_W + 1);
             if (x >= 0) {
                 x = x >= SM_W ? SM_W - 1 : x;
-                vline(wx + x, wy, wh, s->mode == SM_ARP || s->mode == SM_GRAIN ? track_colour[f] : C_WHITE);
+                vline(wx + x, wy, wh, s->mode == SM_GRAIN ? track_colour[f] : C_WHITE);
                 if (s->mode == SM_GRAIN) {                        /* the grain size, as a bracket around the centre */
                     int hw = v->g_size / (s->len / SM_W + 1) / 2;
                     hline(wx + (x - hw < 0 ? 0 : x - hw), wy + 2, (x + hw >= SM_W ? SM_W - 1 : x + hw) - (x - hw < 0 ? 0 : x - hw) + 1, track_colour[f]);
@@ -1175,8 +1182,16 @@ static void draw_samplr(void)
     }
     for (int i = 0; i < SM_MODES; i++)
         sm_button(3 + 42 * i, ba, 40, sm_mode_name[i], s->mode == i);
-    sm_button(173, ba, 46, sm_q_name[s->qi & 3], s->qi != 0);
-    sm_button(221, ba, 46, s->mode == SM_SLICER && !s->gate ? "ONE" : "GATE", s->mode == SM_SLICER ? s->gate : 1);
+    if (s->mode == SM_SLICER)
+        sm_button(173, ba, 46, sm_q_name[s->qi & 3], s->qi != 0);
+    else if (s->mode == SM_ARP)
+        sm_button(173, ba, 46, "SNAP", s->qi != 0);
+    else if (s->mode == SM_GRAIN)
+        sm_button(173, ba, 46, s->gfree ? "FREE" : "SYNC", 1);
+    if (s->mode == SM_SLICER)
+        sm_button(221, ba, 46, s->gate ? "GATE" : "ONE", 1);
+    else if (s->mode == SM_ARP || s->mode == SM_GRAIN)
+        sm_button(221, ba, 46, "LATCH", s->latch);
     if (s->mode == SM_ARP)
         sm_button(269, ba, 42, samplr_pat_name(s->pat), 1);
     sm_button(3, bb, 22, "<", 0);
@@ -1203,7 +1218,11 @@ static int sm_touch(int kind, int id, int x, int d)
         } else if (x >= 173 && x < 219) {
             samplr_cycle(0);
         } else if (x >= 221 && x < 267) {
-            samplr_toggle_gate();
+            struct sm *s = samplr();
+            if (s && s->mode == SM_SLICER)
+                samplr_toggle_gate();
+            else
+                samplr_cycle(2);
         } else if (x >= 269 && x < 311) {
             samplr_cycle(1);
         }
@@ -1321,7 +1340,7 @@ void looper_page_poke(uint8_t *view)
         P->info_on = 0;
         P->sig = 0;
     }
-    if (signature() != P->sig || ++P->force >= 40) {
+    if ((P->mode == M_SMPLR && (looper_ticks() & 7)) ? ++P->force >= 40 : (signature() != P->sig || ++P->force >= 40)) {
         dirty(view);
         /* With the stock screen dropped (full screen) nothing else asks the GUI for a draw pass: post our own message,
          * handled in the GUI task by looper_app_msg. One in flight at a time. */
