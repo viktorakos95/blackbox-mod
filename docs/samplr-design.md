@@ -137,3 +137,15 @@ takes three overdub layers.
 - Readout: S is now this function's cycles over the average block period (the old per-block period made S look like 313 % when the audio task was
   catching up after an overrun); V = voices playing, G = grains playing.
 - Row A (buttons) re-laid: modes 31 px wide, Q/SNAP/SYNC, GATE|ONE|LOOP, LATCH, AUTO|PAT, YP.
+
+## Build 10 (gesture recorder, latch per mode, latched slice loops by tap)
+- GESTURE RECORDER (row C of the SMPLR tab: REC, PLAY/STOP, UNDO, CLR, LEN (1 2 4 8 bars), three layer boxes, position bar). REC arms the first take for the
+  next bar line (the sequencer's clock when it runs, else the free-running grid at the Blackbox BPM); it records every touch (kind, finger, mode, fx, fy,
+  time in 64-frame units; moves at most every 10 ms) for LEN bars, then the loop plays by itself; REC again arms the next layer for the loop start (3
+  layers); UNDO drops the last layer, CLR everything, STOP/PLAY the timeline (PLAY restarts on a bar line). A layer replays its touches through the
+  same touch code in the mode it was recorded in, on its own 4 voices (so layers of different modes - slicer + arp + grain - play together with live
+  playing). Events live in effect block 10 (1000 per layer). Slice point edits are not recorded. Replayed fingers ignore LATCH.
+- LATCH is per mode (a bit each). Slicer: with LOOP, LATCH makes taps toggle loops independent of fingers: a tap on a slice starts its loop on one of 8 latch
+  voices, a tap on a looping slice stops it, any number of loops; LATCH off stops them all. ARP: latched spots (press one to remove it). GRAIN: latched clouds
+  (press to remove). TAPE: the hold.
+- Next: sample slots (6, like SAMPLR) so voices / layers / gestures can play different samples while another one is edited.

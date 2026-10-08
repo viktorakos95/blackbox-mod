@@ -38,7 +38,7 @@ def struct_offsets(names):
     return res
 
 
-OFF = struct_offsets(["loopm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "latch", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
+OFF = struct_offsets(["g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
 
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
@@ -530,6 +530,111 @@ for i, x in enumerate(rec):
 gaps = [starts[k + 1] - starts[k] for k in range(len(starts) - 1)]
 check("repeat on the grid: the slice starts again every 6000 frames", len(starts) >= 4 and all(abs(g - 6000) < 30 for g in gaps), (starts, gaps))
 setb(OFF["qi"], 0)
+setb(OFF["loopm"], 0)
+play(10)
+
+# gesture recorder: one bar loop (96000 frames = 375 blocks at 120 bpm), the grid free-running
+e.call("samplr_set_mode", 0)
+setb(OFF["qi"], 0)
+setb(OFF["g_bars"], 1)
+gp = lambda: e.r32(SMP + OFF["g_pos"])
+check("gesture: nothing recorded yet", e.r8(SMP + OFF["g_layers"]) == 0 and e.r8(SMP + OFF["g_run"]) == 0)
+e.call("samplr_gest", 0)                               # REC: waits for a bar line
+check("gesture: REC arms, nothing runs yet", e.r8(SMP + OFF["g_armed"]) == 1 and e.r8(SMP + OFF["g_run"]) == 0)
+n_wait = 0
+while e.r8(SMP + OFF["g_run"]) == 0 and n_wait < 400:
+    play()
+    n_wait += 1
+check("gesture: the take starts on a bar line (within one bar)", e.r8(SMP + OFF["g_run"]) == 1 and e.r8(SMP + OFF["g_rec"]) == 0 and n_wait < 380, n_wait)
+start_pos = gp()
+loop_out = []
+def run_loop(blocks):
+    out = []
+    for _ in range(blocks):
+        out += play()[0]
+    return out
+run_loop(40 - 1)
+touch(0, 0, 5 * 64 + 10, 100)                          # slice 5, at about block 40 of the loop
+run_loop(20)
+touch(2, 0, 0, 0)
+rest = 375 - 40 - 20 - 5
+run_loop(rest)
+for _ in range(20):
+    play()
+    if e.r8(SMP + OFF["g_layers"]) == 1:
+        break
+check("gesture: at the loop end the layer is closed (1 layer)", e.r8(SMP + OFF["g_layers"]) == 1 and e.r8(SMP + OFF["g_rec"]) == 255 - 0 or e.r8(SMP + OFF["g_layers"]) == 1, (e.r8(SMP + OFF["g_layers"]), e.r8(SMP + OFF["g_rec"])))
+# the next loop: the gesture plays by itself
+pos_now = gp()
+lvl1 = []
+for b in range(375):
+    o = play()[0]
+    lvl1.append(max(abs(x) for x in o))
+snd = [b for b, v in enumerate(lvl1) if v > 0.02]
+check("gesture: the recorded touch plays back on its own, once per loop", len(snd) >= 3 and (snd[-1] - snd[0]) < 40, (snd[:3], snd[-3:]))
+check("gesture: ... at the place in the loop where it was played", abs(snd[0] - (40 - 0 + 0 - (375 - 375))) < 400, snd[:2])
+# overdub a second layer: a different slice at another time
+e.call("samplr_gest", 0)
+check("gesture: REC again arms the loop start", e.r8(SMP + OFF["g_armed"]) == 2, e.r8(SMP + OFF["g_armed"]))
+for _ in range(400):
+    play()
+    if e.r8(SMP + OFF["g_rec"]) == 1:
+        break
+check("gesture: recording layer 2", e.r8(SMP + OFF["g_rec"]) == 1)
+run_loop(200)
+touch(0, 1, 9 * 64 + 10, 100)
+run_loop(20)
+touch(2, 1, 0, 0)
+for _ in range(200):
+    play()
+    if e.r8(SMP + OFF["g_layers"]) == 2:
+        break
+check("gesture: two layers", e.r8(SMP + OFF["g_layers"]) == 2)
+lvl2 = []
+for b in range(375):
+    o = play()[0]
+    lvl2.append(max(abs(x) for x in o))
+snd2 = [b for b, v in enumerate(lvl2) if v > 0.02]
+groups = 1 + sum(1 for a_, b_ in zip(snd2, snd2[1:]) if b_ - a_ > 30)
+check("gesture: both layers play together (two separate events in the loop)", groups == 2, (groups, snd2[:3], snd2[-3:]))
+e.call("samplr_gest", 2)                               # UNDO: the last layer
+check("gesture: UNDO takes the last layer away", e.r8(SMP + OFF["g_layers"]) == 1)
+e.call("samplr_gest", 3)                               # CLR
+check("gesture: CLR stops and clears", e.r8(SMP + OFF["g_layers"]) == 0 and e.r8(SMP + OFF["g_run"]) == 0)
+play(40)
+check("gesture: silent after CLR", max(abs(x) for x in play(5)[0]) < 1e-4)
+
+# per-mode LATCH and tap-to-toggle slice loops
+e.call("samplr_set_mode", 0)
+setb(OFF["qi"], 0)
+setb(OFF["loopm"], 1)
+e.call("samplr_cycle", 2)                                      # latch on for the slicer only
+check("latch is per mode: the slicer's bit only", e.r8(SMP + OFF["latchm"]) == 1, e.r8(SMP + OFF["latchm"]))
+touch(0, 0, 5 * 64 + 10, 100)                                  # tap slice 5
+touch(2, 0, 0, 0)
+touch(0, 0, 8 * 64 + 10, 100)                                  # the same finger taps slice 8: a second loop
+touch(2, 0, 0, 0)
+o = []
+for _ in range(30):
+    o += play()[0]
+loud = max(abs(x) for x in o[-1024:])
+touch(0, 1, 5 * 64 + 10, 100)                                  # another finger taps slice 5 again: only that loop stops
+touch(2, 1, 0, 0)
+play(30)
+o2 = []
+for _ in range(20):
+    o2 += play()[0]
+check("two latched loops, then a tap on one stops just that one (the other keeps going)", loud > 0.1 and 0.05 < max(abs(x) for x in o2[-1024:]) < loud * 0.95, (loud, max(abs(x) for x in o2[-1024:])))
+touch(0, 2, 8 * 64 + 10, 100)                                  # a third finger taps slice 8: stops it too
+touch(2, 2, 0, 0)
+play(30)
+check("... and a tap on the other stops it as well", max(abs(x) for x in play(5)[0]) < 1e-4)
+e.call("samplr_set_mode", 2)
+touch(0, 0, 300, 0)
+touch(2, 0, 0, 0)
+check("the arpeggiator is not latched by the slicer's latch", used() == 0, used())
+e.call("samplr_set_mode", 0)
+e.call("samplr_cycle", 2)                                      # slicer latch off
 setb(OFF["loopm"], 0)
 play(10)
 

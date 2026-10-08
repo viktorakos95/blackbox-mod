@@ -16,6 +16,9 @@ float looper_beat_frames(void);
 #define DWT_CYCCNT (*(volatile uint32_t *)0xe0001004u)
 #define SMAGIC  0x534d5031u
 
+static void release_finger(struct sm *s, int mode, int id, int rp);
+static inline int grid(struct sm *s, float beats, int n);
+
 struct sm *samplr(void)
 {
     struct sm *s = (struct sm *)looper_scratch(9);
@@ -32,6 +35,9 @@ struct sm *samplr(void)
         s->scat = 0.f;
         s->dens = 20.f;
         s->ypit = 0;
+        s->gest = (struct smgest *)looper_scratch(10);
+        s->g_bars = 2;
+        s->g_rec = -1;
         for (int i = 0; i < SM_VOICES; i++)
             s->drag[i] = -1;
     }
@@ -258,7 +264,7 @@ void samplr_leave(void)
         return;
     for (int f = 0; f < SM_VOICES; f++)
         if (s->v[f].held || s->drag[f] >= 0)
-            samplr_touch(2, f, 0, 0);
+            release_finger(s, s->mode, f, 0);
 }
 
 void samplr_select(int delta)
@@ -469,20 +475,29 @@ static void find_transients(struct sm *s)
     s->cut[found + 1] = len;
 }
 
-/* Latch off: whatever was only held by the latch is let go. */
-static void unlatch(struct sm *s)
+/* Latch off for one mode: whatever was only held by that mode's latch is let go. */
+static void unlatch(struct sm *s, int mode)
 {
-    for (int i = 0; i < SM_SPOTS; i++)
-        if (s->spot[i].owner == 0xff)
-            s->spot[i].used = 0;
-    for (int f = 0; f < SM_VOICES; f++)
-        if (!s->v[f].held) {
-            s->v[f].g_on = 0;
-            if (s->v[f].loop || s->v[f].rep > 0.f) {              /* a latched slice loop / repeat / tape hold */
+    if (mode == SM_ARP) {
+        for (int i = 0; i < SM_SPOTS; i++)
+            if (s->spot[i].owner == 0xff)
+                s->spot[i].used = 0;
+    } else if (mode == SM_GRAIN) {
+        for (int f = 0; f < SM_VOICES; f++)
+            if (!s->v[f].held)
+                s->v[f].g_on = 0;
+    } else if (mode == SM_SLICER) {
+        for (int f = SM_LTBASE; f < SM_LTBASE + SM_LATV; f++) {   /* the latched loops */
+            s->v[f].rel = 1;
+            s->v[f].rep = 0.f;
+        }
+    } else {
+        for (int f = 0; f < SM_VOICES; f++)                       /* a latched tape hold */
+            if (!s->v[f].held && s->v[f].vmode == SM_TAPE) {
                 s->v[f].rel = 1;
                 s->v[f].rep = 0.f;
             }
-        }
+    }
 }
 
 void samplr_trans(int what)
@@ -513,9 +528,9 @@ void samplr_cycle(int what)
     } else if (what == 4) {
         find_transients(s);
     } else {
-        s->latch ^= 1;
-        if (!s->latch)
-            unlatch(s);
+        s->latchm ^= (uint8_t)(1u << s->mode);
+        if (!((s->latchm >> s->mode) & 1))
+            unlatch(s, s->mode);
     }
 }
 
@@ -658,8 +673,10 @@ static float pitch_ratio(int st)
     return r * semi[st];
 }
 
-static void fire(struct smvoice *v, int32_t pos, int32_t start, int32_t end, float rate, float gain, int loop, int gate, float q, float rep)
+static void fire(struct smvoice *v, int mode, int32_t pos, int32_t start, int32_t end, float rate, float gain, int loop, int gate, float q, float rep)
 {
+    v->c_mode = (uint8_t)mode;
+    v->vmode = (uint8_t)mode;
     v->c_rep = rep;
     v->c_pos = pos;
     v->c_start = start;
@@ -687,14 +704,14 @@ static inline int pos_fx(struct sm *s, int32_t pos)                /* the invers
 }
 
 /* Finger height: pitch when YP is on for this mode, otherwise volume (top = full). */
-static int ysemi(struct sm *s, int fy)
+static int ysemi(struct sm *s, int mode, int fy)
 {
-    return (s->ypit >> s->mode) & 1 ? height_semitones(fy) : 0;
+    return (s->ypit >> mode) & 1 ? height_semitones(fy) : 0;
 }
 
-static float yvol(struct sm *s, int fy)
+static float yvol(struct sm *s, int mode, int fy)
 {
-    if ((s->ypit >> s->mode) & 1)
+    if ((s->ypit >> mode) & 1)
         return 1.f;
     float g = 1.2f - (float)fy * (1.f / 1024.f);
     return g > 1.f ? 1.f : g < .2f ? .2f : g;
@@ -708,7 +725,7 @@ static void ask(struct sm *s, int32_t f)
 }
 
 /* An arpeggiator spot at fx, fy for finger f (a held finger's spot follows it). */
-static void spot_set(struct sm *s, struct smvoice *v, int f, int fx, int fy, int fresh)
+static void spot_set(struct sm *s, int mode, struct smvoice *v, int f, int fx, int fy, int fresh)
 {
     int32_t pos = (s->len >> 10) * fx, end = 0;
     if (s->qi) {                                                  /* snapped to the start of its slice (the slicer's points, auto or hand made) */
@@ -727,16 +744,16 @@ static void spot_set(struct sm *s, struct smvoice *v, int f, int fx, int fy, int
         v->a_sp = (int8_t)k;
     }
     s->spot[k].pos = pos;
-    s->spot[k].st = (int8_t)ysemi(s, fy);
+    s->spot[k].st = (int8_t)ysemi(s, mode, fy);
     s->spot[k].end = end;
-    s->spot[k].vol = (uint8_t)(yvol(s, fy) * 255.f);              /* finger height = volume (or pitch with YP) */
+    s->spot[k].vol = (uint8_t)(yvol(s, mode, fy) * 255.f);              /* finger height = volume (or pitch with YP) */
     s->spot[k].owner = (uint8_t)f;
     s->spot[k].used = 1;
     ask(s, pos);
 }
 
 /* A finger lets go (or the page is left): whatever it held is released, except what LATCH keeps. */
-static void release_finger(struct sm *s, int id)
+static void release_finger(struct sm *s, int mode, int id, int rp)
 {
     struct smvoice *v = &s->v[id];
     int was = v->held;
@@ -744,7 +761,7 @@ static void release_finger(struct sm *s, int id)
     if (s->drag[id] >= 0) {
         int di = s->drag[id];
         s->drag[id] = -1;
-        if (di > 0 && di < 100 && !s->dmoved[id] && s->mode == SM_SLICER && s->nslice > 2 && di < s->nslice) {
+        if (di > 0 && di < 100 && !s->dmoved[id] && mode == SM_SLICER && s->nslice > 2 && di < s->nslice) {
             for (int q = di; q < s->nslice; q++)                  /* a tap on a handle takes the slice point away */
                 s->cut[q] = s->cut[q + 1];
             s->nslice--;
@@ -753,28 +770,27 @@ static void release_finger(struct sm *s, int id)
     }
     int k = v->a_sp;
     if (k >= 0 && s->spot[k].used && s->spot[k].owner == id) {
-        if (s->latch)
+        if (((s->latchm >> mode) & 1) && !rp)
             s->spot[k].owner = 0xff;
         else
             s->spot[k].used = 0;
     }
     v->a_sp = -1;
-    if (v->g_on && !s->latch)
+    if (v->g_on && !(((s->latchm >> mode) & 1) && !rp))
         v->g_on = 0;
-    if (was && v->c_gate && !(s->latch && (v->loop || v->rep > 0.f))) {
+    if (was && v->c_gate && !(((s->latchm >> mode) & 1) && !rp && (v->loop || v->rep > 0.f))) {
         v->rel = 1;
         v->rep = 0.f;
     }
 }
 
-void samplr_touch(int kind, int id, int fx, int fy)
+static void touch_m(struct sm *s, int mode, int rp, int kind, int id, int fx, int fy)
 {
-    struct sm *s = samplr();
-    if (!s || id < 0 || id >= SM_VOICES)
+    if (id < 0 || id >= SM_NV)
         return;
     struct smvoice *v = &s->v[id];
     if (kind == 2) {
-        release_finger(s, id);
+        release_finger(s, mode, id, rp);
         return;
     }
     if (s->id < 0 || s->len <= 0)
@@ -783,7 +799,7 @@ void samplr_touch(int kind, int id, int fx, int fy)
     fy = fy < 0 ? 0 : fy > 1023 ? 1023 : fy;
     if (s->drag[id] == 100)
         return;                                                   /* this press already took a latched spot / cloud away */
-    if (kind == 0 && s->mode == SM_ARP) {
+    if (kind == 0 && mode == SM_ARP) {
         for (int i = 0; i < SM_SPOTS; i++)                        /* a press on a latched spot removes it */
             if (s->spot[i].used && s->spot[i].owner == 0xff && pos_fx(s, s->spot[i].pos) - fx < 28 && fx - pos_fx(s, s->spot[i].pos) < 28) {
                 s->spot[i].used = 0;
@@ -791,7 +807,7 @@ void samplr_touch(int kind, int id, int fx, int fy)
                 return;
             }
     }
-    if (kind == 0 && s->mode == SM_GRAIN) {
+    if (kind == 0 && mode == SM_GRAIN) {
         for (int f = 0; f < SM_VOICES; f++) {
             struct smvoice *c = &s->v[f];
             int cx = pos_fx(s, c->g_centre);
@@ -802,7 +818,7 @@ void samplr_touch(int kind, int id, int fx, int fy)
             }
         }
     }
-    if (s->mode == SM_SLICER) {
+    if (mode == SM_SLICER) {
         int32_t pos = (s->len >> 10) * fx;
         if (kind == 0 && fy < 100) {                              /* the strip along the top: grab a slice point, or add one */
             int best = -1, bd = 1 << 30;
@@ -844,28 +860,52 @@ void samplr_touch(int kind, int id, int fx, int fy)
             return;
         }
         int sl = slice_at(s, pos);
+        if (kind == 0 && !rp && ((s->latchm >> mode) & 1) && s->loopm) {
+            /* LATCH + LOOP: a tap toggles that slice's loop, whichever finger plays it and however many are down */
+            for (int i = 0; i < SM_LATV; i++) {
+                struct smvoice *lv = &s->v[SM_LTBASE + i];
+                if ((lv->on || lv->rep > 0.f) && lv->slice == sl && lv->vmode == SM_SLICER) {
+                    lv->rel = 1;
+                    lv->rep = 0.f;
+                    s->drag[id] = 100;
+                    return;
+                }
+            }
+            for (int i = 0; i < SM_LATV; i++) {
+                struct smvoice *lv = &s->v[SM_LTBASE + i];
+                if (!lv->on && lv->env <= .0005f && !(lv->rep > 0.f) && lv->seen == lv->cmd) {
+                    lv->slice = (uint8_t)sl;
+                    ask(s, s->cut[sl]);
+                    fire(lv, mode, s->cut[sl], s->cut[sl], s->cut[sl + 1], pitch_ratio(ysemi(s, mode, fy) + s->trans), yvol(s, mode, fy), !s->qi, 1, qbeats[s->qi & 3], qbeats[s->qi & 3]);
+                    lv->held = 0;
+                    break;
+                }
+            }
+            s->drag[id] = 100;
+            return;
+        }
         if (kind == 1 && v->held && v->slice == sl)
             return;
         int32_t start = s->cut[sl], end = s->cut[sl + 1];
         v->slice = (uint8_t)sl;
         ask(s, start);
-        fire(v, start, start, end, pitch_ratio(ysemi(s, fy) + s->trans), yvol(s, fy), s->loopm && !s->qi, s->gate || s->loopm, qbeats[s->qi & 3], s->loopm ? qbeats[s->qi & 3] : 0.f);
-    } else if (s->mode == SM_TAPE) {
+        fire(v, mode, start, start, end, pitch_ratio(ysemi(s, mode, fy) + s->trans), yvol(s, mode, fy), s->loopm && !s->qi, s->gate || s->loopm, qbeats[s->qi & 3], s->loopm ? qbeats[s->qi & 3] : 0.f);
+    } else if (mode == SM_TAPE) {
         float g = 1.2f - (float)fy * (1.f / 1024.f);
         g = g > 1.f ? 1.f : g < .2f ? .2f : g;
         if (kind == 0) {
             s->fx0[id] = (int16_t)fx;
             ask(s, (s->len >> 10) * fx);
-            fire(v, (s->len >> 10) * fx, 0, s->len, pitch_ratio(s->trans), g, 1, 1, 0.f, 0.f);
+            fire(v, mode, (s->len >> 10) * fx, 0, s->len, pitch_ratio(s->trans), g, 1, 1, 0.f, 0.f);
         } else if (v->held) {
             float r = 1.f + (float)(fx - s->fx0[id]) * (1.f / 100.f);
             v->rate = (r > 4.f ? 4.f : r < -4.f ? -4.f : r) * pitch_ratio(s->trans);
             v->gain = g;
         }
-    } else if (s->mode == SM_ARP) {
+    } else if (mode == SM_ARP) {
         if (kind == 0)
             v->held = 1;
-        spot_set(s, v, id, fx, fy, kind == 0);
+        spot_set(s, mode, v, id, fx, fy, kind == 0);
     } else {
         v->g_centre = (s->len >> 10) * fx;
         v->g_size = 960 + fy * 18;                                /* top: 20 ms, bottom: 400 ms */
@@ -876,6 +916,179 @@ void samplr_touch(int kind, int id, int fx, int fy)
             v->g_acc = 1.f;                                       /* the first grain at once */
             ask(s, v->g_centre);
         }
+    }
+}
+
+void samplr_touch(int kind, int id, int fx, int fy)
+{
+    struct sm *s = samplr();
+    if (!s || id < 0 || id >= SM_VOICES)
+        return;
+    int was_drag = s->drag[id] >= 0;
+    touch_m(s, s->mode, 0, kind, id, fx, fy);
+    struct smgest *G = s->gest;
+    if (!G || s->g_rec < 0 || !s->g_run || was_drag || (kind != 2 && s->drag[id] >= 0))
+        return;                                                   /* (slice point edits and presses that removed a latched spot are not gestures) */
+    int L = s->g_rec;
+    if (G->n[L] >= SM_EVENTS)
+        return;
+    int32_t pos = s->g_pos < 0 ? 0 : s->g_pos;
+    if (kind == 1) {                                              /* moves: not more often than every 10 ms of the loop */
+        if (pos - (int32_t)s->g_lastmv[id] * 64 < 480 && pos >= (int32_t)s->g_lastmv[id] * 64)
+            return;
+        s->g_lastmv[id] = (uint16_t)(pos >> 6);
+    }
+    fx = fx < 0 ? 0 : fx > 1023 ? 1023 : fx;
+    fy = fy < 0 ? 0 : fy > 1023 ? 1023 : fy;
+    struct smev *e = &G->ev[L][G->n[L]++];
+    e->t = (uint16_t)(pos >> 6);
+    e->w = (uint32_t)kind | (uint32_t)id << 2 | (uint32_t)s->mode << 4 | (uint32_t)fx << 6 | (uint32_t)fy << 16;
+    s->g_lmode[L] = s->mode;
+}
+
+/* ---- gesture recorder */
+
+static void gest_release_layer(struct sm *s, int L)
+{
+    for (int f = 0; f < SM_LFING; f++)
+        if ((s->g_ldown[L] >> f) & 1)
+            release_finger(s, s->g_lmode[L], SM_LBASE + L * SM_LFING + f, 1);
+    s->g_ldown[L] = 0;
+}
+
+static void gest_stop(struct sm *s)
+{
+    for (int L = 0; L < SM_LAYERS; L++)
+        gest_release_layer(s, L);
+    s->g_run = 0;
+    s->g_armed = 0;
+    s->g_rec = -1;
+    s->g_pos = 0;
+}
+
+void samplr_gest(int what)
+{
+    struct sm *s = samplr();
+    if (!s || !s->gest)
+        return;
+    if (what == 0) {                                              /* REC: arm (a bar line for the first layer, the loop start for the next) */
+        if (s->g_armed == 3 && s->g_rec != -2 && s->g_layers < SM_LAYERS) {
+            s->g_rec = -2;                                        /* PLAY was armed: record the next layer from its start as well */
+        } else if (s->g_rec >= 0 || s->g_armed) {
+            if (s->g_armed) {
+                s->g_armed = 0;                                   /* a second press cancels what was armed */
+                if (s->g_rec == -2)
+                    s->g_rec = -1;
+            } else if (s->g_layers == 0) {
+                gest_stop(s);
+            } else {
+                s->g_rec = -1;
+            }
+        } else if (s->g_layers == 0) {
+            s->g_armed = 1;
+        } else if (s->g_layers < SM_LAYERS) {
+            if (s->g_run) {
+                s->g_armed = 2;
+            } else {
+                s->g_armed = 3;                                   /* play from a bar line, recording the next layer from the start */
+                s->g_rec = -2;
+            }
+        }
+    } else if (what == 1) {                                       /* PLAY / STOP */
+        if (s->g_run || s->g_armed)
+            gest_stop(s);
+        else if (s->g_layers)
+            s->g_armed = 3;
+    } else if (what == 2) {                                       /* UNDO: the last layer */
+        if (s->g_rec >= 0 || s->g_armed) {
+            s->g_armed = 0;
+            s->g_rec = -1;
+        } else if (s->g_layers) {
+            s->g_layers--;
+            s->gest->n[s->g_layers] = 0;
+            gest_release_layer(s, s->g_layers);
+            if (!s->g_layers)
+                gest_stop(s);
+        }
+    } else if (what == 3) {                                       /* CLR */
+        gest_stop(s);
+        s->g_layers = 0;
+        for (int L = 0; L < SM_LAYERS; L++)
+            s->gest->n[L] = 0;
+    } else if (what == 4 && !s->g_layers && !s->g_run) {          /* LEN: 1 2 4 8 bars */
+        s->g_bars = (uint8_t)(s->g_bars >= 8 ? 1 : s->g_bars * 2);
+    }
+}
+
+static void gest_dispatch(struct sm *s, int L, const struct smev *e)
+{
+    int kind = e->w & 3, f = (e->w >> 2) & 3, mode = (e->w >> 4) & 3, fx = (e->w >> 6) & 1023, fy = (e->w >> 16) & 1023;
+    int bit = 1 << f;
+    if (kind == 0)
+        s->g_ldown[L] |= (uint8_t)bit;
+    else if (!(s->g_ldown[L] & bit))
+        return;                                                   /* a move / lift of a finger that went down before this layer began */
+    else if (kind == 2)
+        s->g_ldown[L] &= (uint8_t)~bit;
+    s->g_lmode[L] = (uint8_t)mode;
+    touch_m(s, mode, 1, kind, SM_LBASE + L * SM_LFING + f, fx, fy);
+}
+
+/* The timeline, once per block: starts on bar lines, plays the recorded layers' events, closes a take at the loop end. */
+static void gest_run(struct sm *s, int n)
+{
+    struct smgest *G = s->gest;
+    if (!G)
+        return;
+    if (s->g_armed == 1 || s->g_armed == 3) {
+        int off = grid(s, 4.f, n);
+        if (off >= 0) {
+            s->g_len = (int32_t)(looper_beat_frames() * 4.f * (float)s->g_bars);
+            s->g_pos = -off;
+            s->g_run = 1;
+            for (int L = 0; L < SM_LAYERS; L++) {
+                s->g_rp[L] = 0;
+                s->g_ldown[L] = 0;
+            }
+            if (s->g_armed == 1 || s->g_rec == -2) {
+                s->g_rec = (int8_t)s->g_layers;
+                G->n[s->g_layers] = 0;
+            }
+            s->g_armed = 0;
+        }
+    }
+    if (!s->g_run)
+        return;
+    int32_t pos = s->g_pos;
+    for (int L = 0; L < s->g_layers; L++) {
+        if (L == s->g_rec)
+            continue;
+        while (s->g_rp[L] < G->n[L]) {
+            const struct smev *e = &G->ev[L][s->g_rp[L]];
+            if ((int32_t)e->t * 64 >= pos + n)
+                break;
+            s->g_rp[L]++;
+            gest_dispatch(s, L, e);
+        }
+    }
+    if (pos + n >= s->g_len) {                                    /* the loop ends in this block */
+        if (s->g_rec >= 0) {
+            if (G->n[s->g_rec])
+                s->g_layers = (uint8_t)(s->g_rec + 1 > s->g_layers ? s->g_rec + 1 : s->g_layers);
+            s->g_rec = -1;
+        }
+        for (int L = 0; L < SM_LAYERS; L++) {
+            gest_release_layer(s, L);
+            s->g_rp[L] = 0;
+        }
+        if (s->g_armed == 2 && s->g_layers < SM_LAYERS) {
+            s->g_rec = (int8_t)s->g_layers;
+            G->n[s->g_layers] = 0;
+            s->g_armed = 0;
+        }
+        s->g_pos = pos + n - s->g_len;
+    } else {
+        s->g_pos = pos + n;
     }
 }
 
@@ -1090,7 +1303,7 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         if (off >= 0) {                                           /* (else the note waits for its grid line) */
             v->seen = v->cmd;
             v->c_wait = 0;
-            if (v->held || !v->c_gate || s->latch) {
+            if (v->held || !v->c_gate || ((s->latchm >> v->c_mode) & 1)) {
                 v->start = v->c_start;
                 v->ipos = v->c_pos;
                 v->end = v->c_end;
@@ -1207,7 +1420,8 @@ static void arp_step(struct sm *s, int off)
         return;
     struct smvoice *v = &s->v[SM_VOICES + s->a_step % SM_ARPV];
     v->c_wait = off;
-    fire(v, start, start, end, rate, (float)sp->vol * (1.f / 255.f), 0, 0, 0.f, 0.f);
+    v->vmode = SM_ARP;
+    fire(v, SM_ARP, start, start, end, rate, (float)sp->vol * (1.f / 255.f), 0, 0, 0.f, 0.f);
 }
 
 static void grain_spawn(struct sm *s, struct smvoice *v, int off)
@@ -1336,6 +1550,7 @@ void samplr_run(float *bl, float *br, int n)
     if (!s || n <= 0 || n > 256)
         return;
     uint32_t c0 = DWT_CYCCNT;
+    gest_run(s, n);
     run_voices(s, bl, br, n);
     uint32_t c1 = DWT_CYCCNT, period = c0 - s->t_last, dur = c1 - c0;
     if (s->t_last && period > 1000u && period < 100000000u) {
@@ -1368,8 +1583,10 @@ uint32_t samplr_sig(void)
         return 0;
     uint32_t h = (uint32_t)s->mode | (uint32_t)s->gate << 2 | (uint32_t)s->nslice << 3 | (uint32_t)s->sel << 10 | (uint32_t)s->filled << 15 |
                  (uint32_t)(s->vol * 20.f) << 24;
-    h = h * 31u + ((uint32_t)s->qi | (uint32_t)s->div << 2 | (uint32_t)s->pat << 4 | (uint32_t)s->latch << 7 | (uint32_t)s->atk << 8 |
+    h = h * 31u + ((uint32_t)s->qi | (uint32_t)s->div << 2 | (uint32_t)s->pat << 4 | (uint32_t)s->latchm << 7 | (uint32_t)s->atk << 8 |
                    (uint32_t)s->rel << 11 | (uint32_t)s->gfree << 14 | (uint32_t)(s->scat * 10.f) << 15 | (uint32_t)(s->dens + .5f) << 20);
+    h = h * 31u + ((uint32_t)s->g_bars | (uint32_t)s->g_run << 4 | (uint32_t)s->g_armed << 5 | (uint32_t)s->g_layers << 8 | (uint32_t)(s->g_rec + 2) << 10 |
+                   (uint32_t)(s->g_run && s->g_len > 0 ? (uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / (uint32_t)(s->g_len / 32 + 1) : 0u) << 14);
     for (int i = 0; i < SM_SPOTS; i++)
         h = h * 31u + (s->spot[i].used ? 1u + (uint32_t)(s->spot[i].pos / (s->len / 150 + 1)) + ((uint32_t)(s->a_last == i) << 9) : 0u);
     for (int f = 0; f < SM_NV; f++) {

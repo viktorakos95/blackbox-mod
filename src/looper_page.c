@@ -1084,14 +1084,15 @@ static void draw_footer(const struct lay *L)
 /* ---- SMPLR tab: the sample's waveform on top (touch it), two rows of buttons below. */
 #define SM_W 300                                                  /* waveform: SM_COLS columns of 2 px */
 #define SM_BH 20
-static void sm_geom(int *wx, int *wy, int *wh, int *ba, int *bb)
+static void sm_geom(int *wx, int *wy, int *wh, int *ba, int *bb, int *bc)
 {
     struct lay L;
     layout(0, &L);
     *wx = (P->w - SM_W) / 2;
     *wy = TOPBAR + 4;
-    *bb = L.foot_y - SM_BH - 3;
-    *ba = *bb - SM_BH - 2;
+    *bc = L.foot_y - SM_BH - 3;                                   /* row C: the gesture recorder */
+    *bb = *bc - SM_BH - 2;                                        /* row B: the sample, transpose */
+    *ba = *bb - SM_BH - 2;                                        /* row A: modes and their switches */
     *wh = *ba - 4 - *wy;
 }
 
@@ -1107,10 +1108,10 @@ static const char *const sm_q_name[4] = {"Q OFF", "Q 1/4", "Q 1/8", "Q 1/16"};
 static void draw_samplr(void)
 {
     struct sm *s = samplr();
-    int wx, wy, wh, ba, bb;
-    sm_geom(&wx, &wy, &wh, &ba, &bb);
+    int wx, wy, wh, ba, bb, bc;
+    sm_geom(&wx, &wy, &wh, &ba, &bb, &bc);
     box(1, 1, P->w - 2, TOPBAR, C_BG);
-    box(1, wy - 1, P->w - 2, bb - wy + SM_BH + 3, C_BG);
+    box(1, wy - 1, P->w - 2, bc - wy + SM_BH + 3, C_BG);
     if (!s) {
         text(6, 4, "SAMPLR: LOOPER MEMORY NOT READY", C_RED, 1);
         return;
@@ -1169,9 +1170,9 @@ static void draw_samplr(void)
             while (s->mode == SM_SLICER && sl_c < s->nslice - 1 && fpos >= s->cut[sl_c + 1])
                 sl_c++;
             int slice = s->mode == SM_SLICER ? sl_c : -1, col = C_LIGHT;
-            for (int f = 0; f < SM_VOICES; f++)
-                if (slice >= 0 && (s->v[f].on || s->v[f].env > 0.f) && s->v[f].slice == slice)
-                    col = track_colour[f];
+            for (int f = 0; f < SM_NV; f++)
+                if (slice >= 0 && (s->v[f].on || s->v[f].env > 0.f) && s->v[f].slice == slice && s->v[f].vmode == SM_SLICER)
+                    col = f < SM_VOICES ? track_colour[f] : C_LIGHT == col ? C_TEAL : col;
             box(wx + 2 * c, cy - hi, 2, hi + lo + 1, s->ofill[c] ? col : C_DARK);
         }
         if (s->mode == SM_SLICER)
@@ -1190,6 +1191,11 @@ static void draw_samplr(void)
                 int col = s->spot[i].owner < SM_VOICES ? track_colour[s->spot[i].owner] : C_WHITE;
                 box(wx + x, wy, s->a_last == i ? 3 : 1, wh, col);
             }
+        for (int f = SM_LTBASE; f < SM_LTBASE + SM_LATV; f++) {      /* latched slice loops */
+            struct smvoice *v = &s->v[f];
+            if (v->on && v->vmode == SM_SLICER)
+                vline(wx + (v->ipos / (s->len / SM_W + 1) >= SM_W ? SM_W - 1 : v->ipos / (s->len / SM_W + 1)), wy, wh, C_TEAL);
+        }
         for (int f = 0; f < SM_VOICES; f++) {
             struct smvoice *v = &s->v[f];
             int x = -1;
@@ -1217,7 +1223,7 @@ static void draw_samplr(void)
         sm_button(136, ba, 34, s->gfree ? "FREE" : "SYNC", 1);
     if (s->mode == SM_SLICER)
         sm_button(172, ba, 34, s->loopm ? "LOOP" : s->gate ? "GATE" : "ONE", s->loopm);
-    sm_button(208, ba, 36, "LATCH", s->latch);
+    sm_button(208, ba, 36, "LATCH", (s->latchm >> s->mode) & 1);
     if (s->mode == SM_SLICER)
         sm_button(246, ba, 33, "AUTO", 0);
     else if (s->mode == SM_ARP)
@@ -1228,6 +1234,36 @@ static void draw_samplr(void)
     frame(27, bb, 70, SM_BH, C_RAIL, 1);
     text_c(27, bb + 6, 70, nm[0] ? nm : "-", C_LIGHT, 1);
     sm_button(99, bb, 22, ">", 0);
+    {                                                             /* row C: REC | PLAY / STOP | UNDO | CLR | LEN | the layers | position */
+        int rec = s->g_rec >= 0, arm = s->g_armed != 0, run = s->g_run;
+        frame(3, bc, 34, SM_BH, rec ? C_RED : arm ? C_YELLOW : C_RAIL, 1);
+        text_c(3, bc + 6, 34, "REC", rec ? C_RED : arm ? C_YELLOW : C_LIGHT, 1);
+        sm_button(39, bc, 34, run || arm ? "STOP" : "PLAY", run);
+        sm_button(75, bc, 34, "UNDO", 0);
+        sm_button(111, bc, 30, "CLR", 0);
+        char b[8], *q = b;
+        q = put_uint(q, s->g_bars);
+        *q++ = ' ';
+        *q++ = 'B';
+        *q++ = 'A';
+        *q++ = 'R';
+        if (s->g_bars > 1)
+            *q++ = 'S';
+        *q = 0;
+        sm_button(143, bc, 46, b, s->g_layers == 0 && !run);
+        for (int L = 0; L < SM_LAYERS; L++) {
+            int recL = s->g_rec == L, have = L < s->g_layers;
+            int col = recL ? C_RED : have ? C_CYAN : C_RAIL;
+            frame(193 + 26 * L, bc, 24, SM_BH, col, 1);
+            char d[2] = {(char)('1' + L), 0};
+            text_c(193 + 26 * L, bc + 6, 24, d, recL ? C_RED : have ? C_CYAN : C_GREY, 1);
+        }
+        frame(271, bc, 40, SM_BH, C_RAIL, 1);
+        if (run && s->g_len > 0) {
+            int w = (int)((uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / ((uint32_t)s->g_len / 36u + 1u));
+            box(273, bc + 2, w > 36 ? 36 : w, SM_BH - 4, rec ? C_RED : C_CYAN);
+        }
+    }
     sm_button(125, bb, 30, "-12", 0);
     sm_button(157, bb, 24, "-1", 0);
     {
@@ -1246,13 +1282,24 @@ static void draw_samplr(void)
 /* A touch on the SMPLR tab above the footer. Returns 1 when it was used. */
 static int sm_touch(int kind, int id, int x, int d)
 {
-    int wx, wy, wh, ba, bb;
-    sm_geom(&wx, &wy, &wh, &ba, &bb);
+    int wx, wy, wh, ba, bb, bc;
+    sm_geom(&wx, &wy, &wh, &ba, &bb, &bc);
     if (d >= ba) {
         if (kind != 0)
             return 1;
         struct sm *s = samplr();
-        if (d >= bb) {
+        if (d >= bc) {
+            if (x >= 3 && x < 37)
+                samplr_gest(0);
+            else if (x >= 39 && x < 73)
+                samplr_gest(1);
+            else if (x >= 75 && x < 109)
+                samplr_gest(2);
+            else if (x >= 111 && x < 141)
+                samplr_gest(3);
+            else if (x >= 143 && x < 189)
+                samplr_gest(4);
+        } else if (d >= bb) {
             if (x >= 3 && x < 25)
                 samplr_select(-1);
             else if (x >= 99 && x < 121)

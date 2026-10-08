@@ -6,7 +6,13 @@
 #define SM_COLS   150            /* waveform overview columns */
 #define SM_VOICES 4              /* one per finger */
 #define SM_ARPV   4              /* voices of the arpeggiator's own notes (after the fingers') */
-#define SM_NV     (SM_VOICES + SM_ARPV)
+#define SM_LAYERS 3              /* gesture overdub layers */
+#define SM_LFING  4              /* fingers per layer */
+#define SM_LATV   8              /* voices for latched slice loops (not tied to a finger) */
+#define SM_LTBASE (SM_VOICES + SM_ARPV)
+#define SM_LBASE  (SM_LTBASE + SM_LATV)
+#define SM_NV     (SM_LBASE + SM_LAYERS * SM_LFING)
+#define SM_EVENTS 1000           /* gesture events per layer */
 #define SM_GRAINS 6              /* per finger */
 #define SM_SPOTS  8              /* arpeggiator spots */
 #define SM_CUTS   64             /* slice points: up to 64 slices */
@@ -35,7 +41,7 @@ struct smvoice {
     float c_rate, c_gain, c_q;              /* c_q: start on the next grid line of this many beats (0 = at once) */
     float c_rep, rep;                       /* rep: restart the slice on every grid line of this many beats while held (0 = no) */
     uint8_t c_loop, c_gate, held, rel;
-    uint8_t on, loop, slice, wait_hi;
+    uint8_t on, loop, slice, vmode, c_mode, _w[3];   /* vmode: the mode that played it; c_mode: ... that triggered it */
     int32_t ipos, start, end;
     float frac, rate, gain, env;            /* rate and gain are rewritten live by the GUI (tape) */
     int32_t wait, c_wait;                         /* frames into the block where the note starts */
@@ -50,6 +56,17 @@ struct smvoice {
     struct smgrain g[SM_GRAINS];
 };
 
+/* Gesture recorder: touch events of one layer, time in 64-frame units from the loop start. w = kind (2 bits) | finger (2) | mode (2) | fx (10) | fy (10). */
+struct smev {
+    uint16_t t, _p;
+    uint32_t w;
+};
+
+struct smgest {                              /* lives in effect block 10 */
+    uint16_t n[SM_LAYERS], _p;
+    struct smev ev[SM_LAYERS][SM_EVENTS];
+};
+
 struct sm {
     uint32_t magic;
     uint8_t mode, gate, nslice, npads;
@@ -60,8 +77,8 @@ struct sm {
     int32_t id, len, hz;
     float ratio, vol;
     uint32_t ov_t;
-    int16_t fx0[SM_VOICES];                 /* GUI: where each finger went down (tape) */
-    uint8_t qi, div, pat, latch, atk, rel;  /* quantize (0 off, 1 1/4, 2 1/8, 3 1/16; in ARP: snap to slices), arp / grain rate, arp pattern, hold, attack / release choice */
+    int16_t fx0[SM_NV];                     /* where each finger went down (tape, slice points) */
+    uint8_t qi, div, pat, latchm, atk, rel;  /* quantize (0 off, 1 1/4, 2 1/8, 3 1/16; in ARP: snap to slices), arp / grain rate, arp pattern, hold (a bit per mode), attack / release choice */
     uint8_t gfree, a_last, sp_next, loopm;  /* loopm: SLICER loops its slice while held (or latched) */     /* grain rate free (grains per second) instead of the grid; the spot played last; next spot to replace */
     uint16_t a_step, _q2;
     float scat, sph, dens;                  /* grain scatter 0..1; free-running phase in frames; free grain density per second */
@@ -74,14 +91,20 @@ struct sm {
     struct smspot spot[SM_SPOTS];
     uint32_t rnd;
     int16_t kacc[4];                        /* knob counts not yet turned into a step */
+    struct smgest *gest;
+    int32_t g_len, g_pos;                   /* gesture loop length and position, frames (g_pos < 0: the loop starts that many frames into this block) */
+    uint8_t g_bars, g_run, g_armed, g_layers;   /* bars (1 2 4 8); the timeline runs; waiting for: 1 a bar line to record the first layer, 2 the loop start to record the next, 3 a bar line to play */
+    int8_t g_rec;                           /* the layer being recorded (-1 none) */
+    uint8_t g_lmode[SM_LAYERS], g_ldown[SM_LAYERS];
+    uint16_t g_rp[SM_LAYERS], g_lastmv[SM_VOICES];
     uint16_t filled;                        /* overview columns complete */
     uint8_t ofill[SM_COLS];
     float omn[SM_COLS], omx[SM_COLS];
     int8_t ov[2][SM_COLS];                  /* per column: lowest and highest sample, -127..127 */
     struct smvoice v[SM_NV];
     int32_t cut[SM_CUTS + 1];               /* slice i = frames cut[i] .. cut[i + 1] */
-    int8_t drag[SM_VOICES];                 /* finger -> the slice point it moves (-1 none; 100: the press removed a latched spot, ignore the finger) */
-    uint8_t dmoved[SM_VOICES];              /* the dragged point moved (else a tap on it deletes it) */
+    int8_t drag[SM_NV];                 /* finger -> the slice point it moves (-1 none; 100: the press removed a latched spot, ignore the finger) */
+    uint8_t dmoved[SM_NV];              /* the dragged point moved (else a tap on it deletes it) */
     int8_t trans;                           /* transpose, semitones -48..48 */
     uint8_t ypit;                           /* bit per mode: finger height = pitch */
     uint8_t _t[2];
@@ -101,7 +124,8 @@ void samplr_set_slices(int n);
 void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch, 3 height = pitch, 4 find transients */
 void samplr_trans(int what);                /* transpose: +-1, +-12, 0 = back to 0 */
 void samplr_knob(int knob, int counts);     /* knobs 1..3 per mode (the page handles knob 0 = volume) */
-void samplr_touch(int kind, int id, int fx, int fy);   /* kind 0 down, 1 move, 2 up; fx, fy 0..1023 inside the waveform */
+void samplr_touch(int kind, int id, int fx, int fy);   /* kind 0 down, 1 move, 2 up; fx, fy 0..1023 inside the waveform (recorded when a layer is recording) */
+void samplr_gest(int what);                 /* 0 REC, 1 PLAY / STOP, 2 UNDO, 3 CLR, 4 LEN */
 void samplr_name(char *out, int max);       /* the selected sample's name for the page */
 void samplr_info(char *out);                /* the mode's settings as text for the top bar */
 const char *samplr_pat_name(int p);
