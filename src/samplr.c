@@ -2326,6 +2326,10 @@ static void arp_step(struct sm *s, int off)
 
 static void grain_spawn(struct sm *s, struct smvoice *v, int off)
 {
+    static const uint8_t cap[5] = {40, 24, 14, 9, 4};             /* grains in all across the tracks, by how far SAMPLR has to hold back */
+    if (s->sc->gnow >= cap[s->sc->shed > 4 ? 4 : s->sc->shed])
+        return;
+    s->sc->gnow++;
     for (int i = 0; i < SM_GRAINS; i++) {
         struct smgrain *g = &v->g[i];
         if (g->on)
@@ -2567,6 +2571,7 @@ static int run_voices(struct sm *s, float *bl, float *br, int n)
     dry_run(s, bl, br, n);
     s->n_voices = (uint8_t)nv;
     s->n_grains = (uint8_t)ng;
+    s->sc->gacc = (uint16_t)(s->sc->gacc + ng);
     return 1;
 }
 
@@ -2613,21 +2618,26 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         return 0;
     uint32_t c0 = DWT_CYCCNT;
     int fed = 0;
-    {   /* the governor: the whole audio task must stay clear of its limit (a pad played over a busy SAMPLR took the Blackbox down at C 89/90). SAMPLR's own
-         * budget is what is left under 80 % after everything else; over it, it sheds in steps: 1 half the grains, 2 linear interpolation, 3 the tracks not shown
-         * start nothing new. It comes back up slowly (after about 3 s under 60 % of the budget). */
+    {   /* the governor: the whole audio task must stay clear of its limit (a pad played over a busy SAMPLR took the Blackbox down at C 89/90, and at C 95+ it glitches
+         * for good). It looks at the task's own readout (average and peak, per mille, 0x2405ffe2 / e4) and at SAMPLR's share; under stress it sheds one step every 16
+         * blocks: 1 half the grains and a lower cap of grains in all, 2 linear interpolation instead of the cubic, 3 the tracks that are not shown start nothing new,
+         * 4 the cap goes down to a few grains. It comes back one step at a time, after about 2 s with the task under 70 %. */
         struct smscr *sc = s->sc;
-        float other = (float)*(volatile uint16_t *)0x2405ffe2u - (float)s->t_avg_shown;
+        float tot_avg = (float)*(volatile uint16_t *)0x2405ffe2u, tot_pk = (float)*(volatile uint16_t *)0x2405ffe4u;
+        float other = tot_avg - (float)s->t_avg_shown;
         float lim = 800.f - (other > 0.f ? other : 0.f);
         lim = lim < 250.f ? 250.f : lim;
         sc->ld += ((float)s->load - sc->ld) * .1f;
-        if (sc->ld > lim && sc->shed < 3 && s->tick - sc->shed_t > 24) {
+        int stress = tot_avg > 850.f || tot_pk > 950.f || sc->ld > lim;
+        if (stress && sc->shed < 4 && s->tick - sc->shed_t > 16) {
             sc->shed++;
             sc->shed_t = s->tick;
-        } else if (sc->ld < lim * .6f && sc->shed > 0 && s->tick - sc->shed_t > 560) {
+        } else if (!stress && tot_avg < 700.f && sc->ld < lim * .6f && sc->shed > 0 && s->tick - sc->shed_t > 400) {
             sc->shed--;
             sc->shed_t = s->tick;
         }
+        sc->gnow = sc->gacc;
+        sc->gacc = 0;
     }
     for (int t = 0; t < SM_TRACKS; t++) {                         /* every track that was ever used goes on playing (its loop, what it latched) */
         struct sm *q = t ? trk_get(t, 0) : s;

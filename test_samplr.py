@@ -1300,6 +1300,27 @@ for _ in range(20):
     play(100)
 check("governor: and comes back when it is quiet again", e.r8(SHED) == 0, e.r8(SHED))
 
+# shed 4: the grains in all are capped (4), however many fingers and however dense
+e.call("samplr_set_mode", 3)
+setb(OFF["gfree"], 1)
+e.uc.mem_write(SMP + OFF["dens"], struct.pack("<f", 120.0))
+e.uc.mem_write(SHED, b"\x04")
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))
+for f_ in range(4):
+    touch(0, f_, 100 + 200 * f_, 600)
+mxg = 0
+for _ in range(60):
+    play()
+    mxg = max(mxg, e.r8(SMP + struct_offsets(["n_grains"])["n_grains"]))
+check("shed 4: no more than a handful of grains sound in all", 0 < mxg <= 6, mxg)
+for f_ in range(4):
+    touch(2, f_, 0, 0)
+play(200)
+e.uc.mem_write(SHED, b"\x00")
+e.uc.mem_write(SMP + OFF["dens"], struct.pack("<f", 20.0))
+setb(OFF["gfree"], 0)
+e.call("samplr_set_mode", 0)
+
 # find transients: four bursts
 BURST[0] = True
 for b in range(2):

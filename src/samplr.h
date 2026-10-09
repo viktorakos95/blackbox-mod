@@ -148,6 +148,7 @@ struct smscr {
     uint8_t cur, shed, _c[2];               /* the track the page shows; how much SAMPLR holds back because the audio task is near its limit (0..3) */
     float ld;                               /* SAMPLR's share, smoothed (per mille) */
     uint32_t shed_t;
+    uint16_t gnow, gacc;                    /* grains sounding across all the tracks (last block / this block so far) */
 };
 
 struct sm *samplr(void);                    /* the track the page shows; 0 until the looper's memory is up */

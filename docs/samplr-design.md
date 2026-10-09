@@ -300,3 +300,10 @@ takes three overdub layers.
   share over that budget sheds one step (at most every 24 blocks, back one step after ~3 s under 60 % of the budget): 1 half the grains, 2 linear interpolation instead of the cubic,
   3 the tracks that are not shown start nothing new (no new grains, no arp steps). The top bar shows `!n` after the G count while it holds back. The scratch has `shed`, `ld`, `shed_t`.
 - Not proven on hardware: only the cause that matches C 89/90 (a saturated task) was addressed; a fault from something else would not be.
+
+## Build 27 (a harder safety)
+- Report (build 25, before the governor): three grain tracks, an arp track, a slicer track and stock pads: C went to 95/100 and over, the glitch started and stayed while it was played
+  on the edge; stopping one track cleared it (so no longer a stuck state).
+- The governor of build 26 is stronger: it reacts to the task's own readout (average over 85 % or peak over 95 %) as well as to SAMPLR's share, a step every 16 blocks (was 24), and
+  has a fourth step. Steps: 1 half the grain rate and a cap of 24 grains in all (40 at rest), 2 linear interpolation, 3 the tracks not shown start nothing new and the cap is 9,
+  4 the cap is 4 grains in all. One step back after ~2 s with the task under 70 %. `!n` in the top bar shows it. The cap is on the sum over all tracks (`sc->gnow`).
