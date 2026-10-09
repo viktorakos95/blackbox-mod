@@ -1069,15 +1069,15 @@ check("SMPLR: the touched slice is drawn in the finger's colour (cyan)", any(x[2
 touch("up", wave_x, wave_d)
 blocks(3, 0.0)
 check("SMPLR: lifting the finger silences it (gate)", max(abs(v) for v in block([0.0] * N)[1][0]) < 1e-4)
-touch("down", 3 + 172 + 10, 219)                                 # the MODE sheet (last footer tab)
-touch("up", 3 + 172 + 10, 219)
-touch("down", 3 + 77 + 10, 178 + 10)                               # TAPE
+touch("down", 3 + 185 + 10, 219)                                 # the MODE sheet (last footer tab)
+touch("up", 3 + 185 + 10, 219)
+touch("down", 3 + 62 + 10, 178 + 10)                               # TAPE
 
-touch("up", 3 + 77 + 10, 178 + 10)
+touch("up", 3 + 62 + 10, 178 + 10)
 e.call("samplr")
 check("SMPLR: the TAPE button switches the mode", e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4) == 1, e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4))
-touch("down", 3 + 43 + 10, 219)                                  # the SAMPLE sheet in the footer
-touch("up", 3 + 43 + 10, 219)
+touch("down", 3 + 37 + 10, 219)                                  # the SAMPLE sheet in the footer
+touch("up", 3 + 37 + 10, 219)
 touch("down", 140, 27)                                          # +12 in the strip above the sample (always there)
 touch("up", 140, 27)
 touch("down", 140, 27)                                          # +12 in the strip above the sample (always there)
@@ -1086,8 +1086,8 @@ check("SMPLR: the SAMPLE sheet's +12 button transposes (twice = 24)", struct.unp
 touch("down", 80, 27)                                           # the value: back to 0
 touch("up", 80, 27)
 check("SMPLR: tapping the value resets the transpose", struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0] == 0)
-touch("down", 3 + 86 + 10, 219)                                 # the GESTURE sheet
-touch("up", 3 + 86 + 10, 219)
+touch("down", 3 + 74 + 10, 219)                                 # the GESTURE sheet
+touch("up", 3 + 74 + 10, 219)
 touch("down", 200, 27)                                          # REC in the strip above the sample
 touch("up", 200, 27)
 check("SMPLR: the GESTURE sheet's REC arms the take", e.r8(SMPLR_P + G_ARMED) == 1, e.r8(SMPLR_P + G_ARMED))
@@ -1095,8 +1095,8 @@ touch("down", 200, 27)                                          # REC again canc
 touch("up", 200, 27)
 touch("down", 3 + 10, 219)                                       # back to the PLAY sheet
 touch("up", 3 + 10, 219)
-touch("down", 3 + 215 + 10, 219)                                 # the TRACK sheet (last footer tab)
-touch("up", 3 + 215 + 10, 219)
+touch("down", 3 + 222 + 10, 219)                                 # the TRACK sheet (last footer tab)
+touch("up", 3 + 222 + 10, 219)
 touch("down", 3 + 52 + 10, 178 + 10)                             # track 2
 touch("up", 3 + 52 + 10, 178 + 10)
 e.call("samplr")

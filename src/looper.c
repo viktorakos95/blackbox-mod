@@ -65,7 +65,7 @@ typedef void (*pool_fn)(void *engine);
 
 void bkp_enable(void);
 void looper_ui_poke(void);
-void samplr_run(float *bl, float *br, int n);
+#include "samplr.h"
 void solo_boot_reset(void);
 void looper_page_boot(void);
 
@@ -1672,11 +1672,11 @@ static void run_fx(struct dsp *d, float *bl, float *br, int n)
 }
 
 /* One block of the whole looper: bl / br = the Out 1 bus (read as the "mix" source, then the loop is added to it). */
-static void run(float *bl, float *br, int n)
+static int run(float *bl, float *br, int n)
 {
     struct dsp *d = DSP();
     if (n > MAXN || n <= 0)
-        return;
+        return 0;
     if (S->rewind && S->pfade == 0) {                 /* STOP: everything back to the start */
         S->rewind = 0;
         S->mpos = S->mcount = 0;
@@ -1697,7 +1697,7 @@ static void run(float *bl, float *br, int n)
     }
     if (S->paused) {
         if (S->pfade == 0)
-            return;                                   /* frozen: the bus is left alone, the positions stand still */
+            return 0;                                 /* frozen: the bus is left alone, the positions stand still (SAMPLR plays on, see looper_stage) */
         S->pfade--;                                   /* a block or two of fade-out first */
     }
     int sync = opt_i(LOOPER_O_SYNC);
@@ -1788,7 +1788,8 @@ static void run(float *bl, float *br, int n)
         d->out[0][i] = d->out[1][i] = 0.f;
         d->acc[0][i] = d->acc[1][i] = d->acc[2][i] = d->acc[3][i] = 0.f;
     }
-    int sends = 0;
+    float *snd[4] = {d->acc[0], d->acc[1], d->acc[2], d->acc[3]};
+    int sends = samplr_run(bl, br, n, snd);          /* SAMPLR first: SOURCE MIX records it, and its sends join the looper's delay and reverb */
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
         struct pb p;
@@ -1834,6 +1835,7 @@ static void run(float *bl, float *br, int n)
     S->gphase += (float)n;
     while (S->gphase >= gf)
         S->gphase -= gf;
+    return 1;
 }
 
 typedef void *(*buf_of_fn)(void *bufs, unsigned idx);
@@ -1855,6 +1857,54 @@ static void read_bpm(void *bufs)
     }
 }
 
+/* A SAMPLR track's filter: the looper's own two stages (setup / seg above), f -1..1 (0 off, left low pass, right high pass), res 0..1 (.5 flat). */
+void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, int n)
+{
+    int active = f < -.01f || f > .01f;
+    if (active)
+        st->mode = f > 0.f ? 2 : 1;
+    int hp = st->mode == 2;
+    float hz = active ? fw_cutoff_hz(f < 0.f ? f + 1.f : f) : 14000.f;
+    float rs = active ? res : .5f, q = fw_res_q(rs);
+    float drive = (rs - .5f) * 2.f;
+    drive = !active || drive < 0.f ? 0.f : drive > 1.f ? 1.f : drive * drive;
+    hz = hz < 10.f ? 10.f : hz > .45f * SR ? .45f * SR : hz;
+    q = q < .1f ? .1f : q > 40.f ? 40.f : q;
+    float g = tan_approx(3.14159265f * hz / SR), rr = 1.f / q;
+    if (st->g == 0.f) {
+        st->g = g;
+        st->r2 = rr;
+        st->drive = drive;
+        st->mix = 0.f;
+    } else {
+        st->g += .33333f * (g - st->g);
+        st->r2 += .33333f * (rr - st->r2);
+        st->drive += .33333f * (drive - st->drive);
+    }
+    float h1 = 1.f / (1.f + R_BUTTERWORTH * st->g + st->g * st->g), rg1 = R_BUTTERWORTH + st->g;
+    float h2 = 1.f / (1.f + st->r2 * st->g + st->g * st->g), rg2 = st->r2 + st->g;
+    float fd = st->drive > .001f ? st->drive : 0.f, limit = fd > 0.f ? 4.f - 3.f * fd : 0.f, ilimit = limit > 0.f ? 1.f / limit : 0.f;
+    float target = active ? 1.f : 0.f, m0 = st->mix, dm = (target - m0) / (float)n;
+    st->mix = target;
+    for (int i = 0; i < n; i++) {
+        float m = m0 + dm * (float)(i + 1), x2[2] = {l[i], r[i]}, in[2] = {l[i], r[i]};
+        for (int c = 0; c < 2; c++) {
+            float x = x2[c];
+            if (fd > 0.f)
+                x = soft(x * (1.f + 3.f * fd), 1.f, 1.f);
+            x = svf(x, &st->s[0][c][0], &st->s[0][c][1], st->g, R_BUTTERWORTH, h1, rg1, hp, 0.f, 0.f);
+            x2[c] = svf(x, &st->s[1][c][0], &st->s[1][c][1], st->g, st->r2, h2, rg2, hp, limit, ilimit);
+        }
+        l[i] = in[0] + (x2[0] - in[0]) * m;
+        r[i] = in[1] + (x2[1] - in[1]) * m;
+    }
+    if (target == 0.f && st->mix == 0.f) {                         /* faded out: the filter starts clean next time */
+        for (int a = 0; a < 2; a++)
+            for (int c = 0; c < 2; c++)
+                st->s[a][c][0] = st->s[a][c][1] = 0.f;
+    }
+}
+
 /* Out 1 bus, once per audio block, before the master compressor and the output levels (looper_thunk.S).
  * obj is the compressor stage object; its output index names the Out 1 bus, as in comp_process (comp.c). */
 void looper_stage(uint8_t *obj, void *bufs)
@@ -1869,8 +1919,8 @@ void looper_stage(uint8_t *obj, void *bufs)
     fw_stereo(buf, &l, &r);
     if (l && r && n > 0) {
         read_bpm(bufs);
-        run(l, r, n);
-        samplr_run(l, r, n);
+        if (!run(l, r, n))
+            samplr_run(l, r, n, 0);
     }
 }
 

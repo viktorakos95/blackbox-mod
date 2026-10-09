@@ -38,7 +38,7 @@ def struct_offsets(names):
     return res
 
 
-OFF = struct_offsets(["iq", "g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode", "rev", "seqm", "sq_on", "gate"])
+OFF = struct_offsets(["iq", "g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode", "rev", "seqm", "sq_on", "gate", "lp_a", "lp_b", "fx_f", "fx_r", "fx_sd", "fx_sr", "peak"])
 
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
@@ -1055,6 +1055,71 @@ e.call("samplr_track", 0, count=50_000_000)
 SMP = SMP0
 play(20)
 check("tracks: CLR on track 1 ends it", max(max(abs(x) for x in play()[0]) for _ in range(380)) < 1e-3)
+
+# LOOP mode: a window of the sample that loops; its ends are grabbed in the strip along the top
+e.call("samplr_set_mode", 4)
+setb(OFF["latchm"], 0)
+setb(OFF["qi"], 0)
+check("loop: the window starts as the whole sample", sm(OFF["lp_a"], "i") == 0 and sm(OFF["lp_b"], "i") == LENF, (sm(OFF["lp_a"], "i"), sm(OFF["lp_b"], "i")))
+touch(0, 0, 10, 50)
+touch(1, 0, 256, 50)
+touch(2, 0, 0, 0)
+touch(0, 0, 1020, 50)
+touch(1, 0, 512, 50)
+touch(2, 0, 0, 0)
+check("loop: both ends move", sm(OFF["lp_a"], "i") == 4096 and sm(OFF["lp_b"], "i") == 8192, (sm(OFF["lp_a"], "i"), sm(OFF["lp_b"], "i")))
+touch(0, 0, 900, 500)
+lvl = [max(abs(x) for x in play()[0]) for _ in range(120)]
+check("loop: plays inside the window, over and over", 0.15 < min(lvl[5:]) and max(lvl) < 0.35, (min(lvl[5:]), max(lvl)))
+touch(2, 0, 0, 0)
+play(6)
+check("loop: silent after the lift", max(abs(x) for x in play()[0]) < 1e-3)
+e.call("samplr_cycle", 13)
+check("loop: RESET gives the whole sample back", sm(OFF["lp_a"], "i") == 0 and sm(OFF["lp_b"], "i") == LENF)
+e.call("samplr_set_mode", 0)
+
+# FX: filter and the sends into the looper's delay and reverb; the level meter
+O_ROUTE = 10
+opt(O_ROUTE, 1)
+e.call("samplr_set_slices", 16)
+touch(0, 0, 3 * 64 + 10, 100)
+dry = [max(abs(x) for x in play()[0]) for _ in range(2)]
+check("meter: the track's level is seen", struct.unpack("<f", e.uc.mem_read(SMP + OFF["peak"], 4))[0] > 0.05)
+touch(2, 0, 0, 0)
+play(6)
+setb(OFF["fx_f"], 156)                                          # -100: lowest low pass
+touch(0, 0, 3 * 64 + 10, 100)
+flv = [max(abs(x) for x in play()[0]) for _ in range(2)]
+touch(2, 0, 0, 0)
+play(8)
+setb(OFF["fx_f"], 0)
+check("fx filter: the low pass takes the start of a note down", flv[1] < 0.6 * dry[1], (dry, flv))
+play(6)
+nsl = max(max(abs(x) for x in play()[0]) for _ in range(120))
+check("fx: no send, no echo", nsl < 1e-3, nsl)
+setb(OFF["fx_sd"], 100)
+touch(0, 0, 3 * 64 + 10, 100)
+play(8)
+touch(2, 0, 0, 0)
+play(6)
+echo = max(max(abs(x) for x in play()[0]) for _ in range(150))
+check("fx delay send: an echo of the note arrives", echo > 0.01, echo)
+setb(OFF["fx_sd"], 0)
+play(300)
+setb(OFF["fx_sr"], 100)
+touch(0, 0, 3 * 64 + 10, 100)
+play(8)
+touch(2, 0, 0, 0)
+play(6)
+tail = max(max(abs(x) for x in play()[0]) for _ in range(40))
+check("fx reverb send: a tail", tail > 0.003, tail)
+setb(OFF["fx_sr"], 0)
+play(400)
+opt(O_ROUTE, 0)
+e.call("samplr_fx_knob", 2, 200)
+check("fx: the encoder 3 raises the delay send (a step per 20 counts)", e.r8(SMP + OFF["fx_sd"]) == 10, e.r8(SMP + OFF["fx_sd"]))
+setb(OFF["fx_sd"], 0)
+play(300)
 
 # find transients: four bursts
 BURST[0] = True

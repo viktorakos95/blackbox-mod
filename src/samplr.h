@@ -20,7 +20,7 @@
 #define SM_OWIN   2048           /* transient search windows */
 #define SM_PADS   16
 
-enum { SM_SLICER, SM_TAPE, SM_ARP, SM_GRAIN, SM_MODES };
+enum { SM_SLICER, SM_TAPE, SM_ARP, SM_GRAIN, SM_LOOP, SM_MODES };
 enum { SM_PAT_UP, SM_PAT_DOWN, SM_PAT_UPDN, SM_PAT_RND, SM_PAT_ORDER, SM_PATS };
 
 struct smspot {
@@ -68,6 +68,12 @@ struct smev {
 struct smgest {                              /* a track's events: after its state in a block of its own (track 0: effect block 10) */
     uint16_t n[SM_LAYERS], _p;
     struct smev ev[SM_LAYERS][SM_EVENTS];
+};
+
+struct smfilt {                             /* a track's filter: two state-variable stages (the looper's filter), see looper_filter() */
+    float g, r2, drive, mix;
+    float s[2][2][2];                       /* stage, channel, s1 / s2 */
+    uint8_t mode, _m[3];
 };
 
 struct sm {
@@ -122,6 +128,11 @@ struct sm {
     int8_t trans;                           /* transpose, semitones -48..48 */
     uint8_t ypit;                           /* bit per mode: finger height = pitch */
     uint8_t _t[2];
+    int32_t lp_a, lp_b;                     /* LOOP: the loop window, frames */
+    int8_t fx_f;                            /* FX: filter -100..100 (0 off, left low pass, right high pass) */
+    uint8_t fx_r, fx_sd, fx_sr;             /* resonance 0..100 (50 = flat), delay send, reverb send 0..100 */
+    float peak;                             /* the track's output level, for the meter */
+    struct smfilt flt;
     uint8_t iq, _iq[3];                     /* interpolation: 0 the stock cubic (float), 1 the stock HighQ (double), 2 SAMPLR's own with a low-pass above 1x */
     struct smscr *sc;                       /* the scratch shared by the tracks */
     uint8_t tno, _tn[3];
@@ -140,7 +151,12 @@ int samplr_tracks(void);                    /* how many tracks the memory holds 
 void samplr_track(int t);                   /* show / play on track t */
 int samplr_track_now(void);
 int samplr_track_info(int t);               /* bits: 1 has a sample, 2 loop running, 4 recording, 8 armed, 16 sounding */
-void samplr_run(float *bl, float *br, int n);
+int samplr_run(float *bl, float *br, int n, float **snd);   /* snd: the looper's four send buses (delay L R, reverb L R) or 0; returns 1 if a send was fed */
+void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, int n);   /* in looper.c */
+void samplr_fx_knob(int knob, int counts);  /* the FX sheet's encoders: 0 filter, 1 resonance, 2 delay, 3 reverb */
+void samplr_fx_set(int which, int v);       /* the same from a touch, v 0..1023 */
+void samplr_fx_text(int which, char *out);
+float samplr_fx_frac(int which);            /* 0..1 for a bar (filter: 0.5 = centre) */
 void samplr_refresh(unsigned ticks);        /* call while the tab shows: fills the waveform as a streamed sample loads */
 void samplr_enter(void);                    /* the tab was opened: look at the pads again */
 void samplr_leave(void);                    /* the tab was left: let go of everything */
@@ -148,7 +164,7 @@ void samplr_select(int delta);              /* previous / next loaded pad sample
 void samplr_set_mode(int m);
 void samplr_toggle_gate(void);
 void samplr_set_slices(int n);
-void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch, 3 height = pitch, 4 find transients, 5 grain contour, 6 spray type, 7 pitch pattern, 8 grain size scale, 9 dry loop level, 10 interpolation, 11 reverse, 12 slicer sequence mode */
+void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch, 3 height = pitch, 4 find transients, 5 grain contour, 6 spray type, 7 pitch pattern, 8 grain size scale, 9 dry loop level, 10 interpolation, 11 reverse, 12 slicer sequence mode, 13 loop window back to the whole sample */
 void samplr_set_env(int which, int step);   /* 0 attack, 1 release: step 0..96 (the ENV sheet's sliders) */
 void samplr_trans(int what);                /* transpose: +-1, +-12, 0 = back to 0 */
 void samplr_knob(int knob, int counts);     /* knobs 0..3 per mode (0 = volume); recorded into a take */

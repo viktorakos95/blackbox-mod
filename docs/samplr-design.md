@@ -229,3 +229,15 @@ takes three overdub layers.
 - Events per layer went from 1000 to 800 (both fit the 32 KB blocks; checked by static asserts).
 - One shared load meter (all tracks); the grain load guard sees the total.
 - Not done yet (next): a take recorded in one mode per track is as before, per track; FX; zoom; stock scan import.
+
+## Build 20 (FX, level meters, LOOP mode, and where SAMPLR sits in the looper's audio)
+- Order: SAMPLR now renders INSIDE the looper's block, before the looper's tracks (it still plays when the looper is paused). Consequences: LOOPER SOURCE = MIX records SAMPLR (a
+  gesture take or a played loop can be captured into a looper track), and SAMPLR can feed the looper's send buses.
+- FX per track (FX footer sheet, four bars; with the sheet shown the four encoders turn them, pink 1..4 as on the looper's FX page): FILT (centre off, left low pass, right high
+  pass: the looper's own two-stage filter, `looper_filter()`), RES (50 flat), DLY and REV sends. The sends go to the Blackbox's own delay and reverb (ROUTE STOCK, default) or the
+  looper's (ROUTE OWN), post filter. All four are recorded into a take as encoder events (pids 9..12).
+- Meters: a thin bar in the left margin of the sample = the shown track's output level (red above 95 %), in the right margin = its volume (the first encoder, 0..2).
+- LOOP mode (5th mode): the sample plays as a loop between two markers; grab an end in the strip along the top (within 40 px) and drag it, anything else plays the window (height =
+  volume, or pitch with YP; Q starts it on the grid; LATCH holds; REV runs it backwards; RESET puts the window back to the whole sample). The window follows the markers while it
+  plays. Gesture events carry the mode in 3 bits now (bit 27 is the third).
+- MODE sheet has 5 buttons; footer tabs: PLAY SMPL GEST ENV FX MODE TRK.

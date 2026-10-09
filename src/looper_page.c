@@ -127,9 +127,13 @@ static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> til
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
 enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
 enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, MODES };
-#define SM_SHEETS 6
+#define SM_SHEETS 7
+#define SMS_ENV 3
+#define SMS_FX 4
+#define SMS_MODE 5
+#define SMS_TRK 6
 #define SM_SHEET (P->_r2)
-static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "SAMPLE", "GEST", "ENV", "MODE", "TRACK"};
+static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "SMPL", "GEST", "ENV", "FX", "MODE", "TRK"};
 #define NTABS 5                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
 /* hardware buttons the page can take over: slot numbers */
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
@@ -367,8 +371,8 @@ int looper_page_hit(int x, int d, int *track, float *val)
             return Z_OPTC;
         }
         if (P->mode == M_SMPLR) {                                 /* the sheets (track >= 10 tells Z_TAB apart) */
-            int sh = (x - 3) / 43;
-            if (x >= 3 && sh < SM_SHEETS && (x - 3) % 43 < 41) {
+            int sh = (x - 3) / 37;
+            if (x >= 3 && sh < SM_SHEETS && (x - 3) % 37 < 35) {
                 *track = 10 + sh;
                 return Z_TAB;
             }
@@ -1087,8 +1091,8 @@ static void draw_footer(const struct lay *L)
     if (P->mode == M_SMPLR) {                                     /* SAMPLR is a page of its own: SONG opens it, MIX goes to the Looper; the footer picks the sheet */
         for (int i = 0; i < SM_SHEETS; i++) {
             int on = SM_SHEET == i;
-            frame(3 + 43 * i, L->foot_y + 2, 41, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
-            text_c(3 + 43 * i, L->foot_y + 4, 41, sm_sheet_name[i], on ? C_CYAN : C_GREY, 1);
+            frame(3 + 37 * i, L->foot_y + 2, 35, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
+            text_c(3 + 37 * i, L->foot_y + 4, 35, sm_sheet_name[i], on ? C_CYAN : C_GREY, 1);
         }
         x0 = P->w;
     }
@@ -1124,7 +1128,7 @@ static void sm_button(int x, int by, int w, const char *s, int on)
 }
 
 static const uint8_t pool_colour[8] = {0x0b, 0x1a, 0x20, 0x06, 0x0b, 0x1a, 0x20, 0x06};   /* each latched loop has its own colour: slice and playhead */
-static const char *const sm_mode_name[SM_MODES] = {"SLICE", "TAPE", "ARP", "GRAIN"};
+static const char *const sm_mode_name[SM_MODES] = {"SLICE", "TAPE", "ARP", "GRAIN", "LOOP"};
 static const char *const sm_q_name[4] = {"Q OFF", "Q 1/4", "Q 1/8", "Q 1/16"};
 
 static void draw_sm_top(struct sm *s, const char *info)
@@ -1204,8 +1208,18 @@ static void draw_samplr(void)
             for (int f = 0; f < SM_NV; f++)
                 if (slice >= 0 && (s->v[f].on || s->v[f].env > 0.f) && s->v[f].slice == slice && s->v[f].vmode == SM_SLICER)
                     col = f < SM_VOICES ? track_colour[f] : f >= SM_LTBASE && f < SM_LTBASE + SM_LATV ? pool_colour[f - SM_LTBASE] : col;
+            if (s->mode == SM_LOOP && (fpos < s->lp_a || fpos >= s->lp_b))
+                col = C_GREY;                                         /* outside the loop window */
             box(wx + 2 * c, cy - hi, 2, hi + lo + 1, s->ofill[c] ? col : C_DARK);
         }
+        if (s->mode == SM_LOOP)
+            for (int e = 0; e < 2; e++) {
+                int32_t fp = e ? s->lp_b : s->lp_a;
+                int x = fp / (s->len / SM_W + 1);
+                x = x >= SM_W - 1 ? SM_W - 2 : x;
+                vline(wx + x, wy, wh, C_CYAN);
+                box(wx + x - (e ? 3 : 0), wy, 4, 7, C_CYAN);          /* the ends: grab one in the strip along the top */
+            }
         if (s->mode == SM_SLICER)
             for (int i = 1; i < s->nslice; i++) {
                 int x = s->cut[i] / (s->len / SM_W + 1);
@@ -1242,6 +1256,16 @@ static void draw_samplr(void)
                     hline(wx + (x - hw < 0 ? 0 : x - hw), wy + 2, (x + hw >= SM_W ? SM_W - 1 : x + hw) - (x - hw < 0 ? 0 : x - hw) + 1, track_colour[f]);
                 }
             }
+        }
+        {                                                         /* left: this track's output level; right: its volume (the first encoder) */
+            int h = (int)(s->peak * (float)wh);
+            h = h > wh ? wh : h;
+            box(2, wy, 5, wh, C_DARK);
+            box(2, wy + wh - h, 5, h, s->peak > .95f ? C_RED : C_CYAN);
+            int vh = (int)(s->vol * .5f * (float)wh);
+            vh = vh > wh ? wh : vh;
+            box(P->w - 7, wy, 5, wh, C_DARK);
+            box(P->w - 7, wy + wh - vh, 5, vh, C_YELLOW);
         }
         if (!s->ov_ok) {                                          /* a streamed sample still loading */
             char b[12], *q = b;
@@ -1301,6 +1325,12 @@ static void draw_samplr(void)
             lab[3] = samplr_pat_name(s->pat);
             lab[4] = "YP";
             on[4] = (s->ypit >> s->mode) & 1;
+        } else if (s->mode == SM_LOOP) {
+            lab[0] = sm_q_name[s->qi & 3];
+            on[0] = s->qi != 0;
+            lab[3] = "RESET";
+            lab[4] = "YP";
+            on[4] = (s->ypit >> s->mode) & 1;
         } else if (s->mode == SM_GRAIN) {
             static const char *const sz_name[3] = {"SIZE 1", "SIZE 1/4", "SIZE 1/16"};
             static const char *const dry_name[4] = {"DRY OFF", "DRY 25", "DRY 50", "DRY 100"};
@@ -1356,9 +1386,32 @@ static void draw_samplr(void)
             samplr_env_text(w, q);
             text_c(x0, r1 + (SM_BH - 8) / 2, bw, b, C_LIGHT, 1);
         }
-    } else if (sh == 4) {                                         /* MODE: SLICE TAPE ARP GRAIN */
+    } else if (sh == SMS_FX) {                                    /* FX: filter, resonance, delay and reverb send of this track; the four encoders turn them (pink numbers) */
+        static const char *const fxn[4] = {"FILT", "RES", "DLY", "REV"};
+        for (int i = 0; i < 4; i++) {
+            int x0 = 3 + 78 * i;
+            frame(x0, r1, 76, SM_BH, C_RAIL, 1);
+            float fr = samplr_fx_frac(i);
+            if (i == 0) {
+                int c = 3 + 36;
+                int w = (int)((fr - .5f) * 72.f);
+                box(w < 0 ? x0 + 38 + w : x0 + 38, r1 + SM_BH - 6, w < 0 ? -w : w, 4, C_CYAN);
+                vline(x0 + c, r1 + SM_BH - 8, 8, C_GREY);
+            } else {
+                box(x0 + 2, r1 + SM_BH - 6, (int)(fr * 72.f), 4, C_CYAN);
+            }
+            char b[16], *q = b;
+            for (const char *z = fxn[i]; *z;)
+                *q++ = *z++;
+            *q++ = ' ';
+            samplr_fx_text(i, q);
+            text_c(x0, r1 + 4, 76, b, C_LIGHT, 1);
+            char dg[2] = {(char)('1' + i), 0};
+            text(x0 + 3, r1 + 3, dg, C_PINK, 1);
+        }
+    } else if (sh == SMS_MODE) {                                  /* MODE: SLICE TAPE ARP GRAIN LOOP */
         for (int i = 0; i < SM_MODES; i++)
-            sm_button(3 + 77 * i, r1, 74, sm_mode_name[i], s->mode == i);
+            sm_button(3 + 62 * i, r1, 60, sm_mode_name[i], s->mode == i);
     } else {                                                      /* TRACK: one button per track, a mark for a loop that runs (cyan), a take in progress (red), sound (yellow) */
         int nt = samplr_tracks();
         for (int i = 0; i < nt; i++) {
@@ -1405,7 +1458,15 @@ static int sm_touch(int kind, int id, int x, int d)
     }
     if (d >= r1) {
         int sh = SM_SHEET < SM_SHEETS ? SM_SHEET : 0;
-        if (sh == 3 && kind != 2 && s) {                          /* the ENV sliders follow the finger */
+        if (sh == SMS_FX && kind != 2 && s) {                     /* the FX bars follow the finger */
+            int i = (x - 3) / 78;
+            if (x >= 3 && i < 4 && (x - 3) % 78 < 76) {
+                samplr_fx_set(i, (x - 3 - 78 * i - 2) * 1023 / 72);
+                P->sig = 0;
+            }
+            return 1;
+        }
+        if (sh == SMS_ENV && kind != 2 && s) {                    /* the ENV sliders follow the finger */
             if (x >= 3 && x < 153) {
                 samplr_set_env(0, (x - 5) * 96 / 146);
                 P->sig = 0;
@@ -1430,7 +1491,7 @@ static int sm_touch(int kind, int id, int x, int d)
                 else if (i == 2)
                     samplr_cycle(2);
                 else if (i == 3)
-                    samplr_cycle(m == SM_GRAIN ? 6 : m == SM_SLICER ? 4 : m == SM_ARP ? 1 : -1);
+                    samplr_cycle(m == SM_GRAIN ? 6 : m == SM_SLICER ? 4 : m == SM_ARP ? 1 : m == SM_LOOP ? 13 : -1);
                 else if (i == 4)
                     samplr_cycle(m == SM_GRAIN ? 7 : m == SM_TAPE ? -1 : 3);
                 else if (i == 5 && m == SM_GRAIN)
@@ -1456,9 +1517,9 @@ static int sm_touch(int kind, int id, int x, int d)
                 samplr_gest(3);
             else if (x >= 93 && x < 151)
                 samplr_gest(4);
-        } else if (sh == 4) {
-            if (x >= 3 && x < 3 + 77 * SM_MODES) {                /* MODE: pick one, and back to the PLAY sheet */
-                samplr_set_mode((x - 3) / 77);
+        } else if (sh == SMS_MODE) {
+            if (x >= 3 && x < 3 + 62 * SM_MODES) {                /* MODE: pick one, and back to the PLAY sheet */
+                samplr_set_mode((x - 3) / 62);
                 SM_SHEET = 0;
                 P->entered = 0;
             }
@@ -1969,7 +2030,9 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             float step = (float)counts * KNOB_SCALE;
             if (P->mode == M_SMPLR) {
                 struct sm *sm = samplr();
-                if (sm)
+                if (sm && SM_SHEET == SMS_FX)
+                    samplr_fx_knob(knob, counts);
+                else if (sm)
                     samplr_knob(knob, counts);
             } else if (P->mode == M_MAIN)
                 P->sel = (uint8_t)knob;                                   /* altering a track's setting selects it */

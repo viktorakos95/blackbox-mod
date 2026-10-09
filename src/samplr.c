@@ -20,7 +20,9 @@ static void release_finger(struct sm *s, int mode, int id, int own, int lat);
 static inline int grid(struct sm *s, float beats, int n);
 static void unlatch(struct sm *s, int mode);
 static void seq_stop(struct sm *s);
+static char *num(char *p, unsigned v);
 static void rec_param(struct sm *s, int pid);
+#define EVMODE(m) ((uint32_t)((m) & 3) << 4 | (uint32_t)((m) >> 2) << 27)      /* the mode in a gesture event: bits 4-5 and 27 */
 static void gest_capture_latched(struct sm *s, int L);
 static void gest_uncapture(struct sm *s, int drop);
 
@@ -310,6 +312,8 @@ static void choose(struct sm *s, int k)
         s->ratio = (float)s->hz * (1.f / 48000.f);
     }
     equal_cuts(s);
+    s->lp_a = 0;
+    s->lp_b = s->len;
     overview(s, 1);
 }
 
@@ -596,7 +600,7 @@ static void unlatch(struct sm *s, int mode)
         }
     } else {
         for (int f = 0; f < SM_VOICES; f++)                       /* a latched tape hold */
-            if (!s->v[f].held && s->v[f].vmode == SM_TAPE) {
+            if (!s->v[f].held && s->v[f].vmode == mode) {
                 s->v[f].rel = 1;
                 s->v[f].rep = 0.f;
             }
@@ -615,7 +619,7 @@ void samplr_trans(int what)
 void samplr_cycle(int what)
 {
     struct sm *s = samplr();
-    if (!s || what < 0 || what > 12)
+    if (!s || what < 0 || what > 13)
         return;
     if (what == 0) {
         if (s->mode == SM_GRAIN)
@@ -645,6 +649,9 @@ void samplr_cycle(int what)
     } else if (what == 11) {
         s->rev ^= 1;
         rec_param(s, 8);
+    } else if (what == 13) {
+        s->lp_a = 0;
+        s->lp_b = s->len;
     } else if (what == 12) {
         s->seqm = (uint8_t)((s->seqm + 1) % 3);
         if (!s->seqm)
@@ -680,6 +687,10 @@ static int param_get(struct sm *s, int pid)
     case 5: return s->rel;
     case 7: return 0;
     case 8: return s->rev;
+    case 9: return (s->fx_f + 100) * 1023 / 200;
+    case 10: return s->fx_r * 1023 / 100;
+    case 11: return s->fx_sd * 1023 / 100;
+    case 12: return s->fx_sr * 1023 / 100;
     default: return (int)((s->dens - 1.f) * (1023.f / 119.f));
     }
 }
@@ -696,8 +707,72 @@ static void param_set(struct sm *s, int pid, int val)
     case 5: s->rel = (uint8_t)(val > ENV_MAX ? ENV_MAX : val); break;
     case 7: break;
     case 8: s->rev = (uint8_t)(val & 1); break;
+    case 9: s->fx_f = (int8_t)(val * 200 / 1023 - 100); break;
+    case 10: s->fx_r = (uint8_t)(val * 100 / 1023); break;
+    case 11: s->fx_sd = (uint8_t)(val * 100 / 1023); break;
+    case 12: s->fx_sr = (uint8_t)(val * 100 / 1023); break;
     default: s->dens = 1.f + (float)val * (119.f / 1023.f);
     }
+}
+
+/* The FX sheet: which 0 filter (-100..100, the centre is off), 1 resonance (50 = flat), 2 delay send, 3 reverb send. */
+void samplr_fx_knob(int knob, int counts)
+{
+    struct sm *s = samplr();
+    if (!s || knob < 0 || knob > 3)
+        return;
+    int a = s->kacc[knob] + counts, steps = a / 20;                /* a step per 20 counts: the whole range in about 2000 */
+    s->kacc[knob] = (int16_t)(a - steps * 20);
+    if (!steps)
+        return;
+    int v;
+    if (knob == 0) {
+        v = s->fx_f + steps;
+        s->fx_f = (int8_t)(v < -100 ? -100 : v > 100 ? 100 : v);
+    } else {
+        uint8_t *q = knob == 1 ? &s->fx_r : knob == 2 ? &s->fx_sd : &s->fx_sr;
+        v = *q + steps;
+        *q = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
+    }
+    rec_param(s, 9 + knob);
+}
+
+void samplr_fx_set(int which, int v)
+{
+    struct sm *s = samplr();
+    if (!s || which < 0 || which > 3)
+        return;
+    param_set(s, 9 + which, v);
+    if (which == 0 && s->fx_f > -3 && s->fx_f < 3 && (v > 500 && v < 524))
+        s->fx_f = 0;
+    rec_param(s, 9 + which);
+}
+
+float samplr_fx_frac(int which)
+{
+    struct sm *s = samplr();
+    if (!s)
+        return 0.f;
+    return which == 0 ? (float)(s->fx_f + 100) * .005f : (float)(which == 1 ? s->fx_r : which == 2 ? s->fx_sd : s->fx_sr) * .01f;
+}
+
+void samplr_fx_text(int which, char *out)
+{
+    struct sm *s = samplr();
+    char *p = out;
+    if (s) {
+        int v = which == 0 ? s->fx_f : which == 1 ? s->fx_r : which == 2 ? s->fx_sd : s->fx_sr;
+        if (which == 0 && (v > -3 && v < 3)) {
+            *p++ = 'O';
+            *p++ = 'F';
+            *p++ = 'F';
+        } else {
+            if (which == 0)
+                *p++ = v < 0 ? 'L' : 'H';
+            p = num(p, (unsigned)(which == 0 ? (v < 0 ? -v : v) : v));
+        }
+    }
+    *p = 0;
 }
 
 /* The ENV sheet's sliders (and the gesture recorder's view of them): which 0 attack, 1 release, step 0..96. */
@@ -849,6 +924,10 @@ void samplr_info(char *out)
         }
     } else if (s->mode == SM_TAPE) {
         p = cat(p, "TAPE");
+    } else if (s->mode == SM_LOOP) {
+        p = cat(p, "LOOP ");
+        p = num(p, (unsigned)((s->lp_b - s->lp_a) / (s->hz > 0 ? s->hz / 1000 : 48) ));
+        p = cat(p, "ms");
     } else if (s->mode == SM_ARP) {
         p = cat(p, "ARP ");
         p = cat(p, div_name[s->div % 5]);
@@ -1164,6 +1243,33 @@ static void touch_m(struct sm *s, int mode, int own, int lat, int kind, int id, 
             v->rate = (r > 4.f ? 4.f : r < -4.f ? -4.f : r) * rsign(s) * pitch_ratio(s->trans);
             v->gain = g;
         }
+    } else if (mode == SM_LOOP) {                                 /* the loop window: grab an end in the strip along the top, or play it */
+        int32_t pos = (s->len >> 10) * fx;
+        if (kind == 0 && fy < 100) {
+            int da = pos_fx(s, s->lp_a) - fx, db = pos_fx(s, s->lp_b) - fx;
+            da = da < 0 ? -da : da;
+            db = db < 0 ? -db : db;
+            if ((da < db ? da : db) < 40) {
+                s->drag[id] = (int8_t)(da <= db ? 1 : 2);
+                s->dmoved[id] = 1;
+                return;
+            }
+        }
+        if (s->drag[id] > 0) {
+            if (s->drag[id] == 1)
+                s->lp_a = pos < 0 ? 0 : pos > s->lp_b - 64 ? s->lp_b - 64 : pos;
+            else
+                s->lp_b = pos > s->len ? s->len : pos < s->lp_a + 64 ? s->lp_a + 64 : pos;
+            return;
+        }
+        float rate = rsign(s) * pitch_ratio(ysemi(s, mode, fy) + s->trans);
+        if (kind == 0) {
+            ask(s, s->lp_a);
+            fire(v, mode, s->rev ? s->lp_b - 1 : s->lp_a, s->lp_a, s->lp_b, rate, yvol(s, mode, fy), 1, 1, qbeats[s->qi & 3], 0.f);
+        } else if (v->held) {
+            v->rate = rate;
+            v->gain = yvol(s, mode, fy);
+        }
     } else if (mode == SM_ARP) {
         if (kind == 0)
             v->held = 1;
@@ -1209,7 +1315,7 @@ void samplr_touch(int kind, int id, int fx, int fy)
     }
     struct smev *e = &G->ev[L][G->n[L]++];
     e->t = (uint16_t)(pos >> 6);
-    e->w = (uint32_t)kind | (uint32_t)id << 2 | (uint32_t)s->mode << 4 | (uint32_t)fx << 6 | (uint32_t)fy << 16 | (uint32_t)lat << 26;
+    e->w = (uint32_t)kind | (uint32_t)id << 2 | EVMODE(s->mode) | (uint32_t)fx << 6 | (uint32_t)fy << 16 | (uint32_t)lat << 26;
     s->g_lmode[L] = s->mode;
 }
 
@@ -1223,7 +1329,7 @@ static void gest_capture_held(struct sm *s, int L)
             continue;
         struct smev *e = &G->ev[L][G->n[L]++];
         e->t = 0;
-        e->w = 0u | (uint32_t)f << 2 | (uint32_t)s->mode << 4 | (uint32_t)(s->lfx[f] & 1023) << 6 | (uint32_t)(s->lfy[f] & 1023) << 16 |
+        e->w = 0u | (uint32_t)f << 2 | EVMODE(s->mode) | (uint32_t)(s->lfx[f] & 1023) << 6 | (uint32_t)(s->lfy[f] & 1023) << 16 |
                (uint32_t)((s->latchm >> s->mode) & 1) << 26;
         s->g_lastmv[f] = 0;
     }
@@ -1252,7 +1358,7 @@ static void rec_param(struct sm *s, int pid)
         return;
     struct smev *e = &G->ev[L][G->n[L]++];
     e->t = (uint16_t)(pos >> 6);
-    e->w = 3u | (uint32_t)s->mode << 4 | (uint32_t)pid << 6 | val << 16;
+    e->w = 3u | EVMODE(s->mode) | (uint32_t)pid << 6 | val << 16;
 }
 
 /* Latched things that are already playing when a take starts are part of it: each becomes a (latched) press at the start of the loop, and
@@ -1428,7 +1534,7 @@ void samplr_gest(int what)
 
 static void gest_dispatch(struct sm *s, int L, const struct smev *e)
 {
-    int kind = e->w & 3, f = (e->w >> 2) & 3, mode = (e->w >> 4) & 3, fx = (e->w >> 6) & 1023, fy = (e->w >> 16) & 1023;
+    int kind = e->w & 3, f = (e->w >> 2) & 3, mode = (int)(((e->w >> 4) & 3) | ((e->w >> 27) & 1) << 2), fx = (e->w >> 6) & 1023, fy = (e->w >> 16) & 1023;
     int bit = 1 << f;
     if (kind == 3) {                                              /* an encoder: fx = which parameter, fy = its value; 7: LATCH was switched off */
         if (fx == 7)
@@ -1859,6 +1965,10 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     }
     if (!v->on && v->env <= 0.f && !(v->rep > 0.f))
         return;
+    if (v->vmode == SM_LOOP && v->loop && s->lp_b > s->lp_a) {     /* the window follows the markers */
+        v->start = s->lp_a;
+        v->end = s->lp_b;
+    }
     v->rate_s += (v->rate - v->rate_s) * .4f;                     /* the tape's speed follows the finger smoothly (a touch event every ~10 ms) */
     int i = v->wait < n ? v->wait : 0;
     v->wait = 0;
@@ -2309,19 +2419,41 @@ static void sweep(struct sm *s)
     }
 }
 
-void samplr_run(float *bl, float *br, int n)
+int samplr_run(float *bl, float *br, int n, float **snd)
 {
     struct sm *s = trk_get(0, 1);
     if (!s || n <= 0 || n > 256)
-        return;
+        return 0;
     uint32_t c0 = DWT_CYCCNT;
+    int fed = 0;
     for (int t = 0; t < SM_TRACKS; t++) {                         /* every track that was ever used goes on playing (its loop, what it latched) */
         struct sm *q = t ? trk_get(t, 0) : s;
         if (!q)
             continue;
+        float tl[256], tr[256];
+        for (int i = 0; i < n; i++)
+            tl[i] = tr[i] = 0.f;
         gest_run(q, n);
         sweep(q);
-        run_voices(q, bl, br, n);
+        run_voices(q, tl, tr, n);
+        if (q->fx_f > 2 || q->fx_f < -2 || q->flt.mix > 0.f)      /* the track's strip: filter, then the sends to the looper's delay and reverb */
+            looper_filter(&q->flt, (float)q->fx_f * .01f, (float)q->fx_r * .01f, tl, tr, n);
+        float sd = (float)q->fx_sd * .01f, sr = (float)q->fx_sr * .01f, pk = q->peak * .9f;
+        int send = snd && (q->fx_sd || q->fx_sr);
+        for (int i = 0; i < n; i++) {
+            float l = tl[i], r = tr[i], m = (l < 0.f ? -l : l) > (r < 0.f ? -r : r) ? (l < 0.f ? -l : l) : (r < 0.f ? -r : r);
+            pk = m > pk ? m : pk;
+            bl[i] += l;
+            br[i] += r;
+            if (send) {
+                snd[0][i] += l * sd;
+                snd[1][i] += r * sd;
+                snd[2][i] += l * sr;
+                snd[3][i] += r * sr;
+            }
+        }
+        q->peak = pk;
+        fed |= send;
         q->tick++;
         q->sph += (float)n;                                       /* the free-running grid (used while the sequencer is stopped) */
         float w = 16.f * looper_beat_frames();
@@ -2353,6 +2485,7 @@ void samplr_run(float *bl, float *br, int n)
             q->t_peak_shown = s->t_peak_shown;
         }
     }
+    return fed;
 }
 
 uint32_t samplr_sig(void)
@@ -2364,7 +2497,7 @@ uint32_t samplr_sig(void)
                  (uint32_t)(s->vol * 20.f) << 24;
     h = h * 31u + ((uint32_t)s->qi | (uint32_t)s->div << 2 | (uint32_t)s->pat << 4 | (uint32_t)s->latchm << 7 | (uint32_t)s->gfree << 14 |
                    (uint32_t)(s->scat * 10.f) << 15 | (uint32_t)(s->dens + .5f) << 20);
-    h = h * 31u + ((uint32_t)s->atk | (uint32_t)s->rel << 8 | (uint32_t)s->iq << 16 | (uint32_t)s->g_sz << 18 | (uint32_t)s->g_dry << 20 | (uint32_t)s->rev << 22 | (uint32_t)s->seqm << 23 | (uint32_t)s->sq_on << 25);
+    h = h * 31u + ((uint32_t)s->atk | (uint32_t)s->rel << 8 | (uint32_t)s->iq << 16 | (uint32_t)s->g_sz << 18 | (uint32_t)s->g_dry << 20 | (uint32_t)s->rev << 22 | (uint32_t)s->seqm << 23 | (uint32_t)s->sq_on << 25 | (uint32_t)(s->peak * 14.f > 15.f ? 15.f : s->peak * 14.f) << 26);
     h = h * 31u + ((uint32_t)s->g_bars | (uint32_t)s->g_run << 4 | (uint32_t)s->g_armed << 5 | (uint32_t)s->g_layers << 8 | (uint32_t)(s->g_rec + 2) << 10 |
                    (uint32_t)(s->g_run && s->g_len > 0 ? (uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / (uint32_t)(s->g_len / 32 + 1) : 0u) << 14);
     for (int i = 0; i < SM_SPOTS; i++)
