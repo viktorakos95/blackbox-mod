@@ -202,3 +202,8 @@ takes three overdub layers.
   pitch up; also used for reverse). Beyond 3x it stays linear. The float cubic has a noise floor near -100 dB (the emulator test allows 2.5e-5), HighQ is cleaner.
 - Attack and release are continuous: 97 steps of 0.25 ms * 2^(step / 8) (0.25 ms .. 1 s, eight steps to the octave), a step per ~40 counts of the knob; the top bar shows the
   value (A1.3 R4). A one-shot slice still ends exactly at the slice end with a release under 2.5 ms. Recorded takes store the step.
+
+## Build 17 (the strip above the sample)
+- Report: the sheets hid what is needed while playing (pitch, REC). Now always visible in a strip ABOVE the waveform: transpose (-12 -1 value +1 +12; tap the value for 0)
+  and the take buttons (REC, PLAY / STOP, three layer pips, and a thin position line under them while a loop runs). The row below the sample is the footer's sheet:
+  PLAY (the mode's switches), SAMPLE (< name >, interpolation), GESTURE (UNDO, CLR, LEN, the layers) and MODE (SLICE TAPE ARP GRAIN, the last tab; picking one goes back to PLAY).
