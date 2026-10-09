@@ -292,3 +292,11 @@ takes three overdub layers.
 - GRAIN dry at D off is silent: the dry follows the scan, nothing moves, nothing runs. D+4 normal speed, D+8 twice, D-n backwards.
 - The linear interpolation above 45 % load is gone (changing the interpolation did nothing for the glitches). The other CPU savings of build 24 stay.
 - LOOP mode and Q: the first start waits for the grid line, then the window loops by itself at its own length (no restart on every grid line, unlike the SLICER's LOOP with Q).
+
+## Build 26 (the governor)
+- Report: a few SAMPLR tracks playing, then a stock pad played chromatically: the Blackbox switched itself off; on restart the C readout (left in memory) showed 89/90. The audio task was
+  saturated (average 89 %, peak 90 %): nothing left for the other tasks (and probably whatever feeds the watchdog).
+- samplr_run now watches the whole task: SAMPLR's budget is 80 % minus everything else (the C average minus its own S average, per mille, read from 0x2405ffe2); its own smoothed block
+  share over that budget sheds one step (at most every 24 blocks, back one step after ~3 s under 60 % of the budget): 1 half the grains, 2 linear interpolation instead of the cubic,
+  3 the tracks that are not shown start nothing new (no new grains, no arp steps). The top bar shows `!n` after the G count while it holds back. The scratch has `shed`, `ld`, `shed_t`.
+- Not proven on hardware: only the cause that matches C 89/90 (a saturated task) was addressed; a fault from something else would not be.

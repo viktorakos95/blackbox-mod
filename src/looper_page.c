@@ -1148,6 +1148,11 @@ static void draw_sm_top(struct sm *s, const char *info)
     *q++ = ' ';
     *q++ = 'G';
     q = put_uint(q, s->n_grains);
+    if (s->sc->shed) {                                            /* SAMPLR is holding back (the audio task is near its limit) */
+        *q++ = ' ';
+        *q++ = '!';
+        *q++ = (char)('0' + s->sc->shed);
+    }
     *q = 0;
     int x = P->w - 6 - 6 * (int)(q - b);
     text(x, 4, b, C_GREY, 1);

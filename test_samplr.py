@@ -38,7 +38,7 @@ def struct_offsets(names):
     return res
 
 
-OFF = struct_offsets(["iq", "g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode", "rev", "seqm", "sq_on", "gate", "lp_a", "lp_b", "fx_f", "fx_r", "fx_sd", "fx_sr", "peak", "load"])
+OFF = struct_offsets(["iq", "g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode", "rev", "seqm", "sq_on", "gate", "lp_a", "lp_b", "fx_f", "fx_r", "fx_sd", "fx_sr", "peak", "load", "sc", "t_avg_shown", "tick"])
 
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
@@ -1265,6 +1265,40 @@ touch(2, 0, 0, 0)
 play(8)
 e.call("samplr_cycle", 13)
 e.call("samplr_set_mode", 0)
+
+# the governor: near the audio task's limit SAMPLR sheds (1 half the grains, 2 linear interpolation, 3 others start nothing new)
+def scr_off(name):
+    src = '#include "src/samplr.h"\nchar o_x[__builtin_offsetof(struct smscr,%s)];\n' % name
+    out = subprocess.run(["arm-none-eabi-gcc", "-I.", "-mthumb", "-S", "-x", "c", "-", "-o", "-"], input=src, capture_output=True, text=True, check=True).stdout.splitlines()
+    return int([l.split()[1] for l in out if l.strip().startswith(".space")][0])
+SC = sm(OFF["sc"], "I")
+SHED = SC + scr_off("shed")
+e.call("samplr_set_mode", 0)
+e.uc.mem_write(SHED, b"\x02")
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))        # (just changed: it stays for now)
+e.call("samplr_trans", 0)
+e.call("samplr_trans", 7)
+touch(0, 0, 3 * 64 + 10, 100)
+play()
+o = play()[0]
+steps = [o[i + 1] - o[i] for i in range(40, 200)]
+exp = 2 ** (7 / 12) / LENF * 0.9
+check("shed 2: linear interpolation, the pitched ramp stays a clean ramp", max(abs(x - exp) for x in steps) < exp * 0.03, (min(steps), max(steps), exp))
+touch(2, 0, 0, 0)
+play(6)
+e.call("samplr_trans", 0)
+e.uc.mem_write(SHED, b"\x00")
+# a loaded task makes it shed by itself, and it comes back
+e.uc.mem_write(0x2405ffe2, struct.pack("<H", 900))
+e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 900))
+play(60)
+check("governor: sheds when the task is over its limit", e.r8(SHED) >= 1, e.r8(SHED))
+e.uc.mem_write(0x2405ffe2, struct.pack("<H", 100))
+e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 0))
+for _ in range(20):
+    e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 0))
+    play(100)
+check("governor: and comes back when it is quiet again", e.r8(SHED) == 0, e.r8(SHED))
 
 # find transients: four bursts
 BURST[0] = True

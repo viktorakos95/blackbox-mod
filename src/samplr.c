@@ -1910,6 +1910,22 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
         }
         return 1;
     }
+    if (s->sc->shed >= 2 && r < 3.f && r > -3.f) {                /* the audio task is near its limit: linear interpolation on a contiguous copy (the cubic costs three times as much) */
+        int32_t lo = ip + fl(rmin);
+        int cnt = (ip + fl(rmax) + 2) - lo + 1;
+        if (cnt <= 800) {
+            rd_span(&c, lo, cnt, s->sc->xl, s->mono ? 0 : s->sc->xr);
+            const float *xl = s->sc->xl + (ip - lo), *xr = s->mono ? xl : s->sc->xr + (ip - lo);
+            float *ol = s->sc->il, *or_ = s->sc->ir, p = fr;
+            for (int i = 0; i < m; i++, p += r) {
+                int k = fl(p);
+                float f = p - (float)k, a0 = xl[k], b0 = xr[k];
+                ol[i] = a0 + (xl[k + 1] - a0) * f;
+                or_[i] = b0 + (xr[k + 1] - b0) * f;
+            }
+            return 1;
+        }
+    }
     if (r > 0.f && r <= 3.f && s->iq < 2) {                       /* forward, up to 3x: the firmware's cubic on a contiguous copy */
         int32_t base = ip - 1;
         int cnt = hi - base + 1;
@@ -2393,9 +2409,10 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         v->g_warp += (rnd01(s) * 2.f - 1.f - v->g_warp) * 0.04f;
         v->g_warp2 += (rnd01(s) * 2.f - 1.f - v->g_warp2) * 0.04f;
     }
-    if (live && s->load < 650) {                               /* (no new grains while this block alone is above 65 %) */
+    int shed = s->sc->shed, quiet = shed >= 3 && s->tno != s->sc->cur;   /* (SAMPLR holds back when the audio task is near its limit, see samplr_run) */
+    if (live && s->load < 650 && !quiet) {                     /* (no new grains while this block alone is above 65 %) */
         if (s->gfree) {
-            float inc = s->dens * (1.f / 48000.f);
+            float inc = s->dens * (1.f / 48000.f) * (shed >= 1 ? .5f : 1.f);
             if (v->g_acc >= 1.f) {
                 grain_spawn(s, v, 0);
                 v->g_acc -= 1.f;
@@ -2410,7 +2427,7 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
                 v->g_acc -= 1.f;
         } else {
             int off = grid(s, dbeats[s->div % 5], n);
-            if (off >= 0)
+            if (off >= 0 && (shed < 1 || (rnd(s) & 1)))
                 grain_spawn(s, v, off);
         }
     }
@@ -2533,7 +2550,7 @@ static int run_voices(struct sm *s, float *bl, float *br, int n)
     int any_spot = 0;
     for (int i = 0; i < SM_SPOTS; i++)
         any_spot |= s->spot[i].used;
-    if (any_spot) {
+    if (any_spot && !(s->sc->shed >= 3 && s->tno != s->sc->cur)) {
         int off = grid(s, dbeats[s->div % 5], n);
         if (off >= 0)
             arp_step(s, off);
@@ -2596,6 +2613,22 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         return 0;
     uint32_t c0 = DWT_CYCCNT;
     int fed = 0;
+    {   /* the governor: the whole audio task must stay clear of its limit (a pad played over a busy SAMPLR took the Blackbox down at C 89/90). SAMPLR's own
+         * budget is what is left under 80 % after everything else; over it, it sheds in steps: 1 half the grains, 2 linear interpolation, 3 the tracks not shown
+         * start nothing new. It comes back up slowly (after about 3 s under 60 % of the budget). */
+        struct smscr *sc = s->sc;
+        float other = (float)*(volatile uint16_t *)0x2405ffe2u - (float)s->t_avg_shown;
+        float lim = 800.f - (other > 0.f ? other : 0.f);
+        lim = lim < 250.f ? 250.f : lim;
+        sc->ld += ((float)s->load - sc->ld) * .1f;
+        if (sc->ld > lim && sc->shed < 3 && s->tick - sc->shed_t > 24) {
+            sc->shed++;
+            sc->shed_t = s->tick;
+        } else if (sc->ld < lim * .6f && sc->shed > 0 && s->tick - sc->shed_t > 560) {
+            sc->shed--;
+            sc->shed_t = s->tick;
+        }
+    }
     for (int t = 0; t < SM_TRACKS; t++) {                         /* every track that was ever used goes on playing (its loop, what it latched) */
         struct sm *q = t ? trk_get(t, 0) : s;
         if (!q)
