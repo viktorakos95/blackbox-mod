@@ -1059,7 +1059,7 @@ check("on the SAMPLR page the hardware REC arms the gesture recorder", e.r8(SMPL
 check("... and the looper's tracks did not see it", list(e.uc.mem_read(STATE + T0, TSIZE * 4)) == before_l)
 press(0xF9, 1)
 check("... STOP stops the gesture timeline (and arming)", e.r8(SMPLR_P + G_ARMED) == 0, e.r8(SMPLR_P + G_ARMED))
-wave_x, wave_d = 3 + 7 + 150, 40
+wave_x, wave_d = 3 + 7 + 150, 90
 touch("down", wave_x, wave_d)
 blocks(3, 0.0)
 f = draw(0)
