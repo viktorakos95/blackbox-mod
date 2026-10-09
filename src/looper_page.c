@@ -1278,20 +1278,20 @@ static void draw_samplr(void)
     {                                                             /* the strip above the sample: transpose, REC, PLAY / STOP, the layers and the loop's position */
         for (int i = 0; i < SM_MODES; i++)                          /* the five modes */
             sm_button(3 + 37 * i, ty, 35, sm_mode_name[i], s->mode == i);
-        sm_button(190, ty, 28, "REV", s->rev);
+        sm_button(190, ty, 26, "REV", s->rev);
         int rec = s->g_rec >= 0, arm = s->g_armed != 0, run = s->g_run;
-        frame(220, ty, 32, SM_BH, rec ? C_RED : arm ? C_YELLOW : C_RAIL, 1);
+        frame(218, ty, 32, SM_BH, rec ? C_RED : arm ? C_YELLOW : C_RAIL, 1);
         if (rec || arm)
-            frame(221, ty + 1, 30, SM_BH - 2, rec ? C_RED : C_YELLOW, 1);
-        text_c(220, ty + (SM_BH - 8) / 2, 32, "REC", rec ? C_RED : arm ? C_YELLOW : C_LIGHT, 1);
-        sm_button(254, ty, 36, run || arm ? "STOP" : "PLAY", run);
+            frame(219, ty + 1, 30, SM_BH - 2, rec ? C_RED : C_YELLOW, 1);
+        text_c(218, ty + (SM_BH - 8) / 2, 32, "REC", rec ? C_RED : arm ? C_YELLOW : C_LIGHT, 1);
+        sm_button(252, ty, 34, run || arm ? "STOP" : "PLAY", run);
         for (int L = 0; L < SM_LAYERS; L++) {                      /* the three layers: grey empty, cyan recorded, red recording */
             int recL = s->g_rec == L, have = L < s->g_layers;
-            box(293 + 8 * L, ty + 4, 6, SM_BH - 8, recL ? C_RED : have ? C_CYAN : C_DARK);
+            box(289 + 8 * L, ty + 4, 6, SM_BH - 8, recL ? C_RED : have ? C_CYAN : C_DARK);
         }
         if (run && s->g_len > 0) {                                  /* the loop's position, a thin line under the buttons */
-            int w = (int)((uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / ((uint32_t)s->g_len / 70u + 1u));
-            box(220, ty + SM_BH + 1, w > 70 ? 70 : w, 2, rec ? C_RED : C_CYAN);
+            int w = (int)((uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / ((uint32_t)s->g_len / 68u + 1u));
+            box(218, ty + SM_BH + 1, w > 68 ? 70 : w, 2, rec ? C_RED : C_CYAN);
         }
     }
     int sh = SM_SHEET < SM_SHEETS ? SM_SHEET : 0;
@@ -1440,11 +1440,11 @@ static int sm_touch(int kind, int id, int x, int d)
         if (x >= 3 && x < 188 && (x - 3) % 37 < 35) {
             samplr_set_mode((x - 3) / 37);
             P->entered = 0;
-        } else if (x >= 190 && x < 218)
+        } else if (x >= 190 && x < 216)
             samplr_cycle(11);
-        else if (x >= 220 && x < 252)
+        else if (x >= 218 && x < 250)
             samplr_gest(0);
-        else if (x >= 254 && x < 290)
+        else if (x >= 252 && x < 286)
             samplr_gest(1);
         P->sig = 0;
         return 1;
