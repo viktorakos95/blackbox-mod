@@ -331,3 +331,14 @@ takes three overdub layers.
   blocks, so its effect can show), and the peak only counts together with an average over 80 % (95 % average-free spikes happen when playing normally).
 - Steps now only change how things are computed or how many grains there are; nothing is muted any more: 1 half the grain rate and 24 grains in all, 2 linear interpolation, 3 the
   grains read ONE channel (half the sample work) and 14 grains in all, 4 8 grains in all. Back one step after ~2 s with the task under 70 %.
+
+## Build 30 (the governor measures the real thing)
+- Report: two grain tracks, or one grain track and one stock pad, plus a few light modes, already reach !4.
+- The earlier governor guessed the task's load from SAMPLR's own share plus a readout averaged over a second (it could count SAMPLR twice, and lagged). Now it measures how much of its
+  block the audio task has used when SAMPLR has finished (SAMPLR runs late in the block, so that is nearly all of the task: stock voices, looper, SAMPLR): cycles since the wake-up
+  (cpu.c keeps them at 0x2405ffd4) over the block period - the instantaneous C. Smoothed over ~10 blocks above 85 %, or the worst block of the last ~25 above 96 %, steps up (every
+  16 blocks); smoothed under 70 % and the recent worst under 85 % for ~2 s steps down. It no longer needs the readout, nor t_avg_shown.
+- Steps are ordered by what costs the least sound: 1 grains use linear interpolation instead of the stock cubic, 2 grains read one channel (and every voice goes linear), 3 half the grain
+  rate and 24 grains in all, 4 12 grains in all. Emulator instructions per block for two grain tracks + an arp + slicer loops (tools/prof_samplr.py N, PYTHONPATH=.):
+  588k at rest, 534k step 1, 484k step 2, 382k step 3, ~380k step 4. The stock cubic is 38 % of the rest case.
+- The linear loop for forward rates is a plain truncation per sample (the floor was a function call).

@@ -38,7 +38,7 @@ def struct_offsets(names):
     return res
 
 
-OFF = struct_offsets(["iq", "g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode", "rev", "seqm", "sq_on", "gate", "lp_a", "lp_b", "fx_f", "fx_r", "fx_sd", "fx_sr", "peak", "load", "sc", "t_avg_shown", "tick"])
+OFF = struct_offsets(["iq", "g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode", "rev", "seqm", "sq_on", "gate", "lp_a", "lp_b", "fx_f", "fx_r", "fx_sd", "fx_sr", "peak", "load", "sc", "t_avg_shown", "tick", "t_per"])
 
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
@@ -1288,29 +1288,25 @@ touch(2, 0, 0, 0)
 play(6)
 e.call("samplr_trans", 0)
 e.uc.mem_write(SHED, b"\x00")
-# a loaded task makes it shed by itself, and it comes back
-e.uc.mem_write(0x2405ffe2, struct.pack("<H", 900))
-e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 900))
-play(60)
-check("governor: sheds when the task is over its limit", e.r8(SHED) >= 1, e.r8(SHED))
-e.uc.mem_write(0x2405ffe2, struct.pack("<H", 100))
-e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 0))
-for _ in range(20):
-    e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 0))
+# a loaded task makes it shed by itself (how much of its block the audio task has used when SAMPLR is done), and it comes back
+def busy(frac):
+    dwt = struct.unpack("<I", e.uc.mem_read(0xE0001004, 4))[0]
+    e.uc.mem_write(0x2405ffd4, struct.pack("<I", (dwt - int(frac * 2_000_000)) & 0xffffffff))
+e.uc.mem_write(SMP + OFF["t_per"], struct.pack("<I", 2_000_000))
+for _ in range(60):
+    busy(0.95)
+    play()
+check("governor: sheds when the task has used 95 % of its block", e.r8(SHED) >= 1, e.r8(SHED))
+top = e.r8(SHED)
+for _ in range(30):
+    busy(0.78)
+    play(10)
+check("governor: and holds in the band between (78 %)", e.r8(SHED) == top, (e.r8(SHED), top))
+for _ in range(30):
+    busy(0.20)
     play(100)
 check("governor: and comes back when it is quiet again", e.r8(SHED) == 0, e.r8(SHED))
-
-# the task's own readout (slow, averaged over a second) cannot make it overshoot: one step, then a second to see the effect
-e.uc.mem_write(SHED, b"\x00")
-e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", 0))
-e.uc.mem_write(0x2405ffe2, struct.pack("<H", 900))
-e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 0))
-play(120)
-check("governor: the readout alone steps once in 120 blocks (not up to the top at once)", e.r8(SHED) == 1, e.r8(SHED))
-e.uc.mem_write(0x2405ffe2, struct.pack("<H", 100))
-for _ in range(15):
-    play(100)
-check("governor: ... and it comes back", e.r8(SHED) == 0, e.r8(SHED))
+e.uc.mem_write(SMP + OFF["t_per"], struct.pack("<I", 0))
 
 # shed 4: the grains in all are capped (4), however many fingers and however dense
 e.call("samplr_set_mode", 3)
@@ -1324,7 +1320,7 @@ mxg = 0
 for _ in range(60):
     play()
     mxg = max(mxg, e.r8(SMP + struct_offsets(["n_grains"])["n_grains"]))
-check("shed 4: no more than a handful of grains sound in all (8)", 0 < mxg <= 9, mxg)
+check("shed 4: no more than a dozen grains sound in all", 0 < mxg <= 13, mxg)
 for f_ in range(4):
     touch(2, f_, 0, 0)
 play(200)

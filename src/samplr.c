@@ -1913,26 +1913,35 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
         }
         return 1;
     }
-    if (s->sc->shed >= 2 && r < 3.f && r > -3.f) {                /* the audio task is near its limit: linear interpolation on a contiguous copy (the cubic costs three times as much) */
+    if ((s->sc->flin || s->sc->shed >= 2) && r < 3.f && r > -3.f) {   /* the audio task is near its limit: linear interpolation on a contiguous copy (the cubic costs three times as much) */
         int32_t lo = ip + fl(rmin);
         int cnt = (ip + fl(rmax) + 2) - lo + 1;
         if (cnt <= 800) {
             rd_span(&c, lo, cnt, s->sc->xl, mono ? 0 : s->sc->xr);
             const float *xl = s->sc->xl + (ip - lo), *xr = mono ? xl : s->sc->xr + (ip - lo);
             float *ol = s->sc->il, *or_ = s->sc->ir, p = fr;
-            if (mono) {
+            if (r > 0.f) {                                        /* (p >= 0: a plain truncation is the floor) */
+                if (mono) {
+                    for (int i = 0; i < m; i++, p += r) {
+                        int k = (int)p;
+                        float a0 = xl[k];
+                        ol[i] = or_[i] = a0 + (xl[k + 1] - a0) * (p - (float)k);
+                    }
+                } else {
+                    for (int i = 0; i < m; i++, p += r) {
+                        int k = (int)p;
+                        float f = p - (float)k, a0 = xl[k], b0 = xr[k];
+                        ol[i] = a0 + (xl[k + 1] - a0) * f;
+                        or_[i] = b0 + (xr[k + 1] - b0) * f;
+                    }
+                }
+            } else {
                 for (int i = 0; i < m; i++, p += r) {
                     int k = fl(p);
-                    float a0 = xl[k];
-                    ol[i] = or_[i] = a0 + (xl[k + 1] - a0) * (p - (float)k);
+                    float f = p - (float)k, a0 = xl[k], b0 = xr[k];
+                    ol[i] = a0 + (xl[k + 1] - a0) * f;
+                    or_[i] = b0 + (xr[k + 1] - b0) * f;
                 }
-                return 1;
-            }
-            for (int i = 0; i < m; i++, p += r) {
-                int k = fl(p);
-                float f = p - (float)k, a0 = xl[k], b0 = xr[k];
-                ol[i] = a0 + (xl[k + 1] - a0) * f;
-                or_[i] = b0 + (xr[k + 1] - b0) * f;
             }
             return 1;
         }
@@ -2337,7 +2346,7 @@ static void arp_step(struct sm *s, int off)
 
 static void grain_spawn(struct sm *s, struct smvoice *v, int off)
 {
-    static const uint8_t cap[5] = {40, 24, 20, 14, 8};             /* grains in all across the tracks, by how far SAMPLR has to hold back */
+    static const uint8_t cap[5] = {40, 40, 40, 24, 12};             /* grains in all across the tracks, by how far SAMPLR has to hold back */
     if (s->sc->gnow >= cap[s->sc->shed > 4 ? 4 : s->sc->shed])
         return;
     s->sc->gnow++;
@@ -2427,7 +2436,7 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     int shed = s->sc->shed;                                       /* (SAMPLR holds back when the audio task is near its limit, see samplr_run) */
     if (live && s->load < 650) {                     /* (no new grains while this block alone is above 65 %) */
         if (s->gfree) {
-            float inc = s->dens * (1.f / 48000.f) * (shed >= 1 ? .5f : 1.f);
+            float inc = s->dens * (1.f / 48000.f) * (shed >= 3 ? .5f : 1.f);
             if (v->g_acc >= 1.f) {
                 grain_spawn(s, v, 0);
                 v->g_acc -= 1.f;
@@ -2442,12 +2451,13 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
                 v->g_acc -= 1.f;
         } else {
             int off = grid(s, dbeats[s->div % 5], n);
-            if (off >= 0 && (shed < 1 || (rnd(s) & 1)))
+            if (off >= 0 && (shed < 3 || (rnd(s) & 1)))
                 grain_spawn(s, v, off);
         }
     }
     float gain = v->gain * s->vol, ge = (e1 - e0) * (1.f / (float)n);
-    s->sc->fmono = shed >= 3;
+    s->sc->fmono = shed >= 2;
+    s->sc->flin = shed >= 1;
     for (int i = 0; i < SM_GRAINS; i++) {
         struct smgrain *g = &v->g[i];
         if (!g->on)
@@ -2486,7 +2496,7 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         if (g->age >= g->len)
             g->on = 0;
     }
-    s->sc->fmono = 0;
+    s->sc->fmono = s->sc->flin = 0;
 }
 
 /* GRAIN: the sample itself, looping at normal speed, under the grains while any cloud is on (the dry of MOSAIC). */
@@ -2631,29 +2641,8 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         return 0;
     uint32_t c0 = DWT_CYCCNT;
     int fed = 0;
-    {   /* the governor: the whole audio task must stay clear of its limit (a pad played over a busy SAMPLR took the Blackbox down at C 89/90, and at C 95+ it glitches
-         * for good). It looks at SAMPLR's own share block by block (fast: a step every 16 blocks) and at the task's readout, average and peak, per mille, 0x2405ffe2 / e4
-         * (slow: that is averaged over about a second, so after a step it is given a second to show the effect). Steps, each one only changes how it is computed or
-         * how many grains there are, nothing is muted: 1 half the grain rate and 24 grains in all (40 at rest), 2 linear interpolation instead of the cubic, 3 the grains
-         * read one channel (half the work), 14 grains in all, 4 8 grains in all. One step back after ~2 s with the task under 70 %. */
-        struct smscr *sc = s->sc;
-        float tot_avg = (float)*(volatile uint16_t *)0x2405ffe2u, tot_pk = (float)*(volatile uint16_t *)0x2405ffe4u;
-        float other = tot_avg - (float)s->t_avg_shown;
-        float lim = 800.f - (other > 0.f ? other : 0.f);
-        lim = lim < 250.f ? 250.f : lim;
-        sc->ld += ((float)s->load - sc->ld) * .1f;
-        int fast = sc->ld > lim, slow = tot_avg > 880.f || (tot_pk > 980.f && tot_avg > 800.f);
-        uint32_t since = s->tick - sc->shed_t;
-        if (((fast && since > 16) || (slow && since > 200)) && sc->shed < 4) {
-            sc->shed++;
-            sc->shed_t = s->tick;
-        } else if (!fast && !slow && tot_avg < 700.f && sc->ld < lim * .6f && sc->shed > 0 && since > 400) {
-            sc->shed--;
-            sc->shed_t = s->tick;
-        }
-        sc->gnow = sc->gacc;
-        sc->gacc = 0;
-    }
+    s->sc->gnow = s->sc->gacc;
+    s->sc->gacc = 0;
     for (int t = 0; t < SM_TRACKS; t++) {                         /* every track that was ever used goes on playing (its loop, what it latched) */
         struct sm *q = t ? trk_get(t, 0) : s;
         if (!q)
@@ -2731,6 +2720,27 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         }
     }
     s->t_last = c0;
+    {   /* the governor. How much of its block the audio task has used by now (SAMPLR runs late in it, so this is nearly all of it: the stock voices, the looper, and SAMPLR) is
+         * the instantaneous version of the C readout (cpu.c keeps the cycle count of the wake-up at 0x2405ffd4). A smoothed value over 85 %, or a recent worst block over 96 %
+         * (100 % is a missed deadline), sheds a step every 16 blocks; nothing is muted, each step only changes how it is computed or how many grains there are:
+         * 1 grains use linear interpolation, 2 and one channel, and all voices linear, 3 half the grain rate and 24 grains in all (40 at rest), 4 12 grains in all.
+         * One step back after ~2 s with the smoothed value under 70 % and the recent worst under 85 %. A C89/90 shut the Blackbox off, 95+ glitches for good. */
+        struct smscr *sc = s->sc;
+        uint32_t used = c1 - *(volatile uint32_t *)0x2405ffd4u;
+        if (s->t_per > 100000u && used < 2u * s->t_per) {
+            float inst = (float)used * 1000.f / (float)s->t_per;
+            sc->ld += (inst - sc->ld) * .1f;
+            sc->pk = inst > sc->pk * .97f ? inst : sc->pk * .97f;
+            uint32_t since = s->tick - sc->shed_t;
+            if ((sc->ld > 850.f || sc->pk > 960.f) && sc->shed < 4 && since > 16) {
+                sc->shed++;
+                sc->shed_t = s->tick;
+            } else if (sc->ld < 700.f && sc->pk < 850.f && sc->shed > 0 && since > 400) {
+                sc->shed--;
+                sc->shed_t = s->tick;
+            }
+        }
+    }
     for (int t = 1; t < SM_TRACKS; t++) {                         /* the readouts and the load guard are the whole thing's */
         struct sm *q = trk_get(t, 0);
         if (q) {
