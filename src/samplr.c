@@ -36,8 +36,8 @@ struct sm *samplr(void)
         s->id = -1;
         s->rnd = 2463534242u;
         s->div = 2;
-        s->atk = 1;
-        s->rel = 1;
+        s->atk = 19;                                              /* 1.3 ms */
+        s->rel = 32;                                              /* 4 ms */
         s->scat = 0.f;
         s->dens = 20.f;
         s->ypit = 0;
@@ -325,9 +325,18 @@ static const char *const cont_name[4] = {"SINE", "DOWN", "UP", "FLAT"};
 static const uint8_t pat_k[8] = {0, 2, 1, 3, 2, 0, 3, 1};            /* a fixed pseudo-random pitch pattern: which note of the scale, and the octave */
 static const int8_t pat_o[8] = {0, 0, 12, 0, 0, -12, 0, 12};
 static const char *const pat_name[SM_PATS] = {"UP", "DOWN", "UP-DN", "RND", "ORDER"};
-static const int32_t atk_frames[6] = {16, 64, 240, 960, 3840, 14400};   /* 0.3 1.3 5 20 80 300 ms */
-static const int32_t rel_frames[6] = {48, 192, 960, 3840, 14400, 48000}; /* 1 4 20 80 300 1000 ms */
-static const char *const atk_name[6] = {"0.3", "1", "5", "20", "80", "300"}, *const rel_name[6] = {"1", "4", "20", "80", "300", "1000"};
+/* Attack and release are continuous: a step 0..96 is 0.25 ms * 2^(step / 8), i.e. 0.25 ms .. 1 s, eight steps to the octave. */
+#define ENV_MAX 96
+static const float p8[8] = {1.f, 1.0905077f, 1.1892071f, 1.2968396f, 1.4142136f, 1.5422108f, 1.6817928f, 1.8340081f};
+
+static float step_ms(int i)
+{
+    i = i < 0 ? 0 : i > ENV_MAX ? ENV_MAX : i;
+    float v = .25f * p8[i & 7];
+    for (int k = i >> 3; k > 0; k--)
+        v *= 2.f;
+    return v;
+}
 
 static uint8_t *block_entry(struct sm *s, int blk);
 
@@ -528,7 +537,7 @@ void samplr_trans(int what)
 void samplr_cycle(int what)
 {
     struct sm *s = samplr();
-    if (!s || what < 0 || what > 9)
+    if (!s || what < 0 || what > 10)
         return;
     if (what == 0) {
         if (s->mode == SM_GRAIN)
@@ -553,6 +562,8 @@ void samplr_cycle(int what)
         s->g_sz = (uint8_t)((s->g_sz + 1) % 3);
     } else if (what == 9) {
         s->g_dry = (uint8_t)((s->g_dry + 1) & 3);
+    } else if (what == 10) {
+        s->iq = (uint8_t)((s->iq + 1) % 3);
     } else {
         s->latchm ^= (uint8_t)(1u << s->mode);
         if (!((s->latchm >> s->mode) & 1)) {
@@ -595,8 +606,8 @@ static void param_set(struct sm *s, int pid, int val)
     case 1: s->div = (uint8_t)(val > 4 ? 4 : val); break;
     case 2: s->scat = (float)val * (1.f / 1023.f); break;
     case 3: s->g_drift = (int8_t)((val > 16 ? 16 : val) - 8); break;
-    case 4: s->atk = (uint8_t)(val > 5 ? 5 : val); break;
-    case 5: s->rel = (uint8_t)(val > 5 ? 5 : val); break;
+    case 4: s->atk = (uint8_t)(val > ENV_MAX ? ENV_MAX : val); break;
+    case 5: s->rel = (uint8_t)(val > ENV_MAX ? ENV_MAX : val); break;
     case 7: break;
     default: s->dens = 1.f + (float)val * (119.f / 1023.f);
     }
@@ -620,6 +631,17 @@ void samplr_knob(int knob, int counts)
         float d = s->dens * (1.f + (float)counts * (1.f / 3200.f));
         s->dens = d < 1.f ? 1.f : d > 120.f ? 120.f : d;
         rec_param(s, 6);
+        return;
+    }
+    if (m != SM_GRAIN && (knob == 2 || knob == 3)) {                /* attack / release: a step per ~40 counts, all the values in between */
+        int a = s->kacc[knob] + counts, steps = a / 40;
+        s->kacc[knob] = (int16_t)(a - steps * 40);
+        if (!steps)
+            return;
+        uint8_t *q = knob == 2 ? &s->atk : &s->rel;
+        int v = *q + steps;
+        *q = (uint8_t)(v < 0 ? 0 : v > ENV_MAX ? ENV_MAX : v);
+        rec_param(s, knob == 2 ? 4 : 5);
         return;
     }
     int a = s->kacc[knob] + counts, dir = 0;
@@ -652,14 +674,6 @@ void samplr_knob(int knob, int counts)
         int v = s->g_drift + dir;
         s->g_drift = (int8_t)(v < -8 ? -8 : v > 8 ? 8 : v);
         pid = 3;
-    } else if (m != SM_GRAIN && knob == 2) {
-        int v = s->atk + dir;
-        s->atk = (uint8_t)(v < 0 ? 0 : v > 5 ? 5 : v);
-        pid = 4;
-    } else if (m != SM_GRAIN && knob == 3) {
-        int v = s->rel + dir;
-        s->rel = (uint8_t)(v < 0 ? 0 : v > 5 ? 5 : v);
-        pid = 5;
     }
     if (pid >= 0)
         rec_param(s, pid);
@@ -683,6 +697,21 @@ static char *num(char *p, unsigned v)
     while (n)
         *p++ = tmp[--n];
     return p;
+}
+
+/* A time in ms: one decimal below 10, whole numbers above. */
+static char *ms_text(char *p, float ms)
+{
+    if (ms < 10.f) {
+        int t10 = (int)(ms * 10.f + .5f);
+        p = num(p, (unsigned)(t10 / 10));
+        if (t10 % 10) {
+            *p++ = '.';
+            *p++ = (char)('0' + t10 % 10);
+        }
+        return p;
+    }
+    return num(p, (unsigned)(ms + .5f));
 }
 
 /* The mode's settings for the top bar. */
@@ -730,9 +759,9 @@ void samplr_info(char *out)
     }
     if (s->mode != SM_GRAIN) {
         p = cat(p, " A");
-        p = cat(p, atk_name[s->atk % 6]);
+        p = ms_text(p, step_ms(s->atk));
         p = cat(p, " R");
-        p = cat(p, rel_name[s->rel % 6]);
+        p = ms_text(p, step_ms(s->rel));
     }
     *p = 0;
 }
@@ -1379,6 +1408,12 @@ static uint8_t *block_entry(struct sm *s, int blk)
  * positions touch are read, straight out of the pool blocks (no call into the engine's reader, no copy of the whole span: at +48
  * the span is thousands of frames per block and the pool lives in external memory). 0 when a block is not in the pool yet (it
  * is asked for, at most every 128 ms). Outside the sample it is silence; a mono sample's right side is its left. */
+/* The firmware's own interpolators (the pad engine's Interp: Normal / HighQ): a 4-point cubic over a contiguous float buffer, float32 and float64. Called for one channel:
+ * src (frame idx - 1 is src[idx - 1]), idx, a place for the consumed count, the phase (0..1, updated), the output, the count, the step. */
+typedef void (*stock_interp_fn)(const float *src, int unused, int idx, int *used, float *phase, float *out, int count, float ratio);
+#define STOCK_CUBIC ((stock_interp_fn)0x080619d1u)
+#define STOCK_HIGHQ ((stock_interp_fn)0x08061a65u)
+
 struct rdc {                                                      /* the blocks one read touches */
     int32_t len;
     int b0;
@@ -1497,6 +1532,26 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
         }
         return 1;
     }
+    if (r > 0.f && r <= 3.f && s->iq < 2) {                       /* forward, up to 3x: the firmware's cubic on a contiguous copy */
+        int32_t base = ip - 1;
+        int cnt = hi - base + 1;
+        if (cnt > 800)
+            return 0;
+        for (int i = 0; i < cnt; i++)
+            rd_at(&c, base + i, &s->xl[i], &s->xr[i]);
+        stock_interp_fn fn = s->iq ? STOCK_HIGHQ : STOCK_CUBIC;
+        int used;
+        float ph = fr;
+        fn(s->xl, 0, 1, &used, &ph, s->il, m, r);
+        if (s->mono) {
+            for (int i = 0; i < m; i++)
+                s->ir[i] = s->il[i];
+        } else {
+            ph = fr;
+            fn(s->xr, 0, 1, &used, &ph, s->ir, m, r);
+        }
+        return 1;
+    }
     float ar = r < 0.f ? -r : r;
     struct win4 w;
     w.f = -0x40000000;
@@ -1557,7 +1612,7 @@ static int voice_part(struct sm *s, struct smvoice *v, float *bl, float *br, int
     if (!sample_block(s, ip, fr, r, m))
         return 0;
     int stop_at = m, ends = 0;                                    /* a one-shot ends exactly at its slice's end */
-    if (!v->loop && r > 0.f && s->rel <= 1) {                      /* with the shortest releases a one-shot ends exactly at its end; a longer release plays out past it */
+    if (!v->loop && r > 0.f && s->rel <= 26) {                     /* with a release under 2.5 ms a one-shot ends exactly at its end; a longer release plays out past it */
         float left = (float)(v->end - ip) - fr;
         if (left <= 0.f) {
             stop_at = 0;
@@ -1568,7 +1623,7 @@ static int voice_part(struct sm *s, struct smvoice *v, float *bl, float *br, int
         }
     }
     float env = v->env, g0 = v->gain * s->vol * .9f, gs = v->g_prev, gd = (g0 - gs) * (1.f / (float)m);   /* the gain is ramped over the block: no zipper noise */
-    float eu = 1.f / (float)atk_frames[s->atk % 6], ed = 1.f / (float)rel_frames[s->rel % 6];
+    float eu = 1.f / (step_ms(s->atk) * 48.f), ed = 1.f / (step_ms(s->rel) * 48.f);
     int on = v->on;
     for (int k = 0; k < m; k++) {
         float l = s->il[k], rr = s->ir[k];
@@ -2016,8 +2071,9 @@ uint32_t samplr_sig(void)
         return 0;
     uint32_t h = (uint32_t)s->mode | (uint32_t)s->gate << 2 | (uint32_t)s->nslice << 3 | (uint32_t)s->sel << 10 | (uint32_t)s->filled << 15 |
                  (uint32_t)(s->vol * 20.f) << 24;
-    h = h * 31u + ((uint32_t)s->qi | (uint32_t)s->div << 2 | (uint32_t)s->pat << 4 | (uint32_t)s->latchm << 7 | (uint32_t)s->atk << 8 |
-                   (uint32_t)s->rel << 11 | (uint32_t)s->gfree << 14 | (uint32_t)(s->scat * 10.f) << 15 | (uint32_t)(s->dens + .5f) << 20);
+    h = h * 31u + ((uint32_t)s->qi | (uint32_t)s->div << 2 | (uint32_t)s->pat << 4 | (uint32_t)s->latchm << 7 | (uint32_t)s->gfree << 14 |
+                   (uint32_t)(s->scat * 10.f) << 15 | (uint32_t)(s->dens + .5f) << 20);
+    h = h * 31u + ((uint32_t)s->atk | (uint32_t)s->rel << 8 | (uint32_t)s->iq << 16 | (uint32_t)s->g_sz << 18 | (uint32_t)s->g_dry << 20);
     h = h * 31u + ((uint32_t)s->g_bars | (uint32_t)s->g_run << 4 | (uint32_t)s->g_armed << 5 | (uint32_t)s->g_layers << 8 | (uint32_t)(s->g_rec + 2) << 10 |
                    (uint32_t)(s->g_run && s->g_len > 0 ? (uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / (uint32_t)(s->g_len / 32 + 1) : 0u) << 14);
     for (int i = 0; i < SM_SPOTS; i++)

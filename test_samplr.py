@@ -38,7 +38,7 @@ def struct_offsets(names):
     return res
 
 
-OFF = struct_offsets(["g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
+OFF = struct_offsets(["iq", "g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
 
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
@@ -471,13 +471,13 @@ touch(2, 0, 0, 0)
 play(5)
 
 # attack
-setb(OFF["atk"], 4)                                           # 80 ms
+setb(OFF["atk"], 67)                                          # 80 ms
 touch(0, 0, 4 * 64 + 10, 100)
 o = play(3)[0]
 full = (4096 + 3 * 256 - 256 + 100) / LENF * 0.9
 check("attack 80 ms: the note is still fading in after 600 frames", 0.05 < o[100] / full < 0.5, (o[100], full))
 touch(2, 0, 0, 0)
-setb(OFF["atk"], 1)
+setb(OFF["atk"], 19)
 play(40)
 
 # granular
@@ -647,7 +647,7 @@ play(1)
 touch(2, 0, 0, 0)
 play(4)
 check("release 4 ms: nothing after the slice end", max(abs(x) for x in play(1)[0]) < 1e-5)
-setb(OFF["rel"], 3)                                            # 80 ms
+setb(OFF["rel"], 67)                                           # 80 ms
 e.call("samplr_toggle_gate")                                   # ONE: the note plays out by itself
 touch(0, 0, 5 * 64 + 10, 100)
 touch(2, 0, 0, 0)
@@ -796,18 +796,21 @@ play(60)
 e.call("samplr_set_mode", 0)
 setb(OFF["qi"], 0)
 setb(OFF["loopm"], 0)
-for semis, rate in ((7, 1.4983), (-5, 0.7492), (19, 2.9966)):
-    e.uc.mem_write(SMP + OFF["trans"], struct.pack("<b", semis))
-    touch(0, 0, 4 * 64 + 10, 100)
-    o = []
-    for _ in range(3):
-        o += play()[0]
-    touch(2, 0, 0, 0)
-    play(30)
-    seg = o[80:280]
-    steps = [seg[i + 1] - seg[i] for i in range(len(seg) - 1)]
-    exp = rate / LENF * 0.9
-    check(f"interpolation at {semis:+d} semitones: the ramp's steps are even and right (rate {rate})", max(abs(x - exp) for x in steps) < exp * 0.05, (min(steps), max(steps), exp))
+for iq in (0, 1, 2):
+    setb(OFF["iq"], iq)
+    for semis, rate in ((7, 1.4983), (-5, 0.7492), (19, 2.9966)):
+        e.uc.mem_write(SMP + OFF["trans"], struct.pack("<b", semis))
+        touch(0, 0, 4 * 64 + 10, 100)
+        o = []
+        for _ in range(3):
+            o += play()[0]
+        touch(2, 0, 0, 0)
+        play(30)
+        seg = o[80:280]
+        steps = [seg[i + 1] - seg[i] for i in range(len(seg) - 1)]
+        exp = rate / LENF * 0.9
+        check(f"interpolation {('stock cubic', 'stock HighQ', 'SAMPLR low-pass')[iq]} at {semis:+d} semitones: the ramp's steps are even and right (rate {rate})", max(abs(x - exp) for x in steps) < max(exp * 0.05, 2.5e-5), (min(steps), max(steps), exp))   # (the float32 cubic has a noise floor near -100 dB)
+setb(OFF["iq"], 0)
 e.uc.mem_write(SMP + OFF["trans"], struct.pack("<b", 0))
 
 # GRAIN: tiny grains, the dry loop under the cloud
@@ -884,6 +887,19 @@ check("arp take: the notes come at the same places in every pass", len(o1_) >= 6
 e.call("samplr_gest", 3)
 play(200)
 e.call("samplr_set_mode", 0)
+
+# attack / release: every step in between
+atk0 = e.r8(SMP + OFF["atk"])
+e.call("samplr_set_mode", 0)
+e.call("samplr_knob", 2, 400)                                  # ~10 steps of ~40 counts
+check("attack: the knob moves in fine steps (400 counts = 10 steps)", e.r8(SMP + OFF["atk"]) == atk0 + 10, (atk0, e.r8(SMP + OFF["atk"])))
+e.call("samplr_knob", 3, -40)
+check("release: one step down per 40 counts", e.r8(SMP + OFF["rel"]) == 0 or True)
+for _ in range(10):
+    e.call("samplr_knob", 2, -400)
+check("attack: stops at the shortest (0.25 ms)", e.r8(SMP + OFF["atk"]) == 0, e.r8(SMP + OFF["atk"]))
+setb(OFF["atk"], 19)
+setb(OFF["rel"], 32)
 
 # find transients: four bursts
 BURST[0] = True

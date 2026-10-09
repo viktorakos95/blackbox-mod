@@ -1290,10 +1290,12 @@ static void draw_samplr(void)
             if (lab[i])
                 sm_button(3 + 44 * i, r2, 42, lab[i], on[i]);
     } else if (sh == 1) {                                         /* SAMPLE: which one, and transpose */
+        static const char *const iq_name[3] = {"CUBIC", "HIGHQ", "LOWP"};
         sm_button(3, r1, 40, "<", 0);
-        frame(47, r1, 218, SM_BH, C_RAIL, 1);
-        text_c(47, r1 + (SM_BH - 8) / 2, 218, nm[0] ? nm : "-", C_LIGHT, 1);
-        sm_button(269, r1, 40, ">", 0);
+        frame(47, r1, 178, SM_BH, C_RAIL, 1);
+        text_c(47, r1 + (SM_BH - 8) / 2, 178, nm[0] ? nm : "-", C_LIGHT, 1);
+        sm_button(229, r1, 40, ">", 0);
+        sm_button(273, r1, 38, iq_name[s->iq % 3], 0);                /* the interpolation: the firmware's cubic, its HighQ (double), or SAMPLR's low-passed cubic */
         sm_button(3, r2, 58, "-12", 0);
         sm_button(65, r2, 58, "-1", 0);
         char b[8], *q = b;
@@ -1376,8 +1378,10 @@ static int sm_touch(int kind, int id, int x, int d)
             if (!row2) {
                 if (x < 45)
                     samplr_select(-1);
-                else if (x >= 267)
+                else if (x >= 227 && x < 271)
                     samplr_select(1);
+                else if (x >= 273)
+                    samplr_cycle(10);
             } else if (x >= 3 && x < 61) {
                 samplr_trans(-12);
             } else if (x >= 65 && x < 123) {

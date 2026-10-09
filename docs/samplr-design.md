@@ -192,3 +192,13 @@ takes three overdub layers.
   the pitch pattern starts over with every press.
 - Takes: the arpeggio's step counter restarts with every pass (the same notes each time round); switching LATCH off during a take is recorded (the layer's latched things stop
   there too); a sweep each block lets go of any spot / cloud / latched loop that nobody holds (finger down, mode latch on, captured by a take, or a running layer) - no stuck arp.
+
+## Build 16 (the firmware's interpolator, continuous attack / release)
+- The pad engine's "Interp: Normal / HighQ" (strings "interpqual", "HighQ") are two routines in the firmware: FUN_080619d0 and FUN_08061a64. Both are the same 4-point cubic
+  (Catmull-Rom) over a contiguous float buffer, one channel per call, `(src, -, idx, &used, &phase, out, count, step in s0)`; Normal in float32 (26 instructions per
+  sample and channel in the emulator), HighQ in float64 (41). Neither is oversampled or filtered.
+- SAMPLR calls them for forward playback up to 3x (a contiguous copy of the frames the block touches, then one call per channel; mono once). SAMPLE sheet: the button at
+  the right of the name cycles CUBIC (the stock float one, default), HIGHQ (the stock double one) and LOWP (SAMPLR's own cubic averaged over two taps, a gentle low-pass for
+  pitch up; also used for reverse). Beyond 3x it stays linear. The float cubic has a noise floor near -100 dB (the emulator test allows 2.5e-5), HighQ is cleaner.
+- Attack and release are continuous: 97 steps of 0.25 ms * 2^(step / 8) (0.25 ms .. 1 s, eight steps to the octave), a step per ~40 counts of the knob; the top bar shows the
+  value (A1.3 R4). A one-shot slice still ends exactly at the slice end with a release under 2.5 ms. Recorded takes store the step.
