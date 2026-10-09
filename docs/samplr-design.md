@@ -252,3 +252,12 @@ takes three overdub layers.
 - Sync: the gesture loop's length carried a fraction of a frame away every cycle (4 beats at a tempo that is not a whole number of frames), so loops and the arp grid slid apart over
   many cycles; the fraction is carried now. The free-running grid is shared by all tracks (track n used to start its own at creation).
 - Grain attack / release already were the cloud's own volume (grains keep spawning while it fades); a test now checks a half-second release still sounds 100 ms after the lift.
+
+## Build 22 (a way back to silence)
+- Report: glitches and artifacts after a while with tracks and overdubs, still there with "everything stopped", after reloading the project and the sample, gone after a power
+  cycle. Cause I could find (not reproduced, no hardware): SAMPLR's state is not reset by a project load, and since build 19 other tracks keep playing what they latched
+  (slice loops, clouds, spots, sequences have no stop of their own and the STOP button only stopped the shown track). Hidden voices add CPU and sound.
+- PANIC (TRACK sheet) and STOP pressed on a track that is already stopped (hardware or the strip) = `samplr_stop_all()`: every track's loop, take, latch, sequence, cloud, spot and
+  voice. The TRK footer tab turns yellow while another track than the shown one sounds, loops or records.
+- Guards against a poisoned state that would only a power cycle clear: a track's filter state that blows up is cleared, and nothing but a number in -8..8 reaches the Out 1 bus
+  and the sends into the delay / reverb.

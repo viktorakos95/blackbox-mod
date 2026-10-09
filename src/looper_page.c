@@ -1092,7 +1092,7 @@ static void draw_footer(const struct lay *L)
         for (int i = 0; i < SM_SHEETS; i++) {
             int on = SM_SHEET == i;
             frame(3 + 37 * i, L->foot_y + 2, 35, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
-            text_c(3 + 37 * i, L->foot_y + 4, 35, sm_sheet_name[i], on ? C_CYAN : C_GREY, 1);
+            text_c(3 + 37 * i, L->foot_y + 4, 35, sm_sheet_name[i], on ? C_CYAN : i == SMS_TRK && samplr_others_active() ? C_YELLOW : C_GREY, 1);   /* (yellow: another track plays on) */
         }
         x0 = P->w;
     }
@@ -1416,15 +1416,16 @@ static void draw_samplr(void)
         int nt = samplr_tracks();
         for (int i = 0; i < nt; i++) {
             char b[2] = {(char)('1' + i), 0};
-            int x = 3 + 52 * i, inf = samplr_track_info(i);
-            sm_button(x, r1, 50, b, s->tno == i);
+            int x = 3 + 44 * i, inf = samplr_track_info(i);
+            sm_button(x, r1, 42, b, s->tno == i);
             if (inf & 16)
-                box(x + 5, r1 + 4, 5, 5, C_YELLOW);
+                box(x + 4, r1 + 4, 5, 5, C_YELLOW);
             if (inf & 2)
-                box(x + 38, r1 + 4, 5, 5, C_CYAN);
+                box(x + 33, r1 + 4, 5, 5, C_CYAN);
             if (inf & 12)
-                box(x + 38, r1 + SM_BH - 9, 5, 5, C_RED);
+                box(x + 33, r1 + SM_BH - 9, 5, 5, C_RED);
         }
+        sm_button(270, r1, 41, "PANIC", 0);                        /* silences every track: loops, latches, clouds, sequences */
     }
 }
 
@@ -1521,8 +1522,10 @@ static int sm_touch(int kind, int id, int x, int d)
                 samplr_trans(1);
             else if (x >= 253 && x < 309)
                 samplr_trans(12);
-        } else if (x >= 3 && (x - 3) / 52 < samplr_tracks()) {    /* TRACK: show another (the one that was shown goes on playing) */
-            samplr_track((x - 3) / 52);
+        } else if (x >= 270) {
+            samplr_stop_all();
+        } else if (x >= 3 && (x - 3) / 44 < samplr_tracks() && (x - 3) % 44 < 42) {    /* TRACK: show another (the one that was shown goes on playing) */
+            samplr_track((x - 3) / 44);
             SM_SHEET = 0;
             P->entered = 0;
         }

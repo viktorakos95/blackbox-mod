@@ -151,6 +151,8 @@ struct sm *samplr(void);                    /* the track the page shows; 0 until
 int samplr_tracks(void);                    /* how many tracks the memory holds (1..SM_TRACKS) */
 void samplr_track(int t);                   /* show / play on track t */
 int samplr_track_now(void);
+void samplr_stop_all(void);                 /* silence every track: loops, takes, latches, sequences, clouds */
+int samplr_others_active(void);             /* another track than the shown one sounds, loops or records */
 int samplr_track_info(int t);               /* bits: 1 has a sample, 2 loop running, 4 recording, 8 armed, 16 sounding */
 int samplr_run(float *bl, float *br, int n, float **snd);   /* snd: the looper's four send buses (delay L R, reverb L R) or 0; returns 1 if a send was fed */
 void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, int n);   /* in looper.c */

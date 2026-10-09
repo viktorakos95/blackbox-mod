@@ -1508,8 +1508,11 @@ void samplr_gest(int what)
     } else if (what == 5) {                                       /* PLAY only (the hardware button) */
         if (!s->g_run && !s->g_armed && s->g_layers)
             s->g_armed = 3;
-    } else if (what == 6) {                                       /* STOP only */
-        gest_stop(s);
+    } else if (what == 6) {                                       /* STOP only; when this track is stopped already, STOP stops everything on every track */
+        if (!s->g_run && !s->g_armed && s->g_rec == -1)
+            samplr_stop_all();
+        else
+            gest_stop(s);
     } else if (what == 2) {                                       /* UNDO: the last layer */
         if (s->g_rec >= 0 || s->g_armed) {
             gest_uncapture(s, 0);
@@ -1530,6 +1533,40 @@ void samplr_gest(int what)
     } else if (what == 4 && !s->g_layers && !s->g_run) {          /* LEN: 1 2 4 8 bars */
         s->g_bars = (uint8_t)(s->g_bars >= 8 ? 1 : s->g_bars * 2);
     }
+}
+
+/* Every track: loops, takes, latches, sequences, clouds, spots and whatever still rings - the way back to silence without a power cycle. */
+void samplr_stop_all(void)
+{
+    for (int t = 0; t < SM_TRACKS; t++) {
+        struct sm *q = trk_get(t, 0);
+        if (!q)
+            continue;
+        gest_stop(q);
+        q->g_armed = 0;
+        q->g_rec = -1;
+        q->latchm = 0;
+        for (int m = 0; m < SM_MODES; m++)
+            unlatch(q, m);
+        seq_stop(q);
+        silence(q);
+        for (int f = 0; f < SM_NV; f++) {
+            q->v[f].rep = 0.f;
+            q->v[f].rel = 1;
+            q->v[f].g_on = 0;
+        }
+        for (int f = 0; f < SM_VOICES; f++)
+            q->drag[f] = -1;
+    }
+}
+
+int samplr_others_active(void)
+{
+    struct sm *s = samplr();
+    for (int t = 0; s && t < SM_TRACKS; t++)
+        if (t != s->tno && (samplr_track_info(t) & 30))
+            return 1;
+    return 0;
 }
 
 static void gest_dispatch(struct sm *s, int L, const struct smev *e)
@@ -2455,10 +2492,19 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         run_voices(q, tl, tr, n);
         if (q->fx_f > 2 || q->fx_f < -2 || q->flt.mix > 0.f)      /* the track's strip: filter, then the sends to the looper's delay and reverb */
             looper_filter(&q->flt, (float)q->fx_f * .01f, (float)q->fx_r * .01f, tl, tr, n);
+        for (int a = 0; a < 8; a++) {                             /* a filter that blew up starts clean (a NaN would stay in it, and in the delay and reverb, until the next power on) */
+            float x = ((float *)q->flt.s)[a];
+            if (!(x > -1e4f && x < 1e4f))
+                for (int b = 0; b < 8; b++)
+                    ((float *)q->flt.s)[b] = 0.f;
+        }
         float sd = (float)q->fx_sd * .01f, sr = (float)q->fx_sr * .01f, pk = q->peak * .9f;
         int send = snd && (q->fx_sd || q->fx_sr);
         for (int i = 0; i < n; i++) {
-            float l = tl[i], r = tr[i], m = (l < 0.f ? -l : l) > (r < 0.f ? -r : r) ? (l < 0.f ? -l : l) : (r < 0.f ? -r : r);
+            float l = tl[i], r = tr[i];
+            l = l > -8.f && l < 8.f ? l : 0.f;                      /* (nothing but a number gets to the bus and the sends) */
+            r = r > -8.f && r < 8.f ? r : 0.f;
+            float m = (l < 0.f ? -l : l) > (r < 0.f ? -r : r) ? (l < 0.f ? -l : l) : (r < 0.f ? -r : r);
             pk = m > pk ? m : pk;
             bl[i] += l;
             br[i] += r;

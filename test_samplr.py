@@ -1179,6 +1179,32 @@ setb(OFF["atk"], 19)
 setb(OFF["rel"], 32)
 e.call("samplr_set_mode", 0)
 
+# PANIC / STOP twice: whatever other tracks still play on (latched things have no stop of their own) ends
+e.call("samplr_set_mode", 0)
+setb(OFF["loopm"], 1)
+setb(OFF["latchm"], 1)
+touch(0, 0, 3 * 64 + 10, 100)
+touch(2, 0, 0, 0)
+e.call("samplr_track", 1, count=50_000_000)
+e.call("samplr")
+SMP = e.uc.reg_read(A.UC_ARM_REG_R0)
+e.call("samplr_set_mode", 1)
+setb(OFF["latchm"], 2)
+touch(0, 0, 512, 100)
+touch(2, 0, 0, 0)
+play(8)
+check("stop all: two tracks play latched things", max(abs(x) for x in play()[0]) > 0.1)
+e.call("samplr_others_active")
+check("stop all: track 1 sees that another track plays", e.uc.reg_read(A.UC_ARM_REG_R0) == 1)
+e.call("samplr_gest", 6)                                       # nothing of track 1's own runs: STOP stops everything
+play(10)
+check("stop all: STOP on a stopped track silences every track", max(abs(x) for x in play()[0]) < 1e-3)
+e.call("samplr_track", 0, count=50_000_000)
+SMP = SMP0
+setb(OFF["loopm"], 0)
+setb(OFF["latchm"], 0)
+play(10)
+
 # find transients: four bursts
 BURST[0] = True
 for b in range(2):
