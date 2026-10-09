@@ -656,7 +656,7 @@ void samplr_cycle(int what)
         s->rev ^= 1;
         rec_param(s, 8);
     } else if (what == 14) {
-        s->sc->syncx ^= 1;
+        s->sc->syncb ^= 1;
     } else if (what == 13) {
         s->lp_a = 0;
         s->lp_b = s->len;
@@ -1701,7 +1701,7 @@ static void gest_run(struct sm *s, int n)
 
 static inline int grid(struct sm *s, float beats, int n)
 {
-    return s->sc->syncx ? looper_grid_offset(beats, s->sph, n) : looper_grid_cross(beats, s->sc->prev, n, s->sph);
+    return s->sc->syncb ? looper_grid_cross(beats, s->sc->prev, n, s->sph) : looper_grid_exact(beats, s->sph, n);
 }
 
 static uint32_t rnd(struct sm *s)
@@ -2721,21 +2721,21 @@ int samplr_run(float *bl, float *br, int n, float **snd)
     }
     s->t_last = c0;
     {   /* the governor. How much of its block the audio task has used by now (SAMPLR runs late in it, so this is nearly all of it: the stock voices, the looper, and SAMPLR) is
-         * the instantaneous version of the C readout (cpu.c keeps the cycle count of the wake-up at 0x2405ffd4). A smoothed value over 85 %, or a recent worst block over 96 %
-         * (100 % is a missed deadline), sheds a step every 16 blocks; nothing is muted, each step only changes how it is computed or how many grains there are:
+         * the instantaneous version of the C readout (cpu.c keeps the cycle count of the wake-up at 0x2405ffd4). A smoothed value over 85 %, or three blocks over 95 % within
+         * about 50 blocks (100 % is a missed deadline; one spike alone does not count), sheds a step every 16 blocks; nothing is muted, each step only changes how it is computed or how many grains there are:
          * 1 grains use linear interpolation, 2 and one channel, and all voices linear, 3 half the grain rate and 24 grains in all (40 at rest), 4 12 grains in all.
-         * One step back after ~2 s with the smoothed value under 70 % and the recent worst under 85 %. A C89/90 shut the Blackbox off, 95+ glitches for good. */
+         * One step back after ~2 s with the smoothed value under 78 % and no near misses lately. A C89/90 shut the Blackbox off, 95+ glitches for good. */
         struct smscr *sc = s->sc;
         uint32_t used = c1 - *(volatile uint32_t *)0x2405ffd4u;
         if (s->t_per > 100000u && used < 2u * s->t_per) {
             float inst = (float)used * 1000.f / (float)s->t_per;
             sc->ld += (inst - sc->ld) * .1f;
-            sc->pk = inst > sc->pk * .97f ? inst : sc->pk * .97f;
+            sc->pk = sc->pk * .98f + (inst > 950.f ? 1.f : 0.f);   /* near misses lately: about one per spike, fading over ~50 blocks */
             uint32_t since = s->tick - sc->shed_t;
-            if ((sc->ld > 850.f || sc->pk > 960.f) && sc->shed < 4 && since > 16) {
+            if ((sc->ld > 850.f || sc->pk > 2.f) && sc->shed < 4 && since > 16) {
                 sc->shed++;
                 sc->shed_t = s->tick;
-            } else if (sc->ld < 700.f && sc->pk < 850.f && sc->shed > 0 && since > 400) {
+            } else if (sc->ld < 780.f && sc->pk < .5f && sc->shed > 0 && since > 400) {
                 sc->shed--;
                 sc->shed_t = s->tick;
             }

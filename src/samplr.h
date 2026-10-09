@@ -149,7 +149,7 @@ struct smscr {
     float ld, pk;                           /* how much of its block the audio task has used: smoothed, and the recent worst (per mille) */
     uint32_t shed_t;
     double prev;                            /* the clock position of the previous block (for the grid lines) */
-    uint8_t syncx, _sx[3];                  /* 0 grid lines at the start of the block where the stock clock passes them (BLOCK), 1 at their exact frame (EXACT) */
+    uint8_t syncb, _sx[3];                  /* 0 grid lines at their exact frame (EXACT, the default), 1 at the start of the block where the stock clock passes them (BLOCK) */
     uint16_t gnow, gacc;                    /* grains sounding across all the tracks (last block / this block so far) */
 };
 
@@ -162,6 +162,7 @@ int samplr_others_active(void);             /* another track than the shown one 
 int samplr_track_info(int t);               /* bits: 1 has a sample, 2 loop running, 4 recording, 8 armed, 16 sounding */
 int samplr_run(float *bl, float *br, int n, float **snd);   /* snd: the looper's four send buses (delay L R, reverb L R) or 0; returns 1 if a send was fed */
 int looper_grid_cross(float beats, double prev, int n, float sph);   /* in looper.c: 0 / -1, the block-quantized grid line of the stock sequencer's clock */
+int looper_grid_exact(float beats, float sph, int n);   /* in looper.c: the same grid at its exact frame */
 double looper_clock_now(void);
 int looper_clock_on(void);
 void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, int n);   /* in looper.c */

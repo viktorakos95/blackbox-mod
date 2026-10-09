@@ -342,3 +342,11 @@ takes three overdub layers.
   rate and 24 grains in all, 4 12 grains in all. Emulator instructions per block for two grain tracks + an arp + slicer loops (tools/prof_samplr.py N, PYTHONPATH=.):
   588k at rest, 534k step 1, 484k step 2, 382k step 3, ~380k step 4. The stock cubic is 38 % of the rest case.
 - The linear loop for forward rates is a plain truncation per sample (the floor was a function call).
+
+## Build 31 (EXACT is the default; spikes alone do not shed)
+- Report: EXACT sounds better than BLOCK, so the click is sample-accurate and not block-quantized like the notes. EXACT is now the default (BLOCK stays as an option on the SMPL sheet).
+  EXACT also got the drift fix: the lines are multiples of 3840 x beats ticks of the sequencer time (`seqfix_now()`), at the exact frame `(line - now) x beat_frames / 3840`
+  (`looper_grid_exact`), instead of multiples of a noisy measured rate. Without a clock the free-running grid is unchanged.
+- Report: at !4 the readout showed C 70/90, 75/100, 74/89, 78/86 - averages of 70-78 %. The "recent worst block over 96 %" rule counted a single spike (a pad starting, a sample load) as
+  stress and stepped up every 16 blocks for as long as it was remembered. Now the spikes are counted (blocks over 95 %, a count that fades over ~50 blocks): above 2 steps up, the
+  smoothed load over 85 % steps up as before; stepping down needs the smoothed load under 78 % (was 70) and no recent spikes, for ~2 s. One spike every 100 blocks does nothing.

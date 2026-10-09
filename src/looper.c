@@ -1965,6 +1965,21 @@ int looper_grid_cross(float beats, double prev, int n, float sph)
     return (ph > 0.0 ? ph <= adv : g <= adv) ? 0 : -1;
 }
 
+/* The same grid at its exact frame (what a sample-accurate click would give): frames from the start of this block to the next line of the sequencer time, 3840 ticks a beat
+ * and beat_frames() frames a beat, or -1. Without a clock the free-running grid. */
+int looper_grid_exact(float beats, float sph, int n)
+{
+    if (S->magic != MAGIC)
+        return -1;
+    if (!S->cur_ok)
+        return looper_grid_offset(beats, sph, n);
+    double g = 3840.0 * (double)beats, ph = dmod(seqfix_now(), g);
+    if (ph < 1e-6)
+        return 0;
+    double fr = (g - ph) * (double)beat_frames() * (1.0 / 3840.0);
+    return fr < (double)n ? (int)fr : -1;
+}
+
 /* The clock position of this block (the snapshot), or -1 without a clock. */
 double looper_clock_now(void)
 {
