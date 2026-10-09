@@ -351,6 +351,9 @@ void samplr_leave(void)
     for (int f = 0; f < SM_VOICES; f++)
         if (s->v[f].held || s->drag[f] >= 0)
             release_finger(s, s->mode, f, 0, (s->latchm >> s->mode) & 1);
+    for (int f = 0; f < SM_VOICES; f++)
+        if (s->dmoved[f] >= 2)
+            s->dmoved[f] = 0;                                     /* (a finger that was on the page's pitch box) */
 }
 
 void samplr_select(int delta)

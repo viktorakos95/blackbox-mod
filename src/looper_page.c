@@ -1426,13 +1426,27 @@ static void draw_samplr(void)
     }
 }
 
+/* A finger lifts: 1 if it was on the pitch box (a tap there is back to 0). */
+static int sm_up(int id)
+{
+    struct sm *s = samplr();
+    int k = id & 3;
+    if (!s || s->dmoved[k] < 2)
+        return 0;
+    if (s->dmoved[k] == 2)
+        samplr_trans(0);
+    s->dmoved[k] = 0;
+    P->sig = 0;
+    return 1;
+}
+
 /* A touch on the SAMPLR page above the footer. */
 static int sm_touch(int kind, int id, int x, int d)
 {
     int wx, wy, wh, ty, r1;
     sm_geom(&wx, &wy, &wh, &ty, &r1);
     struct sm *s = samplr();
-    if (s && s->dmoved[id & 3] >= 2) {                            /* a finger on the pitch box: sideways = semitones, a tap = back to 0 */
+    if (s && s->dmoved[id & 3] >= 2) {                            /* a finger on the pitch box: sideways = semitones, a tap = back to 0 (the lift comes through sm_up) */
         int k = id & 3;
         if (kind == 1) {
             int st = (x - s->fx0[k]) / 8;
@@ -1441,10 +1455,6 @@ static int sm_touch(int kind, int id, int x, int d)
                 s->fx0[k] = (int16_t)(s->fx0[k] + st * 8);
                 s->dmoved[k] = 3;
             }
-        } else if (kind == 2) {
-            if (s->dmoved[k] == 2)
-                samplr_trans(0);
-            s->dmoved[k] = 0;
         }
         P->sig = 0;
         return 1;
@@ -2014,7 +2024,8 @@ void looper_page_up(uint8_t *view, const int *pt, int id)
 {
     (void)pt;
     probe(id, 2);
-    samplr_touch(2, id & 3, 0, 0);
+    if (P->mode != M_SMPLR || !sm_up(id))
+        samplr_touch(2, id & 3, 0, 0);
     if (P->pressed == P_REC)
         looper_event(P->track, LOOPER_EV_REC_UP);
     else if (P->pressed == P_MUTE)
