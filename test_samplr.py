@@ -827,6 +827,7 @@ touch(2, 0, 0, 0)
 play(30)
 setb(OFF["g_sz"], 0)
 setb(OFF["g_dry"], 0)
+e.uc.mem_write(SMP + OFF["g_drift"], struct.pack("<b", 4))
 touch(0, 0, 512, 1000)
 o0 = []
 for _ in range(60):
@@ -834,6 +835,7 @@ for _ in range(60):
 touch(2, 0, 0, 0)
 play(60)
 setb(OFF["g_dry"], 3)
+e.uc.mem_write(SMP + OFF["g_drift"], struct.pack("<b", 4))
 touch(0, 0, 512, 1000)
 o1 = []
 for _ in range(60):
@@ -842,6 +844,7 @@ check("grain: the dry loop adds the sample itself under the grains", sum(abs(x) 
 touch(2, 0, 0, 0)
 play(120)
 check("grain: ... and fades out when the cloud is gone", max(abs(x) for x in play(2)[0]) < 1e-4)
+e.uc.mem_write(SMP + OFF["g_drift"], struct.pack("<b", 0))
 setb(OFF["g_dry"], 0)
 setb(OFF["div"], 2)
 
@@ -861,9 +864,15 @@ def dry_slope(drift):
     play(150)
     return d_[len(d_) // 2]
 unit = 0.9 / LENF
-for drift, mult in ((0, 1), (4, 1), (8, 2), (-4, -1)):
+for drift, mult in ((4, 1), (8, 2), (-4, -1)):
     sl_ = dry_slope(drift)
     check(f"grain dry: D{drift:+d} runs at {mult}x", abs(sl_ - mult * unit) < 0.25 * unit, (sl_, mult * unit))
+e.uc.mem_write(SMP + OFF["g_drift"], struct.pack("<b", 0))
+touch(0, 0, 100, 1000)
+play(100)
+check("grain dry: D off - the dry does not run (silent)", max(abs(x) for x in play()[0]) < 0.01)
+touch(2, 0, 0, 0)
+play(150)
 e.uc.mem_write(SMP + OFF["g_drift"], struct.pack("<b", 0))
 setb(OFF["g_dry"], 0)
 setb(OFF["gfree"], 0)
@@ -1142,8 +1151,17 @@ check("fx reverb send: a tail", tail > 0.003, tail)
 setb(OFF["fx_sr"], 0)
 play(400)
 opt(O_ROUTE, 0)
-e.call("samplr_fx_knob", 2, 200)
-check("fx: the encoder 3 raises the delay send (a step per 20 counts)", e.r8(SMP + OFF["fx_sd"]) == 10, e.r8(SMP + OFF["fx_sd"]))
+e.call("samplr_fx_knob", 1, 200)
+check("fx: encoder 2 raises the delay send (a step per 20 counts)", e.r8(SMP + OFF["fx_sd"]) == 10, e.r8(SMP + OFF["fx_sd"]))
+e.call("samplr_fx_knob", 2, 100)
+e.call("samplr_fx_knob", 3, 60)
+check("fx: encoder 3 is the reverb send, encoder 4 the resonance", e.r8(SMP + OFF["fx_sr"]) == 5 and e.r8(SMP + OFF["fx_r"]) == 53, (e.r8(SMP + OFF["fx_sr"]), e.r8(SMP + OFF["fx_r"])))
+setb(OFF["fx_sr"], 0)
+setb(OFF["fx_r"], 50)
+a0_ = e.r8(SMP + OFF["atk"])
+e.call("samplr_env_knob", 0, 400)
+check("fx + INFO: encoder 1 turns the attack (a step per 40 counts)", e.r8(SMP + OFF["atk"]) == a0_ + 10, e.r8(SMP + OFF["atk"]))
+setb(OFF["atk"], 19)
 setb(OFF["fx_sd"], 0)
 play(300)
 
@@ -1230,23 +1248,23 @@ setb(OFF["loopm"], 0)
 setb(OFF["latchm"], 0)
 play(10)
 
-# above 45 % load the interpolation turns linear (cheaper): a pitched ramp stays a clean ramp
+# LOOP: two fingers on the waveform set the two ends
+e.call("samplr_set_mode", 4)
+e.call("samplr_cycle", 13)
+touch(0, 0, 300, 500)
+touch(0, 1, 700, 500)
+check("loop: a second finger sets the two ends (no strip needed)", sm(OFF["lp_a"], "i") == 300 * 16 and sm(OFF["lp_b"], "i") == 700 * 16, (sm(OFF["lp_a"], "i"), sm(OFF["lp_b"], "i")))
+touch(1, 1, 800, 500)
+check("loop: moving it moves that end", sm(OFF["lp_b"], "i") == 800 * 16, sm(OFF["lp_b"], "i"))
+touch(1, 0, 200, 500)
+check("loop: moving the first finger moves the other end", sm(OFF["lp_a"], "i") == 200 * 16, sm(OFF["lp_a"], "i"))
+touch(2, 1, 0, 0)
+lv_ = max(abs(x) for x in play(4)[0])
+check("loop: the first finger goes on playing", lv_ > 0.05, lv_)
+touch(2, 0, 0, 0)
+play(8)
+e.call("samplr_cycle", 13)
 e.call("samplr_set_mode", 0)
-e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 600))
-for semis, rate in ((7, 2 ** (7 / 12)), (-5, 2 ** (-5 / 12)), (12, 2.0)):
-    e.call("samplr_trans", 0)
-    e.call("samplr_trans", semis if semis else 0)
-    touch(0, 0, 3 * 64 + 10, 100)
-    play()
-    o = play()[0]
-    steps = [o[i + 1] - o[i] for i in range(40, 200)]
-    exp = rate / LENF * 0.9
-    check(f"linear (load 60 %) at {semis:+d} semitones: the ramp's steps are even and right", max(abs(x - exp) for x in steps) < exp * 0.03, (min(steps), max(steps), exp))
-    touch(2, 0, 0, 0)
-    play(6)
-e.call("samplr_trans", 0)
-e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 0))
-play(10)
 
 # find transients: four bursts
 BURST[0] = True

@@ -18,6 +18,7 @@ float looper_beat_frames(void);
 #define SMAGIC  0x534d5031u
 
 static void release_finger(struct sm *s, int mode, int id, int own, int lat);
+static void loop_window(struct sm *s, int fxa, int fxb);
 static inline int grid(struct sm *s, float beats, int n);
 static void unlatch(struct sm *s, int mode);
 static void seq_stop(struct sm *s);
@@ -63,6 +64,7 @@ static struct sm *trk_get(int t, int make)
         s->scat = 0.f;
         s->dens = 20.f;
         s->ypit = 0;
+        s->fx_r = 50;                                             /* resonance: flat */
         s->tno = (uint8_t)t;
         s->gest = g;
         s->g_bars = 2;
@@ -725,20 +727,34 @@ void samplr_fx_knob(int knob, int counts)
     struct sm *s = samplr();
     if (!s || knob < 0 || knob > 3)
         return;
+    static const uint8_t which_of[4] = {0, 2, 3, 1};              /* encoder 1 filter, 2 delay, 3 reverb, 4 resonance */
+    int w = which_of[knob];
     int a = s->kacc[knob] + counts, steps = a / 20;                /* a step per 20 counts: the whole range in about 2000 */
     s->kacc[knob] = (int16_t)(a - steps * 20);
     if (!steps)
         return;
     int v;
-    if (knob == 0) {
+    if (w == 0) {
         v = s->fx_f + steps;
         s->fx_f = (int8_t)(v < -100 ? -100 : v > 100 ? 100 : v);
     } else {
-        uint8_t *q = knob == 1 ? &s->fx_r : knob == 2 ? &s->fx_sd : &s->fx_sr;
+        uint8_t *q = w == 1 ? &s->fx_r : w == 2 ? &s->fx_sd : &s->fx_sr;
         v = *q + steps;
         *q = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
     }
-    rec_param(s, 9 + knob);
+    rec_param(s, 9 + w);
+}
+
+/* INFO on the FX sheet: encoder 1 turns the attack, 2 the release (a step per ~40 counts, all the values in between). */
+void samplr_env_knob(int knob, int counts)
+{
+    struct sm *s = samplr();
+    if (!s || knob < 0 || knob > 1)
+        return;
+    int a = s->kacc[knob] + counts, steps = a / 40;
+    s->kacc[knob] = (int16_t)(a - steps * 40);
+    if (steps)
+        samplr_set_env(knob, (knob ? s->rel : s->atk) + steps);
 }
 
 void samplr_fx_set(int which, int v)
@@ -1044,6 +1060,20 @@ static void ask(struct sm *s, int32_t f)
         PREFETCH(ENGINE, s->id, (int64_t)f);
 }
 
+/* LOOP: the window between two fingers' positions (fx 0..1023). */
+static void loop_window(struct sm *s, int fxa, int fxb)
+{
+    int lo = fxa < fxb ? fxa : fxb, hi = fxa < fxb ? fxb : fxa;
+    int32_t a = (s->len >> 10) * lo, b = (s->len >> 10) * hi;
+    b = b > s->len ? s->len : b;
+    if (b - a < 64)
+        b = a + 64 > s->len ? s->len : a + 64;
+    if (b - a < 64)
+        a = b - 64;
+    s->lp_a = a;
+    s->lp_b = b;
+}
+
 /* An arpeggiator spot at fx, fy for finger f (a held finger's spot follows it). */
 static void spot_set(struct sm *s, int mode, struct smvoice *v, int f, int fx, int fy, int fresh)
 {
@@ -1251,6 +1281,17 @@ static void touch_m(struct sm *s, int mode, int own, int lat, int kind, int id, 
                 return;
             }
         }
+        if (!own && (kind == 0 || (kind == 1 && s->drag[id] == 4))) {
+            /* a second finger on the waveform sets the loop's two ends with the first one's position (no need for the strip along the top) */
+            for (int f = 0; f < SM_VOICES; f++)
+                if (f != id && s->v[f].held && s->v[f].vmode == SM_LOOP && s->drag[f] < 0) {
+                    loop_window(s, s->lfx[f], fx);
+                    s->drag[id] = 4;
+                    return;
+                }
+        }
+        if (s->drag[id] == 4)
+            return;
         if (s->drag[id] > 0) {
             if (s->drag[id] == 1)
                 s->lp_a = pos < 0 ? 0 : pos > s->lp_b - 64 ? s->lp_b - 64 : pos;
@@ -1265,6 +1306,9 @@ static void touch_m(struct sm *s, int mode, int own, int lat, int kind, int id, 
         } else if (v->held) {
             v->rate = rate;
             v->gain = yvol(s, mode, fy);
+            for (int f = 0; f < SM_VOICES; f++)                   /* a second finger is down: this one moves an end */
+                if (f != id && s->drag[f] == 4)
+                    loop_window(s, fx, s->lfx[f]);
         }
     } else if (mode == SM_ARP) {
         if (kind == 0)
@@ -1866,31 +1910,6 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
         }
         return 1;
     }
-    if (s->load > 450 && r < 3.f && r > -3.f) {                   /* SAMPLR is above 45 % of the audio block: linear interpolation on a contiguous copy (the cubic costs three times as much) */
-        int32_t lo = ip + fl(rmin);
-        int cnt = (ip + fl(rmax) + 2) - lo + 1;
-        if (cnt <= 800) {
-            rd_span(&c, lo, cnt, s->sc->xl, s->mono ? 0 : s->sc->xr);
-            const float *xl = s->sc->xl + (ip - lo), *xr = s->mono ? xl : s->sc->xr + (ip - lo);
-            float *ol = s->sc->il, *or_ = s->sc->ir, p = fr;
-            if (r > 0.f) {                                        /* (p >= 0: a plain truncation is the floor) */
-                for (int i = 0; i < m; i++, p += r) {
-                    int k = (int)p;
-                    float f = p - (float)k, a0 = xl[k], b0 = xr[k];
-                    ol[i] = a0 + (xl[k + 1] - a0) * f;
-                    or_[i] = b0 + (xr[k + 1] - b0) * f;
-                }
-            } else {
-                for (int i = 0; i < m; i++, p += r) {
-                    int k = fl(p);
-                    float f = p - (float)k, a0 = xl[k], b0 = xr[k];
-                    ol[i] = a0 + (xl[k + 1] - a0) * f;
-                    or_[i] = b0 + (xr[k + 1] - b0) * f;
-                }
-            }
-            return 1;
-        }
-    }
     if (r > 0.f && r <= 3.f && s->iq < 2) {                       /* forward, up to 3x: the firmware's cubic on a contiguous copy */
         int32_t base = ip - 1;
         int cnt = hi - base + 1;
@@ -2442,7 +2461,7 @@ static void dry_run(struct sm *s, float *bl, float *br, int n)
     int want = 0;
     for (int f = 0; f < SM_NV; f++)
         want |= s->v[f].g_on;
-    float target = want && s->g_dry ? 1.f : 0.f;
+    float target = want && s->g_dry && s->g_drift ? 1.f : 0.f;     /* the dry follows the scan: with D off nothing moves, nothing runs */
     if (target == 0.f && s->dry_env <= 0.f)
         return;
     if (want && s->dry_env <= 0.f)                                /* the dry starts where the cloud is */
@@ -2452,7 +2471,7 @@ static void dry_run(struct sm *s, float *bl, float *br, int n)
                 s->dry_frac = 0.f;
                 break;
             }
-    float dr = s->g_drift ? (float)s->g_drift * .25f : 1.f;       /* and runs as fast as the cloud's scan: D off normal speed, D+4 the same, D-n backwards */
+    float dr = (float)s->g_drift * .25f;                          /* and runs as fast as the cloud's scan: D+4 normal speed, D+8 twice, D-n backwards */
     float r = s->ratio * pitch_ratio(s->trans) * rsign(s) * dr;
     if (!sample_block(s, s->dry_pos, s->dry_frac, r, n))
         return;

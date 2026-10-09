@@ -158,6 +158,7 @@ int samplr_track_info(int t);               /* bits: 1 has a sample, 2 loop runn
 int samplr_run(float *bl, float *br, int n, float **snd);   /* snd: the looper's four send buses (delay L R, reverb L R) or 0; returns 1 if a send was fed */
 void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, int n);   /* in looper.c */
 void samplr_fx_knob(int knob, int counts);  /* the FX sheet's encoders: 0 filter, 1 resonance, 2 delay, 3 reverb */
+void samplr_env_knob(int knob, int counts); /* INFO on the FX sheet: encoder 1 attack, 2 release */
 void samplr_fx_set(int which, int v);       /* the same from a touch, v 0..1023 */
 void samplr_fx_text(int which, char *out);
 float samplr_fx_frac(int which);            /* 0..1 for a bar (filter: 0.5 = centre) */

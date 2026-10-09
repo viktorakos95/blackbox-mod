@@ -283,3 +283,12 @@ takes three overdub layers.
   - above 45 % load (the S readout) interpolation is linear on a contiguous copy instead of the stock cubic (a third of the cost).
   After: 446k normally, 401k above 45 % (-50 to -55 %).
 - GRAIN D off: the dry runs at normal speed (as D+4), as asked.
+
+## Build 25
+- FX encoders follow the pink numbers: 1 FILT, 2 DLY, 3 REV, 4 RES (the bars are in that order). With INFO on, on the FX sheet encoder 1 turns the ATTACK and 2 the RELEASE (a step per
+  ~40 counts); the pink digits move to the A / R bars while INFO is on. New tracks start with RES 50 (flat).
+- LOOP mode: a second finger on the waveform sets the loop's two ends (with the first finger's position; moving either moves its end); the first finger goes on playing. The strip along
+  the top still grabs an end.
+- GRAIN dry at D off is silent: the dry follows the scan, nothing moves, nothing runs. D+4 normal speed, D+8 twice, D-n backwards.
+- The linear interpolation above 45 % load is gone (changing the interpolation did nothing for the glitches). The other CPU savings of build 24 stay.
+- LOOP mode and Q: the first start waits for the grid line, then the window loops by itself at its own length (no restart on every grid line, unlike the SLICER's LOOP with Q).

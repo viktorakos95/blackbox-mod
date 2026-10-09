@@ -1390,11 +1390,12 @@ static void draw_samplr(void)
         }
         sm_button(271, r1, 40, "PANIC", 0);                        /* silences every track: loops, latches, clouds, sequences */
     } else if (sh == SMS_FX) {                                    /* FX: filter, resonance, delay and reverb send of this track (the four encoders turn them, pink 1-4), attack and release */
-        static const char *const fxn[6] = {"FILT", "RES", "DLY", "REV", "A", "R"};
+        static const char *const fxn[6] = {"FILT", "DLY", "REV", "RES", "A", "R"};   /* in the order of the encoders 1-4 */
+        static const uint8_t fx_which[4] = {0, 2, 3, 1};
         for (int i = 0; i < 6; i++) {
             int x0 = 3 + 51 * i;
             frame(x0, r1, 49, SM_BH, C_RAIL, 1);
-            float fr = i < 4 ? samplr_fx_frac(i) : (float)(i == 4 ? s->atk : s->rel) * (1.f / 96.f);
+            float fr = i < 4 ? samplr_fx_frac(fx_which[i]) : (float)(i == 4 ? s->atk : s->rel) * (1.f / 96.f);
             if (i == 0) {
                 int w = (int)((fr - .5f) * 44.f);
                 box(w < 0 ? x0 + 24 + w : x0 + 24, r1 + SM_BH - 6, w < 0 ? -w : w, 4, C_CYAN);
@@ -1407,12 +1408,12 @@ static void draw_samplr(void)
                 *q++ = *z++;
             *q++ = ' ';
             if (i < 4)
-                samplr_fx_text(i, q);
+                samplr_fx_text(fx_which[i], q);
             else
                 samplr_env_text(i - 4, q);
             text_c(x0, r1 + 4, 49, b, C_LIGHT, 1);
-            if (i < 4) {
-                char dg[2] = {(char)('1' + i), 0};
+            if (P->info_on ? i >= 4 : i < 4) {                    /* the pink digit: which encoder turns it (with INFO on, 1 and 2 turn attack and release) */
+                char dg[2] = {(char)(P->info_on ? '1' + i - 4 : '1' + i), 0};
                 text(x0 + 3, r1 + 3, dg, C_PINK, 1);
             }
         }
@@ -1489,12 +1490,13 @@ static int sm_touch(int kind, int id, int x, int d)
     }
     if (d >= r1) {
         int sh = SM_SHEET < SM_SHEETS ? SM_SHEET : 0;
+        static const uint8_t fx_which[4] = {0, 2, 3, 1};
         if (sh == SMS_FX && kind != 2 && s) {                     /* the FX bars (and attack / release) follow the finger */
             int i = (x - 3) / 51, v = x - 3 - 51 * i - 2;
             v = v < 0 ? 0 : v > 45 ? 45 : v;
             if (x >= 3 && i < 6 && (x - 3) % 51 < 49) {
                 if (i < 4)
-                    samplr_fx_set(i, v * 1023 / 45);
+                    samplr_fx_set(fx_which[i], v * 1023 / 45);
                 else
                     samplr_set_env(i - 4, v * 96 / 45);
                 P->sig = 0;
@@ -2048,7 +2050,9 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             float step = (float)counts * KNOB_SCALE;
             if (P->mode == M_SMPLR) {
                 struct sm *sm = samplr();
-                if (sm && SM_SHEET == SMS_FX)
+                if (sm && SM_SHEET == SMS_FX && P->info_on)
+                    samplr_env_knob(knob, counts);
+                else if (sm && SM_SHEET == SMS_FX)
                     samplr_fx_knob(knob, counts);
                 else if (sm)
                     samplr_knob(knob, counts);
