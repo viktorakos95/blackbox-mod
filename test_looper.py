@@ -1035,14 +1035,26 @@ def pcm_stub():
 
 e.stub(0x08074A00, pcm_stub)
 e.stub(0x08074CE8)
-tab(5)
+e.call("looper_page_goto", VIEW, 5)
 f = draw(0)
-check("SMPLR tab: the footer's last tab is cyan, nothing is drawn outside the screen",
-      sum(1 for x in f if x[2] == 34 and x[3] == 1 and x[4] == 0x1B) == 2 and all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f),
+check("SMPLR page: no footer tabs (a page of its own), nothing is drawn outside the screen",
+      not any(x[2] == 34 and x[3] == 1 and x[1] <= 14 for x in f) and all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f),
       [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
 cols = [x for x in f if x[2] == 2 and x[4] == 0x16]
 check("SMPLR tab: 150 waveform columns of 2 px, growing along the ramp", len(cols) == 150 and cols[-1][3] > cols[10][3], (len(cols), cols[:1], cols[-1:]))
 check("SMPLR tab: slice lines (grey)", sum(1 for x in f if x[2] == 1 and x[4] == 0x09) >= 15)
+import subprocess as _sp
+_src = '#include "src/samplr.h"\nchar o_g_armed[__builtin_offsetof(struct sm,g_armed)];\n'
+_out = _sp.run(["arm-none-eabi-gcc", "-I.", "-mthumb", "-S", "-x", "c", "-", "-o", "-"], input=_src, capture_output=True, text=True, check=True).stdout.splitlines()
+G_ARMED = int([l.split()[1] for l in _out if l.strip().startswith(".space")][0])
+e.call("samplr")
+SMPLR_P = e.uc.reg_read(A.UC_ARM_REG_R0)
+before_l = list(e.uc.mem_read(STATE + T0, TSIZE * 4))
+press(0xF4, 8)
+check("on the SAMPLR page the hardware REC arms the gesture recorder", e.r8(SMPLR_P + G_ARMED) == 1, e.r8(SMPLR_P + G_ARMED))
+check("... and the looper's tracks did not see it", list(e.uc.mem_read(STATE + T0, TSIZE * 4)) == before_l)
+press(0xF9, 1)
+check("... STOP stops the gesture timeline (and arming)", e.r8(SMPLR_P + G_ARMED) == 0, e.r8(SMPLR_P + G_ARMED))
 wave_x, wave_d = 3 + 7 + 150, 40
 touch("down", wave_x, wave_d)
 blocks(3, 0.0)
@@ -1056,7 +1068,7 @@ touch("down", 3 + 33 + 10, 142 + 5)
 touch("up", 3 + 33 + 10, 142 + 5)
 e.call("samplr")
 check("SMPLR: the TAPE button switches the mode", e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4) == 1, e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4))
-tab(0)
+e.call("looper_page_goto", VIEW, 0)
 check("SMPLR: leaving the tab releases the voices", True)
 
 # ---- page order: MIX opens the Looper first, SONG opens SMPLR first
@@ -1076,7 +1088,7 @@ e.uc.mem_write(APP + 0x8CA4, b"\x2f")
 screens.clear()
 e.call("solo_song_pressed", APP, 0, 0, 0)
 check("SONG again on the SMPLR page: the stock song screen (0x2d)", screens == [0x2D], screens)
-tab(0)
+e.call("looper_page_goto", VIEW, 0)
 screens.clear()
 e.call("solo_song_pressed", APP, 0, 0, 0)
 check("SONG on another tab of the page: switches to SMPLR without leaving the screen", screens == [] and e.r8(PAGE + 76) == 4, (screens, e.r8(PAGE + 76)))
@@ -1084,7 +1096,7 @@ e.uc.mem_write(APP + 0x8CA4, b"\x2f")
 screens.clear()
 e.call("solo_mix_pressed", APP, 0, 0, 0)
 check("MIX on the SMPLR tab goes to the Looper's MAIN tab (no screen change)", screens == [] and e.r8(PAGE + 76) == 0, (screens, e.r8(PAGE + 76)))
-tab(0)
+e.call("looper_page_goto", VIEW, 0)
 
 # leaving the page puts the child widgets back
 e.call("solo_set_mode", VIEW, 1)

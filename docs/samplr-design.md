@@ -166,3 +166,13 @@ takes three overdub layers.
   (-8..+8 = -2x .. +2x real time; 0 = the cloud stays); row A: SYNC/FREE, contour, LATCH, RND/WARP, pitch pattern (OFF MAJ7 MIN7 PENT 5THS).
 - Switching the mode ends the old mode's LATCH and what it kept (no more stuck latch under another mode's button). The coming track model (a sample
   slot = one track with its own mode, latch, gestures, as in SAMPLR) replaces this.
+
+## Build 13 (SAMPLR is a page of its own, buttons, latched things and encoders in takes)
+- The SMPLR tab is gone from the Looper's footer: SAMPLR is its own page (SONG opens it, MIX goes to the Looper, SONG again = stock song). Its footer shows
+  "SAMPLR" and STOCK FX. On this page the hardware buttons are SAMPLR's and never the Looper's: REC = gesture REC (arm / cancel), BACK = UNDO the last layer,
+  PLAY = start the loop on the next bar line, STOP = stop it; with HW STOP PLAY "+STOCK" PLAY / STOP also reach the sequencer. FX stays the stock FX button.
+  On the Looper page they are the Looper's as before; on other screens the stock ones.
+- A take also keeps what was latched before REC: latched slice loops, arp spots and grain clouds that are playing become latched presses at the start of the
+  take and stay live until the loop's end, where the recorded presses take over (no doubling).
+- Encoders are part of a gesture: the volume, rate, spray, drift, attack, release and free-rate knobs are recorded as absolute values (event kind 3: fx = which,
+  fy = value, a turn in progress is one event) and set again on every pass.

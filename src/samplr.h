@@ -127,9 +127,9 @@ void samplr_toggle_gate(void);
 void samplr_set_slices(int n);
 void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch, 3 height = pitch, 4 find transients, 5 grain contour, 6 spray type, 7 pitch pattern */
 void samplr_trans(int what);                /* transpose: +-1, +-12, 0 = back to 0 */
-void samplr_knob(int knob, int counts);     /* knobs 1..3 per mode (the page handles knob 0 = volume) */
+void samplr_knob(int knob, int counts);     /* knobs 0..3 per mode (0 = volume); recorded into a take */
 void samplr_touch(int kind, int id, int fx, int fy);   /* kind 0 down, 1 move, 2 up; fx, fy 0..1023 inside the waveform (recorded when a layer is recording) */
-void samplr_gest(int what);                 /* 0 REC, 1 PLAY / STOP, 2 UNDO, 3 CLR, 4 LEN */
+void samplr_gest(int what);                 /* 0 REC, 1 PLAY / STOP, 2 UNDO, 3 CLR, 4 LEN, 5 PLAY, 6 STOP (the hardware buttons) */
 void samplr_name(char *out, int max);       /* the selected sample's name for the page */
 void samplr_info(char *out);                /* the mode's settings as text for the top bar */
 const char *samplr_pat_name(int p);

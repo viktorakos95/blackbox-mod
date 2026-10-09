@@ -19,6 +19,9 @@ float looper_beat_frames(void);
 static void release_finger(struct sm *s, int mode, int id, int own, int lat);
 static inline int grid(struct sm *s, float beats, int n);
 static void unlatch(struct sm *s, int mode);
+static void rec_param(struct sm *s, int pid);
+static void gest_capture_latched(struct sm *s, int L);
+static void gest_uncapture(struct sm *s, int drop);
 
 struct sm *samplr(void)
 {
@@ -561,16 +564,52 @@ void samplr_set_slices(int n)
     }
 }
 
-/* Knobs 1..3 (0 is the volume, on the page): one step per ~300 counts, or continuous for the free grain rate. */
+/* The knob-driven parameters, as 0..1023 for the gesture recorder: 0 volume, 1 rate division, 2 spray, 3 drift, 4 attack, 5 release, 6 free grain density. */
+static int param_get(struct sm *s, int pid)
+{
+    switch (pid) {
+    case 0: return (int)(s->vol * 511.f);
+    case 1: return s->div;
+    case 2: return (int)(s->scat * 1023.f);
+    case 3: return s->g_drift + 8;
+    case 4: return s->atk;
+    case 5: return s->rel;
+    default: return (int)((s->dens - 1.f) * (1023.f / 119.f));
+    }
+}
+
+static void param_set(struct sm *s, int pid, int val)
+{
+    val = val < 0 ? 0 : val > 1023 ? 1023 : val;
+    switch (pid) {
+    case 0: s->vol = (float)val * (1.f / 511.f); break;
+    case 1: s->div = (uint8_t)(val > 4 ? 4 : val); break;
+    case 2: s->scat = (float)val * (1.f / 1023.f); break;
+    case 3: s->g_drift = (int8_t)((val > 16 ? 16 : val) - 8); break;
+    case 4: s->atk = (uint8_t)(val > 4 ? 4 : val); break;
+    case 5: s->rel = (uint8_t)(val > 4 ? 4 : val); break;
+    default: s->dens = 1.f + (float)val * (119.f / 1023.f);
+    }
+}
+
+/* Knobs 0..3 on the SMPLR page (0 = volume): one step per ~300 counts, or continuous for the volume and the free grain rate. Changes are recorded
+ * into a take that is recording (the encoders are part of a gesture). */
 void samplr_knob(int knob, int counts)
 {
     struct sm *s = samplr();
-    if (!s || knob < 1 || knob > 3)
+    if (!s || knob < 0 || knob > 3)
         return;
-    int m = s->mode;
+    int m = s->mode, pid = -1;
+    if (knob == 0) {
+        float v = s->vol + (float)counts * (2.f / 8000.f);
+        s->vol = v < 0.f ? 0.f : v > 2.f ? 2.f : v;
+        rec_param(s, 0);
+        return;
+    }
     if (m == SM_GRAIN && knob == 1 && s->gfree) {
         float d = s->dens * (1.f + (float)counts * (1.f / 3200.f));
         s->dens = d < 1.f ? 1.f : d > 120.f ? 120.f : d;
+        rec_param(s, 6);
         return;
     }
     int a = s->kacc[knob] + counts, dir = 0;
@@ -594,19 +633,26 @@ void samplr_knob(int knob, int counts)
     } else if ((m == SM_ARP || m == SM_GRAIN) && knob == 1) {
         int d = s->div + dir;
         s->div = (uint8_t)(d < 0 ? 0 : d > 4 ? 4 : d);
+        pid = 1;
     } else if (m == SM_GRAIN && knob == 2) {
         float v = s->scat + .1f * (float)dir;
         s->scat = v < 0.f ? 0.f : v > 1.f ? 1.f : v;
+        pid = 2;
     } else if (m == SM_GRAIN && knob == 3) {
         int v = s->g_drift + dir;
         s->g_drift = (int8_t)(v < -8 ? -8 : v > 8 ? 8 : v);
+        pid = 3;
     } else if (m != SM_GRAIN && knob == 2) {
         int v = s->atk + dir;
         s->atk = (uint8_t)(v < 0 ? 0 : v > 4 ? 4 : v);
+        pid = 4;
     } else if (m != SM_GRAIN && knob == 3) {
         int v = s->rel + dir;
         s->rel = (uint8_t)(v < 0 ? 0 : v > 4 ? 4 : v);
+        pid = 5;
     }
+    if (pid >= 0)
+        rec_param(s, pid);
 }
 
 static char *cat(char *p, const char *q)
@@ -994,9 +1040,96 @@ static void gest_capture_held(struct sm *s, int L)
         s->g_lastmv[f] = 0;
     }
     s->g_lmode[L] = s->mode;
+    gest_capture_latched(s, L);
 }
 
 /* ---- gesture recorder */
+
+static void rec_param(struct sm *s, int pid)
+{
+    struct smgest *G = s->gest;
+    if (!G || s->g_rec < 0 || !s->g_run)
+        return;
+    int L = s->g_rec;
+    int32_t pos = s->g_pos < 0 ? 0 : s->g_pos;
+    uint32_t val = (uint32_t)param_get(s, pid);
+    if (G->n[L]) {                                                /* a turn in progress: one event, its latest value */
+        struct smev *last = &G->ev[L][G->n[L] - 1];
+        if ((last->w & 3) == 3 && ((last->w >> 6) & 1023) == (uint32_t)pid && pos - (int32_t)last->t * 64 < 480) {
+            last->w = (last->w & 0xffffu) | val << 16;
+            return;
+        }
+    }
+    if (G->n[L] >= SM_EVENTS)
+        return;
+    struct smev *e = &G->ev[L][G->n[L]++];
+    e->t = (uint16_t)(pos >> 6);
+    e->w = 3u | (uint32_t)s->mode << 4 | (uint32_t)pid << 6 | val << 16;
+}
+
+/* Latched things that are already playing when a take starts are part of it: each becomes a (latched) press at the start of the loop, and
+ * stays live until the loop's end, where the recorded press takes over. owner 0xfe marks them. */
+static void gest_capture_latched(struct sm *s, int L)
+{
+    struct smgest *G = s->gest;
+    for (int i = 0; i < SM_LATV; i++) {
+        struct smvoice *lv = &s->v[SM_LTBASE + i];
+        if ((lv->on || lv->rep > 0.f) && lv->owner == 0 && lv->vmode == SM_SLICER && lv->slice < s->nslice && G->n[L] < SM_EVENTS) {
+            struct smev *e = &G->ev[L][G->n[L]++];
+            e->t = 0;
+            e->w = (uint32_t)SM_SLICER << 4 | (uint32_t)pos_fx(s, (s->cut[lv->slice] + s->cut[lv->slice + 1]) / 2) << 6 | 100u << 16 | 1u << 26;
+            lv->owner = 0xfe;
+        }
+    }
+    for (int i = 0; i < SM_SPOTS; i++)
+        if (s->spot[i].used && s->spot[i].owner == 0xff && G->n[L] < SM_EVENTS) {
+            int fy = (s->ypit >> SM_ARP) & 1 ? 512 - s->spot[i].st * 412 / 12 : (int)((1.2f - (float)s->spot[i].vol * (1.f / 255.f)) * 1024.f);
+            fy = fy < 0 ? 0 : fy > 1023 ? 1023 : fy;
+            struct smev *e = &G->ev[L][G->n[L]++];
+            e->t = 0;
+            e->w = (uint32_t)SM_ARP << 4 | (uint32_t)pos_fx(s, s->spot[i].pos) << 6 | (uint32_t)fy << 16 | 1u << 26;
+            s->spot[i].owner = 0xfe;
+        }
+    for (int f = 0; f < SM_VOICES; f++) {
+        struct smvoice *v = &s->v[f];
+        if (v->g_on && !v->held && v->owner == 0 && G->n[L] < SM_EVENTS) {
+            int fy = (v->g_size - 960) / 18;
+            fy = fy < 0 ? 0 : fy > 1023 ? 1023 : fy;
+            struct smev *e = &G->ev[L][G->n[L]++];
+            e->t = 0;
+            e->w = (uint32_t)SM_GRAIN << 4 | (uint32_t)pos_fx(s, v->g_centre) << 6 | (uint32_t)fy << 16 | 1u << 26 | (uint32_t)f << 2;
+            v->owner = 0xfe;
+        }
+    }
+}
+
+/* The take ended (drop = 1: the recorded presses take over, so what was live goes) or was abandoned (drop = 0: it stays live as before). */
+static void gest_uncapture(struct sm *s, int drop)
+{
+    for (int i = 0; i < SM_LATV; i++) {
+        struct smvoice *lv = &s->v[SM_LTBASE + i];
+        if (lv->owner == 0xfe) {
+            if (drop) {
+                lv->rel = 1;
+                lv->rep = 0.f;
+            }
+            lv->owner = 0;
+        }
+    }
+    for (int i = 0; i < SM_SPOTS; i++)
+        if (s->spot[i].owner == 0xfe) {
+            if (drop)
+                s->spot[i].used = 0;
+            else
+                s->spot[i].owner = 0xff;
+        }
+    for (int f = 0; f < SM_VOICES; f++)
+        if (s->v[f].owner == 0xfe) {
+            if (drop)
+                s->v[f].g_on = 0;
+            s->v[f].owner = 0;
+        }
+}
 
 static void gest_release_layer(struct sm *s, int L)
 {
@@ -1027,6 +1160,7 @@ static void gest_release_layer(struct sm *s, int L)
 
 static void gest_stop(struct sm *s)
 {
+    gest_uncapture(s, 0);
     for (int L = 0; L < SM_LAYERS; L++)
         gest_release_layer(s, L);
     s->g_run = 0;
@@ -1051,6 +1185,7 @@ void samplr_gest(int what)
             } else if (s->g_layers == 0) {
                 gest_stop(s);
             } else {
+                gest_uncapture(s, 0);
                 s->g_rec = -1;
             }
         } else if (s->g_layers == 0) {
@@ -1068,8 +1203,14 @@ void samplr_gest(int what)
             gest_stop(s);
         else if (s->g_layers)
             s->g_armed = 3;
+    } else if (what == 5) {                                       /* PLAY only (the hardware button) */
+        if (!s->g_run && !s->g_armed && s->g_layers)
+            s->g_armed = 3;
+    } else if (what == 6) {                                       /* STOP only */
+        gest_stop(s);
     } else if (what == 2) {                                       /* UNDO: the last layer */
         if (s->g_rec >= 0 || s->g_armed) {
+            gest_uncapture(s, 0);
             s->g_armed = 0;
             s->g_rec = -1;
         } else if (s->g_layers) {
@@ -1093,6 +1234,10 @@ static void gest_dispatch(struct sm *s, int L, const struct smev *e)
 {
     int kind = e->w & 3, f = (e->w >> 2) & 3, mode = (e->w >> 4) & 3, fx = (e->w >> 6) & 1023, fy = (e->w >> 16) & 1023;
     int bit = 1 << f;
+    if (kind == 3) {                                              /* an encoder: fx = which parameter, fy = its value */
+        param_set(s, fx, fy);
+        return;
+    }
     if (kind == 0)
         s->g_ldown[L] |= (uint8_t)bit;
     else if (!(s->g_ldown[L] & bit))
@@ -1145,6 +1290,7 @@ static void gest_run(struct sm *s, int n)
         if (s->g_rec >= 0) {
             if (G->n[s->g_rec])
                 s->g_layers = (uint8_t)(s->g_rec + 1 > s->g_layers ? s->g_rec + 1 : s->g_layers);
+            gest_uncapture(s, G->n[s->g_rec] != 0);
             s->g_rec = -1;
         }
         for (int L = 0; L < SM_LAYERS; L++) {

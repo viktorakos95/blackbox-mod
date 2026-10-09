@@ -38,7 +38,7 @@ def struct_offsets(names):
     return res
 
 
-OFF = struct_offsets(["g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
+OFF = struct_offsets(["vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
 
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
@@ -755,6 +755,40 @@ check("grain latch: the cloud stays", e.r8(SMP + VOFF + voice_offsets(["g_on"])[
 e.call("samplr_set_mode", 0)
 check("switching mode ends that mode's latch and clears what it kept", e.r8(SMP + VOFF + voice_offsets(["g_on"])["g_on"]) == 0 and e.r8(SMP + OFF["latchm"]) == 0, (e.r8(SMP + VOFF + voice_offsets(["g_on"])["g_on"]), e.r8(SMP + OFF["latchm"])))
 play(80)
+
+# a take keeps what was already latched, and the encoders
+e.call("samplr_gest", 3)
+setb(OFF["g_bars"], 1)
+e.call("samplr_set_mode", 0)
+setb(OFF["loopm"], 1)
+e.call("samplr_cycle", 2)                                      # slicer latch on
+touch(0, 0, 8 * 64 + 10, 100)                                  # a latched loop is already playing...
+touch(2, 0, 0, 0)
+play(20)
+e.call("samplr_gest", 0)                                       # ... when REC is pressed
+gwait(lambda: e.r8(SMP + OFF["g_run"]) == 1)
+vol_of = lambda: struct.unpack("<f", e.uc.mem_read(SMP + OFF["vol"], 4))[0]
+p1 = []
+for b in range(375):
+    if b == 100:
+        e.call("samplr_knob", 0, -4000)                        # the volume encoder, turned down during the take
+    p1.append(max(abs(x) for x in play()[0]))
+v_end = vol_of()
+gwait(lambda: e.r8(SMP + OFF["g_layers"]) == 1)
+e.uc.mem_write(SMP + OFF["vol"], struct.pack("<f", 1.0))      # back up to normal: the recorded turn must do it again
+p2, vols = [], []
+for b in range(375):
+    o = play()[0]
+    p2.append(max(abs(x) for x in o))
+    vols.append(vol_of())
+check("a latched loop that played when the take began is in the take (it plays on in the next pass)", sum(1 for v in p2[10:60] if v > 0.02) > 40, p2[10:20])
+check("... and not doubled by the live one", max(p2[10:60]) < 1.4 * max(p1[10:60]), (max(p2[10:60]), max(p1[10:60])))
+check("the recorded encoder turn comes back: the volume is 1 early in the pass and has dropped after block 100", vols[50] > 0.9 and vols[200] < 0.2, (vols[50], vols[200], v_end))
+e.call("samplr_cycle", 2)
+setb(OFF["loopm"], 0)
+e.uc.mem_write(SMP + OFF["vol"], struct.pack("<f", 1.0))
+e.call("samplr_gest", 3)
+play(60)
 
 # find transients: four bursts
 BURST[0] = True

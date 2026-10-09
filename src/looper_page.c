@@ -127,7 +127,7 @@ static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> til
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
 enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
 enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, MODES };
-#define NTABS 6                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
+#define NTABS 5                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
 /* hardware buttons the page can take over: slot numbers */
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
 
@@ -364,7 +364,7 @@ int looper_page_hit(int x, int d, int *track, float *val)
             return Z_OPTC;
         }
         int i = (x - 3) / (TAB_W + 2);
-        if (x >= 3 && i < NTABS && (x - 3) % (TAB_W + 2) < TAB_W) {
+        if (P->mode != M_SMPLR && x >= 3 && i < NTABS && (x - 3) % (TAB_W + 2) < TAB_W) {
             *track = i;
             return Z_TAB;
         }
@@ -1065,14 +1065,19 @@ static void draw_setup(const struct lay *L)
 static void draw_footer(const struct lay *L)
 {
     box(1, L->foot_y + 1, P->w - 2, FOOT - 1, C_BG);
-    static const char *const tab[NTABS] = {"MAIN", "FX", "FX2", "SETUP", "MORE", "SMPLR"};
-    for (int i = 0; i < NTABS; i++) {
+    static const char *const tab[NTABS] = {"MAIN", "FX", "FX2", "SETUP", "MORE"};
+    for (int i = 0; i < NTABS && P->mode != M_SMPLR; i++) {
         int on = i == 0 ? P->mode == M_MAIN : i == 1 ? P->mode == M_FX && FX_GROUP < 2 : i == 2 ? P->mode == M_FX && FX_GROUP >= 2 :
-                 i == 3 ? P->mode == M_SETUP : i == 4 ? P->mode == M_MORE : P->mode == M_SMPLR;
+                 i == 3 ? P->mode == M_SETUP : P->mode == M_MORE;
         frame(3 + i * (TAB_W + 2), L->foot_y + 2, TAB_W, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
         text_c(3 + i * (TAB_W + 2), L->foot_y + 4, TAB_W, tab[i], on ? C_CYAN : C_GREY, 1);
     }
     int x0 = 3 + NTABS * (TAB_W + 2) + 4;
+    if (P->mode == M_SMPLR) {                                     /* SAMPLR is a page of its own: SONG opens it, MIX goes to the Looper */
+        text(5, L->foot_y + 4, "SAMPLR", C_CYAN, 1);
+        text(50, L->foot_y + 4, "REC PLAY STOP: GESTURES", C_GREY, 1);
+        x0 = P->w;
+    }
     frame(P->w - 58, L->foot_y + 2, 54, FOOT - 3, C_RAIL, 1);
     text_c(P->w - 58, L->foot_y + 4, 54, "STOCK FX", C_LIGHT, 1);
     if (looper_paused())
@@ -1835,12 +1840,8 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             float step = (float)counts * KNOB_SCALE;
             if (P->mode == M_SMPLR) {
                 struct sm *sm = samplr();
-                if (sm && knob == 0) {
-                    float vv = sm->vol + step * 2.f;
-                    sm->vol = vv < 0.f ? 0.f : vv > 2.f ? 2.f : vv;
-                } else if (sm) {
+                if (sm)
                     samplr_knob(knob, counts);
-                }
             } else if (P->mode == M_MAIN)
                 P->sel = (uint8_t)knob;                                   /* altering a track's setting selects it */
             if (P->mode == M_SMPLR) {
@@ -1967,6 +1968,22 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     return;
                 }
                 P->btn_t = looper_ticks();
+                if (P->mode == M_SMPLR) {                          /* on the SAMPLR page the buttons are SAMPLR's, never the looper's */
+                    if (slot == B_FX)
+                        break;                                     /* (FX stays the stock FX button) */
+                    if (slot == B_REC)
+                        samplr_gest(0);
+                    else if (slot == B_BACK)
+                        samplr_gest(2);
+                    else if (slot == B_STOP)
+                        samplr_gest(6);
+                    else
+                        samplr_gest(5);
+                    P->sig = 0;
+                    if ((slot == B_STOP || slot == B_PLAY) && looper_get_opt(LOOPER_O_HWBTN) > .5f)
+                        break;
+                    return;
+                }
                 switch (slot) {
                 case B_FX:
                     if (P->info_on)                                /* INFO + FX: the Blackbox's own FX page */
