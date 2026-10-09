@@ -127,9 +127,9 @@ static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> til
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
 enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
 enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, MODES };
-#define SM_SHEETS 5
+#define SM_SHEETS 6
 #define SM_SHEET (P->_r2)
-static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "SAMPLE", "GESTURE", "ENV", "MODE"};
+static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "SAMPLE", "GEST", "ENV", "MODE", "TRACK"};
 #define NTABS 5                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
 /* hardware buttons the page can take over: slot numbers */
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
@@ -367,8 +367,8 @@ int looper_page_hit(int x, int d, int *track, float *val)
             return Z_OPTC;
         }
         if (P->mode == M_SMPLR) {                                 /* the sheets (track >= 10 tells Z_TAB apart) */
-            int sh = (x - 3) / 50;
-            if (x >= 3 && sh < SM_SHEETS && (x - 3) % 50 < 48) {
+            int sh = (x - 3) / 43;
+            if (x >= 3 && sh < SM_SHEETS && (x - 3) % 43 < 41) {
                 *track = 10 + sh;
                 return Z_TAB;
             }
@@ -1087,8 +1087,8 @@ static void draw_footer(const struct lay *L)
     if (P->mode == M_SMPLR) {                                     /* SAMPLR is a page of its own: SONG opens it, MIX goes to the Looper; the footer picks the sheet */
         for (int i = 0; i < SM_SHEETS; i++) {
             int on = SM_SHEET == i;
-            frame(3 + 50 * i, L->foot_y + 2, 48, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
-            text_c(3 + 50 * i, L->foot_y + 4, 48, sm_sheet_name[i], on ? C_CYAN : C_GREY, 1);
+            frame(3 + 43 * i, L->foot_y + 2, 41, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
+            text_c(3 + 43 * i, L->foot_y + 4, 41, sm_sheet_name[i], on ? C_CYAN : C_GREY, 1);
         }
         x0 = P->w;
     }
@@ -1356,9 +1356,22 @@ static void draw_samplr(void)
             samplr_env_text(w, q);
             text_c(x0, r1 + (SM_BH - 8) / 2, bw, b, C_LIGHT, 1);
         }
-    } else {                                                      /* MODE: SLICE TAPE ARP GRAIN */
+    } else if (sh == 4) {                                         /* MODE: SLICE TAPE ARP GRAIN */
         for (int i = 0; i < SM_MODES; i++)
             sm_button(3 + 77 * i, r1, 74, sm_mode_name[i], s->mode == i);
+    } else {                                                      /* TRACK: one button per track, a mark for a loop that runs (cyan), a take in progress (red), sound (yellow) */
+        int nt = samplr_tracks();
+        for (int i = 0; i < nt; i++) {
+            char b[2] = {(char)('1' + i), 0};
+            int x = 3 + 52 * i, inf = samplr_track_info(i);
+            sm_button(x, r1, 50, b, s->tno == i);
+            if (inf & 16)
+                box(x + 5, r1 + 4, 5, 5, C_YELLOW);
+            if (inf & 2)
+                box(x + 38, r1 + 4, 5, 5, C_CYAN);
+            if (inf & 12)
+                box(x + 38, r1 + SM_BH - 9, 5, 5, C_RED);
+        }
     }
 }
 
@@ -1443,8 +1456,14 @@ static int sm_touch(int kind, int id, int x, int d)
                 samplr_gest(3);
             else if (x >= 93 && x < 151)
                 samplr_gest(4);
-        } else if (x >= 3 && x < 3 + 77 * SM_MODES) {            /* MODE: pick one, and back to the PLAY sheet */
-            samplr_set_mode((x - 3) / 77);
+        } else if (sh == 4) {
+            if (x >= 3 && x < 3 + 77 * SM_MODES) {                /* MODE: pick one, and back to the PLAY sheet */
+                samplr_set_mode((x - 3) / 77);
+                SM_SHEET = 0;
+                P->entered = 0;
+            }
+        } else if (x >= 3 && (x - 3) / 52 < samplr_tracks()) {    /* TRACK: show another (the one that was shown goes on playing) */
+            samplr_track((x - 3) / 52);
             SM_SHEET = 0;
             P->entered = 0;
         }

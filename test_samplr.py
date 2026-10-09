@@ -993,6 +993,69 @@ setb(OFF["atk"], 19)
 setb(OFF["rel"], 32)
 e.call("samplr_set_mode", 0)
 
+# TRACKS: another track plays by itself while this one is shown
+e.call("samplr_tracks")
+check("tracks: the memory holds six", e.uc.reg_read(A.UC_ARM_REG_R0) == 6, e.uc.reg_read(A.UC_ARM_REG_R0))
+SMP0 = SMP
+e.call("samplr_set_mode", 0)
+setb(OFF["loopm"], 1)
+setb(OFF["latchm"], 1)
+touch(0, 0, 3 * 64 + 10, 100)
+touch(2, 0, 0, 0)
+play(8)
+check("tracks: track 0 has a latched slice loop", max(abs(x) for x in play()[0]) > 0.05)
+e.call("samplr_track", 1, count=50_000_000)
+e.call("samplr")
+SMP = e.uc.reg_read(A.UC_ARM_REG_R0)
+check("tracks: track 1 is a state of its own", SMP != SMP0 and sm(OFF["mode"], "B") == 0 and sm(OFF["id"], "i") >= 0 and sm(OFF["latchm"], "B") == 0, (hex(SMP), hex(SMP0)))
+lv = max(abs(x) for x in play(4)[0])
+check("tracks: track 0 goes on playing while track 1 is shown", lv > 0.05, lv)
+e.call("samplr_set_mode", 1)
+touch(0, 0, 512, 100)
+lv1 = max(abs(x) for x in play()[0])
+touch(2, 0, 0, 0)
+play(4)
+check("tracks: track 1 plays tape on its own", lv1 > lv * 0.5, (lv1, lv))
+e.call("samplr_track", 0, count=50_000_000)
+e.call("samplr")
+back = e.uc.reg_read(A.UC_ARM_REG_R0)
+SMP = SMP0
+check("tracks: back on track 0 (slicer, latched)", back == SMP0 and sm(OFF["mode"], "B") == 0 and sm(OFF["latchm"], "B") == 1)
+e.call("samplr_cycle", 2)                                      # LATCH off: the loop ends
+play(10)
+check("tracks: LATCH off on track 0 ends its loop", max(abs(x) for x in play()[0]) < 1e-3)
+setb(OFF["loopm"], 0)
+
+# a take on track 1 goes on replaying while track 0 is shown
+e.call("samplr_track", 1, count=50_000_000)
+e.call("samplr")
+SMP = e.uc.reg_read(A.UC_ARM_REG_R0)
+e.call("samplr_set_mode", 0)
+setb(OFF["latchm"], 0)
+setb(OFF["loopm"], 0)
+setb(OFF["g_bars"], 1)
+e.call("samplr_gest", 0)
+gwait(lambda: e.r8(SMP + OFF["g_run"]) == 1)
+play(20)
+touch(0, 0, 5 * 64 + 10, 100)
+play(20)
+touch(2, 0, 0, 0)
+gwait(lambda: e.r8(SMP + OFF["g_layers"]) == 1)
+check("tracks: track 1 recorded a take", e.r8(SMP + OFF["g_layers"]) == 1)
+e.call("samplr_track", 0, count=50_000_000)
+e.call("samplr")
+SMP = SMP0
+lvt = [max(abs(x) for x in play()[0]) for _ in range(380)]
+check("tracks: the take of track 1 replays while track 0 is shown", max(lvt) > 0.02 and min(lvt) < 1e-3, (max(lvt), min(lvt)))
+e.call("samplr_track", 1, count=50_000_000)
+e.call("samplr")
+SMP = e.uc.reg_read(A.UC_ARM_REG_R0)
+e.call("samplr_gest", 3)
+e.call("samplr_track", 0, count=50_000_000)
+SMP = SMP0
+play(20)
+check("tracks: CLR on track 1 ends it", max(max(abs(x) for x in play()[0]) for _ in range(380)) < 1e-3)
+
 # find transients: four bursts
 BURST[0] = True
 for b in range(2):

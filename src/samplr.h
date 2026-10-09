@@ -12,7 +12,8 @@
 #define SM_LTBASE (SM_VOICES + SM_ARPV)
 #define SM_LBASE  (SM_LTBASE + SM_LATV)
 #define SM_NV     (SM_LBASE + SM_LAYERS * SM_LFING)
-#define SM_EVENTS 1000           /* gesture events per layer */
+#define SM_EVENTS 800            /* gesture events per layer */
+#define SM_TRACKS 6              /* tracks: each its own sample, mode, settings and gesture layers */
 #define SM_GRAINS 6              /* per finger */
 #define SM_SPOTS  8              /* arpeggiator spots */
 #define SM_CUTS   64             /* slice points: up to 64 slices */
@@ -64,7 +65,7 @@ struct smev {
     uint32_t w;
 };
 
-struct smgest {                              /* lives in effect block 10 */
+struct smgest {                              /* a track's events: after its state in a block of its own (track 0: effect block 10) */
     uint16_t n[SM_LAYERS], _p;
     struct smev ev[SM_LAYERS][SM_EVENTS];
 };
@@ -121,13 +122,24 @@ struct sm {
     int8_t trans;                           /* transpose, semitones -48..48 */
     uint8_t ypit;                           /* bit per mode: finger height = pitch */
     uint8_t _t[2];
-    float il[256], ir[256];                 /* one block of the source, interpolated at the voice's positions */
-    float xl[800], xr[800];                 /* a contiguous copy of the source for the stock interpolator */
     uint8_t iq, _iq[3];                     /* interpolation: 0 the stock cubic (float), 1 the stock HighQ (double), 2 SAMPLR's own with a low-pass above 1x */
-    float oenv[SM_OWIN];                    /* transient search scratch (GUI task only) */
+    struct smscr *sc;                       /* the scratch shared by the tracks */
+    uint8_t tno, _tn[3];
 };
 
-struct sm *samplr(void);                    /* 0 until the looper's memory is up */
+/* Scratch every track uses in turn (the audio task renders one voice at a time; the transient search runs in the GUI task): the head of effect block 9. */
+struct smscr {
+    float il[256], ir[256];                 /* one block of the source, interpolated at the voice's positions */
+    float xl[800], xr[800];                 /* a contiguous copy of the source for the stock interpolator */
+    float oenv[SM_OWIN];                    /* transient search scratch (GUI task only) */
+    uint8_t cur, _c[3];                     /* the track the page shows */
+};
+
+struct sm *samplr(void);                    /* the track the page shows; 0 until the looper's memory is up */
+int samplr_tracks(void);                    /* how many tracks the memory holds (1..SM_TRACKS) */
+void samplr_track(int t);                   /* show / play on track t */
+int samplr_track_now(void);
+int samplr_track_info(int t);               /* bits: 1 has a sample, 2 loop running, 4 recording, 8 armed, 16 sounding */
 void samplr_run(float *bl, float *br, int n);
 void samplr_refresh(unsigned ticks);        /* call while the tab shows: fills the waveform as a streamed sample loads */
 void samplr_enter(void);                    /* the tab was opened: look at the pads again */

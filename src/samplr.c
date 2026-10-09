@@ -24,32 +24,107 @@ static void rec_param(struct sm *s, int pid);
 static void gest_capture_latched(struct sm *s, int L);
 static void gest_uncapture(struct sm *s, int drop);
 
-struct sm *samplr(void)
+/* Track t's state: track 0 follows the scratch in effect block 9 (its events in block 10), track 1 has effect block 11 to itself, the others the extra
+ * blocks the looper claims below its own area. Each block: the state, then the events. make: 0 only if it was set up before. */
+static struct sm *trk_get(int t, int make)
 {
-    struct sm *s = (struct sm *)looper_scratch(9);
-    if (!s)
+    uint8_t *b9 = looper_scratch(9);
+    if (!b9 || t < 0 || t >= SM_TRACKS)
+        return 0;
+    struct sm *s;
+    struct smgest *g;
+    if (t == 0) {
+        s = (struct sm *)(b9 + ((sizeof(struct smscr) + 15u) & ~15u));
+        g = (struct smgest *)looper_scratch(10);
+    } else {
+        uint8_t *b = looper_scratch(t == 1 ? 11 : 12 + t - 2);
+        if (!b)
+            return 0;
+        s = (struct sm *)b;
+        g = (struct smgest *)(b + ((sizeof(struct sm) + 15u) & ~15u));
+    }
+    if (!g)
         return 0;
     if (s->magic != SMAGIC) {                         /* the block was zeroed at boot */
+        if (!make)
+            return 0;
         s->magic = SMAGIC;
         s->nslice = 16;
         s->gate = 1;
         s->vol = 1.f;
         s->id = -1;
-        s->rnd = 2463534242u;
+        s->rnd = 2463534242u + 7919u * (uint32_t)t;
         s->div = 2;
         s->atk = 19;                                              /* 1.3 ms */
         s->rel = 32;                                              /* 4 ms */
         s->scat = 0.f;
         s->dens = 20.f;
         s->ypit = 0;
-        s->gest = (struct smgest *)looper_scratch(10);
+        s->tno = (uint8_t)t;
+        s->gest = g;
         s->g_bars = 2;
         s->g_rec = -1;
         for (int i = 0; i < SM_VOICES; i++)
             s->drag[i] = -1;
     }
+    s->sc = (struct smscr *)b9;
     return s;
 }
+
+struct sm *samplr(void)
+{
+    uint8_t *b9 = looper_scratch(9);
+    if (!b9)
+        return 0;
+    struct sm *s = trk_get(((struct smscr *)b9)->cur, 1);
+    return s ? s : trk_get(0, 1);
+}
+
+int samplr_tracks(void)
+{
+    int n;
+    for (n = 0; n < SM_TRACKS; n++) {
+        uint8_t *b = n == 0 ? looper_scratch(10) : looper_scratch(n == 1 ? 11 : 12 + n - 2);
+        if (!b)
+            break;
+    }
+    return n ? n : 1;
+}
+
+int samplr_track_now(void)
+{
+    struct sm *s = samplr();
+    return s ? s->tno : 0;
+}
+
+void samplr_enter(void);
+void samplr_leave(void);
+
+/* Show track t (a track that was never used starts with the first pad sample): fingers let go of the old one, which goes on playing what it has. */
+void samplr_track(int t)
+{
+    struct sm *o = samplr();
+    if (!o || t < 0 || t >= samplr_tracks() || t == o->tno)
+        return;
+    samplr_leave();
+    if (!trk_get(t, 1))
+        return;
+    o->sc->cur = (uint8_t)t;
+    samplr_enter();
+}
+
+int samplr_track_info(int t)
+{
+    struct sm *s = trk_get(t, 0);
+    if (!s)
+        return 0;
+    int r = (s->id >= 0) | (s->g_run ? 2 : 0) | (s->g_rec >= 0 ? 4 : 0) | (s->g_armed ? 8 : 0);
+    for (int f = 0; f < SM_NV; f++)
+        if (s->v[f].on || s->v[f].g_on || s->v[f].env > 0.f)
+            r |= 16;
+    return r;
+}
+
 
 static inline int fl(float x)
 {
@@ -347,7 +422,7 @@ static uint8_t *block_entry(struct sm *s, int blk);
 static int32_t refine_cut(struct sm *s, int32_t pos, int32_t back, int32_t prev)
 {
     enum { BEFORE = 1536, AFTER = 512, B = 16, NB = (BEFORE + AFTER) / B };
-    float *buf = s->oenv, m[NB];
+    float *buf = s->sc->oenv, m[NB];
     int32_t base = pos - BEFORE, len = s->len;
     for (int i = 0; i < BEFORE + AFTER; i++) {
         int32_t f = base + i;
@@ -445,7 +520,7 @@ static void find_transients(struct sm *s)
         }
         float q = sum / (float)(cnt ? cnt : 1), root;
         __asm__("vsqrt.f32 %0, %1" : "=t"(root) : "t"(q));
-        s->oenv[w] = root;
+        s->sc->oenv[w] = root;
     }
     if (miss) {                                                   /* part of a streamed sample is not in memory yet: ask again in a moment */
         s->auto_found = 255;
@@ -453,16 +528,16 @@ static void find_transients(struct sm *s)
     }
     float pk = 0.f;
     for (int w = 0; w < nw; w++)
-        pk = s->oenv[w] > pk ? s->oenv[w] : pk;
+        pk = s->sc->oenv[w] > pk ? s->sc->oenv[w] : pk;
     /* onset strength: the rise over the mean of the 6 windows before */
-    float *fx = s->oenv;
+    float *fx = s->sc->oenv;
     for (int w = nw - 1; w >= 0; w--) {                           /* in place, from the end: oenv[w] still needs the older ones */
         float m = 0.f;
         int c = 0;
         for (int k = 1; k <= 6 && w - k >= 0; k++, c++)
-            m += s->oenv[w - k];
-        m = c ? m / (float)c : s->oenv[w];
-        float d = s->oenv[w] - 1.4f * m - 0.08f * pk;
+            m += s->sc->oenv[w - k];
+        m = c ? m / (float)c : s->sc->oenv[w];
+        float d = s->sc->oenv[w] - 1.4f * m - 0.08f * pk;
         fx[w] = d > 0.f ? d : 0.f;
     }
     int want = s->nslice - 1, found = 0, space = nw / (2 * (want + 1)) + 1;
@@ -761,6 +836,9 @@ void samplr_info(char *out)
         *p = 0;
         return;
     }
+    *p++ = 'T';
+    *p++ = (char)('1' + s->tno);
+    *p++ = ' ';
     if (s->mode == SM_SLICER) {
         p = cat(p, "SLICER ");
         p = num(p, s->nslice);
@@ -1582,7 +1660,7 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
         while (i < m) {
             int32_t f = ip + i;
             if (f < 0 || f >= len) {
-                s->il[i] = s->ir[i] = 0.f;
+                s->sc->il[i] = s->sc->ir[i] = 0.f;
                 i++;
                 continue;
             }
@@ -1592,11 +1670,11 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
             int vk = c.valid[bi] - o;
             vk = vk < 0 ? 0 : vk > k ? k : vk;
             for (int q = 0; q < vk; q++) {
-                s->il[i + q] = c.L[bi][o + q];
-                s->ir[i + q] = c.R[bi][o + q];
+                s->sc->il[i + q] = c.L[bi][o + q];
+                s->sc->ir[i + q] = c.R[bi][o + q];
             }
             for (int q = vk; q < k; q++)
-                s->il[i + q] = s->ir[i + q] = 0.f;
+                s->sc->il[i + q] = s->sc->ir[i + q] = 0.f;
             i += k;
         }
         return 1;
@@ -1607,17 +1685,17 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
         if (cnt > 800)
             return 0;
         for (int i = 0; i < cnt; i++)
-            rd_at(&c, base + i, &s->xl[i], &s->xr[i]);
+            rd_at(&c, base + i, &s->sc->xl[i], &s->sc->xr[i]);
         stock_interp_fn fn = s->iq ? STOCK_HIGHQ : STOCK_CUBIC;
         int used;
         float ph = fr;
-        fn(s->xl, 0, 1, &used, &ph, s->il, m, r);
+        fn(s->sc->xl, 0, 1, &used, &ph, s->sc->il, m, r);
         if (s->mono) {
             for (int i = 0; i < m; i++)
-                s->ir[i] = s->il[i];
+                s->sc->ir[i] = s->sc->il[i];
         } else {
             ph = fr;
-            fn(s->xr, 0, 1, &used, &ph, s->ir, m, r);
+            fn(s->sc->xr, 0, 1, &used, &ph, s->sc->ir, m, r);
         }
         return 1;
     }
@@ -1642,8 +1720,8 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
                 rd_at(&c, f + 1, &l1, &r1);
                 cf = f;
             }
-            s->il[i] = l0 + fa * (l1 - l0);
-            s->ir[i] = r0 + fa * (r1 - r0);
+            s->sc->il[i] = l0 + fa * (l1 - l0);
+            s->sc->ir[i] = r0 + fa * (r1 - r0);
         }
         return 1;
     }
@@ -1663,8 +1741,8 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
             sl *= .5f;
             sr *= .5f;
         }
-        s->il[i] = sl;
-        s->ir[i] = sr;
+        s->sc->il[i] = sl;
+        s->sc->ir[i] = sr;
     }
     return 1;
 }
@@ -1704,7 +1782,7 @@ static int voice_part(struct sm *s, struct smvoice *v, float *bl, float *br, int
     float eu = 1.f / (step_ms(s->atk) * 48.f), ed = 1.f / (step_ms(s->rel) * 48.f);
     int on = v->on;
     for (int k = 0; k < m; k++) {
-        float l = s->il[k], rr = s->ir[k];
+        float l = s->sc->il[k], rr = s->sc->ir[k];
         if (ends) {
             int rem = stop_at - k;                                /* nothing of the next slice is ever heard: a short fade, then silence */
             if (rem <= 0) {
@@ -2097,8 +2175,8 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
             float inv = 1.f / (float)g->len;
             for (int k = 0; k < m; k++) {
                 float t = (float)(g->age + k) * inv, w = contour(g->cont, t) * gain * (e0 + ge * (float)(i0 + k));
-                bl[i0 + k] += s->il[k] * w * g->gl;
-                br[i0 + k] += s->ir[k] * w * g->gr;
+                bl[i0 + k] += s->sc->il[k] * w * g->gl;
+                br[i0 + k] += s->sc->ir[k] * w * g->gr;
             }
             float np = g->frac + g->rate * (float)m;
             int kk = fl(np);
@@ -2128,8 +2206,8 @@ static void dry_run(struct sm *s, float *bl, float *br, int n)
     for (int i = 0; i < n; i++) {
         env += target > env ? 1.f / 960.f : -1.f / 960.f;
         env = env < 0.f ? 0.f : env > 1.f ? 1.f : env;
-        bl[i] += s->il[i] * g * env;
-        br[i] += s->ir[i] * g * env;
+        bl[i] += s->sc->il[i] * g * env;
+        br[i] += s->sc->ir[i] * g * env;
     }
     s->dry_env = env;
     float np = s->dry_frac + r * (float)n;
@@ -2233,13 +2311,23 @@ static void sweep(struct sm *s)
 
 void samplr_run(float *bl, float *br, int n)
 {
-    struct sm *s = samplr();
+    struct sm *s = trk_get(0, 1);
     if (!s || n <= 0 || n > 256)
         return;
     uint32_t c0 = DWT_CYCCNT;
-    gest_run(s, n);
-    sweep(s);
-    run_voices(s, bl, br, n);
+    for (int t = 0; t < SM_TRACKS; t++) {                         /* every track that was ever used goes on playing (its loop, what it latched) */
+        struct sm *q = t ? trk_get(t, 0) : s;
+        if (!q)
+            continue;
+        gest_run(q, n);
+        sweep(q);
+        run_voices(q, bl, br, n);
+        q->tick++;
+        q->sph += (float)n;                                       /* the free-running grid (used while the sequencer is stopped) */
+        float w = 16.f * looper_beat_frames();
+        if (q->sph >= w)
+            q->sph -= w;
+    }
     uint32_t c1 = DWT_CYCCNT, period = c0 - s->t_last, dur = c1 - c0;
     if (s->t_last && period > 1000u && period < 100000000u) {
         s->t_sum += dur;                                          /* load = cycles in this function / the (average) block period */
@@ -2257,11 +2345,14 @@ void samplr_run(float *bl, float *br, int n)
         }
     }
     s->t_last = c0;
-    s->tick++;
-    s->sph += (float)n;                                           /* the free-running grid (used while the sequencer is stopped) */
-    float w = 16.f * looper_beat_frames();
-    if (s->sph >= w)
-        s->sph -= w;
+    for (int t = 1; t < SM_TRACKS; t++) {                         /* the readouts and the load guard are the whole thing's */
+        struct sm *q = trk_get(t, 0);
+        if (q) {
+            q->load = s->load;
+            q->t_avg_shown = s->t_avg_shown;
+            q->t_peak_shown = s->t_peak_shown;
+        }
+    }
 }
 
 uint32_t samplr_sig(void)
@@ -2285,6 +2376,8 @@ uint32_t samplr_sig(void)
         if (v->g_on)
             h = h * 31u + (uint32_t)(v->g_centre / (s->len / 150 + 1)) + (uint32_t)v->g_size;
     }
+    for (int q = 0; q < SM_TRACKS; q++)                           /* the track dots */
+        h = h * 31u + (uint32_t)samplr_track_info(q) + (uint32_t)(s->tno == q) * 64u;
     return h;
 }
 
@@ -2326,7 +2419,8 @@ const char *samplr_pat_name(int p)
 {
     return pat_name[(unsigned)p % SM_PATS];
 }
-_Static_assert(sizeof(struct sm) <= 32768, "SAMPLR state must fit its 32 KB block");
+_Static_assert(((sizeof(struct smscr) + 15u) & ~15u) + sizeof(struct sm) <= 32768, "SAMPLR scratch and the first track must fit effect block 9");
+_Static_assert(((sizeof(struct sm) + 15u) & ~15u) + sizeof(struct smgest) <= 32768, "a track and its events must fit one 32 KB block");
 
 const char *samplr_cont_name(int c)
 {

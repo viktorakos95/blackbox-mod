@@ -217,3 +217,15 @@ takes three overdub layers.
 - Grain attack / release: the cloud has its own level that rises with ATK and falls with REL after the finger lifts (it keeps spawning grains while it fades). New ENV footer
   sheet (PLAY SAMPLE GESTURE ENV MODE) with two sliders for the two times (same 97 steps); slider moves are recorded into a take.
 - Still open: six tracks, FX, zoom, importing the stock slicer's scan slices, a recording source other than the pad samples.
+
+## Build 19 (six tracks)
+- Each track is a full SAMPLR state of its own (sample, mode, slice points, every setting, latch, up to 3 gesture layers of 800 events) and keeps playing when another is
+  shown: loops, latched slices / spots / clouds, sequences. The same pad sample can be on several tracks. Live play, the strip, the hardware REC / PLAY / STOP and the knobs
+  always act on the shown track; the TRACK footer sheet picks it (marks: yellow sounds now, cyan a loop runs, red recording / armed). The top bar starts with T1..T6.
+- Memory (nothing guessed, measured with the compiler): the state shrank by moving the scratch (il, ir, xl, xr, transient search = 16.6 KB) into one shared head of effect block
+  9. Track 0 = block 9 after the scratch + block 10 for its events; track 1 = block 11 (state 12.4 KB + events 19.2 KB); tracks 2..5 = four extra 32 KB blocks, the two pool
+  entries just below the looper's area (entries 382 and 383), claimed at boot ONLY if they are free (state 0). If they are not, SAMPLR has two tracks (the TRACK sheet shows
+  as many as there are) and the looper is unaffected.
+- Events per layer went from 1000 to 800 (both fit the 32 KB blocks; checked by static asserts).
+- One shared load meter (all tracks); the grain load guard sees the total.
+- Not done yet (next): a take recorded in one mode per track is as before, per track; FX; zoom; stock scan import.

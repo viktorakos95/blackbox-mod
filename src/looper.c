@@ -193,6 +193,12 @@ static inline int16_t *frame_at(int a, uint32_t f)
     return half + 2 * (o % HALF_FRAMES);
 }
 
+/* Extra buffer j (0..3): the two pool entries just below the looper's own area, 32 KB each. */
+static inline uint8_t *xbuf(int j)
+{
+    return *(uint8_t **)(entry(FIRST_ENTRY - 1 - j / 2) + ((j & 1) ? ENTRY_RIGHT : ENTRY_LEFT));
+}
+
 /* Effect memory buffer i (0..11), 32 KB each. */
 static inline uint8_t *fxbuf(int i)
 {
@@ -328,6 +334,16 @@ void looper_boot(void *engine)
                 clear_block(a, k);
         for (int i = 0; i < 12; i++)
             zero_words((uint32_t *)fxbuf(i), 8192);
+        for (int k = 1; k <= 2; k++) {                            /* SAMPLR's tracks 2..5: whatever of the two entries below is free (a project that fills the pool leaves fewer tracks) */
+            uint8_t *e = entry(FIRST_ENTRY - k);
+            if (e[ENTRY_STATE] != 0 || !*(void **)(e + ENTRY_LEFT) || !*(void **)(e + ENTRY_RIGHT))
+                break;
+            *(uint32_t *)(e + ENTRY_STAMP) = 0;
+            *(uint32_t *)(e + ENTRY_OWNER) = OWNER;
+            e[ENTRY_STATE] = STATE_CLAIMED;
+            zero_words((uint32_t *)xbuf(2 * k - 2), 8192);
+            zero_words((uint32_t *)xbuf(2 * k - 1), 8192);
+        }
         S->ok = 1;
     }
     looper_page_boot();                           /* the page's state (backup SRAM is not cleared) */
@@ -1884,10 +1900,17 @@ float looper_beat_frames(void)
     return S->magic == MAGIC ? beat_frames() : 24000.f;
 }
 
-/* Spare 32 KB effect memory block 9 + i (i = 0..2), zeroed at boot; 0 while the looper's memory is not up. */
+/* Spare 32 KB effect memory block 9 + i (i = 0..2), and 12.. 15 for the extra blocks that were free, zeroed at boot; 0 while the looper's memory is not up. */
 uint8_t *looper_scratch(int i)
 {
-    return S->magic == MAGIC && S->ok && i >= 9 && i <= 11 ? fxbuf(i) : 0;
+    if (S->magic != MAGIC || !S->ok)
+        return 0;
+    if (i >= 9 && i <= 11)
+        return fxbuf(i);
+    if (i < 12 || i > 15)
+        return 0;
+    uint8_t *e = entry(FIRST_ENTRY - 1 - (i - 12) / 2);                /* (claimed at boot: ours) */
+    return *(uint32_t *)(e + ENTRY_OWNER) == OWNER && e[ENTRY_STATE] == STATE_CLAIMED ? xbuf(i - 12) : 0;
 }
 
 /* The Blackbox's own delay and reverb: add the last block's sends to an FX node's bus before the node runs. obj is

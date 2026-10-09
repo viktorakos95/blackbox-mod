@@ -148,9 +148,10 @@ def ramp(k0, n=N):
 # --- boot
 boot()
 check("boot: the stock pool init still runs, with the engine", ("pool", ENGINE) in log, log)
-check("boot: the last 231 pool blocks claimed (4 tracks + undo + effects), the others untouched",
+check("boot: the last 231 pool blocks claimed (4 tracks + undo + effects) and the two below them (SAMPLR's extra tracks), the others untouched",
       all(e.r8(ENGINE + 0x1C * i + 0x1F) == 3 and e.r32(ENGINE + 0x1C * i + 0x18) == 0x4C4F4F50 for i in range(FIRST, ENTRIES))
-      and all(e.r8(ENGINE + 0x1C * i + 0x1F) == 0 for i in range(FIRST)))
+      and all(e.r8(ENGINE + 0x1C * i + 0x1F) == 3 and e.r32(ENGINE + 0x1C * i + 0x18) == 0x4C4F4F50 for i in range(FIRST - 2, FIRST))
+      and all(e.r8(ENGINE + 0x1C * i + 0x1F) == 0 for i in range(FIRST - 2)))
 check("boot: track memory wiped", bytes(e.uc.mem_read(0xC0000000, 0x100)) == bytes(0x100))
 e.call("looper_status", 0x2403F000)
 check("status: Lok", bytes(e.uc.mem_read(0x2403F000, 3)) == b"Lok")
@@ -1068,15 +1069,15 @@ check("SMPLR: the touched slice is drawn in the finger's colour (cyan)", any(x[2
 touch("up", wave_x, wave_d)
 blocks(3, 0.0)
 check("SMPLR: lifting the finger silences it (gate)", max(abs(v) for v in block([0.0] * N)[1][0]) < 1e-4)
-touch("down", 3 + 200 + 10, 219)                                 # the MODE sheet (last footer tab)
-touch("up", 3 + 200 + 10, 219)
+touch("down", 3 + 172 + 10, 219)                                 # the MODE sheet (last footer tab)
+touch("up", 3 + 172 + 10, 219)
 touch("down", 3 + 77 + 10, 178 + 10)                               # TAPE
 
 touch("up", 3 + 77 + 10, 178 + 10)
 e.call("samplr")
 check("SMPLR: the TAPE button switches the mode", e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4) == 1, e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4))
-touch("down", 3 + 50 + 10, 219)                                  # the SAMPLE sheet in the footer
-touch("up", 3 + 50 + 10, 219)
+touch("down", 3 + 43 + 10, 219)                                  # the SAMPLE sheet in the footer
+touch("up", 3 + 43 + 10, 219)
 touch("down", 140, 27)                                          # +12 in the strip above the sample (always there)
 touch("up", 140, 27)
 touch("down", 140, 27)                                          # +12 in the strip above the sample (always there)
@@ -1085,8 +1086,8 @@ check("SMPLR: the SAMPLE sheet's +12 button transposes (twice = 24)", struct.unp
 touch("down", 80, 27)                                           # the value: back to 0
 touch("up", 80, 27)
 check("SMPLR: tapping the value resets the transpose", struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0] == 0)
-touch("down", 3 + 100 + 10, 219)                                 # the GESTURE sheet
-touch("up", 3 + 100 + 10, 219)
+touch("down", 3 + 86 + 10, 219)                                 # the GESTURE sheet
+touch("up", 3 + 86 + 10, 219)
 touch("down", 200, 27)                                          # REC in the strip above the sample
 touch("up", 200, 27)
 check("SMPLR: the GESTURE sheet's REC arms the take", e.r8(SMPLR_P + G_ARMED) == 1, e.r8(SMPLR_P + G_ARMED))
@@ -1094,6 +1095,13 @@ touch("down", 200, 27)                                          # REC again canc
 touch("up", 200, 27)
 touch("down", 3 + 10, 219)                                       # back to the PLAY sheet
 touch("up", 3 + 10, 219)
+touch("down", 3 + 215 + 10, 219)                                 # the TRACK sheet (last footer tab)
+touch("up", 3 + 215 + 10, 219)
+touch("down", 3 + 52 + 10, 178 + 10)                             # track 2
+touch("up", 3 + 52 + 10, 178 + 10)
+e.call("samplr")
+check("SMPLR: the TRACK sheet shows track 2 (a state of its own)", e.uc.reg_read(A.UC_ARM_REG_R0) != SMPLR_P and e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + _off("tno")) == 1)
+e.call("samplr_track", 0, count=50_000_000)
 e.call("looper_page_goto", VIEW, 0)
 check("SMPLR: leaving the tab releases the voices", True)
 
