@@ -18,6 +18,7 @@ float looper_beat_frames(void);
 
 static void release_finger(struct sm *s, int mode, int id, int own, int lat);
 static inline int grid(struct sm *s, float beats, int n);
+static void unlatch(struct sm *s, int mode);
 
 struct sm *samplr(void)
 {
@@ -284,7 +285,11 @@ void samplr_set_mode(int m)
 {
     struct sm *s = samplr();
     if (s && m >= 0 && m < SM_MODES) {
-        samplr_leave();                                           /* held fingers let go; latched spots and clouds play on */
+        samplr_leave();                                           /* held fingers let go */
+        if ((s->latchm >> s->mode) & 1) {                         /* what the old mode's LATCH kept stops with it (no stuck latch under another mode's button) */
+            s->latchm &= (uint8_t)~(1u << s->mode);
+            unlatch(s, s->mode);
+        }
         s->mode = (uint8_t)m;
     }
 }
@@ -306,8 +311,14 @@ void samplr_toggle_gate(void)                                    /* GATE -> ONE 
 }
 
 static const float qbeats[4] = {0.f, 1.f, .5f, .25f};             /* the quantize choices, in beats */
-static const float dbeats[4] = {1.f, .5f, .25f, .125f};           /* arp / grain rate: 1/4 1/8 1/16 1/32 */
-static const char *const div_name[4] = {"1/4", "1/8", "1/16", "1/32"};
+static const float dbeats[5] = {1.f, .5f, .25f, .125f, .0625f};   /* arp / grain rate: 1/4 1/8 1/16 1/32 1/64 */
+static const char *const div_name[5] = {"1/4", "1/8", "1/16", "1/32", "1/64"};
+static const int8_t scales[4][5] = {{0, 4, 7, 11, 0}, {0, 3, 7, 10, 0}, {0, 2, 4, 7, 9}, {0, 7, 0, 0, 0}};
+static const uint8_t scale_n[4] = {4, 4, 5, 2};
+static const char *const ppat_name[5] = {"OFF", "MAJ7", "MIN7", "PENT", "5THS"};
+static const char *const cont_name[4] = {"SINE", "DOWN", "UP", "FLAT"};
+static const uint8_t pat_k[8] = {0, 2, 1, 3, 2, 0, 3, 1};            /* a fixed pseudo-random pitch pattern: which note of the scale, and the octave */
+static const int8_t pat_o[8] = {0, 0, 12, 0, 0, -12, 0, 12};
 static const char *const pat_name[SM_PATS] = {"UP", "DOWN", "UP-DN", "RND", "ORDER"};
 static const int32_t atk_frames[5] = {64, 240, 960, 3840, 14400};   /* 1.3 5 20 80 300 ms */
 static const int32_t rel_frames[5] = {192, 960, 3840, 14400, 48000}; /* 4 20 80 300 1000 ms */
@@ -527,6 +538,12 @@ void samplr_cycle(int what)
         s->ypit ^= (uint8_t)(1u << s->mode);
     } else if (what == 4) {
         find_transients(s);
+    } else if (what == 5) {
+        s->g_cont = (uint8_t)((s->g_cont + 1) & 3);
+    } else if (what == 6) {
+        s->g_warpmode ^= 1;
+    } else if (what == 7) {
+        s->g_ppat = (uint8_t)((s->g_ppat + 1) % 5);
     } else {
         s->latchm ^= (uint8_t)(1u << s->mode);
         if (!((s->latchm >> s->mode) & 1))
@@ -576,10 +593,13 @@ void samplr_knob(int knob, int counts)
             equal_cuts(s);
     } else if ((m == SM_ARP || m == SM_GRAIN) && knob == 1) {
         int d = s->div + dir;
-        s->div = (uint8_t)(d < 0 ? 0 : d > 3 ? 3 : d);
+        s->div = (uint8_t)(d < 0 ? 0 : d > 4 ? 4 : d);
     } else if (m == SM_GRAIN && knob == 2) {
         float v = s->scat + .1f * (float)dir;
         s->scat = v < 0.f ? 0.f : v > 1.f ? 1.f : v;
+    } else if (m == SM_GRAIN && knob == 3) {
+        int v = s->g_drift + dir;
+        s->g_drift = (int8_t)(v < -8 ? -8 : v > 8 ? 8 : v);
     } else if (m != SM_GRAIN && knob == 2) {
         int v = s->atk + dir;
         s->atk = (uint8_t)(v < 0 ? 0 : v > 4 ? 4 : v);
@@ -630,7 +650,7 @@ void samplr_info(char *out)
         p = cat(p, "TAPE");
     } else if (s->mode == SM_ARP) {
         p = cat(p, "ARP ");
-        p = cat(p, div_name[s->div & 3]);
+        p = cat(p, div_name[s->div % 5]);
         *p++ = ' ';
         p = cat(p, pat_name[s->pat % SM_PATS]);
     } else {
@@ -639,11 +659,18 @@ void samplr_info(char *out)
             p = num(p, (unsigned)(s->dens + .5f));
             p = cat(p, "/S");
         } else {
-            p = cat(p, div_name[s->div & 3]);
+            p = cat(p, div_name[s->div % 5]);
         }
-        p = cat(p, " SCAT ");
+        p = cat(p, s->g_warpmode ? " WARP " : " SPR ");
         p = num(p, (unsigned)(s->scat * 100.f + .5f));
-        *p++ = '%';
+        p = cat(p, "% ");
+        if (s->g_drift) {
+            *p++ = 'D';
+            *p++ = s->g_drift < 0 ? '-' : '+';
+            p = num(p, (unsigned)(s->g_drift < 0 ? -s->g_drift : s->g_drift));
+            *p++ = ' ';
+        }
+        p = cat(p, cont_name[s->g_cont & 3]);
     }
     if (s->mode != SM_GRAIN) {
         p = cat(p, " A");
@@ -1455,7 +1482,7 @@ static void arp_step(struct sm *s, int off)
     }
     struct smspot *sp = &s->spot[idx[pick]];
     s->a_last = (uint8_t)idx[pick];
-    float rate = pitch_ratio(sp->st + s->trans), step = looper_beat_frames() * dbeats[s->div & 3];
+    float rate = pitch_ratio(sp->st + s->trans), step = looper_beat_frames() * dbeats[s->div % 5];
     int32_t span = (int32_t)(step * .9f * rate * s->ratio), start = sp->pos, end = start + span;
     end = end > s->len ? s->len : end;
     if (sp->end && end > sp->end)                                 /* snapped: never into the next slice */
@@ -1474,14 +1501,28 @@ static void grain_spawn(struct sm *s, struct smvoice *v, int off)
         struct smgrain *g = &v->g[i];
         if (g->on)
             continue;
-        float j = (rnd01(s) * 2.f - 1.f) * s->scat * (float)(s->len >> 4), p = (rnd01(s) * 2.f - 1.f) * s->scat * .8f;
+        float jr, pr;
+        if (s->g_warpmode) {                                      /* WARP: smooth random fluctuation of the scan and the stereo position */
+            jr = v->g_warp;
+            pr = v->g_warp2;
+        } else {                                                  /* RANDOM: every grain its own */
+            jr = rnd01(s) * 2.f - 1.f;
+            pr = rnd01(s) * 2.f - 1.f;
+        }
+        float j = jr * s->scat * (float)(s->len >> 4), p = pr * s->scat * .8f;
         int32_t pos = v->g_centre + (int32_t)j;
         g->ip = pos < 0 ? 0 : pos >= s->len ? s->len - 1 : pos;
         g->frac = 0.f;
-        g->rate = s->ratio * pitch_ratio(s->trans);
+        int st = s->trans;
+        if (s->g_ppat) {                                          /* the pitch pattern: a fixed pseudo-random walk over the notes of a scale */
+            int q = v->g_seq++ & 7, sc = s->g_ppat - 1;
+            st += scales[sc][pat_k[q] % scale_n[sc]] + pat_o[q];
+        }
+        g->rate = s->ratio * pitch_ratio(st);
         g->len = v->g_size < 480 ? 480 : v->g_size;
         g->age = 0;
         g->delay = off;
+        g->cont = s->g_cont;
         g->gl = .7f * (1.f - p);
         g->gr = .7f * (1.f + p);
         g->on = 1;
@@ -1489,8 +1530,39 @@ static void grain_spawn(struct sm *s, struct smvoice *v, int off)
     }
 }
 
+/* The grain envelope at t = 0..1 (CONTOUR): sine-like, a downward ramp (a quick attack, a long decay), an upward ramp, or flat with short ramps. */
+static inline float contour(int c, float t)
+{
+    float u = 1.f - t;
+    switch (c) {
+    case 1: {
+        float a = t * 14.f;
+        return (a > 1.f ? 1.f : a) * u * u * 1.7f;
+    }
+    case 2: {
+        float a = u * 14.f;
+        return (a > 1.f ? 1.f : a) * t * t * 1.7f;
+    }
+    case 3: {
+        float a = t * 10.f, b = u * 10.f;
+        return (a > 1.f ? 1.f : a) * (b > 1.f ? 1.f : b);
+    }
+    default:
+        return 4.f * t * u;
+    }
+}
+
 static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
 {
+    if (v->g_on) {                                                /* SCAN: the cloud drifts through the sample (0 = stays); WARP: the smooth random walk moves on */
+        if (s->g_drift) {
+            int32_t step = (int32_t)((float)s->g_drift * (1.f / 4.f) * (float)n * s->ratio);
+            int32_t c = v->g_centre + step;
+            v->g_centre = c < 0 ? c + s->len : c >= s->len ? c - s->len : c;
+        }
+        v->g_warp += (rnd01(s) * 2.f - 1.f - v->g_warp) * 0.04f;
+        v->g_warp2 += (rnd01(s) * 2.f - 1.f - v->g_warp2) * 0.04f;
+    }
     if (v->g_on && s->load < 650) {                               /* (no new grains while this block alone is above 65 %) */
         if (s->gfree) {
             float inc = s->dens * (1.f / 48000.f);
@@ -1507,7 +1579,7 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
             while (v->g_acc >= 1.f)
                 v->g_acc -= 1.f;
         } else {
-            int off = grid(s, dbeats[s->div & 3], n);
+            int off = grid(s, dbeats[s->div % 5], n);
             if (off >= 0)
                 grain_spawn(s, v, off);
         }
@@ -1524,7 +1596,7 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         if (m > 0 && sample_block(s, g->ip, g->frac, g->rate, m)) {
             float inv = 1.f / (float)g->len;
             for (int k = 0; k < m; k++) {
-                float t = (float)(g->age + k) * inv, w = 4.f * t * (1.f - t) * gain;
+                float t = (float)(g->age + k) * inv, w = contour(g->cont, t) * gain;
                 bl[i0 + k] += s->il[k] * w * g->gl;
                 br[i0 + k] += s->ir[k] * w * g->gr;
             }
@@ -1572,7 +1644,7 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
     for (int i = 0; i < SM_SPOTS; i++)
         any_spot |= s->spot[i].used;
     if (any_spot) {
-        int off = grid(s, dbeats[s->div & 3], n);
+        int off = grid(s, dbeats[s->div % 5], n);
         if (off >= 0)
             arp_step(s, off);
     }
@@ -1682,3 +1754,13 @@ const char *samplr_pat_name(int p)
     return pat_name[(unsigned)p % SM_PATS];
 }
 _Static_assert(sizeof(struct sm) <= 32768, "SAMPLR state must fit its 32 KB block");
+
+const char *samplr_cont_name(int c)
+{
+    return cont_name[c & 3];
+}
+
+const char *samplr_ppat_name(int p)
+{
+    return ppat_name[(unsigned)p % 5];
+}

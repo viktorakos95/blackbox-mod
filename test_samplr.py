@@ -38,7 +38,7 @@ def struct_offsets(names):
     return res
 
 
-OFF = struct_offsets(["g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
+OFF = struct_offsets(["g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
 
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
@@ -713,6 +713,48 @@ e.call("samplr_cycle", 2)
 setb(OFF["loopm"], 0)
 e.call("samplr_gest", 3)
 play(60)
+
+# GRAIN: scan drift, pitch pattern, contour, warp spray; a mode switch ends the old mode's latch
+VOFF = struct_offsets(["v"])["v"]
+gcent = lambda: e.r32(SMP + VOFF + voice_offsets(["g_centre"])["g_centre"])
+e.call("samplr_set_mode", 3)
+setb(OFF["gfree"], 0)
+setb(OFF["div"], 1)
+touch(0, 0, 512, 500)
+c0 = gcent()
+play(40)
+check("grain: with no drift the cloud stays where it was put", gcent() == c0, (c0, gcent()))
+e.uc.mem_write(SMP + OFF["g_drift"], struct.pack("<b", 4))     # +1x real time
+c1 = gcent()
+play(40)
+moved = (gcent() - c1) % LENF
+check("grain: drift +4 moves the cloud through the sample at real speed (40 blocks = 10240 frames)", abs(moved - 10240) < 300, moved)
+e.uc.mem_write(SMP + OFF["g_drift"], struct.pack("<b", -4))
+c2 = gcent()
+play(20)
+check("grain: negative drift runs backwards (and wraps)", (c2 - gcent()) % LENF in range(5000 - 200, 5000 + 200), (c2 - gcent()) % LENF)
+e.uc.mem_write(SMP + OFF["g_drift"], struct.pack("<b", 0))
+for ppat in (1, 2, 3, 4):
+    setb(OFF["g_ppat"], ppat)
+    setb(OFF["g_cont"], ppat - 1)
+    setb(OFF["g_warpmode"], ppat & 1)
+    o = []
+    for _ in range(60):
+        o += play()[0]
+    check(f"grain: pitch pattern {ppat}, contour {ppat - 1}, spray type {ppat & 1}: sounds, bounded", 0.001 < max(abs(x) for x in o) < 2.0, max(abs(x) for x in o))
+setb(OFF["g_ppat"], 0)
+setb(OFF["g_cont"], 0)
+setb(OFF["g_warpmode"], 0)
+touch(2, 0, 0, 0)
+play(80)
+# a mode switch ends the old mode's latch
+e.call("samplr_cycle", 2)                                      # grain latch on
+touch(0, 0, 300, 500)
+touch(2, 0, 0, 0)
+check("grain latch: the cloud stays", e.r8(SMP + VOFF + voice_offsets(["g_on"])["g_on"]) == 1)
+e.call("samplr_set_mode", 0)
+check("switching mode ends that mode's latch and clears what it kept", e.r8(SMP + VOFF + voice_offsets(["g_on"])["g_on"]) == 0 and e.r8(SMP + OFF["latchm"]) == 0, (e.r8(SMP + VOFF + voice_offsets(["g_on"])["g_on"]), e.r8(SMP + OFF["latchm"])))
+play(80)
 
 # find transients: four bursts
 BURST[0] = True

@@ -1224,13 +1224,19 @@ static void draw_samplr(void)
         sm_button(136, ba, 34, s->gfree ? "FREE" : "SYNC", 1);
     if (s->mode == SM_SLICER)
         sm_button(172, ba, 34, s->loopm ? "LOOP" : s->gate ? "GATE" : "ONE", s->loopm);
+    else if (s->mode == SM_GRAIN)
+        sm_button(172, ba, 34, samplr_cont_name(s->g_cont), 1);
     sm_button(208, ba, 36, "LATCH", (s->latchm >> s->mode) & 1);
     if (s->mode == SM_SLICER)
         sm_button(246, ba, 33, "AUTO", 0);
     else if (s->mode == SM_ARP)
         sm_button(246, ba, 33, samplr_pat_name(s->pat), 1);
+    else if (s->mode == SM_GRAIN)
+        sm_button(246, ba, 33, s->g_warpmode ? "WARP" : "RND", 1);
     if (s->mode == SM_SLICER || s->mode == SM_ARP)
         sm_button(281, ba, 30, "YP", (s->ypit >> s->mode) & 1);
+    else if (s->mode == SM_GRAIN)
+        sm_button(281, ba, 30, samplr_ppat_name(s->g_ppat), s->g_ppat != 0);
     sm_button(3, bb, 22, "<", 0);
     frame(27, bb, 70, SM_BH, C_RAIL, 1);
     text_c(27, bb + 6, 70, nm[0] ? nm : "-", C_LIGHT, 1);
@@ -1322,12 +1328,14 @@ static int sm_touch(int kind, int id, int x, int d)
         } else if (x >= 172 && x < 206) {
             if (s && s->mode == SM_SLICER)
                 samplr_toggle_gate();
+            else if (s && s->mode == SM_GRAIN)
+                samplr_cycle(5);
         } else if (x >= 208 && x < 244) {
             samplr_cycle(2);
         } else if (x >= 246 && x < 279) {
-            samplr_cycle(s && s->mode == SM_SLICER ? 4 : 1);
+            samplr_cycle(s && s->mode == SM_GRAIN ? 6 : s && s->mode == SM_SLICER ? 4 : 1);
         } else if (x >= 281 && x < 311) {
-            samplr_cycle(3);
+            samplr_cycle(s && s->mode == SM_GRAIN ? 7 : 3);
         }
         P->sig = 0;
         return 1;

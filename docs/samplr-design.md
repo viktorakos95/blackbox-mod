@@ -157,3 +157,12 @@ takes three overdub layers.
 - Gesture recorder: fingers already down when a take starts are recorded as presses at the start of the loop; LATCH is recorded with each touch
   (event bit 26), a replayed latched slice loop / spot / cloud / tape hold is created when its recorded touch comes round and cleared at the loop wrap,
   so each pass reproduces the performance (`owner` on the latch voices, 0xf0 + layer on spots).
+
+## Build 12 (GRAIN after Torso S4 MOSAIC, latch cleared on mode switch)
+- Ideas taken from the S4's MOSAIC device (docs.torsoelectronics.com/s4/devices/device-reference/mosaic): rate divisions up to 1/64 and FREE, CONTOUR (grain
+  envelope: sine / down ramp / up ramp / flat), SCAN (the playhead: fixed, or drifting through the audio at a set speed), SPRAY (RANDOM per grain, or WARP =
+  a smooth random walk, also moving the stereo position), PATTERN (a fixed pseudo-random pitch walk over the notes of a scale).
+- GRAIN controls: finger x = scan position, y = grain size (20..400 ms); knobs: k2 rate (1/4 .. 1/64, or grains/s with FREE), k3 spray amount, k4 drift
+  (-8..+8 = -2x .. +2x real time; 0 = the cloud stays); row A: SYNC/FREE, contour, LATCH, RND/WARP, pitch pattern (OFF MAJ7 MIN7 PENT 5THS).
+- Switching the mode ends the old mode's LATCH and what it kept (no more stuck latch under another mode's button). The coming track model (a sample
+  slot = one track with its own mode, latch, gestures, as in SAMPLR) replaces this.
