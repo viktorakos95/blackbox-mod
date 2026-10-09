@@ -44,6 +44,7 @@ struct smvoice {
     uint8_t on, loop, slice, vmode, c_mode, owner, _w[2];   /* vmode: the mode that played it; c_mode: ... that triggered it; owner: for a latched loop, 0 = played live, else the gesture layer + 1 */
     int32_t ipos, start, end;
     float frac, rate, gain, env;            /* rate and gain are rewritten live by the GUI (tape) */
+    float rate_s, g_prev;                   /* the rate the audio follows (slewed), the gain at the end of the last block (ramped to the new one) */
     int32_t wait, c_wait;                         /* frames into the block where the note starts */
     /* arpeggiator: the spot this finger holds (-1 none) */
     int8_t a_sp;
@@ -80,6 +81,9 @@ struct sm {
     uint32_t ov_t;
     int16_t fx0[SM_NV];                     /* where each finger went down (tape, slice points) */
     uint8_t qi, div, pat, latchm, atk, rel;  /* quantize (0 off, 1 1/4, 2 1/8, 3 1/16; in ARP: snap to slices), arp / grain rate, arp pattern, hold (a bit per mode), attack / release choice */
+    uint8_t g_sz, g_dry;                    /* GRAIN: grain size scale (0 as the finger says, 1 a quarter, 2 a sixteenth), the normal loop under the grains (0 off, 1 25 %, 2 50 %, 3 100 %) */
+    int32_t dry_pos;                        /* GRAIN: where that loop is */
+    float dry_env, dry_frac;
     uint8_t g_cont, g_warpmode, g_ppat;     /* GRAIN: envelope contour (sine, down ramp, up ramp, flat), spray type (0 random, 1 warp), pitch pattern (0 off, 1..4 a scale) */
     int8_t g_drift;                         /* GRAIN: scan speed -8..8 (x 1/4 of real time; 0 = the cloud stays where it is) */
     uint8_t gfree, a_last, sp_next, loopm;  /* loopm: SLICER loops its slice while held (or latched) */     /* grain rate free (grains per second) instead of the grid; the spot played last; next spot to replace */
@@ -125,7 +129,7 @@ void samplr_select(int delta);              /* previous / next loaded pad sample
 void samplr_set_mode(int m);
 void samplr_toggle_gate(void);
 void samplr_set_slices(int n);
-void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch, 3 height = pitch, 4 find transients, 5 grain contour, 6 spray type, 7 pitch pattern */
+void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch, 3 height = pitch, 4 find transients, 5 grain contour, 6 spray type, 7 pitch pattern, 8 grain size scale, 9 dry loop level */
 void samplr_trans(int what);                /* transpose: +-1, +-12, 0 = back to 0 */
 void samplr_knob(int knob, int counts);     /* knobs 0..3 per mode (0 = volume); recorded into a take */
 void samplr_touch(int kind, int id, int fx, int fy);   /* kind 0 down, 1 move, 2 up; fx, fy 0..1023 inside the waveform (recorded when a layer is recording) */

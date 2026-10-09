@@ -36,6 +36,8 @@ struct sm *samplr(void)
         s->id = -1;
         s->rnd = 2463534242u;
         s->div = 2;
+        s->atk = 1;
+        s->rel = 1;
         s->scat = 0.f;
         s->dens = 20.f;
         s->ypit = 0;
@@ -323,9 +325,9 @@ static const char *const cont_name[4] = {"SINE", "DOWN", "UP", "FLAT"};
 static const uint8_t pat_k[8] = {0, 2, 1, 3, 2, 0, 3, 1};            /* a fixed pseudo-random pitch pattern: which note of the scale, and the octave */
 static const int8_t pat_o[8] = {0, 0, 12, 0, 0, -12, 0, 12};
 static const char *const pat_name[SM_PATS] = {"UP", "DOWN", "UP-DN", "RND", "ORDER"};
-static const int32_t atk_frames[5] = {64, 240, 960, 3840, 14400};   /* 1.3 5 20 80 300 ms */
-static const int32_t rel_frames[5] = {192, 960, 3840, 14400, 48000}; /* 4 20 80 300 1000 ms */
-static const uint16_t atk_ms[5] = {1, 5, 20, 80, 300}, rel_ms[5] = {4, 20, 80, 300, 1000};
+static const int32_t atk_frames[6] = {16, 64, 240, 960, 3840, 14400};   /* 0.3 1.3 5 20 80 300 ms */
+static const int32_t rel_frames[6] = {48, 192, 960, 3840, 14400, 48000}; /* 1 4 20 80 300 1000 ms */
+static const char *const atk_name[6] = {"0.3", "1", "5", "20", "80", "300"}, *const rel_name[6] = {"1", "4", "20", "80", "300", "1000"};
 
 static uint8_t *block_entry(struct sm *s, int blk);
 
@@ -526,7 +528,7 @@ void samplr_trans(int what)
 void samplr_cycle(int what)
 {
     struct sm *s = samplr();
-    if (!s || what < 0 || what > 7)
+    if (!s || what < 0 || what > 9)
         return;
     if (what == 0) {
         if (s->mode == SM_GRAIN)
@@ -547,10 +549,16 @@ void samplr_cycle(int what)
         s->g_warpmode ^= 1;
     } else if (what == 7) {
         s->g_ppat = (uint8_t)((s->g_ppat + 1) % 5);
+    } else if (what == 8) {
+        s->g_sz = (uint8_t)((s->g_sz + 1) % 3);
+    } else if (what == 9) {
+        s->g_dry = (uint8_t)((s->g_dry + 1) & 3);
     } else {
         s->latchm ^= (uint8_t)(1u << s->mode);
-        if (!((s->latchm >> s->mode) & 1))
+        if (!((s->latchm >> s->mode) & 1)) {
             unlatch(s, s->mode);
+            rec_param(s, 7);                                      /* (a take records it: the layer's latched things stop at that moment too) */
+        }
     }
 }
 
@@ -574,6 +582,7 @@ static int param_get(struct sm *s, int pid)
     case 3: return s->g_drift + 8;
     case 4: return s->atk;
     case 5: return s->rel;
+    case 7: return 0;
     default: return (int)((s->dens - 1.f) * (1023.f / 119.f));
     }
 }
@@ -586,8 +595,9 @@ static void param_set(struct sm *s, int pid, int val)
     case 1: s->div = (uint8_t)(val > 4 ? 4 : val); break;
     case 2: s->scat = (float)val * (1.f / 1023.f); break;
     case 3: s->g_drift = (int8_t)((val > 16 ? 16 : val) - 8); break;
-    case 4: s->atk = (uint8_t)(val > 4 ? 4 : val); break;
-    case 5: s->rel = (uint8_t)(val > 4 ? 4 : val); break;
+    case 4: s->atk = (uint8_t)(val > 5 ? 5 : val); break;
+    case 5: s->rel = (uint8_t)(val > 5 ? 5 : val); break;
+    case 7: break;
     default: s->dens = 1.f + (float)val * (119.f / 1023.f);
     }
 }
@@ -644,11 +654,11 @@ void samplr_knob(int knob, int counts)
         pid = 3;
     } else if (m != SM_GRAIN && knob == 2) {
         int v = s->atk + dir;
-        s->atk = (uint8_t)(v < 0 ? 0 : v > 4 ? 4 : v);
+        s->atk = (uint8_t)(v < 0 ? 0 : v > 5 ? 5 : v);
         pid = 4;
     } else if (m != SM_GRAIN && knob == 3) {
         int v = s->rel + dir;
-        s->rel = (uint8_t)(v < 0 ? 0 : v > 4 ? 4 : v);
+        s->rel = (uint8_t)(v < 0 ? 0 : v > 5 ? 5 : v);
         pid = 5;
     }
     if (pid >= 0)
@@ -720,9 +730,9 @@ void samplr_info(char *out)
     }
     if (s->mode != SM_GRAIN) {
         p = cat(p, " A");
-        p = num(p, atk_ms[s->atk % 5]);
+        p = cat(p, atk_name[s->atk % 6]);
         p = cat(p, " R");
-        p = num(p, rel_ms[s->rel % 5]);
+        p = cat(p, rel_name[s->rel % 6]);
     }
     *p = 0;
 }
@@ -830,8 +840,8 @@ static void release_finger(struct sm *s, int mode, int id, int own, int lat)
 {
     struct smvoice *v = &s->v[id];
     int was = v->held;
-    v->held = 0;
     if (s->drag[id] >= 0) {
+        v->held = 0;
         int di = s->drag[id];
         s->drag[id] = -1;
         if (di > 0 && di < 100 && !s->dmoved[id] && mode == SM_SLICER && s->nslice > 2 && di < s->nslice) {
@@ -855,6 +865,7 @@ static void release_finger(struct sm *s, int mode, int id, int own, int lat)
         v->rel = 1;
         v->rep = 0.f;
     }
+    v->held = 0;                                                  /* last: the sweep in the audio task must see the latched owner first */
 }
 
 /* own: 0 = a live finger, else the gesture layer + 1 that replays it; lat: LATCH counts for this touch (live: the mode's latch, replay: as recorded). */
@@ -988,6 +999,7 @@ static void touch_m(struct sm *s, int mode, int own, int lat, int kind, int id, 
         if (kind == 0) {
             v->held = 1;
             v->g_on = 1;
+            v->g_seq = 0;                                         /* the pitch pattern starts over with every press (the same on every pass of a take) */
             v->g_acc = 1.f;                                       /* the first grain at once */
             ask(s, v->g_centre);
         }
@@ -1131,20 +1143,20 @@ static void gest_uncapture(struct sm *s, int drop)
         }
 }
 
-static void gest_release_layer(struct sm *s, int L)
+/* What a layer's replayed LATCH keeps: its latched slice loops, spots, clouds and tape hold. */
+static void gest_drop_latched(struct sm *s, int L)
 {
     for (int f = 0; f < SM_LFING; f++) {
-        int vid = SM_LBASE + L * SM_LFING + f;
-        if ((s->g_ldown[L] >> f) & 1)
-            release_finger(s, s->g_lmode[L], vid, L + 1, 0);
-        struct smvoice *v = &s->v[vid];                           /* what a replayed LATCH kept: clouds, a tape hold */
-        v->g_on = 0;
-        if (v->vmode == SM_TAPE && !v->held && v->on) {
-            v->rel = 1;
-            v->rep = 0.f;
+        struct smvoice *v = &s->v[SM_LBASE + L * SM_LFING + f];
+        if (!v->held) {
+            v->g_on = 0;
+            if (v->vmode == SM_TAPE && v->on) {
+                v->rel = 1;
+                v->rep = 0.f;
+            }
         }
     }
-    for (int i = 0; i < SM_LATV; i++) {                           /* latched slice loops and spots this layer started */
+    for (int i = 0; i < SM_LATV; i++) {
         struct smvoice *lv = &s->v[SM_LTBASE + i];
         if (lv->owner == L + 1 && (lv->on || lv->rep > 0.f)) {
             lv->rel = 1;
@@ -1155,7 +1167,15 @@ static void gest_release_layer(struct sm *s, int L)
     for (int i = 0; i < SM_SPOTS; i++)
         if (s->spot[i].owner == 0xf0 + L)
             s->spot[i].used = 0;
+}
+
+static void gest_release_layer(struct sm *s, int L)
+{
+    for (int f = 0; f < SM_LFING; f++)
+        if ((s->g_ldown[L] >> f) & 1)
+            release_finger(s, s->g_lmode[L], SM_LBASE + L * SM_LFING + f, L + 1, 0);
     s->g_ldown[L] = 0;
+    gest_drop_latched(s, L);
 }
 
 static void gest_stop(struct sm *s)
@@ -1234,8 +1254,11 @@ static void gest_dispatch(struct sm *s, int L, const struct smev *e)
 {
     int kind = e->w & 3, f = (e->w >> 2) & 3, mode = (e->w >> 4) & 3, fx = (e->w >> 6) & 1023, fy = (e->w >> 16) & 1023;
     int bit = 1 << f;
-    if (kind == 3) {                                              /* an encoder: fx = which parameter, fy = its value */
-        param_set(s, fx, fy);
+    if (kind == 3) {                                              /* an encoder: fx = which parameter, fy = its value; 7: LATCH was switched off */
+        if (fx == 7)
+            gest_drop_latched(s, L);
+        else
+            param_set(s, fx, fy);
         return;
     }
     if (kind == 0)
@@ -1260,6 +1283,7 @@ static void gest_run(struct sm *s, int n)
             s->g_len = (int32_t)(looper_beat_frames() * 4.f * (float)s->g_bars);
             s->g_pos = -off;
             s->g_run = 1;
+            s->a_step = 0;                                        /* the arpeggio starts over with every pass: the same notes each time round */
             for (int L = 0; L < SM_LAYERS; L++) {
                 s->g_rp[L] = 0;
                 s->g_ldown[L] = 0;
@@ -1304,6 +1328,7 @@ static void gest_run(struct sm *s, int n)
             gest_capture_held(s, s->g_rec);
         }
         s->g_pos = pos + n - s->g_len;
+        s->a_step = 0;
     } else {
         s->g_pos = pos + n;
     }
@@ -1354,21 +1379,87 @@ static uint8_t *block_entry(struct sm *s, int blk)
  * positions touch are read, straight out of the pool blocks (no call into the engine's reader, no copy of the whole span: at +48
  * the span is thousands of frames per block and the pool lives in external memory). 0 when a block is not in the pool yet (it
  * is asked for, at most every 128 ms). Outside the sample it is silence; a mono sample's right side is its left. */
+struct rdc {                                                      /* the blocks one read touches */
+    int32_t len;
+    int b0;
+    const float *L[6], *R[6];
+    int valid[6];
+};
+
+static inline void rd_at(const struct rdc *c, int32_t f, float *l, float *r)
+{
+    if (f < 0 || f >= c->len) {
+        *l = *r = 0.f;
+        return;
+    }
+    int bi = (f >> 13) - c->b0, o = f & 8191;
+    if (bi < 0 || bi > 5 || o >= c->valid[bi]) {
+        *l = *r = 0.f;
+        return;
+    }
+    *l = c->L[bi][o];
+    *r = c->R[bi][o];
+}
+
+/* Four frames f-1 .. f+2 (the window of a cubic), reusing what the last position already read. */
+struct win4 {
+    int32_t f;
+    float l[4], r[4];
+};
+
+static inline void win_to(const struct rdc *c, struct win4 *w, int32_t f)
+{
+    int d = f - w->f;
+    if (d == 0)
+        return;
+    if (d > 0 && d <= 3) {
+        for (int i = 0; i < 4 - d; i++) {
+            w->l[i] = w->l[i + d];
+            w->r[i] = w->r[i + d];
+        }
+        for (int i = 4 - d; i < 4; i++)
+            rd_at(c, f - 1 + i, &w->l[i], &w->r[i]);
+    } else if (d < 0 && d >= -3) {
+        for (int i = 3; i >= -d; i--) {
+            w->l[i] = w->l[i + d];
+            w->r[i] = w->r[i + d];
+        }
+        for (int i = 0; i < -d; i++)
+            rd_at(c, f - 1 + i, &w->l[i], &w->r[i]);
+    } else {
+        for (int i = 0; i < 4; i++)
+            rd_at(c, f - 1 + i, &w->l[i], &w->r[i]);
+    }
+    w->f = f;
+}
+
+static inline float hermite(float y0, float y1, float y2, float y3, float x)
+{
+    float c1 = .5f * (y2 - y0), c2 = y0 - 2.5f * y1 + 2.f * y2 - .5f * y3, c3 = .5f * (y3 - y0) + 1.5f * (y1 - y2);
+    return ((c3 * x + c2) * x + c1) * x + y1;
+}
+
+/* The source at m positions fr + i * r (i = 0..m-1) after frame ip, into il / ir. Only the frames the positions touch are read, straight
+ * out of the pool blocks (no call into the engine's reader, no copy of the whole span: at +48 the span is thousands of frames per block and
+ * the pool lives in external memory). Interpolation: a plain copy at normal pitch; cubic (Catmull-Rom) up to the original speed; cubic averaged
+ * over two taps a quarter step either side of the position (a cheap low-pass against aliasing) up to 3x; linear beyond that (cost).
+ * 0 when a block is not in the pool yet (it is asked for, at most every 128 ms). Outside the sample it is silence; mono: right = left. */
 static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
 {
     int32_t len = s->len;
     float span = r * (float)m;
     float rmin = fr < fr + span ? fr : fr + span, rmax = fr > fr + span ? fr : fr + span;
-    int lo = ip + fl(rmin), hi = ip + fl(rmax) + 1;
-    int cl = lo < 0 ? 0 : lo, ch = hi >= len ? len - 1 : hi, b0 = 0;
-    const float *Lp[6], *Rp[6];
-    int valid[6];
+    int lo = ip + fl(rmin) - 2, hi = ip + fl(rmax) + 3;
+    int cl = lo < 0 ? 0 : lo, ch = hi >= len ? len - 1 : hi;
+    struct rdc c;
+    c.len = len;
+    c.b0 = 0;
     if (ch >= cl) {
-        b0 = cl >> 13;
+        c.b0 = cl >> 13;
         int b1 = ch >> 13;
-        if (b1 - b0 >= 6)
+        if (b1 - c.b0 >= 6)
             return 0;
-        for (int blk = b0; blk <= b1; blk++) {
+        for (int blk = c.b0; blk <= b1; blk++) {
             uint8_t *ent = block_entry(s, blk);
             if (!ent) {
                 if (s->tick - s->pf_t > 24) {
@@ -1377,9 +1468,9 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
                 }
                 return 0;
             }
-            Lp[blk - b0] = (const float *)*(uint32_t *)(ent + 4);
-            Rp[blk - b0] = s->mono ? Lp[blk - b0] : (const float *)*(uint32_t *)(ent + 8);
-            valid[blk - b0] = (int)*(uint32_t *)(ent + 0x14);
+            c.L[blk - c.b0] = (const float *)*(uint32_t *)(ent + 4);
+            c.R[blk - c.b0] = s->mono ? c.L[blk - c.b0] : (const float *)*(uint32_t *)(ent + 8);
+            c.valid[blk - c.b0] = (int)*(uint32_t *)(ent + 0x14);
         }
     }
     if (r == 1.f && fr == 0.f) {                                  /* normal pitch: a plain copy */
@@ -1391,14 +1482,14 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
                 i++;
                 continue;
             }
-            int bi = (f >> 13) - b0, o = f & 8191, k = 8192 - o;
+            int bi = (f >> 13) - c.b0, o = f & 8191, k = 8192 - o;
             k = k > m - i ? m - i : k;
             k = k > len - f ? len - f : k;
-            int vk = valid[bi] - o;
+            int vk = c.valid[bi] - o;
             vk = vk < 0 ? 0 : vk > k ? k : vk;
             for (int q = 0; q < vk; q++) {
-                s->il[i + q] = Lp[bi][o + q];
-                s->ir[i + q] = Rp[bi][o + q];
+                s->il[i + q] = c.L[bi][o + q];
+                s->ir[i + q] = c.R[bi][o + q];
             }
             for (int q = vk; q < k; q++)
                 s->il[i + q] = s->ir[i + q] = 0.f;
@@ -1406,39 +1497,50 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
         }
         return 1;
     }
-    int32_t cf = -0x40000000;
-    float l0 = 0.f, r0 = 0.f, l1 = 0.f, r1 = 0.f;
+    float ar = r < 0.f ? -r : r;
+    struct win4 w;
+    w.f = -0x40000000;
+    if (ar > 3.f) {                                               /* linear, the cheap way */
+        int32_t cf = -0x40000000;
+        float l0 = 0.f, r0 = 0.f, l1 = 0.f, r1 = 0.f;
+        for (int i = 0; i < m; i++) {
+            float p = fr + (float)i * r;
+            int k = fl(p);
+            int32_t f = ip + k;
+            float fa = p - (float)k;
+            if (f != cf) {
+                if (f == cf + 1) {
+                    l0 = l1;
+                    r0 = r1;
+                } else {
+                    rd_at(&c, f, &l0, &r0);
+                }
+                rd_at(&c, f + 1, &l1, &r1);
+                cf = f;
+            }
+            s->il[i] = l0 + fa * (l1 - l0);
+            s->ir[i] = r0 + fa * (r1 - r0);
+        }
+        return 1;
+    }
+    float q4 = ar > 1.f ? .25f * r : 0.f;                         /* 1 < |r| <= 3: two taps, p -/+ r/4, averaged */
     for (int i = 0; i < m; i++) {
         float p = fr + (float)i * r;
-        int k = fl(p);
-        int32_t f = ip + k;
-        float fa = p - (float)k;
-        if (f != cf) {
-            if (f == cf + 1) {
-                l0 = l1;
-                r0 = r1;
-            } else {
-                l0 = r0 = 0.f;
-                if (f >= 0 && f < len) {
-                    int bi = (f >> 13) - b0, o = f & 8191;
-                    if (o < valid[bi]) {
-                        l0 = Lp[bi][o];
-                        r0 = Rp[bi][o];
-                    }
-                }
-            }
-            l1 = r1 = 0.f;
-            if (f + 1 >= 0 && f + 1 < len) {
-                int bi = ((f + 1) >> 13) - b0, o = (f + 1) & 8191;
-                if (o < valid[bi]) {
-                    l1 = Lp[bi][o];
-                    r1 = Rp[bi][o];
-                }
-            }
-            cf = f;
+        float sl = 0.f, sr = 0.f;
+        for (int tap = 0; tap < (q4 != 0.f ? 2 : 1); tap++) {
+            float pp = q4 != 0.f ? (tap ? p + q4 : p - q4) : p;
+            int k = fl(pp);
+            win_to(&c, &w, ip + k);
+            float x = pp - (float)k;
+            sl += hermite(w.l[0], w.l[1], w.l[2], w.l[3], x);
+            sr += hermite(w.r[0], w.r[1], w.r[2], w.r[3], x);
         }
-        s->il[i] = l0 + fa * (l1 - l0);
-        s->ir[i] = r0 + fa * (r1 - r0);
+        if (q4 != 0.f) {
+            sl *= .5f;
+            sr *= .5f;
+        }
+        s->il[i] = sl;
+        s->ir[i] = sr;
     }
     return 1;
 }
@@ -1448,14 +1550,14 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
 static int voice_part(struct sm *s, struct smvoice *v, float *bl, float *br, int i0, int ie, int fi, int fo)
 {
     int m = ie - i0;
-    float r = v->rate * s->ratio;
+    float r = v->rate_s * s->ratio;
     r = r > 15.5f ? 15.5f : r < -15.5f ? -15.5f : r;
     int32_t ip = v->ipos;
     float fr = v->frac, span = r * (float)m;
     if (!sample_block(s, ip, fr, r, m))
         return 0;
     int stop_at = m, ends = 0;                                    /* a one-shot ends exactly at its slice's end */
-    if (!v->loop && r > 0.f && (s->rel % 5) == 0) {                /* with the shortest release a one-shot ends exactly at its end; a longer release plays out past it */
+    if (!v->loop && r > 0.f && s->rel <= 1) {                      /* with the shortest releases a one-shot ends exactly at its end; a longer release plays out past it */
         float left = (float)(v->end - ip) - fr;
         if (left <= 0.f) {
             stop_at = 0;
@@ -1465,8 +1567,8 @@ static int voice_part(struct sm *s, struct smvoice *v, float *bl, float *br, int
             ends = 1;
         }
     }
-    float env = v->env, g0 = v->gain * s->vol * .9f;
-    float eu = 1.f / (float)atk_frames[s->atk % 5], ed = 1.f / (float)rel_frames[s->rel % 5];
+    float env = v->env, g0 = v->gain * s->vol * .9f, gs = v->g_prev, gd = (g0 - gs) * (1.f / (float)m);   /* the gain is ramped over the block: no zipper noise */
+    float eu = 1.f / (float)atk_frames[s->atk % 6], ed = 1.f / (float)rel_frames[s->rel % 6];
     int on = v->on;
     for (int k = 0; k < m; k++) {
         float l = s->il[k], rr = s->ir[k];
@@ -1496,9 +1598,11 @@ static int voice_part(struct sm *s, struct smvoice *v, float *bl, float *br, int
             env -= ed;
             env = env < 0.f ? 0.f : env;
         }
-        bl[i0 + k] += l * g0 * env;
-        br[i0 + k] += rr * g0 * env;
+        gs += gd;
+        bl[i0 + k] += l * gs * env;
+        br[i0 + k] += rr * gs * env;
     }
+    v->g_prev = g0;
     float np = fr + span;
     int k = fl(np);
     ip += k;
@@ -1525,8 +1629,9 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
                 v->ipos = v->c_pos;
                 v->end = v->c_end;
                 v->frac = 0.f;
-                v->rate = v->c_rate;
+                v->rate = v->rate_s = v->c_rate;
                 v->gain = v->c_gain;
+                v->g_prev = v->c_gain * s->vol * .9f;
                 v->loop = v->c_loop;
                 v->rep = v->c_rep;
                 v->on = 1;
@@ -1543,6 +1648,7 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     }
     if (!v->on && v->env <= 0.f && !(v->rep > 0.f))
         return;
+    v->rate_s += (v->rate - v->rate_s) * .4f;                     /* the tape's speed follows the finger smoothly (a touch event every ~10 ms) */
     int i = v->wait < n ? v->wait : 0;
     v->wait = 0;
     int roff = -1;
@@ -1562,7 +1668,7 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
             ie = roff;
             fo = 1;
         }
-        float r = v->rate * s->ratio;
+        float r = v->rate_s * s->ratio;
         if (v->loop && r > 0.f && v->end > v->start) {            /* the loop point inside this piece: split there */
             float left = (float)(v->end - v->ipos) - v->frac;
             if (left <= 0.f) {
@@ -1665,7 +1771,8 @@ static void grain_spawn(struct sm *s, struct smvoice *v, int off)
             st += scales[sc][pat_k[q] % scale_n[sc]] + pat_o[q];
         }
         g->rate = s->ratio * pitch_ratio(st);
-        g->len = v->g_size < 480 ? 480 : v->g_size;
+        g->len = v->g_size >> (2 * (s->g_sz % 3));                 /* SIZE: as the finger says, a quarter, a sixteenth (down to 2 ms) */
+        g->len = g->len < 96 ? 96 : g->len;
         g->age = 0;
         g->delay = off;
         g->cont = s->g_cont;
@@ -1757,6 +1864,36 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     }
 }
 
+/* GRAIN: the sample itself, looping at normal speed, under the grains while any cloud is on (the dry of MOSAIC). */
+static void dry_run(struct sm *s, float *bl, float *br, int n)
+{
+    int want = 0;
+    for (int f = 0; f < SM_NV; f++)
+        want |= s->v[f].g_on;
+    float target = want && s->g_dry ? 1.f : 0.f;
+    if (target == 0.f && s->dry_env <= 0.f)
+        return;
+    float r = s->ratio * pitch_ratio(s->trans);
+    if (!sample_block(s, s->dry_pos, s->dry_frac, r, n))
+        return;
+    static const float lvl[4] = {0.f, .25f, .5f, 1.f};
+    float g = lvl[s->g_dry & 3] * s->vol * .9f, env = s->dry_env;
+    for (int i = 0; i < n; i++) {
+        env += target > env ? 1.f / 960.f : -1.f / 960.f;
+        env = env < 0.f ? 0.f : env > 1.f ? 1.f : env;
+        bl[i] += s->il[i] * g * env;
+        br[i] += s->ir[i] * g * env;
+    }
+    s->dry_env = env;
+    float np = s->dry_frac + r * (float)n;
+    int k = fl(np);
+    int32_t ip = s->dry_pos + k;
+    s->dry_frac = np - (float)k;
+    while (ip >= s->len)
+        ip -= s->len;
+    s->dry_pos = ip;
+}
+
 static void run_voices(struct sm *s, float *bl, float *br, int n)
 {
     if (s->id < 0)
@@ -1770,6 +1907,7 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
         for (int i = 0; i < SM_GRAINS; i++)
             any |= v->g[i].on;
     }
+    any |= s->dry_env > 0.f;
     if (!any)
         return;
     int32_t len, hz;
@@ -1802,8 +1940,40 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
         for (int i = 0; i < SM_GRAINS; i++)
             ng += s->v[f].g[i].on;
     }
+    dry_run(s, bl, br, n);
     s->n_voices = (uint8_t)nv;
     s->n_grains = (uint8_t)ng;
+}
+
+/* Nothing stays on that nobody holds: a spot, cloud or latched loop lives only while its finger is down, its mode's LATCH is on, a take is
+ * recording it (captured), or the take's timeline is running (a layer's). Whatever else is left over - after an odd order of events - is let go. */
+static void sweep(struct sm *s)
+{
+    int latA = (s->latchm >> SM_ARP) & 1, latG = (s->latchm >> SM_GRAIN) & 1, latS = (s->latchm >> SM_SLICER) & 1;
+    for (int i = 0; i < SM_SPOTS; i++) {
+        struct smspot *sp = &s->spot[i];
+        if (!sp->used)
+            continue;
+        int o = sp->owner, ok = ((o < SM_VOICES || (o >= SM_LBASE && o < SM_NV)) && s->v[o].held) || (o == 0xff && latA) || (o == 0xfe && s->g_rec >= 0) || (o >= 0xf0 && o < 0xfe && s->g_run);
+        if (!ok)
+            sp->used = 0;
+    }
+    for (int f = 0; f < SM_NV; f++) {
+        struct smvoice *v = &s->v[f];
+        if (v->g_on && !(v->held || (f < SM_VOICES && (latG || (v->owner == 0xfe && s->g_rec >= 0))) || (f >= SM_LBASE && s->g_run)))
+            v->g_on = 0;
+    }
+    for (int i = 0; i < SM_LATV; i++) {
+        struct smvoice *lv = &s->v[SM_LTBASE + i];
+        if (!(lv->on || lv->rep > 0.f))
+            continue;
+        int o = lv->owner, ok = (o == 0 && latS) || (o == 0xfe && s->g_rec >= 0) || (o >= 1 && o <= SM_LAYERS && s->g_run);
+        if (!ok) {
+            lv->rel = 1;
+            lv->rep = 0.f;
+            lv->owner = 0;
+        }
+    }
 }
 
 void samplr_run(float *bl, float *br, int n)
@@ -1813,6 +1983,7 @@ void samplr_run(float *bl, float *br, int n)
         return;
     uint32_t c0 = DWT_CYCCNT;
     gest_run(s, n);
+    sweep(s);
     run_voices(s, bl, br, n);
     uint32_t c1 = DWT_CYCCNT, period = c0 - s->t_last, dur = c1 - c0;
     if (s->t_last && period > 1000u && period < 100000000u) {

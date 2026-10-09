@@ -1255,8 +1255,8 @@ static void draw_samplr(void)
     if (sh == 0) {                                                /* PLAY: the modes, then the current mode's switches */
         for (int i = 0; i < SM_MODES; i++)
             sm_button(3 + 77 * i, r1, 74, sm_mode_name[i], s->mode == i);
-        const char *lab[5] = {0, 0, 0, 0, 0};
-        int on[5] = {0, 0, 0, 0, 0};
+        const char *lab[7] = {0, 0, 0, 0, 0, 0, 0};
+        int on[7] = {0, 0, 0, 0, 0, 0, 0};
         lab[2] = "LATCH";
         on[2] = (s->latchm >> s->mode) & 1;
         if (s->mode == SM_SLICER) {
@@ -1274,15 +1274,21 @@ static void draw_samplr(void)
             lab[4] = "YP";
             on[4] = (s->ypit >> s->mode) & 1;
         } else if (s->mode == SM_GRAIN) {
+            static const char *const sz_name[3] = {"SIZE 1", "SIZE 1/4", "SIZE 1/16"};
+            static const char *const dry_name[4] = {"DRY OFF", "DRY 25", "DRY 50", "DRY 100"};
             lab[0] = s->gfree ? "FREE" : "SYNC";
             lab[1] = samplr_cont_name(s->g_cont);
             lab[3] = s->g_warpmode ? "WARP" : "RND";
             lab[4] = samplr_ppat_name(s->g_ppat);
             on[4] = s->g_ppat != 0;
+            lab[5] = sz_name[s->g_sz % 3];
+            on[5] = s->g_sz != 0;
+            lab[6] = dry_name[s->g_dry & 3];
+            on[6] = s->g_dry != 0;
         }
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < 7; i++)
             if (lab[i])
-                sm_button(3 + 62 * i, r2, 58, lab[i], on[i]);
+                sm_button(3 + 44 * i, r2, 42, lab[i], on[i]);
     } else if (sh == 1) {                                         /* SAMPLE: which one, and transpose */
         sm_button(3, r1, 40, "<", 0);
         frame(47, r1, 218, SM_BH, C_RAIL, 1);
@@ -1345,8 +1351,8 @@ static int sm_touch(int kind, int id, int x, int d)
                 if (x >= 3)
                     samplr_set_mode(x - 3 < 77 * SM_MODES ? (x - 3) / 77 : SM_MODES - 1);
             } else {
-                int i = (x - 3) / 62;
-                if (x >= 3 && i < 5 && (x - 3) % 62 < 58 && s) {
+                int i = (x - 3) / 44;
+                if (x >= 3 && i < 7 && (x - 3) % 44 < 42 && s) {
                     int m = s->mode;
                     if (i == 0 && m != SM_TAPE)
                         samplr_cycle(0);
@@ -1360,6 +1366,10 @@ static int sm_touch(int kind, int id, int x, int d)
                         samplr_cycle(m == SM_GRAIN ? 6 : m == SM_SLICER ? 4 : m == SM_ARP ? 1 : -1);
                     else if (i == 4)
                         samplr_cycle(m == SM_GRAIN ? 7 : m == SM_TAPE ? -1 : 3);
+                    else if (i == 5 && m == SM_GRAIN)
+                        samplr_cycle(8);
+                    else if (i == 6 && m == SM_GRAIN)
+                        samplr_cycle(9);
                 }
             }
         } else if (sh == 1) {

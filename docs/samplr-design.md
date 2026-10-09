@@ -183,3 +183,12 @@ takes three overdub layers.
   row 2 the mode's switches: Q / SNAP / SYNC, GATE-ONE-LOOP / CNT, LATCH, AUTO / PAT / RND-WARP, YP / pitch pattern), SAMPLE (< name > with room for 36
   characters, transpose -12 -1 value +1 +12), GESTURE (REC PLAY UNDO CLR LEN; the layers; a position bar). The top bar: the mode's settings, the take state
   (REC / ARMED / LOOP) and C / S / V / G (the CPU numbers, shorter). A loading percentage sits in the waveform's corner.
+
+## Build 15 (quality, GRAIN depth, take timing)
+- Interpolation: plain copy at normal pitch; cubic (Catmull-Rom) up to the original speed; cubic averaged over two taps (position -/+ a quarter step) from 1x to 3x
+  (a cheap low-pass against aliasing); linear beyond 3x (CPU). The block's gain is ramped (no zipper noise on volume / height changes) and the tape speed is slewed.
+- Attack (0.3 1.3 5 20 80 300 ms) and release (1 4 20 80 300 1000 ms): one step shorter than before; a one-shot still ends exactly at the slice end only with the two shortest releases.
+- GRAIN: SIZE (finger size / 1/4 / 1/16, grains down to 2 ms) and DRY (the sample itself looping at normal speed under the cloud: off / 25 / 50 / 100 %, fades with the cloud);
+  the pitch pattern starts over with every press.
+- Takes: the arpeggio's step counter restarts with every pass (the same notes each time round); switching LATCH off during a take is recorded (the layer's latched things stop
+  there too); a sweep each block lets go of any spot / cloud / latched loop that nobody holds (finger down, mode latch on, captured by a take, or a running layer) - no stuck arp.
