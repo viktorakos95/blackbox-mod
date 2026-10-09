@@ -149,3 +149,11 @@ takes three overdub layers.
   voices, a tap on a looping slice stops it, any number of loops; LATCH off stops them all. ARP: latched spots (press one to remove it). GRAIN: latched clouds
   (press to remove). TAPE: the hold.
 - Next: sample slots (6, like SAMPLR) so voices / layers / gestures can play different samples while another one is edited.
+
+## Build 11
+- Release (ATK / REL knobs): with the shortest release a one-shot slice still ends exactly at its end; with a longer release the tail plays out past the
+  slice end (into the next slice) - otherwise the release setting did nothing on slices.
+- Each latched slice loop has its own colour (slice highlight and playhead), so loops no longer look interchangeable.
+- Gesture recorder: fingers already down when a take starts are recorded as presses at the start of the loop; LATCH is recorded with each touch
+  (event bit 26), a replayed latched slice loop / spot / cloud / tape hold is created when its recorded touch comes round and cleared at the loop wrap,
+  so each pass reproduces the performance (`owner` on the latch voices, 0xf0 + layer on spots).

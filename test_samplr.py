@@ -638,6 +638,82 @@ e.call("samplr_cycle", 2)                                      # slicer latch of
 setb(OFF["loopm"], 0)
 play(10)
 
+# release longer than the slice: the tail plays on into the next slice; the shortest release ends exactly at the slice end
+setb(OFF["rel"], 0)
+touch(0, 0, 5 * 64 + 10, 100)
+play(1)
+touch(2, 0, 0, 0)
+play(4)
+check("release 4 ms: nothing after the slice end", max(abs(x) for x in play(1)[0]) < 1e-5)
+setb(OFF["rel"], 2)                                            # 80 ms
+e.call("samplr_toggle_gate")                                   # ONE: the note plays out by itself
+touch(0, 0, 5 * 64 + 10, 100)
+touch(2, 0, 0, 0)
+play(4)
+tail = max(abs(x) for x in play(1)[0])
+e.call("samplr_toggle_gate")
+e.call("samplr_toggle_gate")
+e.call("samplr_toggle_gate")                                   # ONE -> LOOP -> GATE: back to GATE
+setb(OFF["loopm"], 0)
+e.uc.mem_write(SMP + OFF["gate"] if "gate" in OFF else SMP + 5, b"\x01")
+check("release 80 ms: the tail runs past the slice end", tail > 0.01, tail)
+setb(OFF["rel"], 0)
+play(30)
+
+# a take that starts with a finger already down, and one that keeps a latched slice loop
+def gwait(cond, limit=420):
+    k = 0
+    while not cond() and k < limit:
+        play()
+        k += 1
+    return k
+e.call("samplr_gest", 3)
+setb(OFF["g_bars"], 1)
+touch(0, 0, 5 * 64 + 10, 100)                                  # the finger is down before REC
+e.call("samplr_gest", 0)
+gwait(lambda: e.r8(SMP + OFF["g_run"]) == 1)
+play(30)
+touch(2, 0, 0, 0)                                              # lifts 30 blocks into the take
+gwait(lambda: e.r8(SMP + OFF["g_layers"]) == 1)
+lv = []
+for b in range(375):
+    lv.append(max(abs(x) for x in play()[0]))
+on = [b for b, v in enumerate(lv) if v > 0.02]
+check("take with a finger already down: the slice plays from the very start of the loop", bool(on) and on[0] < 6 and on[-1] < 12, (on[:2], on[-2:]))
+e.call("samplr_gest", 3)
+play(40)
+
+e.call("samplr_set_mode", 0)
+setb(OFF["loopm"], 1)
+e.call("samplr_cycle", 2)                                      # slicer latch on
+e.call("samplr_gest", 0)
+gwait(lambda: e.r8(SMP + OFF["g_run"]) == 1)
+play(49)
+touch(0, 0, 8 * 64 + 10, 100)                                  # a tap starts a latched loop at about block 50
+touch(2, 0, 0, 0)
+play(150)
+touch(0, 1, 8 * 64 + 10, 100)                                  # and a tap stops it at about block 200
+touch(2, 1, 0, 0)
+gwait(lambda: e.r8(SMP + OFF["g_layers"]) == 1)
+pas = []
+for b in range(750):                                           # two passes of the loop
+    pas.append(max(abs(x) for x in play()[0]))
+def active(lo, hi, off):
+    return all(pas[off + b] > 0.02 for b in range(lo, hi))
+def quiet(lo, hi, off):
+    return all(pas[off + b] < 1e-4 for b in range(lo, hi))
+# find the loop start of the first pass from the first sound
+first = next(b for b, v in enumerate(pas) if v > 0.02)
+base = first - 52 if first >= 52 else first
+check("a recorded latched loop plays on its own: sounding between its start and stop", all(pas[first + 10 + k] > 0.02 for k in range(0, 120)), first)
+check("... and is stopped by the recorded second tap", all(pas[first + 170 + k] < 1e-4 for k in range(0, 60)), first)
+second = next(b for b in range(first + 200, 750) if pas[b] > 0.02)
+check("... and starts again in the next pass of the loop (375 blocks later)", abs(second - first - 375) < 8, (first, second))
+e.call("samplr_cycle", 2)
+setb(OFF["loopm"], 0)
+e.call("samplr_gest", 3)
+play(60)
+
 # find transients: four bursts
 BURST[0] = True
 for b in range(2):

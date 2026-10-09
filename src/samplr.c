@@ -16,7 +16,7 @@ float looper_beat_frames(void);
 #define DWT_CYCCNT (*(volatile uint32_t *)0xe0001004u)
 #define SMAGIC  0x534d5031u
 
-static void release_finger(struct sm *s, int mode, int id, int rp);
+static void release_finger(struct sm *s, int mode, int id, int own, int lat);
 static inline int grid(struct sm *s, float beats, int n);
 
 struct sm *samplr(void)
@@ -264,7 +264,7 @@ void samplr_leave(void)
         return;
     for (int f = 0; f < SM_VOICES; f++)
         if (s->v[f].held || s->drag[f] >= 0)
-            release_finger(s, s->mode, f, 0);
+            release_finger(s, s->mode, f, 0, (s->latchm >> s->mode) & 1);
 }
 
 void samplr_select(int delta)
@@ -753,7 +753,7 @@ static void spot_set(struct sm *s, int mode, struct smvoice *v, int f, int fx, i
 }
 
 /* A finger lets go (or the page is left): whatever it held is released, except what LATCH keeps. */
-static void release_finger(struct sm *s, int mode, int id, int rp)
+static void release_finger(struct sm *s, int mode, int id, int own, int lat)
 {
     struct smvoice *v = &s->v[id];
     int was = v->held;
@@ -770,38 +770,39 @@ static void release_finger(struct sm *s, int mode, int id, int rp)
     }
     int k = v->a_sp;
     if (k >= 0 && s->spot[k].used && s->spot[k].owner == id) {
-        if (((s->latchm >> mode) & 1) && !rp)
-            s->spot[k].owner = 0xff;
+        if (lat)
+            s->spot[k].owner = (uint8_t)(own ? 0xf0 + own - 1 : 0xff);
         else
             s->spot[k].used = 0;
     }
     v->a_sp = -1;
-    if (v->g_on && !(((s->latchm >> mode) & 1) && !rp))
+    if (v->g_on && !lat)
         v->g_on = 0;
-    if (was && v->c_gate && !(((s->latchm >> mode) & 1) && !rp && (v->loop || v->rep > 0.f))) {
+    if (was && v->c_gate && !(lat && (v->loop || v->rep > 0.f))) {
         v->rel = 1;
         v->rep = 0.f;
     }
 }
 
-static void touch_m(struct sm *s, int mode, int rp, int kind, int id, int fx, int fy)
+/* own: 0 = a live finger, else the gesture layer + 1 that replays it; lat: LATCH counts for this touch (live: the mode's latch, replay: as recorded). */
+static void touch_m(struct sm *s, int mode, int own, int lat, int kind, int id, int fx, int fy)
 {
     if (id < 0 || id >= SM_NV)
         return;
     struct smvoice *v = &s->v[id];
     if (kind == 2) {
-        release_finger(s, mode, id, rp);
+        release_finger(s, mode, id, own, lat);
         return;
     }
     if (s->id < 0 || s->len <= 0)
         return;
     fx = fx < 0 ? 0 : fx > 1023 ? 1023 : fx;
     fy = fy < 0 ? 0 : fy > 1023 ? 1023 : fy;
-    if (s->drag[id] == 100)
+    if (s->drag[id] >= 100)
         return;                                                   /* this press already took a latched spot / cloud away */
     if (kind == 0 && mode == SM_ARP) {
         for (int i = 0; i < SM_SPOTS; i++)                        /* a press on a latched spot removes it */
-            if (s->spot[i].used && s->spot[i].owner == 0xff && pos_fx(s, s->spot[i].pos) - fx < 28 && fx - pos_fx(s, s->spot[i].pos) < 28) {
+            if (s->spot[i].used && s->spot[i].owner >= 0xf0 && pos_fx(s, s->spot[i].pos) - fx < 28 && fx - pos_fx(s, s->spot[i].pos) < 28) {
                 s->spot[i].used = 0;
                 s->drag[id] = 100;
                 return;
@@ -860,14 +861,14 @@ static void touch_m(struct sm *s, int mode, int rp, int kind, int id, int fx, in
             return;
         }
         int sl = slice_at(s, pos);
-        if (kind == 0 && !rp && ((s->latchm >> mode) & 1) && s->loopm) {
+        if (kind == 0 && lat && s->loopm) {
             /* LATCH + LOOP: a tap toggles that slice's loop, whichever finger plays it and however many are down */
             for (int i = 0; i < SM_LATV; i++) {
                 struct smvoice *lv = &s->v[SM_LTBASE + i];
                 if ((lv->on || lv->rep > 0.f) && lv->slice == sl && lv->vmode == SM_SLICER) {
                     lv->rel = 1;
                     lv->rep = 0.f;
-                    s->drag[id] = 100;
+                    s->drag[id] = 101;
                     return;
                 }
             }
@@ -878,10 +879,11 @@ static void touch_m(struct sm *s, int mode, int rp, int kind, int id, int fx, in
                     ask(s, s->cut[sl]);
                     fire(lv, mode, s->cut[sl], s->cut[sl], s->cut[sl + 1], pitch_ratio(ysemi(s, mode, fy) + s->trans), yvol(s, mode, fy), !s->qi, 1, qbeats[s->qi & 3], qbeats[s->qi & 3]);
                     lv->held = 0;
+                    lv->owner = (uint8_t)own;
                     break;
                 }
             }
-            s->drag[id] = 100;
+            s->drag[id] = 101;
             return;
         }
         if (kind == 1 && v->held && v->slice == sl)
@@ -924,10 +926,16 @@ void samplr_touch(int kind, int id, int fx, int fy)
     struct sm *s = samplr();
     if (!s || id < 0 || id >= SM_VOICES)
         return;
-    int was_drag = s->drag[id] >= 0;
-    touch_m(s, s->mode, 0, kind, id, fx, fy);
+    fx = fx < 0 ? 0 : fx > 1023 ? 1023 : fx;
+    fy = fy < 0 ? 0 : fy > 1023 ? 1023 : fy;
+    int lat = (s->latchm >> s->mode) & 1, was_drag = s->drag[id] >= 0 && s->drag[id] != 101;
+    if (kind != 2) {
+        s->lfx[id] = (int16_t)fx;
+        s->lfy[id] = (int16_t)fy;
+    }
+    touch_m(s, s->mode, 0, lat, kind, id, fx, fy);
     struct smgest *G = s->gest;
-    if (!G || s->g_rec < 0 || !s->g_run || was_drag || (kind != 2 && s->drag[id] >= 0))
+    if (!G || s->g_rec < 0 || !s->g_run || was_drag || (kind != 2 && s->drag[id] >= 0 && s->drag[id] != 101))
         return;                                                   /* (slice point edits and presses that removed a latched spot are not gestures) */
     int L = s->g_rec;
     if (G->n[L] >= SM_EVENTS)
@@ -938,11 +946,26 @@ void samplr_touch(int kind, int id, int fx, int fy)
             return;
         s->g_lastmv[id] = (uint16_t)(pos >> 6);
     }
-    fx = fx < 0 ? 0 : fx > 1023 ? 1023 : fx;
-    fy = fy < 0 ? 0 : fy > 1023 ? 1023 : fy;
     struct smev *e = &G->ev[L][G->n[L]++];
     e->t = (uint16_t)(pos >> 6);
-    e->w = (uint32_t)kind | (uint32_t)id << 2 | (uint32_t)s->mode << 4 | (uint32_t)fx << 6 | (uint32_t)fy << 16;
+    e->w = (uint32_t)kind | (uint32_t)id << 2 | (uint32_t)s->mode << 4 | (uint32_t)fx << 6 | (uint32_t)fy << 16 | (uint32_t)lat << 26;
+    s->g_lmode[L] = s->mode;
+}
+
+/* A take starts: the fingers that are already down are part of it (a press at the start of the loop). */
+static void gest_capture_held(struct sm *s, int L)
+{
+    struct smgest *G = s->gest;
+    for (int f = 0; f < SM_VOICES; f++) {
+        struct smvoice *v = &s->v[f];
+        if (!v->held || s->drag[f] >= 0 || G->n[L] >= SM_EVENTS)
+            continue;
+        struct smev *e = &G->ev[L][G->n[L]++];
+        e->t = 0;
+        e->w = 0u | (uint32_t)f << 2 | (uint32_t)s->mode << 4 | (uint32_t)(s->lfx[f] & 1023) << 6 | (uint32_t)(s->lfy[f] & 1023) << 16 |
+               (uint32_t)((s->latchm >> s->mode) & 1) << 26;
+        s->g_lastmv[f] = 0;
+    }
     s->g_lmode[L] = s->mode;
 }
 
@@ -950,9 +973,28 @@ void samplr_touch(int kind, int id, int fx, int fy)
 
 static void gest_release_layer(struct sm *s, int L)
 {
-    for (int f = 0; f < SM_LFING; f++)
+    for (int f = 0; f < SM_LFING; f++) {
+        int vid = SM_LBASE + L * SM_LFING + f;
         if ((s->g_ldown[L] >> f) & 1)
-            release_finger(s, s->g_lmode[L], SM_LBASE + L * SM_LFING + f, 1);
+            release_finger(s, s->g_lmode[L], vid, L + 1, 0);
+        struct smvoice *v = &s->v[vid];                           /* what a replayed LATCH kept: clouds, a tape hold */
+        v->g_on = 0;
+        if (v->vmode == SM_TAPE && !v->held && v->on) {
+            v->rel = 1;
+            v->rep = 0.f;
+        }
+    }
+    for (int i = 0; i < SM_LATV; i++) {                           /* latched slice loops and spots this layer started */
+        struct smvoice *lv = &s->v[SM_LTBASE + i];
+        if (lv->owner == L + 1 && (lv->on || lv->rep > 0.f)) {
+            lv->rel = 1;
+            lv->rep = 0.f;
+            lv->owner = 0;
+        }
+    }
+    for (int i = 0; i < SM_SPOTS; i++)
+        if (s->spot[i].owner == 0xf0 + L)
+            s->spot[i].used = 0;
     s->g_ldown[L] = 0;
 }
 
@@ -1031,7 +1073,7 @@ static void gest_dispatch(struct sm *s, int L, const struct smev *e)
     else if (kind == 2)
         s->g_ldown[L] &= (uint8_t)~bit;
     s->g_lmode[L] = (uint8_t)mode;
-    touch_m(s, mode, 1, kind, SM_LBASE + L * SM_LFING + f, fx, fy);
+    touch_m(s, mode, L + 1, (e->w >> 26) & 1, kind, SM_LBASE + L * SM_LFING + f, fx, fy);
 }
 
 /* The timeline, once per block: starts on bar lines, plays the recorded layers' events, closes a take at the loop end. */
@@ -1053,6 +1095,7 @@ static void gest_run(struct sm *s, int n)
             if (s->g_armed == 1 || s->g_rec == -2) {
                 s->g_rec = (int8_t)s->g_layers;
                 G->n[s->g_layers] = 0;
+                gest_capture_held(s, s->g_rec);
             }
             s->g_armed = 0;
         }
@@ -1085,6 +1128,7 @@ static void gest_run(struct sm *s, int n)
             s->g_rec = (int8_t)s->g_layers;
             G->n[s->g_layers] = 0;
             s->g_armed = 0;
+            gest_capture_held(s, s->g_rec);
         }
         s->g_pos = pos + n - s->g_len;
     } else {
@@ -1238,7 +1282,7 @@ static int voice_part(struct sm *s, struct smvoice *v, float *bl, float *br, int
     if (!sample_block(s, ip, fr, r, m))
         return 0;
     int stop_at = m, ends = 0;                                    /* a one-shot ends exactly at its slice's end */
-    if (!v->loop && r > 0.f) {
+    if (!v->loop && r > 0.f && (s->rel % 5) == 0) {                /* with the shortest release a one-shot ends exactly at its end; a longer release plays out past it */
         float left = (float)(v->end - ip) - fr;
         if (left <= 0.f) {
             stop_at = 0;

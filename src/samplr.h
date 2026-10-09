@@ -41,7 +41,7 @@ struct smvoice {
     float c_rate, c_gain, c_q;              /* c_q: start on the next grid line of this many beats (0 = at once) */
     float c_rep, rep;                       /* rep: restart the slice on every grid line of this many beats while held (0 = no) */
     uint8_t c_loop, c_gate, held, rel;
-    uint8_t on, loop, slice, vmode, c_mode, _w[3];   /* vmode: the mode that played it; c_mode: ... that triggered it */
+    uint8_t on, loop, slice, vmode, c_mode, owner, _w[2];   /* vmode: the mode that played it; c_mode: ... that triggered it; owner: for a latched loop, 0 = played live, else the gesture layer + 1 */
     int32_t ipos, start, end;
     float frac, rate, gain, env;            /* rate and gain are rewritten live by the GUI (tape) */
     int32_t wait, c_wait;                         /* frames into the block where the note starts */
@@ -56,7 +56,7 @@ struct smvoice {
     struct smgrain g[SM_GRAINS];
 };
 
-/* Gesture recorder: touch events of one layer, time in 64-frame units from the loop start. w = kind (2 bits) | finger (2) | mode (2) | fx (10) | fy (10). */
+/* Gesture recorder: touch events of one layer, time in 64-frame units from the loop start. w = kind (2 bits) | finger (2) | mode (2) | fx (10) | fy (10) | latch (1). */
 struct smev {
     uint16_t t, _p;
     uint32_t w;
@@ -97,6 +97,7 @@ struct sm {
     int8_t g_rec;                           /* the layer being recorded (-1 none) */
     uint8_t g_lmode[SM_LAYERS], g_ldown[SM_LAYERS];
     uint16_t g_rp[SM_LAYERS], g_lastmv[SM_VOICES];
+    int16_t lfx[SM_VOICES], lfy[SM_VOICES]; /* where each live finger last was (a take can start with fingers already down) */
     uint16_t filled;                        /* overview columns complete */
     uint8_t ofill[SM_COLS];
     float omn[SM_COLS], omx[SM_COLS];

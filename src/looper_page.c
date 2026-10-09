@@ -1102,6 +1102,7 @@ static void sm_button(int x, int by, int w, const char *s, int on)
     text_c(x, by + 6, w, s, on ? C_CYAN : C_LIGHT, 1);
 }
 
+static const uint8_t pool_colour[8] = {0x0b, 0x1a, 0x20, 0x06, 0x0b, 0x1a, 0x20, 0x06};   /* each latched loop has its own colour: slice and playhead */
 static const char *const sm_mode_name[SM_MODES] = {"SLICE", "TAPE", "ARP", "GRAIN"};
 static const char *const sm_q_name[4] = {"Q OFF", "Q 1/4", "Q 1/8", "Q 1/16"};
 
@@ -1172,7 +1173,7 @@ static void draw_samplr(void)
             int slice = s->mode == SM_SLICER ? sl_c : -1, col = C_LIGHT;
             for (int f = 0; f < SM_NV; f++)
                 if (slice >= 0 && (s->v[f].on || s->v[f].env > 0.f) && s->v[f].slice == slice && s->v[f].vmode == SM_SLICER)
-                    col = f < SM_VOICES ? track_colour[f] : C_LIGHT == col ? C_TEAL : col;
+                    col = f < SM_VOICES ? track_colour[f] : f >= SM_LTBASE && f < SM_LTBASE + SM_LATV ? pool_colour[f - SM_LTBASE] : col;
             box(wx + 2 * c, cy - hi, 2, hi + lo + 1, s->ofill[c] ? col : C_DARK);
         }
         if (s->mode == SM_SLICER)
@@ -1194,7 +1195,7 @@ static void draw_samplr(void)
         for (int f = SM_LTBASE; f < SM_LTBASE + SM_LATV; f++) {      /* latched slice loops */
             struct smvoice *v = &s->v[f];
             if (v->on && v->vmode == SM_SLICER)
-                vline(wx + (v->ipos / (s->len / SM_W + 1) >= SM_W ? SM_W - 1 : v->ipos / (s->len / SM_W + 1)), wy, wh, C_TEAL);
+                vline(wx + (v->ipos / (s->len / SM_W + 1) >= SM_W ? SM_W - 1 : v->ipos / (s->len / SM_W + 1)), wy, wh, pool_colour[f - SM_LTBASE]);
         }
         for (int f = 0; f < SM_VOICES; f++) {
             struct smvoice *v = &s->v[f];
