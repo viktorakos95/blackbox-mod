@@ -625,7 +625,7 @@ void samplr_trans(int what)
 void samplr_cycle(int what)
 {
     struct sm *s = samplr();
-    if (!s || what < 0 || what > 13)
+    if (!s || what < 0 || what > 14)
         return;
     if (what == 0) {
         if (s->mode == SM_GRAIN)
@@ -655,6 +655,8 @@ void samplr_cycle(int what)
     } else if (what == 11) {
         s->rev ^= 1;
         rec_param(s, 8);
+    } else if (what == 14) {
+        s->sc->syncx ^= 1;
     } else if (what == 13) {
         s->lp_a = 0;
         s->lp_b = s->len;
@@ -1699,7 +1701,7 @@ static void gest_run(struct sm *s, int n)
 
 static inline int grid(struct sm *s, float beats, int n)
 {
-    return looper_grid_offset(beats, s->sph, n);
+    return s->sc->syncx ? looper_grid_offset(beats, s->sph, n) : looper_grid_cross(beats, s->sc->prev, n, s->sph);
 }
 
 static uint32_t rnd(struct sm *s)
@@ -2694,6 +2696,7 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         fed |= send;
         q->tick++;
     }
+    s->sc->prev = looper_clock_now();                             /* (for the next block's grid lines) */
     s->sph += (float)n;                                           /* the free-running grid (used while the sequencer is stopped) */
     float w = 16.f * looper_beat_frames();
     if (s->sph >= w)

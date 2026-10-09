@@ -307,3 +307,19 @@ takes three overdub layers.
 - The governor of build 26 is stronger: it reacts to the task's own readout (average over 85 % or peak over 95 %) as well as to SAMPLR's share, a step every 16 blocks (was 24), and
   has a fourth step. Steps: 1 half the grain rate and a cap of 24 grains in all (40 at rest), 2 linear interpolation, 3 the tracks not shown start nothing new and the cap is 9,
   4 the cap is 4 grains in all. One step back after ~2 s with the task under 70 %. `!n` in the top bar shows it. The cap is on the sum over all tracks (`sc->gnow`).
+
+## Build 28 (sync with the Blackbox's clock)
+- Report: the slicer's sync follows the tempo but is not really synced to the click.
+- Two defects found in how SAMPLR (and the looper's `looper_grid_offset`) placed grid lines on the sequencer's clock:
+  1. the grid length was `beat_frames * beats * S->rate`, with `rate` the clock units per frame measured block to block (a smoothed estimate; the clock moves in whole units, so it
+     jitters by percent). The phase was `position mod that length`: an error of 0.1 % in the length is 0.001 x the position, i.e. a whole 1/16 after a hundred bars. Lines
+     wandered with the song position and the tempo.
+  2. a line was put at its exact frame, but the stock sequencer starts its notes (and so presumably the click) at the START of the block in which its time has passed them
+     (`seq_play`: the player plays every note with start < now). Lines at an exact frame jitter against that by up to a block (5.3 ms), a different amount at each hit.
+- Now: `seq_play` also keeps the sequencer time `now` it computes (ticks, 960 per 16th = 3840 a beat, exact whatever the tempo) in the backup SRAM (`seqfix_now()`); the grid
+  length is `beats x 3840` ticks, and a line belongs to the block where `prev <= line < now` (previous block's `now` kept in the scratch), starting at that block's first frame
+  (`looper_grid_cross`) - the same rule as the stock notes. Test: arp steps start in exactly those blocks. Without a clock (no sequence playing) the free-running grid is
+  unchanged. The top bar shows `CLK` when SAMPLR is on the sequencer's clock (nothing shown otherwise, the label of LOOP / REC takes its place).
+- SMPL sheet: a SYNC button, BLOCK (default) or EXACT (the previous behaviour, at the exact frame), to compare on hardware.
+- Unconfirmed on hardware (as for the looper since step 21): that the click itself starts with the notes; if it is sample-accurate EXACT with the corrected grid may sit closer.
+- Not changed: the looper's own placement (`looper_grid_offset` in `run()`), which has the drift of 1 as well.

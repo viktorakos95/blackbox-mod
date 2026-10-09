@@ -66,6 +66,7 @@ typedef void (*pool_fn)(void *engine);
 void bkp_enable(void);
 void looper_ui_poke(void);
 #include "samplr.h"
+double seqfix_now(void);
 void solo_boot_reset(void);
 void looper_page_boot(void);
 
@@ -1943,6 +1944,36 @@ int looper_grid_offset(float beats, float sph, int n)
     float off = (float)k * gf - sph;
     off = off < 0.f ? 0.f : off;
     return off < (float)n ? (int)off : -1;
+}
+
+/* The grid the way the stock sequencer's note player sees it: it plays every note whose time has passed the clock position it was given for the block, at the START of that block.
+ * So a grid line belongs to the block in which the clock position (this block's snapshot, cur) has passed it since the previous block (prev): 0, else -1. Without a clock
+ * (no sequence playing) the free-running grid of looper_grid_offset. */
+int looper_grid_cross(float beats, double prev, int n, float sph)
+{
+    if (S->magic != MAGIC)
+        return -1;
+    if (!S->cur_ok)
+        return looper_grid_offset(beats, sph, n);
+    double g = 3840.0 * (double)beats, cur = seqfix_now(), adv = cur - prev;   /* (exact: a beat is 3840 ticks, whatever the tempo) */
+    if (!(adv > 0.0 && adv < 4.0 * g))                           /* no usable previous block (the first one, a restart, a jump): the measured speed */
+        adv = (double)n * 3840.0 / (double)beat_frames();
+    if (!(adv > 0.0))
+        return -1;
+    double ph = dmod(cur, g);
+    /* the player plays what lies in [prev, cur): the last line at or before cur counts if it is at least prev, and a line exactly at cur waits for the next block */
+    return (ph > 0.0 ? ph <= adv : g <= adv) ? 0 : -1;
+}
+
+/* The clock position of this block (the snapshot), or -1 without a clock. */
+double looper_clock_now(void)
+{
+    return S->magic == MAGIC && S->cur_ok ? seqfix_now() : -1.0;
+}
+
+int looper_clock_on(void)
+{
+    return S->magic == MAGIC && S->cur_ok;
 }
 
 float looper_beat_frames(void)

@@ -1167,6 +1167,10 @@ static void draw_sm_top(struct sm *s, const char *info)
     } else if (s->g_run) {
         st = "LOOP";
     }
+    if (!st && looper_clock_on()) {
+        st = "CLK";                                               /* SAMPLR is on the sequencer's clock (else its own free-running grid) */
+        col = C_GREY;
+    }
     if (st)
         text(x - 6 * 7, 4, st, col, 1);
 }
@@ -1424,11 +1428,12 @@ static void draw_samplr(void)
         }
     } else {                                                      /* SMPL: which sample, the interpolation (the modes are in the strip above) */
         static const char *const iq_name[3] = {"HIGHQ", "HIGHQ", "LOWP"};
-        sm_button(3, r1, 40, "<", 0);
-        frame(47, r1, 178, SM_BH, C_RAIL, 1);
-        text_c(47, r1 + (SM_BH - 8) / 2, 178, nm[0] ? nm : "-", C_LIGHT, 1);
-        sm_button(229, r1, 40, ">", 0);
-        sm_button(273, r1, 38, iq_name[s->iq % 3], 0);
+        sm_button(3, r1, 36, "<", 0);
+        frame(41, r1, 108, SM_BH, C_RAIL, 1);
+        text_c(41, r1 + (SM_BH - 8) / 2, 108, nm[0] ? nm : "-", C_LIGHT, 1);
+        sm_button(151, r1, 36, ">", 0);
+        sm_button(189, r1, 56, iq_name[s->iq % 3], 0);
+        sm_button(247, r1, 64, s->sc->syncx ? "EXACT" : "BLOCK", 0);   /* where the grid lines of the sequencer's clock start things: the block the stock notes start in, or the exact frame */
     }
 }
 
@@ -1545,12 +1550,14 @@ static int sm_touch(int kind, int id, int x, int d)
             else if (x >= 271)
                 samplr_stop_all();
         } else {
-            if (x < 45)
+            if (x < 39)
                 samplr_select(-1);
-            else if (x >= 227 && x < 271)
+            else if (x >= 151 && x < 187)
                 samplr_select(1);
-            else if (x >= 273)
+            else if (x >= 189 && x < 245)
                 samplr_cycle(10);
+            else if (x >= 247)
+                samplr_cycle(14);
         }
         P->sig = 0;
         return 1;
