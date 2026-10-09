@@ -127,6 +127,9 @@ static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> til
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
 enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
 enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, MODES };
+#define SM_SHEETS 3
+#define SM_SHEET (P->_r2)
+static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "SAMPLE", "GESTURE"};
 #define NTABS 5                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
 /* hardware buttons the page can take over: slot numbers */
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
@@ -363,8 +366,16 @@ int looper_page_hit(int x, int d, int *track, float *val)
             *track = 94;
             return Z_OPTC;
         }
+        if (P->mode == M_SMPLR) {                                 /* the sheets (track >= 10 tells Z_TAB apart) */
+            int sh = (x - 3) / 60;
+            if (x >= 3 && sh < SM_SHEETS && (x - 3) % 60 < 58) {
+                *track = 10 + sh;
+                return Z_TAB;
+            }
+            return Z_NONE;
+        }
         int i = (x - 3) / (TAB_W + 2);
-        if (P->mode != M_SMPLR && x >= 3 && i < NTABS && (x - 3) % (TAB_W + 2) < TAB_W) {
+        if (x >= 3 && i < NTABS && (x - 3) % (TAB_W + 2) < TAB_W) {
             *track = i;
             return Z_TAB;
         }
@@ -1073,9 +1084,12 @@ static void draw_footer(const struct lay *L)
         text_c(3 + i * (TAB_W + 2), L->foot_y + 4, TAB_W, tab[i], on ? C_CYAN : C_GREY, 1);
     }
     int x0 = 3 + NTABS * (TAB_W + 2) + 4;
-    if (P->mode == M_SMPLR) {                                     /* SAMPLR is a page of its own: SONG opens it, MIX goes to the Looper */
-        text(5, L->foot_y + 4, "SAMPLR", C_CYAN, 1);
-        text(50, L->foot_y + 4, "REC PLAY STOP: GESTURES", C_GREY, 1);
+    if (P->mode == M_SMPLR) {                                     /* SAMPLR is a page of its own: SONG opens it, MIX goes to the Looper; the footer picks the sheet */
+        for (int i = 0; i < SM_SHEETS; i++) {
+            int on = SM_SHEET == i;
+            frame(3 + 60 * i, L->foot_y + 2, 58, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
+            text_c(3 + 60 * i, L->foot_y + 4, 58, sm_sheet_name[i], on ? C_CYAN : C_GREY, 1);
+        }
         x0 = P->w;
     }
     frame(P->w - 58, L->foot_y + 2, 54, FOOT - 3, C_RAIL, 1);
@@ -1086,74 +1100,85 @@ static void draw_footer(const struct lay *L)
         text(x0, L->foot_y + 4, "SHIFT", C_RED, 1);
 }
 
-/* ---- SMPLR tab: the sample's waveform on top (touch it), two rows of buttons below. */
+/* ---- the SAMPLR page: the sample's waveform on top (touch it), below it two rows of big buttons that depend on the sheet picked in the footer:
+ * PLAY (the mode and its switches), SAMPLE (which sample, transpose), GESTURE (the take recorder). */
 #define SM_W 300                                                  /* waveform: SM_COLS columns of 2 px */
-#define SM_BH 20
-static void sm_geom(int *wx, int *wy, int *wh, int *ba, int *bb, int *bc)
+#define SM_BH 28
+static void sm_geom(int *wx, int *wy, int *wh, int *r1, int *r2)
 {
     struct lay L;
     layout(0, &L);
     *wx = (P->w - SM_W) / 2;
     *wy = TOPBAR + 4;
-    *bc = L.foot_y - SM_BH - 3;                                   /* row C: the gesture recorder */
-    *bb = *bc - SM_BH - 2;                                        /* row B: the sample, transpose */
-    *ba = *bb - SM_BH - 2;                                        /* row A: modes and their switches */
-    *wh = *ba - 4 - *wy;
+    *r2 = L.foot_y - SM_BH - 3;
+    *r1 = *r2 - SM_BH - 3;
+    *wh = *r1 - 4 - *wy;
 }
 
 static void sm_button(int x, int by, int w, const char *s, int on)
 {
     frame(x, by, w, SM_BH, on ? C_CYAN : C_RAIL, 1);
-    text_c(x, by + 6, w, s, on ? C_CYAN : C_LIGHT, 1);
+    if (on)
+        frame(x + 1, by + 1, w - 2, SM_BH - 2, C_CYAN, 1);
+    text_c(x, by + (SM_BH - 8) / 2, w, s, on ? C_WHITE : C_LIGHT, 1);
 }
 
 static const uint8_t pool_colour[8] = {0x0b, 0x1a, 0x20, 0x06, 0x0b, 0x1a, 0x20, 0x06};   /* each latched loop has its own colour: slice and playhead */
 static const char *const sm_mode_name[SM_MODES] = {"SLICE", "TAPE", "ARP", "GRAIN"};
 static const char *const sm_q_name[4] = {"Q OFF", "Q 1/4", "Q 1/8", "Q 1/16"};
 
+static void draw_sm_top(struct sm *s, const char *info)
+{
+    box(1, 1, P->w - 2, TOPBAR, C_BG);
+    text(6, 4, info, C_CYAN, 1);
+    char b[24], *q = b;                                           /* C: the whole audio task (average / peak %), S: SAMPLR's share, V voices, G grains */
+    *q++ = 'C';
+    q = put_uint(q, (*(volatile uint16_t *)0x2405ffe2u + 5u) / 10u);
+    *q++ = '/';
+    q = put_uint(q, (*(volatile uint16_t *)0x2405ffe4u + 5u) / 10u);
+    *q++ = ' ';
+    *q++ = 'S';
+    q = put_uint(q, (s->t_avg_shown + 5u) / 10u);
+    *q++ = ' ';
+    *q++ = 'V';
+    q = put_uint(q, s->n_voices);
+    *q++ = ' ';
+    *q++ = 'G';
+    q = put_uint(q, s->n_grains);
+    *q = 0;
+    int x = P->w - 6 - 6 * (int)(q - b);
+    text(x, 4, b, C_GREY, 1);
+    const char *st = 0;
+    int col = C_CYAN;
+    if (s->g_rec >= 0) {
+        st = "REC";
+        col = C_RED;
+    } else if (s->g_armed) {
+        st = "ARMED";
+        col = C_YELLOW;
+    } else if (s->g_run) {
+        st = "LOOP";
+    }
+    if (st)
+        text(x - 6 * 7, 4, st, col, 1);
+}
+
 static void draw_samplr(void)
 {
     struct sm *s = samplr();
-    int wx, wy, wh, ba, bb, bc;
-    sm_geom(&wx, &wy, &wh, &ba, &bb, &bc);
-    box(1, 1, P->w - 2, TOPBAR, C_BG);
-    box(1, wy - 1, P->w - 2, bc - wy + SM_BH + 3, C_BG);
+    int wx, wy, wh, r1, r2;
+    sm_geom(&wx, &wy, &wh, &r1, &r2);
+    box(1, wy - 1, P->w - 2, r2 - wy + SM_BH + 3, C_BG);
     if (!s) {
+        box(1, 1, P->w - 2, TOPBAR, C_BG);
         text(6, 4, "SAMPLR: LOOPER MEMORY NOT READY", C_RED, 1);
         return;
     }
-    char nm[24], info[40];
+    char nm[40], info[40];
     samplr_refresh(looper_ticks());
-    samplr_name(nm, 22);
+    samplr_name(nm, 38);
     samplr_info(info);
-    text(6, 4, info, C_CYAN, 1);
-    {
-        char b[32], *q = b;                                       /* C: the whole audio task, S: SAMPLR's share (percent, average / peak) */
-        *q++ = 'C';
-        q = put_uint(q, (*(volatile uint16_t *)0x2405ffe2u + 5u) / 10u);
-        *q++ = '/';
-        q = put_uint(q, (*(volatile uint16_t *)0x2405ffe4u + 5u) / 10u);
-        *q++ = ' ';
-        *q++ = 'S';
-        q = put_uint(q, (s->t_avg_shown + 5u) / 10u);
-        *q++ = '/';
-        q = put_uint(q, (s->t_peak_shown + 5u) / 10u);
-        *q++ = ' ';
-        *q++ = 'V';
-        q = put_uint(q, s->n_voices);
-        *q++ = ' ';
-        *q++ = 'G';
-        q = put_uint(q, s->n_grains);
-        *q = 0;
-        text(P->w - 6 - 6 * 21, 4, b, C_GREY, 1);
-    }
-    if (!s->ov_ok && s->id >= 0) {
-        char b[12], *q = b;
-        q = put_uint(q, s->filled * 100u / SM_COLS);
-        *q++ = '%';
-        *q = 0;
-        text(P->w - 6 - 6 * 21 - 6 * 5, 4, b, C_YELLOW, 1);
-    }
+    draw_sm_top(s, info);
     int cy = wy + wh / 2;
     frame(wx - 1, wy - 1, SM_W + 2, wh + 2, C_RAIL, 1);
     if (s->id < 0) {
@@ -1218,41 +1243,68 @@ static void draw_samplr(void)
                 }
             }
         }
+        if (!s->ov_ok) {                                          /* a streamed sample still loading */
+            char b[12], *q = b;
+            q = put_uint(q, s->filled * 100u / SM_COLS);
+            *q++ = '%';
+            *q = 0;
+            text(wx + 6, wy + 12, b, C_YELLOW, 1);
+        }
     }
-    for (int i = 0; i < SM_MODES; i++)
-        sm_button(3 + 33 * i, ba, 31, sm_mode_name[i], s->mode == i);
-    if (s->mode == SM_SLICER)
-        sm_button(136, ba, 34, sm_q_name[s->qi & 3], s->qi != 0);
-    else if (s->mode == SM_ARP)
-        sm_button(136, ba, 34, "SNAP", s->qi != 0);
-    else if (s->mode == SM_GRAIN)
-        sm_button(136, ba, 34, s->gfree ? "FREE" : "SYNC", 1);
-    if (s->mode == SM_SLICER)
-        sm_button(172, ba, 34, s->loopm ? "LOOP" : s->gate ? "GATE" : "ONE", s->loopm);
-    else if (s->mode == SM_GRAIN)
-        sm_button(172, ba, 34, samplr_cont_name(s->g_cont), 1);
-    sm_button(208, ba, 36, "LATCH", (s->latchm >> s->mode) & 1);
-    if (s->mode == SM_SLICER)
-        sm_button(246, ba, 33, "AUTO", 0);
-    else if (s->mode == SM_ARP)
-        sm_button(246, ba, 33, samplr_pat_name(s->pat), 1);
-    else if (s->mode == SM_GRAIN)
-        sm_button(246, ba, 33, s->g_warpmode ? "WARP" : "RND", 1);
-    if (s->mode == SM_SLICER || s->mode == SM_ARP)
-        sm_button(281, ba, 30, "YP", (s->ypit >> s->mode) & 1);
-    else if (s->mode == SM_GRAIN)
-        sm_button(281, ba, 30, samplr_ppat_name(s->g_ppat), s->g_ppat != 0);
-    sm_button(3, bb, 22, "<", 0);
-    frame(27, bb, 70, SM_BH, C_RAIL, 1);
-    text_c(27, bb + 6, 70, nm[0] ? nm : "-", C_LIGHT, 1);
-    sm_button(99, bb, 22, ">", 0);
-    {                                                             /* row C: REC | PLAY / STOP | UNDO | CLR | LEN | the layers | position */
+    int sh = SM_SHEET < SM_SHEETS ? SM_SHEET : 0;
+    if (sh == 0) {                                                /* PLAY: the modes, then the current mode's switches */
+        for (int i = 0; i < SM_MODES; i++)
+            sm_button(3 + 77 * i, r1, 74, sm_mode_name[i], s->mode == i);
+        const char *lab[5] = {0, 0, 0, 0, 0};
+        int on[5] = {0, 0, 0, 0, 0};
+        lab[2] = "LATCH";
+        on[2] = (s->latchm >> s->mode) & 1;
+        if (s->mode == SM_SLICER) {
+            lab[0] = sm_q_name[s->qi & 3];
+            on[0] = s->qi != 0;
+            lab[1] = s->loopm ? "LOOP" : s->gate ? "GATE" : "ONE";
+            on[1] = s->loopm;
+            lab[3] = "AUTO";
+            lab[4] = "YP";
+            on[4] = (s->ypit >> s->mode) & 1;
+        } else if (s->mode == SM_ARP) {
+            lab[0] = "SNAP";
+            on[0] = s->qi != 0;
+            lab[3] = samplr_pat_name(s->pat);
+            lab[4] = "YP";
+            on[4] = (s->ypit >> s->mode) & 1;
+        } else if (s->mode == SM_GRAIN) {
+            lab[0] = s->gfree ? "FREE" : "SYNC";
+            lab[1] = samplr_cont_name(s->g_cont);
+            lab[3] = s->g_warpmode ? "WARP" : "RND";
+            lab[4] = samplr_ppat_name(s->g_ppat);
+            on[4] = s->g_ppat != 0;
+        }
+        for (int i = 0; i < 5; i++)
+            if (lab[i])
+                sm_button(3 + 62 * i, r2, 58, lab[i], on[i]);
+    } else if (sh == 1) {                                         /* SAMPLE: which one, and transpose */
+        sm_button(3, r1, 40, "<", 0);
+        frame(47, r1, 218, SM_BH, C_RAIL, 1);
+        text_c(47, r1 + (SM_BH - 8) / 2, 218, nm[0] ? nm : "-", C_LIGHT, 1);
+        sm_button(269, r1, 40, ">", 0);
+        sm_button(3, r2, 58, "-12", 0);
+        sm_button(65, r2, 58, "-1", 0);
+        char b[8], *q = b;
+        int tv = s->trans;
+        *q++ = tv < 0 ? '-' : '+';
+        q = put_uint(q, (unsigned)(tv < 0 ? -tv : tv));
+        *q = 0;
+        sm_button(127, r2, 58, b, tv != 0);
+        sm_button(189, r2, 58, "+1", 0);
+        sm_button(251, r2, 58, "+12", 0);
+    } else {                                                      /* GESTURE: REC PLAY UNDO CLR LEN, the layers, the position */
         int rec = s->g_rec >= 0, arm = s->g_armed != 0, run = s->g_run;
-        frame(3, bc, 34, SM_BH, rec ? C_RED : arm ? C_YELLOW : C_RAIL, 1);
-        text_c(3, bc + 6, 34, "REC", rec ? C_RED : arm ? C_YELLOW : C_LIGHT, 1);
-        sm_button(39, bc, 34, run || arm ? "STOP" : "PLAY", run);
-        sm_button(75, bc, 34, "UNDO", 0);
-        sm_button(111, bc, 30, "CLR", 0);
+        frame(3, r1, 58, SM_BH, rec ? C_RED : arm ? C_YELLOW : C_RAIL, 1);
+        text_c(3, r1 + (SM_BH - 8) / 2, 58, "REC", rec ? C_RED : arm ? C_YELLOW : C_LIGHT, 1);
+        sm_button(65, r1, 58, run || arm ? "STOP" : "PLAY", run);
+        sm_button(127, r1, 58, "UNDO", 0);
+        sm_button(189, r1, 58, "CLR", 0);
         char b[8], *q = b;
         q = put_uint(q, s->g_bars);
         *q++ = ' ';
@@ -1262,85 +1314,75 @@ static void draw_samplr(void)
         if (s->g_bars > 1)
             *q++ = 'S';
         *q = 0;
-        sm_button(143, bc, 46, b, s->g_layers == 0 && !run);
+        sm_button(251, r1, 58, b, s->g_layers == 0 && !run);
         for (int L = 0; L < SM_LAYERS; L++) {
             int recL = s->g_rec == L, have = L < s->g_layers;
             int col = recL ? C_RED : have ? C_CYAN : C_RAIL;
-            frame(193 + 26 * L, bc, 24, SM_BH, col, 1);
-            char d[2] = {(char)('1' + L), 0};
-            text_c(193 + 26 * L, bc + 6, 24, d, recL ? C_RED : have ? C_CYAN : C_GREY, 1);
+            frame(3 + 62 * L, r2, 58, SM_BH, col, 1);
+            char d[8] = {'L', 'A', 'Y', 'E', 'R', ' ', (char)('1' + L), 0};
+            text_c(3 + 62 * L, r2 + (SM_BH - 8) / 2, 58, d, recL ? C_RED : have ? C_CYAN : C_GREY, 1);
         }
-        frame(271, bc, 40, SM_BH, C_RAIL, 1);
+        frame(189, r2, 120, SM_BH, C_RAIL, 1);
         if (run && s->g_len > 0) {
-            int w = (int)((uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / ((uint32_t)s->g_len / 36u + 1u));
-            box(273, bc + 2, w > 36 ? 36 : w, SM_BH - 4, rec ? C_RED : C_CYAN);
+            int w = (int)((uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / ((uint32_t)s->g_len / 116u + 1u));
+            box(191, r2 + 3, w > 116 ? 116 : w, SM_BH - 6, rec ? C_RED : C_CYAN);
         }
     }
-    sm_button(125, bb, 30, "-12", 0);
-    sm_button(157, bb, 24, "-1", 0);
-    {
-        char b[8], *q = b;
-        int tv = s->trans;
-        *q++ = tv < 0 ? '-' : '+';
-        q = put_uint(q, (unsigned)(tv < 0 ? -tv : tv));
-        *q = 0;
-        frame(183, bb, 50, SM_BH, tv ? C_CYAN : C_RAIL, 1);
-        text_c(183, bb + 6, 50, b, tv ? C_CYAN : C_LIGHT, 1);
-    }
-    sm_button(235, bb, 24, "+1", 0);
-    sm_button(261, bb, 30, "+12", 0);
 }
 
-/* A touch on the SMPLR tab above the footer. Returns 1 when it was used. */
+/* A touch on the SAMPLR page above the footer. */
 static int sm_touch(int kind, int id, int x, int d)
 {
-    int wx, wy, wh, ba, bb, bc;
-    sm_geom(&wx, &wy, &wh, &ba, &bb, &bc);
-    if (d >= ba) {
+    int wx, wy, wh, r1, r2;
+    sm_geom(&wx, &wy, &wh, &r1, &r2);
+    if (d >= r1) {
         if (kind != 0)
             return 1;
         struct sm *s = samplr();
-        if (d >= bc) {
-            if (x >= 3 && x < 37)
-                samplr_gest(0);
-            else if (x >= 39 && x < 73)
-                samplr_gest(1);
-            else if (x >= 75 && x < 109)
-                samplr_gest(2);
-            else if (x >= 111 && x < 141)
-                samplr_gest(3);
-            else if (x >= 143 && x < 189)
-                samplr_gest(4);
-        } else if (d >= bb) {
-            if (x >= 3 && x < 25)
-                samplr_select(-1);
-            else if (x >= 99 && x < 121)
-                samplr_select(1);
-            else if (x >= 125 && x < 155)
+        int row2 = d >= r2, sh = SM_SHEET < SM_SHEETS ? SM_SHEET : 0;
+        if (sh == 0) {
+            if (!row2) {
+                if (x >= 3)
+                    samplr_set_mode(x - 3 < 77 * SM_MODES ? (x - 3) / 77 : SM_MODES - 1);
+            } else {
+                int i = (x - 3) / 62;
+                if (x >= 3 && i < 5 && (x - 3) % 62 < 58 && s) {
+                    int m = s->mode;
+                    if (i == 0 && m != SM_TAPE)
+                        samplr_cycle(0);
+                    else if (i == 1 && m == SM_SLICER)
+                        samplr_toggle_gate();
+                    else if (i == 1 && m == SM_GRAIN)
+                        samplr_cycle(5);
+                    else if (i == 2)
+                        samplr_cycle(2);
+                    else if (i == 3)
+                        samplr_cycle(m == SM_GRAIN ? 6 : m == SM_SLICER ? 4 : m == SM_ARP ? 1 : -1);
+                    else if (i == 4)
+                        samplr_cycle(m == SM_GRAIN ? 7 : m == SM_TAPE ? -1 : 3);
+                }
+            }
+        } else if (sh == 1) {
+            if (!row2) {
+                if (x < 45)
+                    samplr_select(-1);
+                else if (x >= 267)
+                    samplr_select(1);
+            } else if (x >= 3 && x < 61) {
                 samplr_trans(-12);
-            else if (x >= 157 && x < 181)
+            } else if (x >= 65 && x < 123) {
                 samplr_trans(-1);
-            else if (x >= 183 && x < 233)
+            } else if (x >= 127 && x < 185) {
                 samplr_trans(0);
-            else if (x >= 235 && x < 259)
+            } else if (x >= 189 && x < 247) {
                 samplr_trans(1);
-            else if (x >= 261 && x < 291)
+            } else if (x >= 251) {
                 samplr_trans(12);
-        } else if (x >= 3 && x < 3 + 33 * SM_MODES) {
-            samplr_set_mode((x - 3) / 33);
-        } else if (x >= 136 && x < 170) {
-            samplr_cycle(0);
-        } else if (x >= 172 && x < 206) {
-            if (s && s->mode == SM_SLICER)
-                samplr_toggle_gate();
-            else if (s && s->mode == SM_GRAIN)
-                samplr_cycle(5);
-        } else if (x >= 208 && x < 244) {
-            samplr_cycle(2);
-        } else if (x >= 246 && x < 279) {
-            samplr_cycle(s && s->mode == SM_GRAIN ? 6 : s && s->mode == SM_SLICER ? 4 : 1);
-        } else if (x >= 281 && x < 311) {
-            samplr_cycle(s && s->mode == SM_GRAIN ? 7 : 3);
+            }
+        } else if (!row2) {
+            int i = (x - 3) / 62;
+            if (x >= 3 && i < 5)
+                samplr_gest(i == 0 ? 0 : i == 1 ? 1 : i == 2 ? 2 : i == 3 ? 3 : 4);
         }
         P->sig = 0;
         return 1;
@@ -1692,7 +1734,11 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         P->sel = (uint8_t)t;                                      /* touching a track's column selects it */
     if (P->info_on)
         info_touch();
-    if (zone == Z_TAB) {
+    if (zone == Z_TAB && t >= 10) {                               /* a sheet of the SAMPLR page */
+        SM_SHEET = (uint16_t)(t - 10);
+        P->entered = 0;
+        P->sig = 0;
+    } else if (zone == Z_TAB) {
         tab_select(t);
         P->info_on = 0;
         P->entered = 0;                                           /* repaint the whole page for the new tab */

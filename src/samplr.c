@@ -526,7 +526,7 @@ void samplr_trans(int what)
 void samplr_cycle(int what)
 {
     struct sm *s = samplr();
-    if (!s)
+    if (!s || what < 0 || what > 7)
         return;
     if (what == 0) {
         if (s->mode == SM_GRAIN)

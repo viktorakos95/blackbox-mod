@@ -1044,9 +1044,13 @@ cols = [x for x in f if x[2] == 2 and x[4] == 0x16]
 check("SMPLR tab: 150 waveform columns of 2 px, growing along the ramp", len(cols) == 150 and cols[-1][3] > cols[10][3], (len(cols), cols[:1], cols[-1:]))
 check("SMPLR tab: slice lines (grey)", sum(1 for x in f if x[2] == 1 and x[4] == 0x09) >= 15)
 import subprocess as _sp
-_src = '#include "src/samplr.h"\nchar o_g_armed[__builtin_offsetof(struct sm,g_armed)];\n'
-_out = _sp.run(["arm-none-eabi-gcc", "-I.", "-mthumb", "-S", "-x", "c", "-", "-o", "-"], input=_src, capture_output=True, text=True, check=True).stdout.splitlines()
-G_ARMED = int([l.split()[1] for l in _out if l.strip().startswith(".space")][0])
+def _off(name):
+    src = '#include "src/samplr.h"\nchar o_x[__builtin_offsetof(struct sm,%s)];\n' % name
+    out = _sp.run(["arm-none-eabi-gcc", "-I.", "-mthumb", "-S", "-x", "c", "-", "-o", "-"], input=src, capture_output=True, text=True, check=True).stdout.splitlines()
+    return int([l.split()[1] for l in out if l.strip().startswith(".space")][0])
+
+
+G_ARMED = _off("g_armed")
 e.call("samplr")
 SMPLR_P = e.uc.reg_read(A.UC_ARM_REG_R0)
 before_l = list(e.uc.mem_read(STATE + T0, TSIZE * 4))
@@ -1064,10 +1068,29 @@ check("SMPLR: the touched slice is drawn in the finger's colour (cyan)", any(x[2
 touch("up", wave_x, wave_d)
 blocks(3, 0.0)
 check("SMPLR: lifting the finger silences it (gate)", max(abs(v) for v in block([0.0] * N)[1][0]) < 1e-4)
-touch("down", 3 + 33 + 10, 142 + 5)
-touch("up", 3 + 33 + 10, 142 + 5)
+touch("down", 3 + 77 + 10, 147 + 5)
+touch("up", 3 + 77 + 10, 147 + 5)
 e.call("samplr")
 check("SMPLR: the TAPE button switches the mode", e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4) == 1, e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4))
+touch("down", 3 + 60 + 10, 219)                                  # the SAMPLE sheet in the footer
+touch("up", 3 + 60 + 10, 219)
+touch("down", 251 + 10, 178 + 10)                                # +12 (row 2 of that sheet)
+touch("up", 251 + 10, 178 + 10)
+touch("down", 251 + 10, 178 + 10)
+touch("up", 251 + 10, 178 + 10)
+check("SMPLR: the SAMPLE sheet's +12 button transposes (twice = 24)", struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0] == 24, struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0])
+touch("down", 127 + 10, 178 + 10)                                # the value: back to 0
+touch("up", 127 + 10, 178 + 10)
+check("SMPLR: tapping the value resets the transpose", struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0] == 0)
+touch("down", 3 + 120 + 10, 219)                                 # the GESTURE sheet
+touch("up", 3 + 120 + 10, 219)
+touch("down", 3 + 10, 147 + 10)                                  # REC
+touch("up", 3 + 10, 147 + 10)
+check("SMPLR: the GESTURE sheet's REC arms the take", e.r8(SMPLR_P + G_ARMED) == 1, e.r8(SMPLR_P + G_ARMED))
+touch("down", 3 + 10, 147 + 10)                                  # REC again cancels
+touch("up", 3 + 10, 147 + 10)
+touch("down", 3 + 10, 219)                                       # back to the PLAY sheet
+touch("up", 3 + 10, 219)
 e.call("looper_page_goto", VIEW, 0)
 check("SMPLR: leaving the tab releases the voices", True)
 

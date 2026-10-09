@@ -176,3 +176,10 @@ takes three overdub layers.
   take and stay live until the loop's end, where the recorded presses take over (no doubling).
 - Encoders are part of a gesture: the volume, rate, spray, drift, attack, release and free-rate knobs are recorded as absolute values (event kind 3: fx = which,
   fy = value, a turn in progress is one event) and set again on every pass.
+
+## Build 14 (a roomier SAMPLR page)
+- Report: three rows of 20 px buttons with 6-8 character labels touching their frames, long sample names cut off - cramped and hard to hit.
+- Now: two rows of 28 px buttons (62 px pitch, 58 px wide) under the waveform, and three SHEETS picked in the footer: PLAY (row 1 the four modes at 74 px;
+  row 2 the mode's switches: Q / SNAP / SYNC, GATE-ONE-LOOP / CNT, LATCH, AUTO / PAT / RND-WARP, YP / pitch pattern), SAMPLE (< name > with room for 36
+  characters, transpose -12 -1 value +1 +12), GESTURE (REC PLAY UNDO CLR LEN; the layers; a position bar). The top bar: the mode's settings, the take state
+  (REC / ARMED / LOOP) and C / S / V / G (the CPU numbers, shorter). A loading percentage sits in the waveform's corner.
