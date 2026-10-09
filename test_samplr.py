@@ -38,7 +38,7 @@ def struct_offsets(names):
     return res
 
 
-OFF = struct_offsets(["iq", "g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode", "rev", "seqm", "sq_on", "gate", "lp_a", "lp_b", "fx_f", "fx_r", "fx_sd", "fx_sr", "peak"])
+OFF = struct_offsets(["iq", "g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode", "rev", "seqm", "sq_on", "gate", "lp_a", "lp_b", "fx_f", "fx_r", "fx_sd", "fx_sr", "peak", "load"])
 
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
@@ -1228,6 +1228,24 @@ e.call("samplr_track", 0, count=50_000_000)
 SMP = SMP0
 setb(OFF["loopm"], 0)
 setb(OFF["latchm"], 0)
+play(10)
+
+# above 45 % load the interpolation turns linear (cheaper): a pitched ramp stays a clean ramp
+e.call("samplr_set_mode", 0)
+e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 600))
+for semis, rate in ((7, 2 ** (7 / 12)), (-5, 2 ** (-5 / 12)), (12, 2.0)):
+    e.call("samplr_trans", 0)
+    e.call("samplr_trans", semis if semis else 0)
+    touch(0, 0, 3 * 64 + 10, 100)
+    play()
+    o = play()[0]
+    steps = [o[i + 1] - o[i] for i in range(40, 200)]
+    exp = rate / LENF * 0.9
+    check(f"linear (load 60 %) at {semis:+d} semitones: the ramp's steps are even and right", max(abs(x - exp) for x in steps) < exp * 0.03, (min(steps), max(steps), exp))
+    touch(2, 0, 0, 0)
+    play(6)
+e.call("samplr_trans", 0)
+e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 0))
 play(10)
 
 # find transients: four bursts

@@ -6,6 +6,7 @@
  */
 #include <stdint.h>
 #include "samplr.h"
+#pragma GCC optimize("O2,no-tree-loop-distribute-patterns")                                      /* (the DSP: speed over size) */
 
 uint8_t *looper_scratch(int i);
 int looper_grid_offset(float beats, float sph, int n);
@@ -1723,6 +1724,52 @@ static inline void rd_at(const struct rdc *c, int32_t f, float *l, float *r)
     *r = c->R[bi][o];
 }
 
+/* cnt frames from f0 into xl / xr, a run at a time (zeros outside the sample and where a block is not valid). */
+static void rd_span(const struct rdc *c, int32_t f0, int cnt, float *xl, float *xr)
+{
+    int i = 0;
+    while (i < cnt) {
+        int32_t f = f0 + i;
+        int k;
+        if (f < 0 || f >= c->len) {
+            k = f < 0 ? (int)(-f) : cnt - i;
+            k = k > cnt - i ? cnt - i : k;
+            for (int q = 0; q < k; q++) {
+                xl[i + q] = 0.f;
+                if (xr)
+                    xr[i + q] = 0.f;
+            }
+            i += k;
+            continue;
+        }
+        int bi = (f >> 13) - c->b0, o = f & 8191;
+        k = 8192 - o;
+        k = k > cnt - i ? cnt - i : k;
+        k = k > c->len - f ? c->len - f : k;
+        int vk = 0;
+        if (bi >= 0 && bi <= 5) {
+            vk = c->valid[bi] - o;
+            vk = vk < 0 ? 0 : vk > k ? k : vk;
+            const float *L = c->L[bi] + o, *R = c->R[bi] + o;
+            if (xr) {
+                for (int q = 0; q < vk; q++) {
+                    xl[i + q] = L[q];
+                    xr[i + q] = R[q];
+                }
+            } else {
+                for (int q = 0; q < vk; q++)
+                    xl[i + q] = L[q];
+            }
+        }
+        for (int q = vk; q < k; q++) {
+            xl[i + q] = 0.f;
+            if (xr)
+                xr[i + q] = 0.f;
+        }
+        i += k;
+    }
+}
+
 /* Four frames f-1 .. f+2 (the window of a cubic), reusing what the last position already read. */
 struct win4 {
     int32_t f;
@@ -1819,13 +1866,37 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
         }
         return 1;
     }
+    if (s->load > 450 && r < 3.f && r > -3.f) {                   /* SAMPLR is above 45 % of the audio block: linear interpolation on a contiguous copy (the cubic costs three times as much) */
+        int32_t lo = ip + fl(rmin);
+        int cnt = (ip + fl(rmax) + 2) - lo + 1;
+        if (cnt <= 800) {
+            rd_span(&c, lo, cnt, s->sc->xl, s->mono ? 0 : s->sc->xr);
+            const float *xl = s->sc->xl + (ip - lo), *xr = s->mono ? xl : s->sc->xr + (ip - lo);
+            float *ol = s->sc->il, *or_ = s->sc->ir, p = fr;
+            if (r > 0.f) {                                        /* (p >= 0: a plain truncation is the floor) */
+                for (int i = 0; i < m; i++, p += r) {
+                    int k = (int)p;
+                    float f = p - (float)k, a0 = xl[k], b0 = xr[k];
+                    ol[i] = a0 + (xl[k + 1] - a0) * f;
+                    or_[i] = b0 + (xr[k + 1] - b0) * f;
+                }
+            } else {
+                for (int i = 0; i < m; i++, p += r) {
+                    int k = fl(p);
+                    float f = p - (float)k, a0 = xl[k], b0 = xr[k];
+                    ol[i] = a0 + (xl[k + 1] - a0) * f;
+                    or_[i] = b0 + (xr[k + 1] - b0) * f;
+                }
+            }
+            return 1;
+        }
+    }
     if (r > 0.f && r <= 3.f && s->iq < 2) {                       /* forward, up to 3x: the firmware's cubic on a contiguous copy */
         int32_t base = ip - 1;
         int cnt = hi - base + 1;
         if (cnt > 800)
             return 0;
-        for (int i = 0; i < cnt; i++)
-            rd_at(&c, base + i, &s->sc->xl[i], &s->sc->xr[i]);
+        rd_span(&c, base, cnt, s->sc->xl, s->mono ? 0 : s->sc->xr);
         stock_interp_fn fn = s->iq ? STOCK_HIGHQ : STOCK_CUBIC;
         int used;
         float ph = fr;
@@ -1921,7 +1992,14 @@ static int voice_part(struct sm *s, struct smvoice *v, float *bl, float *br, int
     float env = v->env, g0 = v->gain * s->vol * .9f, gs = v->g_prev, gd = (g0 - gs) * (1.f / (float)m);   /* the gain is ramped over the block: no zipper noise */
     float eu = 1.f / (step_ms(s->atk) * 48.f), ed = 1.f / (step_ms(s->rel) * 48.f);
     int on = v->on;
-    for (int k = 0; k < m; k++) {
+    int fast = on && env >= 1.f && !ends && !fi && !fo;           /* the usual case: a note at full level, nothing to fade */
+    const float *il = s->sc->il, *ir = s->sc->ir;
+    for (int k = 0; fast && k < m; k++) {
+        gs += gd;
+        bl[i0 + k] += il[k] * gs;
+        br[i0 + k] += ir[k] * gs;
+    }
+    for (int k = 0; !fast && k < m; k++) {
         float l = s->sc->il[k], rr = s->sc->ir[k];
         if (ends) {
             int rem = stop_at - k;                                /* nothing of the next slice is ever heard: a short fade, then silence */
@@ -2328,10 +2406,24 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
             m = g->len - g->age;
         if (m > 0 && sample_block(s, g->ip, g->frac, g->rate, m)) {
             float inv = 1.f / (float)g->len;
-            for (int k = 0; k < m; k++) {
-                float t = (float)(g->age + k) * inv, w = contour(g->cont, t) * gain * (e0 + ge * (float)(i0 + k));
-                bl[i0 + k] += s->sc->il[k] * w * g->gl;
-                br[i0 + k] += s->sc->ir[k] * w * g->gr;
+            const float *il = s->sc->il, *ir = s->sc->ir;
+            if (g->cont == 0) {                                   /* the sine-like contour is a parabola: two additions a sample */
+                float t0 = (float)g->age * inv, w = 4.f * t0 * (1.f - t0), dw = 4.f * inv * (1.f - 2.f * t0 - inv), ddw = -8.f * inv * inv;
+                float amp = gain * (e0 + ge * (float)i0), damp = gain * ge, gl = g->gl, gr = g->gr;
+                for (int k = 0; k < m; k++) {
+                    float a = w * amp;
+                    bl[i0 + k] += il[k] * a * gl;
+                    br[i0 + k] += ir[k] * a * gr;
+                    w += dw;
+                    dw += ddw;
+                    amp += damp;
+                }
+            } else {
+                for (int k = 0; k < m; k++) {
+                    float t = (float)(g->age + k) * inv, w = contour(g->cont, t) * gain * (e0 + ge * (float)(i0 + k));
+                    bl[i0 + k] += il[k] * w * g->gl;
+                    br[i0 + k] += ir[k] * w * g->gr;
+                }
             }
             float np = g->frac + g->rate * (float)m;
             int kk = fl(np);
@@ -2384,10 +2476,11 @@ static void dry_run(struct sm *s, float *bl, float *br, int n)
     s->dry_pos = ip;
 }
 
-static void run_voices(struct sm *s, float *bl, float *br, int n)
+/* Renders the track into bl / br (zeroed here); 0 when there was nothing to play and they were left alone. */
+static int run_voices(struct sm *s, float *bl, float *br, int n)
 {
     if (s->id < 0)
-        return;
+        return 0;
     int any = 0;
     for (int i = 0; i < SM_SPOTS; i++)
         any |= s->spot[i].used;
@@ -2398,8 +2491,10 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
             any |= v->g[i].on;
     }
     any |= (s->dry_env > 0.f) | s->sq_on;
-    if (!any)
-        return;
+    if (!any) {
+        s->n_voices = s->n_grains = 0;
+        return 0;
+    }
     int32_t len, hz;
     int ch;
     if (!sample_info(s->id, &len, &hz, &ch) || len != s->len) {      /* the pad's sample went away or changed */
@@ -2412,8 +2507,10 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
         }
         for (int i = 0; i < SM_SPOTS; i++)
             s->spot[i].used = 0;
-        return;
+        return 0;
     }
+    for (int i = 0; i < n; i++)
+        bl[i] = br[i] = 0.f;
     int any_spot = 0;
     for (int i = 0; i < SM_SPOTS; i++)
         any_spot |= s->spot[i].used;
@@ -2434,6 +2531,7 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
     dry_run(s, bl, br, n);
     s->n_voices = (uint8_t)nv;
     s->n_grains = (uint8_t)ng;
+    return 1;
 }
 
 /* Nothing stays on that nobody holds: a spot, cloud or latched loop lives only while its finger is down, its mode's LATCH is on, a take is
@@ -2484,12 +2582,20 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         if (!q)
             continue;
         float *tl = s->sc->mixl, *tr = s->sc->mixr;               /* (not on the stack: the audio task's is small) */
-        for (int i = 0; i < n; i++)
-            tl[i] = tr[i] = 0.f;
         q->sph = s->sph;                                          /* one free-running grid for all the tracks */
         gest_run(q, n);
         sweep(q);
-        run_voices(q, tl, tr, n);
+        int busy = run_voices(q, tl, tr, n);
+        if (!busy && q->flt.mix > 0.f) {                          /* (the filter's tail after the last note) */
+            for (int i = 0; i < n; i++)
+                tl[i] = tr[i] = 0.f;
+            busy = 1;
+        }
+        if (!busy) {
+            q->peak *= .9f;
+            q->tick++;
+            continue;
+        }
         if (q->fx_f > 2 || q->fx_f < -2 || q->flt.mix > 0.f)      /* the track's strip: filter, then the sends to the looper's delay and reverb */
             looper_filter(&q->flt, (float)q->fx_f * .01f, (float)q->fx_r * .01f, tl, tr, n);
         for (int a = 0; a < 8; a++) {                             /* a filter that blew up starts clean (a NaN would stay in it, and in the delay and reverb, until the next power on) */
@@ -2498,14 +2604,21 @@ int samplr_run(float *bl, float *br, int n, float **snd)
                 for (int b = 0; b < 8; b++)
                     ((float *)q->flt.s)[b] = 0.f;
         }
-        float sd = (float)q->fx_sd * .01f, sr = (float)q->fx_sr * .01f, pk = q->peak * .9f;
-        int send = snd && (q->fx_sd || q->fx_sr);
+        float sd = (float)q->fx_sd * .01f, sr = (float)q->fx_sr * .01f, pk = q->peak * .9f, mx = 0.f;
+        int send = snd && (q->fx_sd || q->fx_sr), bad = 0;
+        for (int i = 0; i < n; i++) {                             /* the level of the block (a NaN never raises it: it shows as 'bad' below) */
+            float a = __builtin_fabsf(tl[i]), b = __builtin_fabsf(tr[i]);
+            mx = a > mx ? a : mx;
+            mx = b > mx ? b : mx;
+            bad |= !(a < 8.f && b < 8.f);
+        }
+        pk = mx > pk ? mx : pk;
         for (int i = 0; i < n; i++) {
             float l = tl[i], r = tr[i];
-            l = l > -8.f && l < 8.f ? l : 0.f;                      /* (nothing but a number gets to the bus and the sends) */
-            r = r > -8.f && r < 8.f ? r : 0.f;
-            float m = (l < 0.f ? -l : l) > (r < 0.f ? -r : r) ? (l < 0.f ? -l : l) : (r < 0.f ? -r : r);
-            pk = m > pk ? m : pk;
+            if (bad) {                                            /* (nothing but a number gets to the bus and the sends) */
+                l = __builtin_fabsf(l) < 8.f ? l : 0.f;
+                r = __builtin_fabsf(r) < 8.f ? r : 0.f;
+            }
             bl[i] += l;
             br[i] += r;
             if (send) {

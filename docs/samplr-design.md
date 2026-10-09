@@ -271,3 +271,15 @@ takes three overdub layers.
 - Glitches that stay after everything is stopped and PANIC was pressed, until a power cycle: not SAMPLR voices then. Suspect: stack. Since build 20 samplr_run kept two 1 KB buffers on the
   audio task's stack (frame 2264 bytes, `-fstack-usage`) in a call chain that reaches the stock interpolators; with grains, 6 tracks and the looper all busy that can run over the
   task's stack and corrupt whatever sits next to it. The buffers live in the shared scratch now (frame 224 bytes). Not proven on hardware.
+
+## Build 24 (CPU)
+- Report: four tracks with many gestures (grain, loop, arp, slice) glitch at C 75 / 92 (the whole audio task, average / peak), S 50-65 (SAMPLR's share).
+- `tools/prof_samplr.py` counts emulator instructions per function for a heavy scene (4 tracks: grain, arp, slicer loops, tape, all latched, +3 semitones). Not cycles, but the
+  proportions are right. Before: 891k instructions per block. The hot spots and what was done:
+  - copying the source for the stock interpolator one sample at a time (`rd_at`, 24 %): runs of whole blocks now (`rd_span`);
+  - SAMPLR is compiled -O2 (the cave is -Os) with loop-to-memmove turned off (there is no libc);
+  - a note at full level (the usual case) skips the fade / end checks per sample in `voice_part`; the grain's parabola contour is two additions a sample;
+  - a track with nothing to play costs a flag check (no zeroing, filtering or mixing), the block's level and NaN check are two light passes;
+  - above 45 % load (the S readout) interpolation is linear on a contiguous copy instead of the stock cubic (a third of the cost).
+  After: 446k normally, 401k above 45 % (-50 to -55 %).
+- GRAIN D off: the dry runs at normal speed (as D+4), as asked.
