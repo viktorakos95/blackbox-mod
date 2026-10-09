@@ -1266,7 +1266,7 @@ play(8)
 e.call("samplr_cycle", 13)
 e.call("samplr_set_mode", 0)
 
-# the governor: near the audio task's limit SAMPLR sheds (1 half the grains, 2 linear interpolation, 3 others start nothing new)
+# the governor: near the audio task's limit SAMPLR sheds (1 half the grains, 2 linear interpolation, 3 one channel, 4 fewer grains)
 def scr_off(name):
     src = '#include "src/samplr.h"\nchar o_x[__builtin_offsetof(struct smscr,%s)];\n' % name
     out = subprocess.run(["arm-none-eabi-gcc", "-I.", "-mthumb", "-S", "-x", "c", "-", "-o", "-"], input=src, capture_output=True, text=True, check=True).stdout.splitlines()
@@ -1300,6 +1300,18 @@ for _ in range(20):
     play(100)
 check("governor: and comes back when it is quiet again", e.r8(SHED) == 0, e.r8(SHED))
 
+# the task's own readout (slow, averaged over a second) cannot make it overshoot: one step, then a second to see the effect
+e.uc.mem_write(SHED, b"\x00")
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", 0))
+e.uc.mem_write(0x2405ffe2, struct.pack("<H", 900))
+e.uc.mem_write(SMP + OFF["load"], struct.pack("<H", 0))
+play(120)
+check("governor: the readout alone steps once in 120 blocks (not up to the top at once)", e.r8(SHED) == 1, e.r8(SHED))
+e.uc.mem_write(0x2405ffe2, struct.pack("<H", 100))
+for _ in range(15):
+    play(100)
+check("governor: ... and it comes back", e.r8(SHED) == 0, e.r8(SHED))
+
 # shed 4: the grains in all are capped (4), however many fingers and however dense
 e.call("samplr_set_mode", 3)
 setb(OFF["gfree"], 1)
@@ -1312,7 +1324,7 @@ mxg = 0
 for _ in range(60):
     play()
     mxg = max(mxg, e.r8(SMP + struct_offsets(["n_grains"])["n_grains"]))
-check("shed 4: no more than a handful of grains sound in all", 0 < mxg <= 6, mxg)
+check("shed 4: no more than a handful of grains sound in all (8)", 0 < mxg <= 9, mxg)
 for f_ in range(4):
     touch(2, f_, 0, 0)
 play(200)

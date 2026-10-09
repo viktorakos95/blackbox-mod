@@ -145,7 +145,7 @@ struct smscr {
     float xl[800], xr[800];                 /* a contiguous copy of the source for the stock interpolator */
     float oenv[SM_OWIN];                    /* transient search scratch (GUI task only) */
     float mixl[256], mixr[256];             /* one track's output before its filter and sends */
-    uint8_t cur, shed, _c[2];               /* the track the page shows; how much SAMPLR holds back because the audio task is near its limit (0..3) */
+    uint8_t cur, shed, fmono, _c[1];               /* the track the page shows; how much SAMPLR holds back because the audio task is near its limit (0..3) */
     float ld;                               /* SAMPLR's share, smoothed (per mille) */
     uint32_t shed_t;
     double prev;                            /* the clock position of the previous block (for the grid lines) */

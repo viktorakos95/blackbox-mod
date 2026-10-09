@@ -323,3 +323,11 @@ takes three overdub layers.
 - SMPL sheet: a SYNC button, BLOCK (default) or EXACT (the previous behaviour, at the exact frame), to compare on hardware.
 - Unconfirmed on hardware (as for the looper since step 21): that the click itself starts with the notes; if it is sample-accurate EXACT with the corrected grid may sit closer.
 - Not changed: the looper's own placement (`looper_grid_offset` in `run()`), which has the drift of 1 as well.
+
+## Build 29 (a gentler governor)
+- Report: step 3 (the tracks not shown start nothing new, 9 grains) is not nice, and it was reached too easily.
+- Why too easily: the task's readout (C average / peak) is averaged over about a second, so after a step it still showed the old, high value and the governor went up a step every 16
+  blocks until the top, in a third of a second. Now SAMPLR's own block-by-block share is the fast signal (a step every 16 blocks), the readout the slow one (a step at most every 200
+  blocks, so its effect can show), and the peak only counts together with an average over 80 % (95 % average-free spikes happen when playing normally).
+- Steps now only change how things are computed or how many grains there are; nothing is muted any more: 1 half the grain rate and 24 grains in all, 2 linear interpolation, 3 the
+  grains read ONE channel (half the sample work) and 14 grains in all, 4 8 grains in all. Back one step after ~2 s with the task under 70 %.

@@ -1861,6 +1861,7 @@ static inline float hermite(float y0, float y1, float y2, float y3, float x)
  * 0 when a block is not in the pool yet (it is asked for, at most every 128 ms). Outside the sample it is silence; mono: right = left. */
 static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
 {
+    int mono = s->mono || s->sc->fmono;                          /* (the grains read one channel when SAMPLR has to hold back) */
     int32_t len = s->len;
     float span = r * (float)m;
     float rmin = fr < fr + span ? fr : fr + span, rmax = fr > fr + span ? fr : fr + span;
@@ -1884,7 +1885,7 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
                 return 0;
             }
             c.L[blk - c.b0] = (const float *)*(uint32_t *)(ent + 4);
-            c.R[blk - c.b0] = s->mono ? c.L[blk - c.b0] : (const float *)*(uint32_t *)(ent + 8);
+            c.R[blk - c.b0] = mono ? c.L[blk - c.b0] : (const float *)*(uint32_t *)(ent + 8);
             c.valid[blk - c.b0] = (int)*(uint32_t *)(ent + 0x14);
         }
     }
@@ -1916,9 +1917,17 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
         int32_t lo = ip + fl(rmin);
         int cnt = (ip + fl(rmax) + 2) - lo + 1;
         if (cnt <= 800) {
-            rd_span(&c, lo, cnt, s->sc->xl, s->mono ? 0 : s->sc->xr);
-            const float *xl = s->sc->xl + (ip - lo), *xr = s->mono ? xl : s->sc->xr + (ip - lo);
+            rd_span(&c, lo, cnt, s->sc->xl, mono ? 0 : s->sc->xr);
+            const float *xl = s->sc->xl + (ip - lo), *xr = mono ? xl : s->sc->xr + (ip - lo);
             float *ol = s->sc->il, *or_ = s->sc->ir, p = fr;
+            if (mono) {
+                for (int i = 0; i < m; i++, p += r) {
+                    int k = fl(p);
+                    float a0 = xl[k];
+                    ol[i] = or_[i] = a0 + (xl[k + 1] - a0) * (p - (float)k);
+                }
+                return 1;
+            }
             for (int i = 0; i < m; i++, p += r) {
                 int k = fl(p);
                 float f = p - (float)k, a0 = xl[k], b0 = xr[k];
@@ -1933,12 +1942,12 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
         int cnt = hi - base + 1;
         if (cnt > 800)
             return 0;
-        rd_span(&c, base, cnt, s->sc->xl, s->mono ? 0 : s->sc->xr);
+        rd_span(&c, base, cnt, s->sc->xl, mono ? 0 : s->sc->xr);
         stock_interp_fn fn = s->iq ? STOCK_HIGHQ : STOCK_CUBIC;
         int used;
         float ph = fr;
         fn(s->sc->xl, 0, 1, &used, &ph, s->sc->il, m, r);
-        if (s->mono) {
+        if (mono) {
             for (int i = 0; i < m; i++)
                 s->sc->ir[i] = s->sc->il[i];
         } else {
@@ -2328,7 +2337,7 @@ static void arp_step(struct sm *s, int off)
 
 static void grain_spawn(struct sm *s, struct smvoice *v, int off)
 {
-    static const uint8_t cap[5] = {40, 24, 14, 9, 4};             /* grains in all across the tracks, by how far SAMPLR has to hold back */
+    static const uint8_t cap[5] = {40, 24, 20, 14, 8};             /* grains in all across the tracks, by how far SAMPLR has to hold back */
     if (s->sc->gnow >= cap[s->sc->shed > 4 ? 4 : s->sc->shed])
         return;
     s->sc->gnow++;
@@ -2415,8 +2424,8 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         v->g_warp += (rnd01(s) * 2.f - 1.f - v->g_warp) * 0.04f;
         v->g_warp2 += (rnd01(s) * 2.f - 1.f - v->g_warp2) * 0.04f;
     }
-    int shed = s->sc->shed, quiet = shed >= 3 && s->tno != s->sc->cur;   /* (SAMPLR holds back when the audio task is near its limit, see samplr_run) */
-    if (live && s->load < 650 && !quiet) {                     /* (no new grains while this block alone is above 65 %) */
+    int shed = s->sc->shed;                                       /* (SAMPLR holds back when the audio task is near its limit, see samplr_run) */
+    if (live && s->load < 650) {                     /* (no new grains while this block alone is above 65 %) */
         if (s->gfree) {
             float inc = s->dens * (1.f / 48000.f) * (shed >= 1 ? .5f : 1.f);
             if (v->g_acc >= 1.f) {
@@ -2438,6 +2447,7 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         }
     }
     float gain = v->gain * s->vol, ge = (e1 - e0) * (1.f / (float)n);
+    s->sc->fmono = shed >= 3;
     for (int i = 0; i < SM_GRAINS; i++) {
         struct smgrain *g = &v->g[i];
         if (!g->on)
@@ -2476,6 +2486,7 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         if (g->age >= g->len)
             g->on = 0;
     }
+    s->sc->fmono = 0;
 }
 
 /* GRAIN: the sample itself, looping at normal speed, under the grains while any cloud is on (the dry of MOSAIC). */
@@ -2556,7 +2567,7 @@ static int run_voices(struct sm *s, float *bl, float *br, int n)
     int any_spot = 0;
     for (int i = 0; i < SM_SPOTS; i++)
         any_spot |= s->spot[i].used;
-    if (any_spot && !(s->sc->shed >= 3 && s->tno != s->sc->cur)) {
+    if (any_spot) {
         int off = grid(s, dbeats[s->div % 5], n);
         if (off >= 0)
             arp_step(s, off);
@@ -2621,20 +2632,22 @@ int samplr_run(float *bl, float *br, int n, float **snd)
     uint32_t c0 = DWT_CYCCNT;
     int fed = 0;
     {   /* the governor: the whole audio task must stay clear of its limit (a pad played over a busy SAMPLR took the Blackbox down at C 89/90, and at C 95+ it glitches
-         * for good). It looks at the task's own readout (average and peak, per mille, 0x2405ffe2 / e4) and at SAMPLR's share; under stress it sheds one step every 16
-         * blocks: 1 half the grains and a lower cap of grains in all, 2 linear interpolation instead of the cubic, 3 the tracks that are not shown start nothing new,
-         * 4 the cap goes down to a few grains. It comes back one step at a time, after about 2 s with the task under 70 %. */
+         * for good). It looks at SAMPLR's own share block by block (fast: a step every 16 blocks) and at the task's readout, average and peak, per mille, 0x2405ffe2 / e4
+         * (slow: that is averaged over about a second, so after a step it is given a second to show the effect). Steps, each one only changes how it is computed or
+         * how many grains there are, nothing is muted: 1 half the grain rate and 24 grains in all (40 at rest), 2 linear interpolation instead of the cubic, 3 the grains
+         * read one channel (half the work), 14 grains in all, 4 8 grains in all. One step back after ~2 s with the task under 70 %. */
         struct smscr *sc = s->sc;
         float tot_avg = (float)*(volatile uint16_t *)0x2405ffe2u, tot_pk = (float)*(volatile uint16_t *)0x2405ffe4u;
         float other = tot_avg - (float)s->t_avg_shown;
         float lim = 800.f - (other > 0.f ? other : 0.f);
         lim = lim < 250.f ? 250.f : lim;
         sc->ld += ((float)s->load - sc->ld) * .1f;
-        int stress = tot_avg > 850.f || tot_pk > 950.f || sc->ld > lim;
-        if (stress && sc->shed < 4 && s->tick - sc->shed_t > 16) {
+        int fast = sc->ld > lim, slow = tot_avg > 880.f || (tot_pk > 980.f && tot_avg > 800.f);
+        uint32_t since = s->tick - sc->shed_t;
+        if (((fast && since > 16) || (slow && since > 200)) && sc->shed < 4) {
             sc->shed++;
             sc->shed_t = s->tick;
-        } else if (!stress && tot_avg < 700.f && sc->ld < lim * .6f && sc->shed > 0 && s->tick - sc->shed_t > 400) {
+        } else if (!fast && !slow && tot_avg < 700.f && sc->ld < lim * .6f && sc->shed > 0 && since > 400) {
             sc->shed--;
             sc->shed_t = s->tick;
         }
