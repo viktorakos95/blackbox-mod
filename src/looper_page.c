@@ -127,9 +127,9 @@ static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> til
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
 enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
 enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, MODES };
-#define SM_SHEETS 4
+#define SM_SHEETS 5
 #define SM_SHEET (P->_r2)
-static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "SAMPLE", "GESTURE", "MODE"};
+static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "SAMPLE", "GESTURE", "ENV", "MODE"};
 #define NTABS 5                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
 /* hardware buttons the page can take over: slot numbers */
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
@@ -367,8 +367,8 @@ int looper_page_hit(int x, int d, int *track, float *val)
             return Z_OPTC;
         }
         if (P->mode == M_SMPLR) {                                 /* the sheets (track >= 10 tells Z_TAB apart) */
-            int sh = (x - 3) / 60;
-            if (x >= 3 && sh < SM_SHEETS && (x - 3) % 60 < 58) {
+            int sh = (x - 3) / 50;
+            if (x >= 3 && sh < SM_SHEETS && (x - 3) % 50 < 48) {
                 *track = 10 + sh;
                 return Z_TAB;
             }
@@ -1087,8 +1087,8 @@ static void draw_footer(const struct lay *L)
     if (P->mode == M_SMPLR) {                                     /* SAMPLR is a page of its own: SONG opens it, MIX goes to the Looper; the footer picks the sheet */
         for (int i = 0; i < SM_SHEETS; i++) {
             int on = SM_SHEET == i;
-            frame(3 + 60 * i, L->foot_y + 2, 58, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
-            text_c(3 + 60 * i, L->foot_y + 4, 58, sm_sheet_name[i], on ? C_CYAN : C_GREY, 1);
+            frame(3 + 50 * i, L->foot_y + 2, 48, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
+            text_c(3 + 50 * i, L->foot_y + 4, 48, sm_sheet_name[i], on ? C_CYAN : C_GREY, 1);
         }
         x0 = P->w;
     }
@@ -1252,29 +1252,30 @@ static void draw_samplr(void)
         }
     }
     {                                                             /* the strip above the sample: transpose, REC, PLAY / STOP, the layers and the loop's position */
-        sm_button(3, ty, 30, "-12", 0);
-        sm_button(35, ty, 26, "-1", 0);
+        sm_button(3, ty, 28, "-12", 0);
+        sm_button(33, ty, 24, "-1", 0);
         char b[8], *q = b;
         int tv = s->trans;
         *q++ = tv < 0 ? '-' : '+';
         q = put_uint(q, (unsigned)(tv < 0 ? -tv : tv));
         *q = 0;
-        sm_button(63, ty, 38, b, tv != 0);
-        sm_button(103, ty, 26, "+1", 0);
-        sm_button(131, ty, 30, "+12", 0);
+        sm_button(59, ty, 34, b, tv != 0);
+        sm_button(95, ty, 24, "+1", 0);
+        sm_button(121, ty, 28, "+12", 0);
+        sm_button(153, ty, 34, "REV", s->rev);
         int rec = s->g_rec >= 0, arm = s->g_armed != 0, run = s->g_run;
-        frame(167, ty, 46, SM_BH, rec ? C_RED : arm ? C_YELLOW : C_RAIL, 1);
+        frame(191, ty, 40, SM_BH, rec ? C_RED : arm ? C_YELLOW : C_RAIL, 1);
         if (rec || arm)
-            frame(168, ty + 1, 44, SM_BH - 2, rec ? C_RED : C_YELLOW, 1);
-        text_c(167, ty + (SM_BH - 8) / 2, 46, "REC", rec ? C_RED : arm ? C_YELLOW : C_LIGHT, 1);
-        sm_button(215, ty, 46, run || arm ? "STOP" : "PLAY", run);
+            frame(192, ty + 1, 38, SM_BH - 2, rec ? C_RED : C_YELLOW, 1);
+        text_c(191, ty + (SM_BH - 8) / 2, 40, "REC", rec ? C_RED : arm ? C_YELLOW : C_LIGHT, 1);
+        sm_button(233, ty, 40, run || arm ? "STOP" : "PLAY", run);
         for (int L = 0; L < SM_LAYERS; L++) {                      /* the three layers: grey empty, cyan recorded, red recording */
             int recL = s->g_rec == L, have = L < s->g_layers;
-            box(263 + 16 * L, ty + 4, 14, SM_BH - 8, recL ? C_RED : have ? C_CYAN : C_DARK);
+            box(277 + 12 * L, ty + 4, 10, SM_BH - 8, recL ? C_RED : have ? C_CYAN : C_DARK);
         }
         if (run && s->g_len > 0) {                                  /* the loop's position, a thin line under the buttons */
-            int w = (int)((uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / ((uint32_t)s->g_len / 142u + 1u));
-            box(167, ty + SM_BH + 1, w > 142 ? 142 : w, 2, rec ? C_RED : C_CYAN);
+            int w = (int)((uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / ((uint32_t)s->g_len / 82u + 1u));
+            box(191, ty + SM_BH + 1, w > 82 ? 82 : w, 2, rec ? C_RED : C_CYAN);
         }
     }
     int sh = SM_SHEET < SM_SHEETS ? SM_SHEET : 0;
@@ -1291,6 +1292,9 @@ static void draw_samplr(void)
             lab[3] = "AUTO";
             lab[4] = "YP";
             on[4] = (s->ypit >> s->mode) & 1;
+            lab[5] = s->seqm == 0 ? "SEQ" : s->seqm == 1 ? "SEQ NAT" : "SEQ GRID";
+            on[5] = s->seqm != 0;
+            lab[6] = samplr_pat_name(s->pat);
         } else if (s->mode == SM_ARP) {
             lab[0] = "SNAP";
             on[0] = s->qi != 0;
@@ -1340,6 +1344,18 @@ static void draw_samplr(void)
             char d[8] = {'L', 'A', 'Y', 'E', 'R', ' ', (char)('1' + L), 0};
             text_c(155 + 52 * L, r1 + (SM_BH - 8) / 2, 50, d, recL ? C_RED : have ? C_CYAN : C_GREY, 1);
         }
+    } else if (sh == 3) {                                         /* ENV: attack and release as two sliders (every mode; the grain clouds use them too) */
+        for (int w = 0; w < 2; w++) {
+            int x0 = w ? 157 : 3, bw = w ? 154 : 150;
+            frame(x0, r1, bw, SM_BH, C_RAIL, 1);
+            int fill = (w ? s->rel : s->atk) * (bw - 4) / 96;
+            box(x0 + 2, r1 + 2, fill, SM_BH - 4, C_DARK);
+            char b[16], *q = b;
+            *q++ = w ? 'R' : 'A';
+            *q++ = ' ';
+            samplr_env_text(w, q);
+            text_c(x0, r1 + (SM_BH - 8) / 2, bw, b, C_LIGHT, 1);
+        }
     } else {                                                      /* MODE: SLICE TAPE ARP GRAIN */
         for (int i = 0; i < SM_MODES; i++)
             sm_button(3 + 77 * i, r1, 74, sm_mode_name[i], s->mode == i);
@@ -1355,27 +1371,39 @@ static int sm_touch(int kind, int id, int x, int d)
     if (d >= ty - 2 && d < wy - 2) {                              /* the strip above the sample */
         if (kind != 0)
             return 1;
-        if (x >= 3 && x < 33)
+        if (x >= 3 && x < 31)
             samplr_trans(-12);
-        else if (x >= 35 && x < 61)
+        else if (x >= 33 && x < 57)
             samplr_trans(-1);
-        else if (x >= 63 && x < 101)
+        else if (x >= 59 && x < 93)
             samplr_trans(0);
-        else if (x >= 103 && x < 129)
+        else if (x >= 95 && x < 119)
             samplr_trans(1);
-        else if (x >= 131 && x < 163)
+        else if (x >= 121 && x < 149)
             samplr_trans(12);
-        else if (x >= 167 && x < 213)
+        else if (x >= 153 && x < 187)
+            samplr_cycle(11);
+        else if (x >= 191 && x < 231)
             samplr_gest(0);
-        else if (x >= 215 && x < 261)
+        else if (x >= 233 && x < 273)
             samplr_gest(1);
         P->sig = 0;
         return 1;
     }
     if (d >= r1) {
+        int sh = SM_SHEET < SM_SHEETS ? SM_SHEET : 0;
+        if (sh == 3 && kind != 2 && s) {                          /* the ENV sliders follow the finger */
+            if (x >= 3 && x < 153) {
+                samplr_set_env(0, (x - 5) * 96 / 146);
+                P->sig = 0;
+            } else if (x >= 157 && x < 311) {
+                samplr_set_env(1, (x - 159) * 96 / 150);
+                P->sig = 0;
+            }
+            return 1;
+        }
         if (kind != 0)
             return 1;
-        int sh = SM_SHEET < SM_SHEETS ? SM_SHEET : 0;
         if (sh == 0) {
             int i = (x - 3) / 44;
             if (x >= 3 && i < 7 && (x - 3) % 44 < 42 && s) {
@@ -1394,8 +1422,12 @@ static int sm_touch(int kind, int id, int x, int d)
                     samplr_cycle(m == SM_GRAIN ? 7 : m == SM_TAPE ? -1 : 3);
                 else if (i == 5 && m == SM_GRAIN)
                     samplr_cycle(8);
+                else if (i == 5 && m == SM_SLICER)
+                    samplr_cycle(12);
                 else if (i == 6 && m == SM_GRAIN)
                     samplr_cycle(9);
+                else if (i == 6 && m == SM_SLICER)
+                    samplr_cycle(1);
             }
         } else if (sh == 1) {
             if (x < 45)

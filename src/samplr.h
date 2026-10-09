@@ -53,7 +53,7 @@ struct smvoice {
     uint8_t g_on;
     uint8_t _g[3];
     int32_t g_centre, g_size;
-    float g_acc, g_warp, g_warp2;            /* g_warp: smooth random walk of the scan / pan (WARP spray) */
+    float g_acc, g_warp, g_warp2, g_env;     /* g_warp: smooth random walk of the scan / pan (WARP spray); g_env: the cloud's own attack / release (it keeps spawning while it fades) */
     uint8_t g_seq, _gs[3];                  /* step of the pitch pattern */
     struct smgrain g[SM_GRAINS];
 };
@@ -81,6 +81,11 @@ struct sm {
     uint32_t ov_t;
     int16_t fx0[SM_NV];                     /* where each finger went down (tape, slice points) */
     uint8_t qi, div, pat, latchm, atk, rel;  /* quantize (0 off, 1 1/4, 2 1/8, 3 1/16; in ARP: snap to slices), arp / grain rate, arp pattern, hold (a bit per mode), attack / release choice */
+    uint8_t rev, seqm, sq_on, sq_idx;       /* REVERSE (every mode); SLICER SEQ: 0 off, 1 slice after slice, 2 one slice per grid step; running; the slice to play next */
+    uint8_t sq_alt, sq_lat;
+    int8_t sq_dir, sq_id, sq_st;            /* the voice alternator, started latched, the direction (up-down), the finger that plays it, its pitch */
+    int32_t sq_left;                        /* frames until the playing sequence note ends (natural mode) */
+    float sq_gain;
     uint8_t g_sz, g_dry;                    /* GRAIN: grain size scale (0 as the finger says, 1 a quarter, 2 a sixteenth), the normal loop under the grains (0 off, 1 25 %, 2 50 %, 3 100 %) */
     int32_t dry_pos;                        /* GRAIN: where that loop is */
     float dry_env, dry_frac;
@@ -131,12 +136,14 @@ void samplr_select(int delta);              /* previous / next loaded pad sample
 void samplr_set_mode(int m);
 void samplr_toggle_gate(void);
 void samplr_set_slices(int n);
-void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch, 3 height = pitch, 4 find transients, 5 grain contour, 6 spray type, 7 pitch pattern, 8 grain size scale, 9 dry loop level, 10 interpolation */
+void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch, 3 height = pitch, 4 find transients, 5 grain contour, 6 spray type, 7 pitch pattern, 8 grain size scale, 9 dry loop level, 10 interpolation, 11 reverse, 12 slicer sequence mode */
+void samplr_set_env(int which, int step);   /* 0 attack, 1 release: step 0..96 (the ENV sheet's sliders) */
 void samplr_trans(int what);                /* transpose: +-1, +-12, 0 = back to 0 */
 void samplr_knob(int knob, int counts);     /* knobs 0..3 per mode (0 = volume); recorded into a take */
 void samplr_touch(int kind, int id, int fx, int fy);   /* kind 0 down, 1 move, 2 up; fx, fy 0..1023 inside the waveform (recorded when a layer is recording) */
 void samplr_gest(int what);                 /* 0 REC, 1 PLAY / STOP, 2 UNDO, 3 CLR, 4 LEN, 5 PLAY, 6 STOP (the hardware buttons) */
 void samplr_name(char *out, int max);       /* the selected sample's name for the page */
+void samplr_env_text(int which, char *out);  /* attack / release as text */
 void samplr_info(char *out);                /* the mode's settings as text for the top bar */
 const char *samplr_pat_name(int p);
 const char *samplr_cont_name(int c);

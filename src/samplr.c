@@ -19,6 +19,7 @@ float looper_beat_frames(void);
 static void release_finger(struct sm *s, int mode, int id, int own, int lat);
 static inline int grid(struct sm *s, float beats, int n);
 static void unlatch(struct sm *s, int mode);
+static void seq_stop(struct sm *s);
 static void rec_param(struct sm *s, int pid);
 static void gest_capture_latched(struct sm *s, int L);
 static void gest_uncapture(struct sm *s, int drop);
@@ -512,6 +513,8 @@ static void unlatch(struct sm *s, int mode)
             if (!s->v[f].held)
                 s->v[f].g_on = 0;
     } else if (mode == SM_SLICER) {
+        if (s->sq_on && s->sq_lat)
+            seq_stop(s);
         for (int f = SM_LTBASE; f < SM_LTBASE + SM_LATV; f++) {   /* the latched loops */
             s->v[f].rel = 1;
             s->v[f].rep = 0.f;
@@ -537,7 +540,7 @@ void samplr_trans(int what)
 void samplr_cycle(int what)
 {
     struct sm *s = samplr();
-    if (!s || what < 0 || what > 10)
+    if (!s || what < 0 || what > 12)
         return;
     if (what == 0) {
         if (s->mode == SM_GRAIN)
@@ -564,6 +567,13 @@ void samplr_cycle(int what)
         s->g_dry = (uint8_t)((s->g_dry + 1) & 3);
     } else if (what == 10) {
         s->iq = (uint8_t)((s->iq + 1) % 3);
+    } else if (what == 11) {
+        s->rev ^= 1;
+        rec_param(s, 8);
+    } else if (what == 12) {
+        s->seqm = (uint8_t)((s->seqm + 1) % 3);
+        if (!s->seqm)
+            seq_stop(s);
     } else {
         s->latchm ^= (uint8_t)(1u << s->mode);
         if (!((s->latchm >> s->mode) & 1)) {
@@ -594,6 +604,7 @@ static int param_get(struct sm *s, int pid)
     case 4: return s->atk;
     case 5: return s->rel;
     case 7: return 0;
+    case 8: return s->rev;
     default: return (int)((s->dens - 1.f) * (1023.f / 119.f));
     }
 }
@@ -609,8 +620,23 @@ static void param_set(struct sm *s, int pid, int val)
     case 4: s->atk = (uint8_t)(val > ENV_MAX ? ENV_MAX : val); break;
     case 5: s->rel = (uint8_t)(val > ENV_MAX ? ENV_MAX : val); break;
     case 7: break;
+    case 8: s->rev = (uint8_t)(val & 1); break;
     default: s->dens = 1.f + (float)val * (119.f / 1023.f);
     }
+}
+
+/* The ENV sheet's sliders (and the gesture recorder's view of them): which 0 attack, 1 release, step 0..96. */
+void samplr_set_env(int which, int step)
+{
+    struct sm *s = samplr();
+    if (!s || which < 0 || which > 1)
+        return;
+    step = step < 0 ? 0 : step > ENV_MAX ? ENV_MAX : step;
+    if (which)
+        s->rel = (uint8_t)step;
+    else
+        s->atk = (uint8_t)step;
+    rec_param(s, 4 + which);
 }
 
 /* Knobs 0..3 on the SMPLR page (0 = volume): one step per ~300 counts, or continuous for the volume and the free grain rate. Changes are recorded
@@ -714,6 +740,18 @@ static char *ms_text(char *p, float ms)
     return num(p, (unsigned)(ms + .5f));
 }
 
+/* The attack (which 0) or release (1) as text for the ENV sheet. */
+void samplr_env_text(int which, char *out)
+{
+    struct sm *s = samplr();
+    char *p = out;
+    if (s) {
+        p = ms_text(p, step_ms(which ? s->rel : s->atk));
+        p = cat(p, "ms");
+    }
+    *p = 0;
+}
+
 /* The mode's settings for the top bar. */
 void samplr_info(char *out)
 {
@@ -757,6 +795,10 @@ void samplr_info(char *out)
         }
         p = cat(p, cont_name[s->g_cont & 3]);
     }
+    if (s->mode == SM_SLICER && s->seqm)
+        p = cat(p, s->seqm == 1 ? " SEQ NAT" : " SEQ GRID");
+    if (s->rev)
+        p = cat(p, " REV");
     if (s->mode != SM_GRAIN) {
         p = cat(p, " A");
         p = ms_text(p, step_ms(s->atk));
@@ -783,6 +825,11 @@ static float pitch_ratio(int st)
         st += 12;
     }
     return r * semi[st];
+}
+
+static inline float rsign(struct sm *s)
+{
+    return s->rev ? -1.f : 1.f;
 }
 
 static void fire(struct smvoice *v, int mode, int32_t pos, int32_t start, int32_t end, float rate, float gain, int loop, int gate, float q, float rep)
@@ -873,6 +920,8 @@ static void release_finger(struct sm *s, int mode, int id, int own, int lat)
         v->held = 0;
         int di = s->drag[id];
         s->drag[id] = -1;
+        if (di == 101 && mode == SM_SLICER && s->sq_on && s->sq_id == id && !lat)
+            seq_stop(s);
         if (di > 0 && di < 100 && !s->dmoved[id] && mode == SM_SLICER && s->nslice > 2 && di < s->nslice) {
             for (int q = di; q < s->nslice; q++)                  /* a tap on a handle takes the slice point away */
                 s->cut[q] = s->cut[q + 1];
@@ -974,9 +1023,29 @@ static void touch_m(struct sm *s, int mode, int own, int lat, int kind, int id, 
             return;
         }
         int sl = slice_at(s, pos);
+        if (kind == 0 && s->seqm) {                               /* SEQ: the slices play one after another from the one pressed */
+            if (s->sq_on && s->sq_lat && lat && !own) {           /* (a tap while a latched sequence plays stops it) */
+                seq_stop(s);
+                s->drag[id] = 101;
+                return;
+            }
+            seq_stop(s);
+            ask(s, s->cut[sl]);
+            s->sq_idx = (uint8_t)sl;
+            s->sq_left = 0;
+            s->sq_dir = 1;
+            s->sq_st = (int8_t)ysemi(s, mode, fy);
+            s->sq_gain = yvol(s, mode, fy);
+            s->sq_lat = (uint8_t)lat;
+            s->sq_id = (int8_t)id;
+            v->held = 1;
+            s->sq_on = 1;
+            s->drag[id] = 101;
+            return;
+        }
         if (kind == 0 && lat && s->loopm) {
             /* LATCH + LOOP: a tap toggles that slice's loop, whichever finger plays it and however many are down */
-            for (int i = 0; i < SM_LATV; i++) {
+            for (int i = 0; i < SM_LATV - 2; i++) {
                 struct smvoice *lv = &s->v[SM_LTBASE + i];
                 if ((lv->on || lv->rep > 0.f) && lv->slice == sl && lv->vmode == SM_SLICER) {
                     lv->rel = 1;
@@ -985,12 +1054,12 @@ static void touch_m(struct sm *s, int mode, int own, int lat, int kind, int id, 
                     return;
                 }
             }
-            for (int i = 0; i < SM_LATV; i++) {
+            for (int i = 0; i < SM_LATV - 2; i++) {
                 struct smvoice *lv = &s->v[SM_LTBASE + i];
                 if (!lv->on && lv->env <= .0005f && !(lv->rep > 0.f) && lv->seen == lv->cmd) {
                     lv->slice = (uint8_t)sl;
                     ask(s, s->cut[sl]);
-                    fire(lv, mode, s->cut[sl], s->cut[sl], s->cut[sl + 1], pitch_ratio(ysemi(s, mode, fy) + s->trans), yvol(s, mode, fy), !s->qi, 1, qbeats[s->qi & 3], qbeats[s->qi & 3]);
+                    fire(lv, mode, s->rev ? s->cut[sl + 1] - 1 : s->cut[sl], s->cut[sl], s->cut[sl + 1], rsign(s) * pitch_ratio(ysemi(s, mode, fy) + s->trans), yvol(s, mode, fy), !s->qi, 1, qbeats[s->qi & 3], qbeats[s->qi & 3]);
                     lv->held = 0;
                     lv->owner = (uint8_t)own;
                     break;
@@ -1004,17 +1073,17 @@ static void touch_m(struct sm *s, int mode, int own, int lat, int kind, int id, 
         int32_t start = s->cut[sl], end = s->cut[sl + 1];
         v->slice = (uint8_t)sl;
         ask(s, start);
-        fire(v, mode, start, start, end, pitch_ratio(ysemi(s, mode, fy) + s->trans), yvol(s, mode, fy), s->loopm && !s->qi, s->gate || s->loopm, qbeats[s->qi & 3], s->loopm ? qbeats[s->qi & 3] : 0.f);
+        fire(v, mode, s->rev ? end - 1 : start, start, end, rsign(s) * pitch_ratio(ysemi(s, mode, fy) + s->trans), yvol(s, mode, fy), s->loopm && !s->qi, s->gate || s->loopm, qbeats[s->qi & 3], s->loopm ? qbeats[s->qi & 3] : 0.f);
     } else if (mode == SM_TAPE) {
         float g = 1.2f - (float)fy * (1.f / 1024.f);
         g = g > 1.f ? 1.f : g < .2f ? .2f : g;
         if (kind == 0) {
             s->fx0[id] = (int16_t)fx;
             ask(s, (s->len >> 10) * fx);
-            fire(v, mode, (s->len >> 10) * fx, 0, s->len, pitch_ratio(s->trans), g, 1, 1, 0.f, 0.f);
+            fire(v, mode, (s->len >> 10) * fx, 0, s->len, rsign(s) * pitch_ratio(s->trans), g, 1, 1, 0.f, 0.f);
         } else if (v->held) {
             float r = 1.f + (float)(fx - s->fx0[id]) * (1.f / 100.f);
-            v->rate = (r > 4.f ? 4.f : r < -4.f ? -4.f : r) * pitch_ratio(s->trans);
+            v->rate = (r > 4.f ? 4.f : r < -4.f ? -4.f : r) * rsign(s) * pitch_ratio(s->trans);
             v->gain = g;
         }
     } else if (mode == SM_ARP) {
@@ -1611,8 +1680,17 @@ static int voice_part(struct sm *s, struct smvoice *v, float *bl, float *br, int
     float fr = v->frac, span = r * (float)m;
     if (!sample_block(s, ip, fr, r, m))
         return 0;
-    int stop_at = m, ends = 0;                                    /* a one-shot ends exactly at its slice's end */
-    if (!v->loop && r > 0.f && s->rel <= 26) {                     /* with a release under 2.5 ms a one-shot ends exactly at its end; a longer release plays out past it */
+    int stop_at = m, ends = 0;                                    /* a one-shot ends exactly at its slice's end (backwards: at its start) */
+    if (!v->loop && r < 0.f && s->rel <= 26) {
+        float left = (float)(ip - v->start) + fr;
+        if (left <= 0.f) {
+            stop_at = 0;
+            ends = 1;
+        } else if (left < -span) {
+            stop_at = (int)(left / -r);
+            ends = 1;
+        }
+    } else if (!v->loop && r > 0.f && s->rel <= 26) {                     /* with a release under 2.5 ms a one-shot ends exactly at its end; a longer release plays out past it */
         float left = (float)(v->end - ip) - fr;
         if (left <= 0.f) {
             stop_at = 0;
@@ -1662,7 +1740,7 @@ static int voice_part(struct sm *s, struct smvoice *v, float *bl, float *br, int
     int k = fl(np);
     ip += k;
     fr = np - (float)k;
-    if (!v->loop && ip >= v->end)
+    if (!v->loop && (r < 0.f ? ip < v->start : ip >= v->end))
         on = 0;
     v->ipos = ip;
     v->frac = fr;
@@ -1712,7 +1790,7 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     int fi = 0;
     for (int guard = 0; i < n && guard < 8; guard++) {
         if (roff >= 0 && roff <= i) {
-            v->ipos = v->start;
+            v->ipos = v->rate_s < 0.f ? v->end - 1 : v->start;
             v->frac = 0.f;
             v->on = 1;
             roff = -1;
@@ -1737,6 +1815,19 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
                 }
             }
         }
+        if (v->loop && r < 0.f && v->end > v->start) {
+            float left = (float)(v->ipos - v->start) + v->frac;
+            if (left < 0.f) {
+                v->ipos = v->end + (v->ipos - v->start);
+                fi = 1;
+            } else if (left < -r * (float)(ie - i)) {
+                int c = i + (int)(left / -r) + 1;
+                if (c < ie) {
+                    ie = c;
+                    fo = 1;
+                }
+            }
+        }
         if (!v->on && v->env <= 0.f && !(v->rep > 0.f))
             break;
         if (!voice_part(s, v, bl, br, i, ie, fi, fo))
@@ -1751,6 +1842,91 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         }
         i = ie;
     }
+}
+
+static void seq_stop(struct sm *s)
+{
+    s->sq_on = 0;
+    for (int i = SM_LATV - 2; i < SM_LATV; i++) {
+        struct smvoice *v = &s->v[SM_LTBASE + i];
+        v->rel = 1;
+        v->owner = 0;
+    }
+}
+
+static void seq_next(struct sm *s)
+{
+    int n = s->nslice, i = s->sq_idx;
+    switch (s->pat) {
+    case SM_PAT_DOWN:
+        i = i ? i - 1 : n - 1;
+        break;
+    case SM_PAT_UPDN:
+        i += s->sq_dir;
+        if (i >= n) {
+            i = n > 1 ? n - 2 : 0;
+            s->sq_dir = -1;
+        } else if (i < 0) {
+            i = n > 1 ? 1 : 0;
+            s->sq_dir = 1;
+        }
+        break;
+    case SM_PAT_RND:
+        i = (int)(rnd(s) >> 8) % n;
+        break;
+    default:
+        i = (i + 1) % n;
+    }
+    s->sq_idx = (uint8_t)i;
+}
+
+/* The slicer's sequence: NAT plays each slice to its end and the next starts at that very frame (two voices alternate, so the tails overlap
+ * only as far as the release lets them); GRID plays one slice per rate step, cut at the step. */
+static void seq_run(struct sm *s, int n)
+{
+    if (!s->sq_on || s->nslice < 2)
+        return;
+    float t = (float)s->sq_left;
+    if (s->seqm == 2) {
+        int off = grid(s, dbeats[s->div % 5], n);
+        if (off < 0)
+            return;
+        t = (float)off;
+    } else if (t >= (float)n) {
+        s->sq_left -= n;
+        return;
+    }
+    for (int guard = 0; guard < 4 && t < (float)n; guard++) {
+        int sl = s->sq_idx >= s->nslice ? 0 : s->sq_idx;
+        int32_t st = s->cut[sl], en = s->cut[sl + 1];
+        float rate = pitch_ratio(s->sq_st + s->trans), dur = (float)(en - st) / (rate * s->ratio);
+        if (s->seqm == 2) {
+            float step = looper_beat_frames() * dbeats[s->div % 5] * .98f;
+            if (dur > step) {
+                int32_t cutn = (int32_t)(step * rate * s->ratio);
+                if (s->rev)
+                    st = en - cutn;
+                else
+                    en = st + cutn;
+                dur = step;
+            }
+        }
+        if (en > st) {
+            struct smvoice *v = &s->v[SM_LTBASE + SM_LATV - 2 + (s->sq_alt ^= 1)];
+            v->c_wait = (int)t;
+            v->slice = (uint8_t)sl;
+            v->owner = 0xfd;
+            ask(s, st);
+            fire(v, SM_SLICER, s->rev ? en - 1 : st, st, en, rsign(s) * rate, s->sq_gain, 0, 0, 0.f, 0.f);
+        }
+        seq_next(s);
+        if (s->seqm == 2) {
+            t = (float)n;
+            break;
+        }
+        t += dur < 8.f ? 8.f : dur;
+    }
+    s->sq_left = (int32_t)(t - (float)n);
 }
 
 /* One arpeggiator step on a grid line: the next spot (in the pattern's order) plays from its place for one step. */
@@ -1799,7 +1975,7 @@ static void arp_step(struct sm *s, int off)
     struct smvoice *v = &s->v[SM_VOICES + s->a_step % SM_ARPV];
     v->c_wait = off;
     v->vmode = SM_ARP;
-    fire(v, SM_ARP, start, start, end, rate, (float)sp->vol * (1.f / 255.f), 0, 0, 0.f, 0.f);
+    fire(v, SM_ARP, s->rev ? end - 1 : start, start, end, rsign(s) * rate, (float)sp->vol * (1.f / 255.f), 0, 0, 0.f, 0.f);
 }
 
 static void grain_spawn(struct sm *s, struct smvoice *v, int off)
@@ -1828,6 +2004,11 @@ static void grain_spawn(struct sm *s, struct smvoice *v, int off)
         g->rate = s->ratio * pitch_ratio(st);
         g->len = v->g_size >> (2 * (s->g_sz % 3));                 /* SIZE: as the finger says, a quarter, a sixteenth (down to 2 ms) */
         g->len = g->len < 96 ? 96 : g->len;
+        if (s->rev) {                                             /* REVERSE: the same stretch of the sample, backwards */
+            int32_t e = g->ip + (int32_t)((float)g->len * g->rate);
+            g->ip = e >= s->len ? s->len - 1 : e;
+            g->rate = -g->rate;
+        }
         g->age = 0;
         g->delay = off;
         g->cont = s->g_cont;
@@ -1862,7 +2043,18 @@ static inline float contour(int c, float t)
 
 static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
 {
-    if (v->g_on) {                                                /* SCAN: the cloud drifts through the sample (0 = stays); WARP: the smooth random walk moves on */
+    /* the cloud's own attack / release (the ENV sheet): its level rises and falls over the block, and it keeps spawning while it fades out */
+    float e0 = v->g_env, e1 = e0;
+    if (v->g_on) {
+        e1 = e0 + (float)n / (step_ms(s->atk) * 48.f);
+        e1 = e1 > 1.f ? 1.f : e1;
+    } else if (e0 > 0.f) {
+        e1 = e0 - (float)n / (step_ms(s->rel) * 48.f);
+        e1 = e1 < 0.f ? 0.f : e1;
+    }
+    v->g_env = e1;
+    int live = v->g_on || e0 > 0.f;
+    if (live) {                                                /* SCAN: the cloud drifts through the sample (0 = stays); WARP: the smooth random walk moves on */
         if (s->g_drift) {
             int32_t step = (int32_t)((float)s->g_drift * (1.f / 4.f) * (float)n * s->ratio);
             int32_t c = v->g_centre + step;
@@ -1871,7 +2063,7 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         v->g_warp += (rnd01(s) * 2.f - 1.f - v->g_warp) * 0.04f;
         v->g_warp2 += (rnd01(s) * 2.f - 1.f - v->g_warp2) * 0.04f;
     }
-    if (v->g_on && s->load < 650) {                               /* (no new grains while this block alone is above 65 %) */
+    if (live && s->load < 650) {                               /* (no new grains while this block alone is above 65 %) */
         if (s->gfree) {
             float inc = s->dens * (1.f / 48000.f);
             if (v->g_acc >= 1.f) {
@@ -1892,7 +2084,7 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
                 grain_spawn(s, v, off);
         }
     }
-    float gain = v->gain * s->vol;
+    float gain = v->gain * s->vol, ge = (e1 - e0) * (1.f / (float)n);
     for (int i = 0; i < SM_GRAINS; i++) {
         struct smgrain *g = &v->g[i];
         if (!g->on)
@@ -1904,7 +2096,7 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         if (m > 0 && sample_block(s, g->ip, g->frac, g->rate, m)) {
             float inv = 1.f / (float)g->len;
             for (int k = 0; k < m; k++) {
-                float t = (float)(g->age + k) * inv, w = contour(g->cont, t) * gain;
+                float t = (float)(g->age + k) * inv, w = contour(g->cont, t) * gain * (e0 + ge * (float)(i0 + k));
                 bl[i0 + k] += s->il[k] * w * g->gl;
                 br[i0 + k] += s->ir[k] * w * g->gr;
             }
@@ -1928,7 +2120,7 @@ static void dry_run(struct sm *s, float *bl, float *br, int n)
     float target = want && s->g_dry ? 1.f : 0.f;
     if (target == 0.f && s->dry_env <= 0.f)
         return;
-    float r = s->ratio * pitch_ratio(s->trans);
+    float r = s->ratio * pitch_ratio(s->trans) * rsign(s);
     if (!sample_block(s, s->dry_pos, s->dry_frac, r, n))
         return;
     static const float lvl[4] = {0.f, .25f, .5f, 1.f};
@@ -1946,6 +2138,8 @@ static void dry_run(struct sm *s, float *bl, float *br, int n)
     s->dry_frac = np - (float)k;
     while (ip >= s->len)
         ip -= s->len;
+    while (ip < 0)
+        ip += s->len;
     s->dry_pos = ip;
 }
 
@@ -1958,11 +2152,11 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
         any |= s->spot[i].used;
     for (int f = 0; f < SM_NV; f++) {
         struct smvoice *v = &s->v[f];
-        any |= v->on | (v->env > 0.f) | (v->seen != v->cmd) | v->g_on | (v->rep > 0.f);
+        any |= v->on | (v->env > 0.f) | (v->seen != v->cmd) | v->g_on | (v->rep > 0.f) | (v->g_env > 0.f);
         for (int i = 0; i < SM_GRAINS; i++)
             any |= v->g[i].on;
     }
-    any |= s->dry_env > 0.f;
+    any |= (s->dry_env > 0.f) | s->sq_on;
     if (!any)
         return;
     int32_t len, hz;
@@ -1971,7 +2165,7 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
         s->id = -1;
         for (int f = 0; f < SM_NV; f++) {
             s->v[f].on = s->v[f].g_on = 0;
-            s->v[f].env = 0.f;
+            s->v[f].env = s->v[f].g_env = 0.f;
             for (int i = 0; i < SM_GRAINS; i++)
                 s->v[f].g[i].on = 0;
         }
@@ -1987,6 +2181,7 @@ static void run_voices(struct sm *s, float *bl, float *br, int n)
         if (off >= 0)
             arp_step(s, off);
     }
+    seq_run(s, n);
     int nv = 0, ng = 0;
     for (int f = 0; f < SM_NV; f++) {
         render(s, &s->v[f], bl, br, n);
@@ -2018,11 +2213,16 @@ static void sweep(struct sm *s)
         if (v->g_on && !(v->held || (f < SM_VOICES && (latG || (v->owner == 0xfe && s->g_rec >= 0))) || (f >= SM_LBASE && s->g_run)))
             v->g_on = 0;
     }
+    if (s->sq_on) {
+        int q = s->sq_id, ok = q >= 0 && q < SM_NV && (s->v[q].held || (s->sq_lat && (q < SM_VOICES ? latS : s->g_run)));
+        if (!ok)
+            seq_stop(s);
+    }
     for (int i = 0; i < SM_LATV; i++) {
         struct smvoice *lv = &s->v[SM_LTBASE + i];
         if (!(lv->on || lv->rep > 0.f))
             continue;
-        int o = lv->owner, ok = (o == 0 && latS) || (o == 0xfe && s->g_rec >= 0) || (o >= 1 && o <= SM_LAYERS && s->g_run);
+        int o = lv->owner, ok = (o == 0xfd && s->sq_on) || (o == 0 && latS) || (o == 0xfe && s->g_rec >= 0) || (o >= 1 && o <= SM_LAYERS && s->g_run);
         if (!ok) {
             lv->rel = 1;
             lv->rep = 0.f;
@@ -2073,7 +2273,7 @@ uint32_t samplr_sig(void)
                  (uint32_t)(s->vol * 20.f) << 24;
     h = h * 31u + ((uint32_t)s->qi | (uint32_t)s->div << 2 | (uint32_t)s->pat << 4 | (uint32_t)s->latchm << 7 | (uint32_t)s->gfree << 14 |
                    (uint32_t)(s->scat * 10.f) << 15 | (uint32_t)(s->dens + .5f) << 20);
-    h = h * 31u + ((uint32_t)s->atk | (uint32_t)s->rel << 8 | (uint32_t)s->iq << 16 | (uint32_t)s->g_sz << 18 | (uint32_t)s->g_dry << 20);
+    h = h * 31u + ((uint32_t)s->atk | (uint32_t)s->rel << 8 | (uint32_t)s->iq << 16 | (uint32_t)s->g_sz << 18 | (uint32_t)s->g_dry << 20 | (uint32_t)s->rev << 22 | (uint32_t)s->seqm << 23 | (uint32_t)s->sq_on << 25);
     h = h * 31u + ((uint32_t)s->g_bars | (uint32_t)s->g_run << 4 | (uint32_t)s->g_armed << 5 | (uint32_t)s->g_layers << 8 | (uint32_t)(s->g_rec + 2) << 10 |
                    (uint32_t)(s->g_run && s->g_len > 0 ? (uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / (uint32_t)(s->g_len / 32 + 1) : 0u) << 14);
     for (int i = 0; i < SM_SPOTS; i++)

@@ -38,7 +38,7 @@ def struct_offsets(names):
     return res
 
 
-OFF = struct_offsets(["iq", "g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode"])
+OFF = struct_offsets(["iq", "g_sz", "g_dry", "a_step", "vol", "g_drift", "g_ppat", "g_cont", "g_warpmode", "g_bars", "g_run", "g_armed", "g_layers", "g_rec", "g_pos", "g_len", "loopm", "latchm", "gfree", "dens", "id", "len", "filled", "spot", "cut", "trans", "ypit", "sph", "qi", "div", "pat", "atk", "scale_dummy_unused" if False else "rel", "nslice", "mode", "rev", "seqm", "sq_on", "gate"])
 
 SE = 0x2400A9C0                      # the stock engine object
 LENF = 16384
@@ -900,6 +900,98 @@ for _ in range(10):
 check("attack: stops at the shortest (0.25 ms)", e.r8(SMP + OFF["atk"]) == 0, e.r8(SMP + OFF["atk"]))
 setb(OFF["atk"], 19)
 setb(OFF["rel"], 32)
+
+# REVERSE: every mode plays backwards
+setb(OFF["loopm"], 0)
+setb(OFF["latchm"], 0)
+setb(OFF["ypit"], 0)
+setb(OFF["rev"], 1)
+e.call("samplr_set_mode", 0)
+touch(0, 0, 3 * 64 + 10, 100)
+o = play()[0]
+exp = (4095 - 200) / LENF * 0.9
+check("reverse slicer: plays from the end of the slice backwards", abs(o[200] - exp) < 0.02 and o[250] < o[200], f"{o[200]:.4f} vs {exp:.4f} / {o[250]:.4f}")
+touch(2, 0, 0, 0)
+play(3)
+check("reverse slicer: silent after release", max(abs(x) for x in play()[0]) < 1e-5)
+e.call("samplr_toggle_gate")                                   # ONE
+touch(0, 0, 3 * 64 + 10, 100)
+touch(2, 0, 0, 0)
+play(6)
+check("reverse one-shot: ends at the slice start", max(abs(x) for x in play()[0]) < 1e-3, max(abs(x) for x in play()[0]))
+e.call("samplr_toggle_gate")                                   # back (LOOP -> GATE)
+setb(OFF["loopm"], 0)
+setb(OFF["gate"], 1)
+e.call("samplr_set_mode", 1)
+touch(0, 0, 512, 100)
+o = play()[0]
+check("reverse tape: runs backwards", o[250] < o[200] and o[200] > 0.1, (o[200], o[250]))
+touch(2, 0, 0, 0)
+play(3)
+setb(OFF["rev"], 0)
+
+# SLICER SEQ: the slices play one after another (DOWN: 2, 1, 0), gapless, the next starting where the last ends
+e.call("samplr_set_mode", 0)
+e.call("samplr_set_slices", 16)                                # (the slice points back to equal ones)
+setb(OFF["rel"], 20)
+setb(OFF["pat"], 1)
+setb(OFF["seqm"], 1)
+touch(0, 0, 2 * 64 + 10, 100)
+flat = []
+for _ in range(14):
+    flat += play()[0]
+for tt, sl_ in ((300, 2), (1024 + 300, 1), (2048 + 300, 0)):
+    exp = (sl_ * 1024 + 300) / LENF * 0.9
+    check(f"seq: at {tt} the slice is {sl_}", abs(flat[tt] - exp) < 0.02, f"{flat[tt]:.4f} vs {exp:.4f}")
+check("seq: no gap between the slices", min(abs(flat[i]) for i in range(1100, 1160)) > 0.02, min(abs(flat[i]) for i in range(1100, 1160)))
+touch(2, 0, 0, 0)
+play(6)
+check("seq: stops when the finger lifts", max(abs(x) for x in play()[0]) < 1e-3)
+setb(OFF["latchm"], 1)
+touch(0, 0, 2 * 64 + 10, 100)
+touch(2, 0, 0, 0)
+play(30)
+check("seq latched: keeps going after the lift", max(abs(x) for x in play()[0]) > 0.01)
+touch(0, 0, 400, 100)
+touch(2, 0, 0, 0)
+play(8)
+check("seq latched: a tap stops it", max(abs(x) for x in play()[0]) < 1e-3)
+setb(OFF["latchm"], 0)
+# GRID: one slice per rate step (1/16 = 6000 frames), cut at the step
+setb(OFF["seqm"], 2)
+setb(OFF["div"], 2)
+touch(0, 0, 2 * 64 + 10, 100)
+lv2 = []
+for _ in range(120):
+    lv2.append(max(abs(x) for x in play()[0]))
+on2 = [b for b in range(1, 120) if lv2[b] > 0.02 and lv2[b - 1] <= 0.02]
+check("seq grid: one slice per step", len(on2) >= 2 and abs((on2[1] - on2[0]) * N - 6000) < 2 * N, (on2, N))
+touch(2, 0, 0, 0)
+play(8)
+setb(OFF["seqm"], 0)
+setb(OFF["rel"], 32)
+
+# GRAIN attack / release (the cloud's own envelope)
+e.call("samplr_set_mode", 3)
+setb(OFF["div"], 3)
+setb(OFF["atk"], 70)                                           # ~107 ms
+setb(OFF["rel"], 70)
+touch(0, 1, 512, 100)
+early = max(max(abs(x) for x in play()[0]) for _ in range(3))
+late = 0.0
+for b in range(130):
+    late = max(late, max(abs(x) for x in play()[0])) if b >= 70 else late
+    if b < 70:
+        play()
+check("grain attack: the cloud fades in", early < 0.3 * late and late > 0.02, (early, late))
+touch(2, 1, 0, 0)
+tail = max(max(abs(x) for x in play()[0]) for _ in range(6))
+play(300)
+check("grain release: the cloud fades out instead of stopping", tail > 0.01, tail)
+check("grain release: silent in the end", max(abs(x) for x in play()[0]) < 1e-5)
+setb(OFF["atk"], 19)
+setb(OFF["rel"], 32)
+e.call("samplr_set_mode", 0)
 
 # find transients: four bursts
 BURST[0] = True

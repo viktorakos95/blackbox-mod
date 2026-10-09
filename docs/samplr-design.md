@@ -207,3 +207,13 @@ takes three overdub layers.
 - Report: the sheets hid what is needed while playing (pitch, REC). Now always visible in a strip ABOVE the waveform: transpose (-12 -1 value +1 +12; tap the value for 0)
   and the take buttons (REC, PLAY / STOP, three layer pips, and a thin position line under them while a loop runs). The row below the sample is the footer's sheet:
   PLAY (the mode's switches), SAMPLE (< name >, interpolation), GESTURE (UNDO, CLR, LEN, the layers) and MODE (SLICE TAPE ARP GRAIN, the last tab; picking one goes back to PLAY).
+
+## Build 18 (reverse, slicer sequence, grain attack / release)
+- REV (button in the strip above the sample, between +12 and REC) plays every mode backwards: slicer slices from their end, tape runs at negative speed, arp notes backwards,
+  grains read backwards over the same stretch, the DRY loop runs backwards. One-shots end at the slice start (hard end with a release under 2.5 ms). A take records the switch.
+- SEQ (slicer, PLAY sheet slot 6; SEQ / SEQ NAT / SEQ GRID) plays the slices one after another from the one pressed, in the PAT order (UP DOWN UP-DN RND; slot 7). NAT: every
+  slice plays to its end and the next starts at that very frame (two voices alternate, so a long release overlaps like a tail). GRID: one slice per rate step (DIV), cut at the
+  step. It runs while the finger is down; with LATCH it keeps going and a tap stops it. A press fires the sequence, so a take records it like any press.
+- Grain attack / release: the cloud has its own level that rises with ATK and falls with REL after the finger lifts (it keeps spawning grains while it fades). New ENV footer
+  sheet (PLAY SAMPLE GESTURE ENV MODE) with two sliders for the two times (same 97 steps); slider moves are recorded into a take.
+- Still open: six tracks, FX, zoom, importing the stock slicer's scan slices, a recording source other than the pad samples.
