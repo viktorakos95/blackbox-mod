@@ -244,7 +244,7 @@ touch(2, 2, 96, 20)
 check("a tap on a handle takes it away", e.r8(SMP + OFF["nslice"]) == ns0 and cut(2) == 2048, (e.r8(SMP + OFF["nslice"]), cut(2)))
 e.call("samplr_set_slices", 16)
 
-# a press on a latched arp spot / grain cloud removes it
+# a press on a latched grain cloud removes it (an arp spot stays)
 e.call("samplr_set_mode", 2)
 e.call("samplr_cycle", 2)                              # latch on
 touch(0, 0, 300, 0)
@@ -252,7 +252,7 @@ touch(2, 0, 0, 0)
 check("arp: a latched spot is there", used() == 1, used())
 touch(0, 1, 305, 0)                                    # a press right on it
 touch(2, 1, 0, 0)
-check("arp: a press on a latched spot removes it (and adds none)", used() == 0, used())
+check("arp: a press on a latched spot does not remove it (it adds another)", used() == 2, used())
 e.call("samplr_cycle", 2)                              # latch off
 e.call("samplr_set_mode", 3)
 e.call("samplr_cycle", 2)                              # latch on
@@ -845,6 +845,31 @@ check("grain: ... and fades out when the cloud is gone", max(abs(x) for x in pla
 setb(OFF["g_dry"], 0)
 setb(OFF["div"], 2)
 
+# GRAIN: the dry loop runs as fast as the cloud's scan (D off normal speed, D+4 the same, D+8 twice, D-4 backwards)
+setb(OFF["g_dry"], 3)
+setb(OFF["gfree"], 1)
+setb(OFF["dens"], 0)                                           # (the density is a float: leave the 20/s but keep the grains tiny and far apart)
+e.uc.mem_write(SMP + OFF["dens"], struct.pack("<f", 1.0))
+setb(OFF["g_sz"], 2)
+def dry_slope(drift):
+    e.uc.mem_write(SMP + OFF["g_drift"], struct.pack("<b", drift))
+    touch(0, 0, 100, 1000)
+    play(100)
+    o = play()[0]
+    d_ = sorted((o[i + 2] - o[i]) / 2 for i in range(100, 200))        # (two apart: the cubic leaves a faint alternation)
+    touch(2, 0, 0, 0)
+    play(150)
+    return d_[len(d_) // 2]
+unit = 0.9 / LENF
+for drift, mult in ((0, 1), (4, 1), (8, 2), (-4, -1)):
+    sl_ = dry_slope(drift)
+    check(f"grain dry: D{drift:+d} runs at {mult}x", abs(sl_ - mult * unit) < 0.25 * unit, (sl_, mult * unit))
+e.uc.mem_write(SMP + OFF["g_drift"], struct.pack("<b", 0))
+setb(OFF["g_dry"], 0)
+setb(OFF["gfree"], 0)
+setb(OFF["g_sz"], 0)
+e.uc.mem_write(SMP + OFF["dens"], struct.pack("<f", 20.0))
+
 # sweep: a spot nobody holds does not stay
 e.call("samplr_set_mode", 2)
 spb = SMP + OFF["spot"]
@@ -1196,9 +1221,9 @@ play(8)
 check("stop all: two tracks play latched things", max(abs(x) for x in play()[0]) > 0.1)
 e.call("samplr_others_active")
 check("stop all: track 1 sees that another track plays", e.uc.reg_read(A.UC_ARM_REG_R0) == 1)
-e.call("samplr_gest", 6)                                       # nothing of track 1's own runs: STOP stops everything
+e.call("samplr_stop_all")                                      # PANIC
 play(10)
-check("stop all: STOP on a stopped track silences every track", max(abs(x) for x in play()[0]) < 1e-3)
+check("stop all: PANIC silences every track", max(abs(x) for x in play()[0]) < 1e-3)
 e.call("samplr_track", 0, count=50_000_000)
 SMP = SMP0
 setb(OFF["loopm"], 0)

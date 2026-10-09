@@ -1069,35 +1069,39 @@ check("SMPLR: the touched slice is drawn in the finger's colour (cyan)", any(x[2
 touch("up", wave_x, wave_d)
 blocks(3, 0.0)
 check("SMPLR: lifting the finger silences it (gate)", max(abs(v) for v in block([0.0] * N)[1][0]) < 1e-4)
-touch("down", 3 + 37 + 10, 27)                                   # TAPE: the second mode button in the strip above the sample
-touch("up", 3 + 37 + 10, 27)
+touch("down", 3 + 180 + 10, 219)                                 # the SMPL sheet (last footer tab): the strip above shows the modes
+touch("up", 3 + 180 + 10, 219)
+touch("down", 111 + 40 + 10, 27)                                 # TAPE
+touch("up", 111 + 40 + 10, 27)
 e.call("samplr")
-check("SMPLR: the TAPE button switches the mode", e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4) == 1, e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4))
-touch("down", 3 + 185 + 10, 219)                                 # the PITCH sheet
-touch("up", 3 + 185 + 10, 219)
-touch("down", 270, 188)                                          # +12
-touch("up", 270, 188)
-touch("down", 270, 188)
-touch("up", 270, 188)
-check("SMPLR: the PITCH sheet's +12 button transposes (twice = 24)", struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0] == 24, struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0])
-touch("down", 150, 188)                                          # the value: back to 0
-touch("up", 150, 188)
+check("SMPLR: the TAPE button (SMPL sheet) switches the mode", e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4) == 1, e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + 4))
+touch("down", 190, 27)                                           # +12 (the pitch is in the strip again)
+touch("up", 190, 27)
+touch("down", 190, 27)
+touch("up", 190, 27)
+check("SMPLR: the strip's +12 button transposes (twice = 24)", struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0] == 24, struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0])
+touch("down", 160, 27)                                           # the value: a tap = back to 0
+touch("up", 160, 27)
 check("SMPLR: tapping the value resets the transpose", struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0] == 0)
-touch("down", 3 + 74 + 10, 219)                                 # the GESTURE sheet
-touch("up", 3 + 74 + 10, 219)
-touch("down", 230, 27)                                          # REC in the strip above the sample
-touch("up", 230, 27)
-check("SMPLR: the GESTURE sheet's REC arms the take", e.r8(SMPLR_P + G_ARMED) == 1, e.r8(SMPLR_P + G_ARMED))
-touch("down", 230, 27)                                          # REC again cancels
-touch("up", 230, 27)
+touch("down", 160, 27)                                           # dragging it sideways: a semitone per 8 px
+touch("move", 184, 27)
+touch("up", 184, 27)
+check("SMPLR: dragging the value sideways transposes in semitones (+3)", struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0] == 3, struct.unpack("<b", e.uc.mem_read(SMPLR_P + _off("trans"), 1))[0])
+touch("down", 160, 27)
+touch("up", 160, 27)
+touch("down", 3 + 60 + 10, 219)                                  # the REC sheet
+touch("up", 3 + 60 + 10, 219)
+touch("down", 255, 27)                                           # REC in the strip above the sample
+touch("up", 255, 27)
+check("SMPLR: REC arms the take", e.r8(SMPLR_P + G_ARMED) == 1, e.r8(SMPLR_P + G_ARMED))
+touch("down", 255, 27)                                           # REC again cancels
+touch("up", 255, 27)
 touch("down", 3 + 10, 219)                                       # back to the PLAY sheet
 touch("up", 3 + 10, 219)
-touch("down", 3 + 222 + 10, 219)                                 # the TRACK sheet (last footer tab)
-touch("up", 3 + 222 + 10, 219)
-touch("down", 3 + 52 + 10, 178 + 10)                             # track 2
-touch("up", 3 + 52 + 10, 178 + 10)
+touch("down", 3 + 18 + 5, 27)                                    # track 2 (the strip's first buttons)
+touch("up", 3 + 18 + 5, 27)
 e.call("samplr")
-check("SMPLR: the TRACK sheet shows track 2 (a state of its own)", e.uc.reg_read(A.UC_ARM_REG_R0) != SMPLR_P and e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + _off("tno")) == 1)
+check("SMPLR: the track buttons in the strip show track 2 (a state of its own)", e.uc.reg_read(A.UC_ARM_REG_R0) != SMPLR_P and e.r8(e.uc.reg_read(A.UC_ARM_REG_R0) + _off("tno")) == 1)
 e.call("samplr_track", 0, count=50_000_000)
 e.call("looper_page_goto", VIEW, 0)
 check("SMPLR: leaving the tab releases the voices", True)

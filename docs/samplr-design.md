@@ -261,3 +261,13 @@ takes three overdub layers.
   voice. The TRK footer tab turns yellow while another track than the shown one sounds, loops or records.
 - Guards against a poisoned state that would only a power cycle clear: a track's filter state that blows up is cleared, and nothing but a number in -8..8 reaches the Out 1 bus
   and the sends into the delay / reverb.
+
+## Build 23 (the page re-laid out; the audio task's stack)
+- Strip above the sample, always: the six track buttons (small marks: yellow sounding, cyan a loop runs, red recording), -12, the pitch box (drag sideways = semitones, tap = 0), +12,
+  REV, REC, PLAY / STOP; the layer pips and the loop position sit in the gap under it. On the SMPL sheet the strip shows the five modes instead of everything right of the tracks
+  (pick one: back to the PLAY sheet). Footer: PLAY, REC (the take: UNDO CLR LEN, layers, PANIC), FX (FILT RES DLY REV on the four encoders, plus ATK and REL), SMPL (sample, interpolation).
+- STOP pressed again no longer stops everything (PANIC is on the REC sheet). The arp's "tap a latched spot to remove it" is gone (the grain cloud's stays).
+- GRAIN DRY runs at the cloud's scan speed (D off normal, D+4 normal, D+8 twice, D-4 backwards) and starts where the cloud is.
+- Glitches that stay after everything is stopped and PANIC was pressed, until a power cycle: not SAMPLR voices then. Suspect: stack. Since build 20 samplr_run kept two 1 KB buffers on the
+  audio task's stack (frame 2264 bytes, `-fstack-usage`) in a call chain that reaches the stock interpolators; with grains, 6 tracks and the looper all busy that can run over the
+  task's stack and corrupt whatever sits next to it. The buffers live in the shared scratch now (frame 224 bytes). Not proven on hardware.

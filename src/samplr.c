@@ -1119,14 +1119,6 @@ static void touch_m(struct sm *s, int mode, int own, int lat, int kind, int id, 
     fy = fy < 0 ? 0 : fy > 1023 ? 1023 : fy;
     if (s->drag[id] >= 100)
         return;                                                   /* this press already took a latched spot / cloud away */
-    if (kind == 0 && mode == SM_ARP) {
-        for (int i = 0; i < SM_SPOTS; i++)                        /* a press on a latched spot removes it */
-            if (s->spot[i].used && s->spot[i].owner >= 0xf0 && pos_fx(s, s->spot[i].pos) - fx < 28 && fx - pos_fx(s, s->spot[i].pos) < 28) {
-                s->spot[i].used = 0;
-                s->drag[id] = 100;
-                return;
-            }
-    }
     if (kind == 0 && mode == SM_GRAIN) {
         for (int f = 0; f < SM_VOICES; f++) {
             struct smvoice *c = &s->v[f];
@@ -1508,11 +1500,8 @@ void samplr_gest(int what)
     } else if (what == 5) {                                       /* PLAY only (the hardware button) */
         if (!s->g_run && !s->g_armed && s->g_layers)
             s->g_armed = 3;
-    } else if (what == 6) {                                       /* STOP only; when this track is stopped already, STOP stops everything on every track */
-        if (!s->g_run && !s->g_armed && s->g_rec == -1)
-            samplr_stop_all();
-        else
-            gest_stop(s);
+    } else if (what == 6) {                                       /* STOP only */
+        gest_stop(s);
     } else if (what == 2) {                                       /* UNDO: the last layer */
         if (s->g_rec >= 0 || s->g_armed) {
             gest_uncapture(s, 0);
@@ -2361,7 +2350,15 @@ static void dry_run(struct sm *s, float *bl, float *br, int n)
     float target = want && s->g_dry ? 1.f : 0.f;
     if (target == 0.f && s->dry_env <= 0.f)
         return;
-    float r = s->ratio * pitch_ratio(s->trans) * rsign(s);
+    if (want && s->dry_env <= 0.f)                                /* the dry starts where the cloud is */
+        for (int f = 0; f < SM_NV; f++)
+            if (s->v[f].g_on) {
+                s->dry_pos = s->v[f].g_centre;
+                s->dry_frac = 0.f;
+                break;
+            }
+    float dr = s->g_drift ? (float)s->g_drift * .25f : 1.f;       /* and runs as fast as the cloud's scan: D off normal speed, D+4 the same, D-n backwards */
+    float r = s->ratio * pitch_ratio(s->trans) * rsign(s) * dr;
     if (!sample_block(s, s->dry_pos, s->dry_frac, r, n))
         return;
     static const float lvl[4] = {0.f, .25f, .5f, 1.f};
@@ -2483,7 +2480,7 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         struct sm *q = t ? trk_get(t, 0) : s;
         if (!q)
             continue;
-        float tl[256], tr[256];
+        float *tl = s->sc->mixl, *tr = s->sc->mixr;               /* (not on the stack: the audio task's is small) */
         for (int i = 0; i < n; i++)
             tl[i] = tr[i] = 0.f;
         q->sph = s->sph;                                          /* one free-running grid for all the tracks */

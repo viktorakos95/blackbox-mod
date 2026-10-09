@@ -144,6 +144,7 @@ struct smscr {
     float il[256], ir[256];                 /* one block of the source, interpolated at the voice's positions */
     float xl[800], xr[800];                 /* a contiguous copy of the source for the stock interpolator */
     float oenv[SM_OWIN];                    /* transient search scratch (GUI task only) */
+    float mixl[256], mixr[256];             /* one track's output before its filter and sends */
     uint8_t cur, _c[3];                     /* the track the page shows */
 };
 
