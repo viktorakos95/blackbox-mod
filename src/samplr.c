@@ -645,7 +645,7 @@ void samplr_cycle(int what)
     } else if (what == 9) {
         s->g_dry = (uint8_t)((s->g_dry + 1) & 3);
     } else if (what == 10) {
-        s->iq = (uint8_t)((s->iq + 1) % 3);
+        s->iq = s->iq == 0 ? 2 : 0;                                  /* HIGHQ (the stock cubic) or LOWP (SAMPLR's own, a gentle low pass); the stock double-precision one glitched */
     } else if (what == 11) {
         s->rev ^= 1;
         rec_param(s, 8);
@@ -956,7 +956,7 @@ void samplr_info(char *out)
         p = cat(p, s->seqm == 1 ? " SEQ NAT" : " SEQ GRID");
     if (s->rev)
         p = cat(p, " REV");
-    if (s->mode != SM_GRAIN) {
+    {
         p = cat(p, " A");
         p = ms_text(p, step_ms(s->atk));
         p = cat(p, " R");
@@ -1562,7 +1562,9 @@ static void gest_run(struct sm *s, int n)
     if (s->g_armed == 1 || s->g_armed == 3) {
         int off = grid(s, 4.f, n);
         if (off >= 0) {
-            s->g_len = (int32_t)(looper_beat_frames() * 4.f * (float)s->g_bars);
+            float Lf = looper_beat_frames() * 4.f * (float)s->g_bars;
+            s->g_len = (int32_t)Lf;
+            s->g_res = Lf - (float)s->g_len;
             s->g_pos = -off;
             s->g_run = 1;
             s->a_step = 0;                                        /* the arpeggio starts over with every pass: the same notes each time round */
@@ -1610,6 +1612,9 @@ static void gest_run(struct sm *s, int n)
             gest_capture_held(s, s->g_rec);
         }
         s->g_pos = pos + n - s->g_len;
+        float Lf = looper_beat_frames() * 4.f * (float)s->g_bars + s->g_res;   /* the next pass: the fraction of a frame carries on, so the loop stays on the grid cycle after cycle */
+        s->g_len = (int32_t)Lf;
+        s->g_res = Lf - (float)s->g_len;
         s->a_step = 0;
     } else {
         s->g_pos = pos + n;
@@ -2154,13 +2159,24 @@ static void arp_step(struct sm *s, int off)
     struct smspot *sp = &s->spot[idx[pick]];
     s->a_last = (uint8_t)idx[pick];
     float rate = pitch_ratio(sp->st + s->trans), step = looper_beat_frames() * dbeats[s->div % 5];
-    int32_t span = (int32_t)(step * .9f * rate * s->ratio), start = sp->pos, end = start + span;
+    /* a note is as long as its envelope: the attack, and with a release that stops exactly at the end the release too (else it plays out past the end);
+     * the shortest settings give short fragments (not less than 2 ms), long ones fill the step */
+    float sus = step_ms(s->atk) * 48.f + (s->rel <= 26 ? step_ms(s->rel) * 48.f : 0.f);
+    sus = sus < 96.f ? 96.f : sus > step * .9f ? step * .9f : sus;
+    int32_t span = (int32_t)(sus * rate * s->ratio), start = sp->pos, end = start + span;
     end = end > s->len ? s->len : end;
     if (sp->end && end > sp->end)                                 /* snapped: never into the next slice */
         end = sp->end;
     if (start >= end)
         return;
-    struct smvoice *v = &s->v[SM_VOICES + s->a_step % SM_ARPV];
+    struct smvoice *v = 0;
+    for (int i = 0; i < SM_ARPV && !v; i++) {                     /* a voice that is free (a busy one would start the note at the block's start instead of its place in it) */
+        struct smvoice *c = &s->v[SM_VOICES + (s->a_step + i) % SM_ARPV];
+        if (!c->on && c->env <= .0005f && c->seen == c->cmd)
+            v = c;
+    }
+    if (!v)
+        v = &s->v[SM_VOICES + s->a_step % SM_ARPV];
     v->c_wait = off;
     v->vmode = SM_ARP;
     fire(v, SM_ARP, s->rev ? end - 1 : start, start, end, rsign(s) * rate, (float)sp->vol * (1.f / 255.f), 0, 0, 0.f, 0.f);
@@ -2433,6 +2449,7 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         float tl[256], tr[256];
         for (int i = 0; i < n; i++)
             tl[i] = tr[i] = 0.f;
+        q->sph = s->sph;                                          /* one free-running grid for all the tracks */
         gest_run(q, n);
         sweep(q);
         run_voices(q, tl, tr, n);
@@ -2455,11 +2472,11 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         q->peak = pk;
         fed |= send;
         q->tick++;
-        q->sph += (float)n;                                       /* the free-running grid (used while the sequencer is stopped) */
-        float w = 16.f * looper_beat_frames();
-        if (q->sph >= w)
-            q->sph -= w;
     }
+    s->sph += (float)n;                                           /* the free-running grid (used while the sequencer is stopped) */
+    float w = 16.f * looper_beat_frames();
+    if (s->sph >= w)
+        s->sph -= w;
     uint32_t c1 = DWT_CYCCNT, period = c0 - s->t_last, dur = c1 - c0;
     if (s->t_last && period > 1000u && period < 100000000u) {
         s->t_sum += dur;                                          /* load = cycles in this function / the (average) block period */

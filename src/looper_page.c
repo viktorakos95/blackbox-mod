@@ -130,10 +130,10 @@ enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, MODES };
 #define SM_SHEETS 7
 #define SMS_ENV 3
 #define SMS_FX 4
-#define SMS_MODE 5
+#define SMS_PITCH 5
 #define SMS_TRK 6
 #define SM_SHEET (P->_r2)
-static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "SMPL", "GEST", "ENV", "FX", "MODE", "TRK"};
+static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "SMPL", "GEST", "ENV", "FX", "PITCH", "TRK"};
 #define NTABS 5                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
 /* hardware buttons the page can take over: slot numbers */
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
@@ -1276,30 +1276,22 @@ static void draw_samplr(void)
         }
     }
     {                                                             /* the strip above the sample: transpose, REC, PLAY / STOP, the layers and the loop's position */
-        sm_button(3, ty, 28, "-12", 0);
-        sm_button(33, ty, 24, "-1", 0);
-        char b[8], *q = b;
-        int tv = s->trans;
-        *q++ = tv < 0 ? '-' : '+';
-        q = put_uint(q, (unsigned)(tv < 0 ? -tv : tv));
-        *q = 0;
-        sm_button(59, ty, 34, b, tv != 0);
-        sm_button(95, ty, 24, "+1", 0);
-        sm_button(121, ty, 28, "+12", 0);
-        sm_button(153, ty, 34, "REV", s->rev);
+        for (int i = 0; i < SM_MODES; i++)                          /* the five modes */
+            sm_button(3 + 37 * i, ty, 35, sm_mode_name[i], s->mode == i);
+        sm_button(190, ty, 28, "REV", s->rev);
         int rec = s->g_rec >= 0, arm = s->g_armed != 0, run = s->g_run;
-        frame(191, ty, 40, SM_BH, rec ? C_RED : arm ? C_YELLOW : C_RAIL, 1);
+        frame(220, ty, 32, SM_BH, rec ? C_RED : arm ? C_YELLOW : C_RAIL, 1);
         if (rec || arm)
-            frame(192, ty + 1, 38, SM_BH - 2, rec ? C_RED : C_YELLOW, 1);
-        text_c(191, ty + (SM_BH - 8) / 2, 40, "REC", rec ? C_RED : arm ? C_YELLOW : C_LIGHT, 1);
-        sm_button(233, ty, 40, run || arm ? "STOP" : "PLAY", run);
+            frame(221, ty + 1, 30, SM_BH - 2, rec ? C_RED : C_YELLOW, 1);
+        text_c(220, ty + (SM_BH - 8) / 2, 32, "REC", rec ? C_RED : arm ? C_YELLOW : C_LIGHT, 1);
+        sm_button(254, ty, 36, run || arm ? "STOP" : "PLAY", run);
         for (int L = 0; L < SM_LAYERS; L++) {                      /* the three layers: grey empty, cyan recorded, red recording */
             int recL = s->g_rec == L, have = L < s->g_layers;
-            box(277 + 12 * L, ty + 4, 10, SM_BH - 8, recL ? C_RED : have ? C_CYAN : C_DARK);
+            box(293 + 8 * L, ty + 4, 6, SM_BH - 8, recL ? C_RED : have ? C_CYAN : C_DARK);
         }
         if (run && s->g_len > 0) {                                  /* the loop's position, a thin line under the buttons */
-            int w = (int)((uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / ((uint32_t)s->g_len / 82u + 1u));
-            box(191, ty + SM_BH + 1, w > 82 ? 82 : w, 2, rec ? C_RED : C_CYAN);
+            int w = (int)((uint32_t)(s->g_pos < 0 ? 0 : s->g_pos) / ((uint32_t)s->g_len / 70u + 1u));
+            box(220, ty + SM_BH + 1, w > 70 ? 70 : w, 2, rec ? C_RED : C_CYAN);
         }
     }
     int sh = SM_SHEET < SM_SHEETS ? SM_SHEET : 0;
@@ -1348,7 +1340,7 @@ static void draw_samplr(void)
             if (lab[i])
                 sm_button(3 + 44 * i, r1, 42, lab[i], on[i]);
     } else if (sh == 1) {                                         /* SAMPLE: which one, the interpolation */
-        static const char *const iq_name[3] = {"CUBIC", "HIGHQ", "LOWP"};
+        static const char *const iq_name[3] = {"HIGHQ", "HIGHQ", "LOWP"};
         sm_button(3, r1, 40, "<", 0);
         frame(47, r1, 178, SM_BH, C_RAIL, 1);
         text_c(47, r1 + (SM_BH - 8) / 2, 178, nm[0] ? nm : "-", C_LIGHT, 1);
@@ -1409,9 +1401,17 @@ static void draw_samplr(void)
             char dg[2] = {(char)('1' + i), 0};
             text(x0 + 3, r1 + 3, dg, C_PINK, 1);
         }
-    } else if (sh == SMS_MODE) {                                  /* MODE: SLICE TAPE ARP GRAIN LOOP */
-        for (int i = 0; i < SM_MODES; i++)
-            sm_button(3 + 62 * i, r1, 60, sm_mode_name[i], s->mode == i);
+    } else if (sh == SMS_PITCH) {                                 /* PITCH: transpose, always for the whole track */
+        sm_button(3, r1, 56, "-12", 0);
+        sm_button(61, r1, 56, "-1", 0);
+        char b[8], *q = b;
+        int tv = s->trans;
+        *q++ = tv < 0 ? '-' : '+';
+        q = put_uint(q, (unsigned)(tv < 0 ? -tv : tv));
+        *q = 0;
+        sm_button(119, r1, 74, b, tv != 0);
+        sm_button(195, r1, 56, "+1", 0);
+        sm_button(253, r1, 56, "+12", 0);
     } else {                                                      /* TRACK: one button per track, a mark for a loop that runs (cyan), a take in progress (red), sound (yellow) */
         int nt = samplr_tracks();
         for (int i = 0; i < nt; i++) {
@@ -1437,21 +1437,14 @@ static int sm_touch(int kind, int id, int x, int d)
     if (d >= ty - 2 && d < wy - 2) {                              /* the strip above the sample */
         if (kind != 0)
             return 1;
-        if (x >= 3 && x < 31)
-            samplr_trans(-12);
-        else if (x >= 33 && x < 57)
-            samplr_trans(-1);
-        else if (x >= 59 && x < 93)
-            samplr_trans(0);
-        else if (x >= 95 && x < 119)
-            samplr_trans(1);
-        else if (x >= 121 && x < 149)
-            samplr_trans(12);
-        else if (x >= 153 && x < 187)
+        if (x >= 3 && x < 188 && (x - 3) % 37 < 35) {
+            samplr_set_mode((x - 3) / 37);
+            P->entered = 0;
+        } else if (x >= 190 && x < 218)
             samplr_cycle(11);
-        else if (x >= 191 && x < 231)
+        else if (x >= 220 && x < 252)
             samplr_gest(0);
-        else if (x >= 233 && x < 273)
+        else if (x >= 254 && x < 290)
             samplr_gest(1);
         P->sig = 0;
         return 1;
@@ -1517,12 +1510,17 @@ static int sm_touch(int kind, int id, int x, int d)
                 samplr_gest(3);
             else if (x >= 93 && x < 151)
                 samplr_gest(4);
-        } else if (sh == SMS_MODE) {
-            if (x >= 3 && x < 3 + 62 * SM_MODES) {                /* MODE: pick one, and back to the PLAY sheet */
-                samplr_set_mode((x - 3) / 62);
-                SM_SHEET = 0;
-                P->entered = 0;
-            }
+        } else if (sh == SMS_PITCH) {
+            if (x >= 3 && x < 59)
+                samplr_trans(-12);
+            else if (x >= 61 && x < 117)
+                samplr_trans(-1);
+            else if (x >= 119 && x < 193)
+                samplr_trans(0);
+            else if (x >= 195 && x < 251)
+                samplr_trans(1);
+            else if (x >= 253 && x < 309)
+                samplr_trans(12);
         } else if (x >= 3 && (x - 3) / 52 < samplr_tracks()) {    /* TRACK: show another (the one that was shown goes on playing) */
             samplr_track((x - 3) / 52);
             SM_SHEET = 0;

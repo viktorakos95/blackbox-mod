@@ -131,6 +131,7 @@ struct sm {
     int32_t lp_a, lp_b;                     /* LOOP: the loop window, frames */
     int8_t fx_f;                            /* FX: filter -100..100 (0 off, left low pass, right high pass) */
     uint8_t fx_r, fx_sd, fx_sr;             /* resonance 0..100 (50 = flat), delay send, reverb send 0..100 */
+    float g_res;                            /* the fraction of a frame the loop length carries from pass to pass */
     float peak;                             /* the track's output level, for the meter */
     struct smfilt flt;
     uint8_t iq, _iq[3];                     /* interpolation: 0 the stock cubic (float), 1 the stock HighQ (double), 2 SAMPLR's own with a low-pass above 1x */

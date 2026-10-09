@@ -384,7 +384,8 @@ for i, x in enumerate(allo):
 if cur:
     segs.append(cur)
 check("arp: a note on every 1/8 step", len(segs) >= 5 and all(abs(segs[i + 1][0] - segs[i][0] - 12000) < 300 for i in range(4)), segs[:6])
-vals = [allo[a_ + 150] * LENF / 0.9 - 150 for a_, _ in segs[:5]]
+vals = [allo[a_ + 60] * LENF / 0.9 - 60 for a_, _ in segs[:5]]
+check("arp: with the default (short) attack and release a note is a short fragment", all(b_ - a_ < 1200 for a_, b_ in segs[:5]), [b_ - a_ for a_, b_ in segs[:5]])
 lo_, hi_ = 100 * 16, 700 * 16
 check("arp: the notes alternate between the two spots (1600 and 11200)", all(abs(v - (lo_ if k % 2 == 0 else hi_)) < 250 for k, v in enumerate(vals)) or all(abs(v - (hi_ if k % 2 == 0 else lo_)) < 250 for k, v in enumerate(vals)), vals)
 setb(OFF["pat"], 4)
@@ -796,7 +797,7 @@ play(60)
 e.call("samplr_set_mode", 0)
 setb(OFF["qi"], 0)
 setb(OFF["loopm"], 0)
-for iq in (0, 1, 2):
+for iq in (0, 2):
     setb(OFF["iq"], iq)
     for semis, rate in ((7, 1.4983), (-5, 0.7492), (19, 2.9966)):
         e.uc.mem_write(SMP + OFF["trans"], struct.pack("<b", semis))
@@ -809,7 +810,7 @@ for iq in (0, 1, 2):
         seg = o[80:280]
         steps = [seg[i + 1] - seg[i] for i in range(len(seg) - 1)]
         exp = rate / LENF * 0.9
-        check(f"interpolation {('stock cubic', 'stock HighQ', 'SAMPLR low-pass')[iq]} at {semis:+d} semitones: the ramp's steps are even and right (rate {rate})", max(abs(x - exp) for x in steps) < max(exp * 0.05, 2.5e-5), (min(steps), max(steps), exp))   # (the float32 cubic has a noise floor near -100 dB)
+        check(f"interpolation {('HIGHQ', 'x', 'LOWP')[iq]} at {semis:+d} semitones: the ramp's steps are even and right (rate {rate})", max(abs(x - exp) for x in steps) < max(exp * 0.05, 2.5e-5), (min(steps), max(steps), exp))   # (the float32 cubic has a noise floor near -100 dB)
 setb(OFF["iq"], 0)
 e.uc.mem_write(SMP + OFF["trans"], struct.pack("<b", 0))
 
@@ -1120,6 +1121,63 @@ e.call("samplr_fx_knob", 2, 200)
 check("fx: the encoder 3 raises the delay send (a step per 20 counts)", e.r8(SMP + OFF["fx_sd"]) == 10, e.r8(SMP + OFF["fx_sd"]))
 setb(OFF["fx_sd"], 0)
 play(300)
+
+# GRAIN release as the volume of the whole cloud: with a long release the grains go on sounding, fading, after the lift
+e.call("samplr_set_mode", 3)
+setb(OFF["div"], 3)
+setb(OFF["atk"], 10)
+setb(OFF["rel"], 88)                                           # ~0.5 s
+touch(0, 1, 512, 100)
+play(80)
+before = max(max(abs(x) for x in play()[0]) for _ in range(30))
+touch(2, 1, 0, 0)
+play(20)                                                       # ~100 ms after the lift
+after100 = max(max(abs(x) for x in play()[0]) for _ in range(10))
+play(150)                                                      # ~0.9 s
+late = max(max(abs(x) for x in play()[0]) for _ in range(10))
+check("grain long release: the cloud still sounds 100 ms after the lift", after100 > 0.3 * before, (before, after100))
+check("grain long release: and has faded out well within the release's second half", late < 0.1 * before, (before, late))
+play(400)
+setb(OFF["atk"], 19)
+setb(OFF["rel"], 32)
+e.call("samplr_set_mode", 0)
+
+# ARP: a longer release makes longer notes, the shortest settings short fragments
+e.call("samplr_set_mode", 2)
+setb(OFF["div"], 1)
+setb(OFF["atk"], 0)
+setb(OFF["rel"], 0)
+touch(0, 0, 300, 0)
+sg = []
+cur = None
+allo = []
+for _ in range(100):
+    allo += play()[0]
+touch(2, 0, 0, 0)
+play(20)
+segs = []
+for i, x in enumerate(allo):
+    if abs(x) > 1e-4:
+        if cur is None:
+            cur = [i, i]
+        cur[1] = i
+    elif cur is not None and i - cur[1] > 30:
+        segs.append(cur)
+        cur = None
+check("arp: the lowest attack and release give fragments of a couple of ms", len(segs) >= 2 and all(b_ - a_ < 400 for a_, b_ in segs), [b_ - a_ for a_, b_ in segs])
+setb(OFF["atk"], 60)
+setb(OFF["rel"], 70)
+touch(0, 0, 300, 0)
+allo = []
+for _ in range(100):
+    allo += play()[0]
+touch(2, 0, 0, 0)
+play(400)
+on_ = sum(1 for x in allo if abs(x) > 1e-4)
+check("arp: a long attack and release make long notes (most of the time something sounds)", on_ > 0.5 * len(allo), on_ / len(allo))
+setb(OFF["atk"], 19)
+setb(OFF["rel"], 32)
+e.call("samplr_set_mode", 0)
 
 # find transients: four bursts
 BURST[0] = True

@@ -241,3 +241,14 @@ takes three overdub layers.
   volume, or pitch with YP; Q starts it on the grid; LATCH holds; REV runs it backwards; RESET puts the window back to the whole sample). The window follows the markers while it
   plays. Gesture events carry the mode in 3 bits now (bit 27 is the third).
 - MODE sheet has 5 buttons; footer tabs: PLAY SMPL GEST ENV FX MODE TRK.
+
+## Build 21 (modes in the strip, short arp notes, HIGHQ/LOWP, loop drift)
+- The strip above the sample now holds the five MODE buttons (SLICE TAPE ARP GRAIN LOOP), REV, REC, PLAY/STOP and the three layer pips. Transpose moved to the PITCH footer sheet
+  (PLAY SMPL GEST ENV FX PITCH TRK). The info bar shows A / R in every mode.
+- ARP notes are as long as their envelope: the attack (plus the release when it is short enough to end exactly at the note's end, else the release plays out past it); never less than
+  2 ms, never more than 90 % of the step. The lowest attack / release give ~2 ms fragments; long ones fill the step. A free arp voice is chosen for each note (a busy one used to
+  start the note at the beginning of the block instead of its place in it).
+- Interpolation: the stock double-precision HighQ glitched and is gone; the stock cubic is now called HIGHQ, SAMPLR's own low-passed one LOWP.
+- Sync: the gesture loop's length carried a fraction of a frame away every cycle (4 beats at a tempo that is not a whole number of frames), so loops and the arp grid slid apart over
+  many cycles; the fraction is carried now. The free-running grid is shared by all tracks (track n used to start its own at creation).
+- Grain attack / release already were the cloud's own volume (grains keep spawning while it fades); a test now checks a half-second release still sounds 100 ms after the lift.
