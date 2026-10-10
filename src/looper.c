@@ -54,6 +54,7 @@
 #include <stdint.h>
 
 #include "looper.h"
+#include "t2m_bb.h"
 
 #define FN(addr) ((addr) | 1u)
 
@@ -270,6 +271,7 @@ void looper_boot(void *engine)
 {
     fw_pool_init(engine);
     bkp_enable();
+    t2m_boot();                                   /* Trigger2MIDI (src/t2m_bb.c): its memory, while nothing else allocates */
     S->magic = 0;
     S->engine = (uint8_t *)engine;
     S->ok = 0;
@@ -744,6 +746,8 @@ void looper_in(void *obj, float **bufs, int frames)
         if (S->ticks % 10 == 0)
             looper_ui_poke();                     /* about 19 redraws a second while the page shows */
     }
+    if (frames > 0)
+        t2m_audio(bufs[0], bufs[1], frames);      /* Trigger2MIDI on both inputs (src/t2m_bb.c) */
     fw_in_tail(obj, bufs, frames);
 }
 

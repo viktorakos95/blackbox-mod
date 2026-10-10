@@ -26,11 +26,22 @@ the two audio inputs as two trigger pads, MIDI notes / CCs out over TRS or USB, 
 4. In Dynamic mode the patch also gives makenote a 60 s length, so a stray note-off follows a minute later: dropped.
 Same as the patch (not a bug): a hit into a still-ringing note re-sends note-on without a note-off in between.
 
+## Done: wired into the firmware (step 2)
+
+- MIDI out (stock, `BoomboxFramework/Src/MidiPort.cpp`): port manager at `0x24002e88`; the MIDI jack is USART6 at
+  31250 baud (`0x08044da0`); `FUN_08044a0e(mgr, msg, uart, usb)` queues one message for the UART(s) and / or USB, the
+  way the engine sends its own notes, CCs and clock from the render (`0x0804d004`, `0x0804d1e2`); the render flushes
+  the queues at `0x0804ced8` (`FUN_08044ad8`) in the same audio block. Message = 5 bytes: status, d1, d2, -, length.
+- `src/t2m_bb.c`: `t2m_boot` (from `looper_boot`) takes ~1.2 KB from the SDRAM allocator (only with 256 KB to spare;
+  pointer at `0x38800980` in the backup SRAM, free between seqfix's clock and fx2); `t2m_audio` (from `looper_in`, every
+  block, before the render) runs the inputs' detectors and sends their messages. Per input: on / off, port TRS / USB /
+  both, the patch's settings. Defaults at every boot: input L on (TRS + USB, note 38 = D1, channel 1), input R off.
+- `test_t2m_bb.py`: the patched image under Unicorn through the real `looper_in`: same messages as the reference,
+  right manager / flags / block, R silent while off, USB-only routing, note-off when an input is switched off, no
+  allocation when memory is short. The looper and SAMPLR tests still pass.
+
 ## Next
 
-- Input: run both detectors from the input hook the looper already has (`engine+0x8fb0`, L / R floats, 256 frames).
-- MIDI out: find the stock MIDI send path (TRS UART and USB device) and whether it may be called from the audio task;
-  otherwise queue the messages and send them from the UI loop. Port choice TRS / USB per input.
 - Page: the patch's controls per input (Sens, Thresh, Retrig, Mask, Scan, Strict, Speed, anti-bleed, Curve, Note out /
   note, velocity / CC / length modes, CC number, channel, port), saved in the backup SRAM like the looper's state.
 - Later: MIDI learn (needs MIDI in).
