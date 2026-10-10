@@ -85,6 +85,7 @@ void t2m_audio(const float *l, const float *r, int frames)
     if (!m || frames <= 0 || !l || !r)
         return;
     const float *in[T2M_INPUTS] = {l, r};
+    m->blocks++;
     for (int k = 0; k < T2M_INPUTS; k++) {
         float pk = 0.f, g = m->p[k].sens;
         for (int i = 0; i < frames; i++) {
@@ -117,12 +118,10 @@ void t2m_audio(const float *l, const float *r, int frames)
             const t2m_event *e = &t->events[j];
             uint8_t msg[5] = {e->status, e->d1, e->d2, 0, 3};
             fw_midi_send(MIDI_MGR, msg, m->port[k] & T2M_PORT_TRS, m->port[k] & T2M_PORT_USB);
-            if ((e->status & 0xf0) == 0x90) {
-                m->hits[k]++;
+            if ((e->status & 0xf0) == 0x90 || ((e->status & 0xf0) == 0xb0 && !m->p[k].note_on)) {
+                m->hits[k]++;                    /* one per hit: the note-on, or the CC when there is no note */
                 m->last_vel[k] = e->d2;
-            } else if ((e->status & 0xf0) == 0xb0 && !m->p[k].note_on) {
-                m->hits[k]++;
-                m->last_vel[k] = e->d2;
+                m->hit_blk[k] = m->blocks;
             }
         }
     }

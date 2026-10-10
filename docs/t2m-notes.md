@@ -40,8 +40,23 @@ Same as the patch (not a bug): a hit into a still-ringing note re-sends note-on 
   right manager / flags / block, R silent while off, USB-only routing, note-off when an input is switched off, no
   allocation when memory is short. The looper and SAMPLR tests still pass.
 
+## Done: the TRIG page (step 3)
+
+- `src/t2m_page.c`: the Looper page's sixth footer tab, TRIG. Top bar: both inputs' hit counts and last velocity.
+  Switch row: IN L / IN R (the input being edited), ON / OFF, TRS and USB (each on or off). Meter: the input after
+  SENS, -48..0 dB, the threshold as a red tick, green for 128 ms after each hit. Four rows of four values; a tap on a
+  row gives it to the four knobs (knob n = the n-th value, the tracks' order): DETECT (SENS THRESH RETRIG MASK), ONSET
+  (SCAN STRICT SPEED CURVE), NOTE (NOTE / OFF, VEL DYN / 1-127, LEN DYN / 5-2000 ms, CHAN), CC (CC OFF / 0-127,
+  CC VAL DYN / 1-127, BLEED, RANGE). 40 knob counts a step.
+- `src/looper_page.c` only hooks it: the tab, the draw / touch / knob dispatch, the redraw signature, and `lp_*`
+  wrappers of its drawing for the TRIG file.
+- `test_t2m_page.py`: test_looper.py's setup, then the tab, switches, rows, knobs, the signature, and a PNG of the
+  page (`out/t2m_test/trig_page.png`).
+
 ## Next
 
-- Page: the patch's controls per input (Sens, Thresh, Retrig, Mask, Scan, Strict, Speed, anti-bleed, Curve, Note out /
+- Hardware: detection feel, MIDI on TRS and USB, knob speed (40 counts a step is a guess from SAMPLR's envelope).
+- Settings survive only until power-off (like the looper's); saving them needs the preset save / load hooks.
+- Old page note: the patch's controls per input (Sens, Thresh, Retrig, Mask, Scan, Strict, Speed, anti-bleed, Curve, Note out /
   note, velocity / CC / length modes, CC number, channel, port), saved in the backup SRAM like the looper's state.
 - Later: MIDI learn (needs MIDI in).
