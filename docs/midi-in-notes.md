@@ -68,8 +68,8 @@ Confidence tags: [Certain] read straight from code, [Likely] inferred, [Guessing
 
 ## Clock monitor (src/clkmon.c, patches/clkmon.py, test_clkmon.py): measuring before changing anything
 Build: `python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper clkmon cave`.
-Looper page -> TRIG tab -> tap the top bar (CLK in the top right corner): the CLK view. Tap anywhere in it to reset the
-numbers, the top bar again to go back. Nothing in the stock MIDI path changes: two call sites are redirected to functions
+SONG button -> SAMPLR -> TRIG page -> footer sheet CLK (fourth, after HITS / DETECT / OUT). Tap anywhere on it to reset the
+numbers; the knobs do nothing there. Nothing in the stock MIDI path changes: two call sites are redirected to functions
 that stamp the cycle counter and then call the very same stock function with the same arguments.
 - `0x08044e48` (USART6 byte callback) -> `clkmon_rx`; `0x08044f2c` (USB packet callback) -> `clkmon_usb_rx`.
 - Interrupt side: a 104-byte block of backup SRAM at `0x38800988` (only touched while the backup SRAM clock and write access
