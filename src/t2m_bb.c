@@ -76,6 +76,7 @@ void t2m_boot(void)
         m->p[k] = defaults;
         m->port[k] = T2M_PORT_TRS | T2M_PORT_USB;
         m->pad_note[k] = 60;
+        m->scan_saved[k] = defaults.scan_ms;
         m->pad_held[k] = -1;
         t2m_reset(&m->st[k]);
     }

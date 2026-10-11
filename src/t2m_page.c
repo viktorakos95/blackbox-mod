@@ -586,7 +586,15 @@ void t2m_page_knob(int knob, int counts)
         m->pad_note[k] = (uint8_t)clampi((int)m->pad_note[k] + steps, 0, 127);
     } else {
         t2m_params q = m->p[k];                       /* edit a copy: the audio task never sees half a change */
+        uint8_t was_fixed = q.vel_mode;
         step_params(&q, v, steps);
+        if (v == V_VEL && !was_fixed && q.vel_mode) {         /* fixed velocity needs no peak search: SCAN 0 (kept to put back) */
+            if (q.scan_ms > 0.f)
+                m->scan_saved[k] = q.scan_ms;
+            q.scan_ms = 0.f;
+        } else if (v == V_VEL && was_fixed && !q.vel_mode && q.scan_ms == 0.f) {
+            q.scan_ms = m->scan_saved[k];                      /* back to DYN: SCAN as it was, unless it was changed meanwhile */
+        }
         m->p[k] = q;
     }
 }

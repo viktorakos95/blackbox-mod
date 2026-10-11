@@ -32,6 +32,7 @@ struct t2m_mem {
     uint8_t learn;                   /* 0 off, else the input + 1 whose pad the next stock pad hit teaches */
     uint32_t pad_id[T2M_INPUTS];     /* the stock note-on's pad argument, as learned */
     uint32_t pad_sent[T2M_INPUTS];   /* pad note-ons sent (for the page) */
+    float scan_saved[T2M_INPUTS];    /* SCAN before VEL went fixed (which sets it to 0); restored when VEL goes back to DYN */
     uint8_t hist_n[T2M_INPUTS];      /* the history's write position */
     uint8_t _r0[2];
     struct t2m_hit hist[T2M_INPUTS][T2M_HIST];

@@ -233,6 +233,9 @@ def param_sets():
                   len_mode=1, len_ms=120)),
             ("CC Dynamic + note Dynamic, short Fixed length 5 ms",
              dict(ref.DEFAULTS, cc_on=1, cc_num=1, len_mode=1, len_ms=5)),
+            ("fixed velocity: Scan 0, Speed 3 / 1 / 0.2 ms", dict(ref.DEFAULTS, scan_ms=0.0, vel_mode=1, vel_fixed=100, speed_ms=1.0)),
+            ("Scan 0, Speed 0.2 ms, fixed velocity, CC on", dict(ref.DEFAULTS, scan_ms=0.0, vel_mode=1, vel_fixed=64, speed_ms=0.2, cc_on=1)),
+            ("Scan 0 with the default speed", dict(ref.DEFAULTS, scan_ms=0.0)),
             ("anti-bleed strong (Strict 0.5, Range 1), slow onset", dict(ref.DEFAULTS, spec_strict=0.5, spec_range=1.0,
                                                                         strict_db=2.0, speed_ms=1.0)),
             ("anti-bleed medium (Strict 0.3, Range 0.6)", dict(ref.DEFAULTS, spec_strict=0.3, spec_range=0.6))]

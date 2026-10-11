@@ -64,6 +64,9 @@ Same as the patch (not a bug): a hit into a still-ringing note re-sends note-on 
   NOT checked (needs hardware): that the engine plays the pad when called from the input stage; the velocity range the engine
   expects (assumed 1-127, the Keys screen test uses 77); whether a pad plays at its own pitch with the note LEARN took.
 
+- VEL fixed sets SCAN to 0 (the old value is kept and comes back when VEL goes to DYN, unless SCAN was changed by hand meanwhile).
+  Note the decision window is `max(Scan, 3 x Speed)`: with SCAN 0 it is 3 x Speed (9 ms at Speed 3.0), so SPEED sets the delay then.
+
 ## Latency (corrected; the first estimate "about 5 ms" left out the scan window)
 - The detector needs the true peak for the velocity. It decides after `max(Scan, 3 x Speed)`: at the patch defaults (Scan 2.0 ms, Speed
   3.0 ms) that is **9 ms** after the threshold is crossed; Speed 1.0 -> 3 ms, 0.7 -> 2.1 ms, 0.2 -> 0.6 ms (more false triggers).
