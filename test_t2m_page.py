@@ -27,7 +27,7 @@ def check(label, cond, detail=""):
 
 
 FIELDS = ["on", "port", "last_vel", "last_note", "hits", "peak", "blocks", "hit_blk", "pad_on", "pad_note", "learn", "pad_id",
-          "pad_sent", "hist_n", "hist", "ui", "p"]
+          "pad_sent", "hist_n", "hist", "ui", "p", "clk"]
 os.makedirs("out/t2m_test", exist_ok=True)
 open("out/t2m_test/off2.c", "w").write(
     '#include <stdio.h>\n#include <stddef.h>\n#include "../../src/t2m_bb.h"\nint main(void){\n'
@@ -142,8 +142,8 @@ def inside(f):
 # ---- footer: three sheets
 f = draw(0)
 check("TRIG page: no looper tab strip, no looper track columns", not any(x[2] == 71 for x in f) and not any(x[2] == 34 and x[3] == 1 for x in f))
-check("footer: the three sheets (HITS, DETECT, OUT), 58 px wide at 60 px pitch",
-      all(any(x[0] == 3 + 3 + 60 * i and x[2] == 58 and x[3] == 1 for x in f) for i in range(3)), [x for x in f if x[3] == 1 and x[2] == 58][:4])
+check("footer: the four sheets (HITS, DETECT, OUT, CLK), 58 px wide at 60 px pitch",
+      all(any(x[0] == 3 + 3 + 60 * i and x[2] == 58 and x[3] == 1 for x in f) for i in range(4)), [x for x in f if x[3] == 1 and x[2] == 58][:4])
 check("TRIG page: inside the screen, text drawn", inside(f) and len(pixels) > 1500, len(pixels))
 check("HITS is the first sheet", e.r8(MEM + O["ui"] + 2) == 0)
 
@@ -276,6 +276,47 @@ s0 = sig()
 e.uc.mem_write(MEM + O["learn"], b"\x01")
 check("... and when LEARN is armed", sig() != s0)
 e.uc.mem_write(MEM + O["learn"], b"\x00")
+
+# ---- the CLK sheet (src/clkmon.c): a measurement of the incoming MIDI clock, a fourth sheet of the footer
+import random  # noqa: E402
+
+CYC, MGR = 0xE0001004, 0x24002E88
+e.w32(0x580244E0, 1 << 28)                                # RCC: backup SRAM clock
+e.w32(0x58024800, 1 << 8)                                 # PWR: backup domain writes
+e.uc.mem_write(MGR + 0x20D, b"\x01")
+tap(3 + 180 + 10, 216)
+check("footer: CLK", e.r8(MEM + O["ui"] + 2) == 3, e.r8(MEM + O["ui"] + 2))
+rng = random.Random(5)
+blk, tick = 2133333, 8333333
+arr = [300000 + i * tick + rng.randint(-900, 900) for i in range(60)]
+ev = sorted([(t, 1) for t in arr] + [(blk * b + 777, 0) for b in range(1, arr[-1] // blk + 3)])
+for t, is_tick in ev:
+    e.w32(CYC, t)
+    if is_tick:
+        e.call("clkmon_rx", MGR, 0xF8, 0)
+    else:
+        e.call("clkmon_block", MEM + O["clk"])
+e.w32(CYC, 2_100_000_000)
+e.call("clkmon_rx", MGR, 0xFA, 0)
+f = picture("clk")
+check("CLK sheet: inside the screen, text drawn", inside(f) and len(pixels) > 800, len(pixels))
+check("CLK sheet: no switch row (nothing at the TRIG switch row's buttons)", not any(x[0] == 4 and x[1] == 18 and x[2] == 38 for x in f))
+s0 = sig()
+e.w32(CYC, 2_100_001_000)
+e.call("clkmon_rx", MGR, 0xF8, 0)
+check("CLK sheet: the page redraws when a tick arrives", sig() != s0)
+n0 = p8(0, O["p_note"])
+knob(0, 40 * 20)
+check("knobs do nothing on the CLK sheet", p8(0, O["p_note"]) == n0 and e.r8(MEM + O["ui"] + 2) == 3)
+tap(100, 100)
+e.call("clkmon_block", MEM + O["clk"])
+e.call("clkmon_stats", MEM + O["clk"], 0, 0x30038000)
+check("a tap on the sheet resets the numbers (counted from zero after the next block)",
+      e.r32(0x30038000) == 0 and e.r32(0x30038014) == 0, (e.r32(0x30038000), e.r32(0x30038014)))
+tap(3 + 60 + 10, 216)
+check("back to DETECT from CLK", e.r8(MEM + O["ui"] + 2) == 1)
+f = picture("detect_after_clk")
+check("DETECT after CLK: inside the screen", inside(f))
 
 print("ALL PASS" if not fails else f"{fails} FAILED")
 sys.exit(1 if fails else 0)

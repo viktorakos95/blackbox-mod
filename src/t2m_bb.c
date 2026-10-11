@@ -79,6 +79,7 @@ void t2m_boot(void)
         m->pad_held[k] = -1;
         t2m_reset(&m->st[k]);
     }
+    clkmon_boot(&m->clk);                       /* the cycle counter and the clock monitor's interrupt block */
     m->on[0] = 1;                               /* input L on, R off */
     R->mem = m;
     R->magic = MAGIC;
@@ -163,6 +164,7 @@ void t2m_audio(const float *l, const float *r, int frames)
         return;
     const float *in[T2M_INPUTS] = {l, r};
     m->blocks++;
+    clkmon_block(&m->clk);
     for (int k = 0; k < T2M_INPUTS; k++) {
         t2m_state *t = &m->st[k];
         float pk = 0.f, g = m->p[k].sens;

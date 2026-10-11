@@ -2,6 +2,7 @@
 #pragma once
 #include <stdint.h>
 
+#include "clkmon.h"
 #include "t2m.h"
 
 #define T2M_INPUTS   2
@@ -40,6 +41,7 @@ struct t2m_mem {
     } ui;
     t2m_params p[T2M_INPUTS];
     t2m_state st[T2M_INPUTS];
+    struct clkmon clk;               /* the MIDI clock monitor (src/clkmon.c) */
 };
 
 void t2m_boot(void);

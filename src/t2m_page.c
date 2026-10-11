@@ -1,7 +1,7 @@
 /*
  * Trigger2MIDI page: the third page of the SONG button (SAMPLR, TRIG, then the stock song screen). src/looper_page.c
  * draws the frame and the footer and hands over the area between the top bar and the footer, the touches there and the
- * four knobs. The footer's sheets: HITS, DETECT, OUT.
+ * four knobs. The footer's sheets: HITS, DETECT, OUT, CLK.
  *
  *   top bar    TRIG  L <hits> v<last>   R <hits> v<last>
  *   row        [IN L] [IN R]   [ON]   [TRS] [USB]        the input shown, its switch, its MIDI ports (every sheet)
@@ -14,6 +14,8 @@
  * Looper page's knob order). NOTE OFF = no MIDI note (hits still show and still reach a pad); CC OFF = no CC; VEL / CC VAL /
  * LEN at their lowest = DYN. PAD: a pad of the Blackbox as a target: tap LEARN, hit a pad; PAD turns it off and on; PAD NOTE
  * is the note it gets. Knobs: 40 counts a step (the SAMPLR envelope's rate).
+ *   CLK        a measurement, not a setting (src/clkmon.c): how the MIDI clock arriving on the TRS jack and on USB is seen,
+ *              timings in microseconds; a tap anywhere on the sheet resets the numbers. No switch row, the knobs do nothing.
  */
 #include <stdint.h>
 
@@ -46,7 +48,7 @@ void lp_vline(int x, int d, int h, int color);
 #define STEP_COUNTS 40
 #define LIT_BLOCKS  30           /* a pad is lit this long after a hit (160 ms) */
 
-enum { SH_HITS, SH_DETECT, SH_OUT, SHEETS };
+enum { SH_HITS, SH_DETECT, SH_OUT, SH_CLK, SHEETS };
 enum { V_SENS, V_THRESH, V_RETRIG, V_MASK, V_SCAN, V_STRICT, V_SPEED, V_CURVE, V_NOTE, V_VEL, V_LEN, V_CHAN, V_CC, V_CCVAL,
        V_BLEED, V_RANGE, V_PAD, V_PNOTE, V_LEARN, VALUES, V_NONE = -1 };
 static const char *const val_name[VALUES] = {"SENS", "THRESH", "RETRIG", "MASK", "SCAN", "STRICT", "SPEED", "CURVE",
@@ -335,6 +337,90 @@ static void draw_hist(const struct t2m_mem *m, int w, int d0, int d1)
     lp_text(w - 8 - 24, d1 + 1, "now", C_GREY, 1);
 }
 
+/* ---- the CLK sheet */
+static char *put_us(char *p, float v)                /* microseconds, whole */
+{
+    return put_u(p, (unsigned)(v + .5f > 99999.f ? 99999.f : v + .5f));
+}
+
+static void clk_col(const struct clkmon *c, int src, int x, int d0, int st)
+{
+    struct clk_stats o;
+    clkmon_stats(c, src, &o);
+    char b[40], *p;
+    int has = o.n > 0, has_stk = c->r[src].n_stk > 0;
+    p = put_s(b, src ? "USB F8 " : "TRS F8 ");
+    p = put_u(p, o.f8);
+    *p = 0;
+    lp_text(x, d0, b, o.f8 ? C_CYAN : C_GREY, 1);
+    p = put_s(b, "BPM ");
+    p = put_f(p, o.bpm, 1);
+    p = put_s(p, " FA");
+    p = put_u(p, o.fa);
+    p = put_s(p, " FB");
+    p = put_u(p, o.fb);
+    p = put_s(p, " FC");
+    p = put_u(p, o.fc);
+    *p = 0;
+    lp_text(x, d0 + st, b, has ? C_LIGHT : C_GREY, 1);
+    p = put_s(b, "ARR ");
+    p = put_us(p, o.arr_min);
+    *p++ = '-';
+    p = put_us(p, o.arr_max);
+    p = put_s(p, " sd");
+    p = put_us(p, o.arr_sd);
+    *p = 0;
+    lp_text(x, d0 + 2 * st, b, has ? C_GREEN : C_GREY, 1);
+    p = put_s(b, "STK ");
+    p = put_us(p, o.stk_min);
+    *p++ = '-';
+    p = put_us(p, o.stk_max);
+    p = put_s(p, " sd");
+    p = put_us(p, o.stk_sd);
+    *p = 0;
+    lp_text(x, d0 + 3 * st, b, has_stk ? C_YELLOW : C_GREY, 1);
+    p = put_s(b, "LAT ");
+    p = put_us(p, o.lat_avg);
+    p = put_s(p, " max ");
+    p = put_us(p, o.lat_max);
+    *p = 0;
+    lp_text(x, d0 + 4 * st, b, has ? C_LIGHT : C_GREY, 1);
+}
+
+static void draw_clk(struct t2m_mem *m, int w, int foot)
+{
+    const struct clkmon *c = &m->clk;
+    char b[48], *p;
+    lp_text(6, 3, "CLK", C_CYAN, 1);
+    lp_text(36, 3, "MIDI CLOCK IN, US", C_GREY, 1);
+    int d0 = TOP + 3, st = (foot - d0 - 12) / 9;
+    st = st > 14 ? 14 : st < 8 ? 8 : st;
+    clk_col(c, 0, 4, d0, st);
+    clk_col(c, 1, w / 2 + 2, d0, st);
+    lp_vline(w / 2 - 2, TOP, 5 * st, C_RAIL);
+    float mhz = clkmon_mhz(c);
+    struct clk_stats a, u;
+    clkmon_stats(c, 0, &a);
+    clkmon_stats(c, 1, &u);
+    p = put_s(b, "CORE ");
+    if (mhz > 0.f)
+        p = put_f(p, mhz, 0);
+    else
+        p = put_s(p, "..");
+    p = put_s(p, "MHZ  ISR ");
+    p = put_u(p, a.cost);
+    *p++ = '/';
+    p = put_u(p, u.cost);
+    p = put_s(p, "CY  LOST ");
+    p = put_u(p, a.over + u.over);
+    p = put_s(p, "  TAP=RESET");
+    *p = 0;
+    lp_text(4, d0 + 5 * st, b, C_GREY, 1);
+    lp_text(4, d0 + 6 * st + 4, "ARR  tick to tick as it arrives (the interrupt)", C_GREEN, 1);
+    lp_text(4, d0 + 7 * st + 4, "STK  tick to tick as the stock sequencer gets it", C_YELLOW, 1);
+    lp_text(4, d0 + 8 * st + 4, "LAT  how long a tick waits for the audio block", C_LIGHT, 1);
+}
+
 void t2m_page_draw(int w, int foot)
 {
     struct t2m_mem *m = t2m_mem();
@@ -347,6 +433,10 @@ void t2m_page_draw(int w, int foot)
     }
     int k = UI->in & 1, sheet = UI->sheet < SHEETS ? UI->sheet : 0;
     char b[48], *p;
+    if (sheet == SH_CLK) {
+        draw_clk(m, w, foot);
+        return;
+    }
 
     /* top bar: both inputs at a glance */
     lp_text(6, 3, "TRIG", C_CYAN, 1);
@@ -427,6 +517,10 @@ void t2m_page_touch(int x, int d, int w, int foot)
     if (!m)
         return;
     int k = UI->in & 1, sheet = UI->sheet < SHEETS ? UI->sheet : 0;
+    if (sheet == SH_CLK) {                            /* anywhere on the CLK sheet: start the numbers again */
+        m->clk.reset = 1;
+        return;
+    }
     if (d >= TOP && d < TOP + BAR_H) {
         for (int i = 0; i < 5; i++) {
             if (x < sw_x[i] || x >= sw_x[i] + sw_w[i])
@@ -476,7 +570,7 @@ int t2m_page_sheet_now(void)
 void t2m_page_knob(int knob, int counts)
 {
     struct t2m_mem *m = t2m_mem();
-    if (!m || knob < 0 || knob > 3)
+    if (!m || knob < 0 || knob > 3 || UI->sheet == SH_CLK)
         return;
     int a = UI->kacc[knob] + counts, steps = a / STEP_COUNTS;
     UI->kacc[knob] = (int16_t)(a - steps * STEP_COUNTS);
@@ -503,6 +597,8 @@ uint32_t t2m_page_sig(void)
     struct t2m_mem *m = t2m_mem();
     if (!m)
         return 0;
+    if (m->ui.sheet == SH_CLK)
+        return clkmon_sig(&m->clk) ^ 0xc1c00001u;
     int k = m->ui.in & 1;
     uint32_t h = 2166136261u;
     const uint8_t *b = (const uint8_t *)&m->p[k];

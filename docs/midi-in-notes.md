@@ -65,3 +65,21 @@ Confidence tags: [Certain] read straight from code, [Likely] inferred, [Guessing
 - Whether the clock-in path can be smoothed by the stock code (does `0x08070304` low-pass the tick interval?).
 - Which USB IRQ number this is (OTG_HS vs OTG_FS) and its real packet cadence.
 - SD / FatFs API (step 2).
+
+## Clock monitor (src/clkmon.c, patches/clkmon.py, test_clkmon.py): measuring before changing anything
+Build: `python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper clkmon cave`.
+Looper page -> TRIG tab -> tap the top bar (CLK in the top right corner): the CLK view. Tap anywhere in it to reset the
+numbers, the top bar again to go back. Nothing in the stock MIDI path changes: two call sites are redirected to functions
+that stamp the cycle counter and then call the very same stock function with the same arguments.
+- `0x08044e48` (USART6 byte callback) -> `clkmon_rx`; `0x08044f2c` (USB packet callback) -> `clkmon_usb_rx`.
+- Interrupt side: a 104-byte block of backup SRAM at `0x38800988` (only touched while the backup SRAM clock and write access
+  are on, so nothing before `bkp_enable` can fault); 8 stamps per source.
+- Audio-block side: `clkmon_block` from `t2m_audio` (one call per block), numbers in `struct t2m_mem.clk`.
+Reading the view (TRS left, USB right): `F8 n` ticks seen; `BPM`; `FA/FB/FC` start / continue / stop counts;
+`ARR min-max sdN` = interval between ticks as they arrive (what a timer-driven sequencer could use);
+`STK` = the same interval as the stock sequencer gets it (stamped at the audio block that takes the tick);
+`LAT` = average / worst wait of a tick for that block; `CORE` = core clock found from the audio blocks (256 frames at
+48 kHz, needs about 1.4 s); `ISR a/b CY` = worst cycles spent inside the TRS / USB hook (stock push included), `LOST` = stamps dropped.
+How to read it: if ARR sd is a few microseconds and STK sd is over a millisecond, the clock reaches the unit cleanly and the stock
+firmware throws the timing away (expected: STK intervals come in whole blocks, 16000 / 21333 us at 120 BPM). If ARR itself is
+wide, the sender or the cable is the limit. Hardware numbers are not in yet.

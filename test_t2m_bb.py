@@ -62,6 +62,7 @@ e = Emu(IMG, "out/cave.elf")
 e.uc.mem_map(0x38800000, 0x1000)                     # backup SRAM
 e.uc.mem_map(0x58024000, 0x1000)                     # RCC / PWR
 e.uc.mem_map(0xE0001000, 0x1000)                     # DWT
+e.uc.mem_map(0xE000E000, 0x1000)                     # DEMCR (the clock monitor switches the cycle counter on)
 e.uc.mem_map(0x30000000, 0x200000)                   # buffers + the "SDRAM" block the allocator hands out
 
 free_bytes = [3 << 20]

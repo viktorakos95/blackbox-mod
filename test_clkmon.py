@@ -1,0 +1,203 @@
+"""The MIDI clock monitor (src/clkmon.c, hooks patches/clkmon.py) under Unicorn, on the patched image.
+
+Real code: the stock USART6 receive callback (0x08044e24) with the patched call into clkmon_rx and the stock byte push
+behind it, the stock USB MIDI OUT callback (0x08044f1c) with clkmon_usb_rx, clkmon_boot, clkmon_block, clkmon_stats.
+Stubbed: HAL_UART_Receive_IT and the USB endpoint re-arm. The cycle counter is a memory word the test sets.
+Checked: ticks stamped on arrival, all bytes still reach the stock ring, intervals / jitter / latency against numbers worked
+out here, the core clock found from the audio blocks, start / stop counters, USB packets, nothing touched while the backup
+SRAM is off, a stale block from a previous boot cleared, reset.
+
+python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper clkmon cave && python3 test_clkmon.py
+"""
+import os
+import random
+import struct
+import subprocess
+
+from emu import Emu
+
+IMG = "out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+cave/BLACKBOX.bin"
+MGR, HUART, RXBUF = 0x24002E88, 0x24009914, 0x24009910
+USBBUF = 0x24009710
+ISR = 0x38800988
+CYC = 0xE0001004
+RCC, PWR = 0x580244E0, 0x58024800
+MEM, OUT = 0x30000000, 0x30008000
+MHZ = 400.0
+BLOCK = round(MHZ * 5333.3333)          # cycles per audio block
+TICK = round(MHZ * 20833.3333)          # 120 BPM, 24 ppq
+
+fails = 0
+
+
+def check(label, cond, detail=""):
+    global fails
+    print(("PASS " if cond else "FAIL ") + label + (f"  [{detail}]" if not cond else ""))
+    fails += not cond
+
+
+os.makedirs("out/clk_test", exist_ok=True)
+open("out/clk_test/off.c", "w").write(
+    '#include <stdio.h>\n#include <stddef.h>\n#include "../../src/clkmon.h"\nint main(void){printf("%zu %zu %zu %zu %zu", '
+    'sizeof(struct clkmon), sizeof(struct clk_stats), sizeof(struct clk_isr), offsetof(struct clkmon, reset), offsetof(struct clkmon, mhz));}\n')
+subprocess.run(["gcc", "-o", "out/clk_test/off", "out/clk_test/off.c"], check=True)
+SZ, STSZ, ISZ, O_RESET, O_MHZ = map(int, subprocess.run(["out/clk_test/off"], capture_output=True, text=True, check=True).stdout.split())
+check("the interrupt block fits its backup SRAM window (0x38800988..0x38800a00)", ISZ <= 0x78, ISZ)
+
+e = Emu(IMG, "out/cave.elf")
+e.uc.mem_map(0x38800000, 0x1000)
+e.uc.mem_map(0x58024000, 0x1000)
+e.uc.mem_map(0xE0001000, 0x1000)
+e.uc.mem_map(0xE000E000, 0x1000)
+e.uc.mem_map(0x30000000, 0x100000)
+e.stub(0x0808163C, value=0)                         # HAL_UART_Receive_IT
+e.stub(0x080467CC)                                  # USB endpoint re-arm
+e.uc.mem_write(MGR + 0x20D, b"\x01")                # the stock ring of port 0 is active
+bkp_on = lambda on: (e.w32(RCC, (1 << 28) if on else 0), e.w32(PWR, (1 << 8) if on else 0))
+cyc = lambda v: e.w32(CYC, v)
+
+
+def rx(byte, t, port=0):
+    cyc(t)
+    e.uc.mem_write(RXBUF + port, bytes([byte]))
+    e.call(0x08044E24, HUART + 0x8C * port, count=2_000_000)
+
+
+def usb(packets, t):
+    cyc(t)
+    buf = b"".join(bytes(p) for p in packets).ljust(0x200, b"\0")
+    e.uc.mem_write(USBBUF, buf)
+    e.call(0x08044F1C, 0x24001000, count=2_000_000)
+
+
+def block(t):
+    cyc(t)
+    e.call("clkmon_block", MEM, count=2_000_000)
+
+
+def stats(src):
+    e.call("clkmon_stats", MEM, src, OUT, count=2_000_000)
+    v = struct.unpack("<6I9fI", bytes(e.uc.mem_read(OUT, STSZ)))
+    keys = "f8 fa fb fc over n bpm arr_min arr_max arr_sd stk_min stk_max stk_sd lat_avg lat_max cost".split()
+    return dict(zip(keys, v))
+
+
+def stock_ring():
+    return e.r32(MGR + 0x204)                       # write index of port 0's ring
+
+
+# ---- boot, with the backup SRAM still off: the monitor must not touch it
+e.uc.mem_write(0x38800988, bytes([0xA5]) * 0x78)
+e.uc.mem_write(MEM, bytes([0xFF]) * SZ)
+e.call("clkmon_boot", MEM)
+check("boot: the monitor state is cleared", bytes(e.uc.mem_read(MEM, SZ)) == bytes(SZ))
+check("boot: the cycle counter is switched on (TRCENA, unlock, CYCCNTENA)",
+      e.r32(0xE000EDFC) & (1 << 24) and e.r32(0xE0001FB0) & 0xFFFFFFFF == 0xC5ACCE55 and e.r32(0xE0001000) & 1)
+e.uc.mem_write(0x38800988, bytes([0xA5]) * 0x78)    # a stale block from the previous boot / nothing yet
+w0 = stock_ring()
+rx(0xF8, 1000)
+check("backup SRAM off: the hook leaves it alone", bytes(e.uc.mem_read(0x38800988, 0x78)) == bytes([0xA5]) * 0x78)
+check("backup SRAM off: the byte still reaches the stock ring", stock_ring() == w0 + 1 and e.r8(MGR + w0 % 512) == 0xF8,
+      (w0, stock_ring()))
+rx(0x90, 1100)
+check("... every other byte too", stock_ring() == w0 + 2 and e.r8(MGR + (w0 + 1) % 512) == 0x90)
+
+# ---- backup SRAM on (as bkp_enable leaves it), the block cleared as t2m_boot does at the start of a boot
+bkp_on(True)
+e.uc.mem_write(0x38800988, bytes([0xA5]) * 0x78)
+e.call("clkmon_boot", MEM)
+check("boot: a stale interrupt block is cleared", bytes(e.uc.mem_read(ISR, ISZ)) == bytes(ISZ))
+for b in (0x90, 0x3C, 0x7F, 0x80, 0xF0, 0xF7, 0xF9, 0xFD, 0xFE, 0xFF):      # not clock: no stamp (0xFE = active sensing)
+    rx(b, 5000)
+s = stats(0)
+check("notes / sysex bytes are not counted as clock", s["f8"] == 0 and s["n"] == 0, s)
+
+# ---- a steady 120 BPM clock with a little arrival jitter, the audio blocks free-running at the core clock
+rng = random.Random(7)
+N = 90
+arr = [int(300_000 + i * TICK + rng.uniform(-900, 900)) for i in range(N)]       # up to ~2.5 us of byte-timing noise
+blocks = [BLOCK * b + 12345 for b in range(1, int(arr[-1] / BLOCK) + 4)]
+ev = sorted([(t, "a", i) for i, t in enumerate(arr)] + [(t, "b", 0) for t in blocks])
+n_blk = n_arr = 0
+for t, kind, _ in ev:
+    if kind == "a":
+        rx(0xF8, t)
+        n_arr += 1
+    else:
+        block(t)
+        n_blk += 1
+s = stats(0)
+# expected, worked out here
+iv = [arr[i + 1] - arr[i] for i in range(N - 1)]
+mean = sum(iv) / len(iv)
+sd = (sum((x - mean) ** 2 for x in iv) / (len(iv) - 1)) ** .5
+take = []                                            # the first block at or after each arrival
+for a in arr:
+    take.append(next(b for b in blocks if b >= a))
+siv = [take[i + 1] - take[i] for i in range(N - 1)]
+smean = sum(siv) / len(siv)
+ssd = (sum((x - smean) ** 2 for x in siv) / (len(siv) - 1)) ** .5
+lat = [b - a for a, b in zip(arr, take)]
+us = lambda c: c / MHZ
+close = lambda a, b, tol: abs(a - b) <= tol
+check(f"{N} ticks counted", s["f8"] == N and s["n"] == N - 1, s)
+check(f"core clock found from the blocks: {MHZ} MHz", close(struct.unpack("<f", bytes(e.uc.mem_read(MEM + O_MHZ, 4)))[0], MHZ, 0.5))
+check(f"tempo 120 BPM (got {s['bpm']:.2f})", close(s["bpm"], 120.0, 0.05), s["bpm"])
+check(f"arrival interval min / max {us(min(iv)):.1f} / {us(max(iv)):.1f} us",
+      close(s["arr_min"], us(min(iv)), 0.1) and close(s["arr_max"], us(max(iv)), 0.1), (s["arr_min"], s["arr_max"]))
+check(f"arrival jitter sd {us(sd):.2f} us", close(s["arr_sd"], us(sd), 0.1), s["arr_sd"])
+check(f"stock-view interval min / max {us(min(siv)):.0f} / {us(max(siv)):.0f} us (whole blocks)",
+      close(s["stk_min"], us(min(siv)), 0.5) and close(s["stk_max"], us(max(siv)), 0.5), (s["stk_min"], s["stk_max"]))
+check(f"stock-view jitter sd {us(ssd):.0f} us, far above the arrival jitter", close(s["stk_sd"], us(ssd), 2.0) and s["stk_sd"] > 100 * s["arr_sd"],
+      (s["stk_sd"], ssd))
+check(f"latency to the taking block: avg {us(sum(lat) / len(lat)):.0f} max {us(max(lat)):.0f} us",
+      close(s["lat_avg"], us(sum(lat) / len(lat)), 1.0) and close(s["lat_max"], us(max(lat)), 1.0), (s["lat_avg"], s["lat_max"]))
+check("the stock ring got every byte, clock included", stock_ring() == w0 + 2 + 10 + N, (stock_ring(), w0))
+check("the interrupt cost is recorded (0 here: the counter is frozen between its two reads)", s["cost"] == 0)
+
+# ---- start / continue / stop
+for b, t in ((0xFA, 40_000_000), (0xFB, 40_001_000), (0xFC, 40_002_000), (0xFC, 40_003_000)):
+    rx(b, t)
+s = stats(0)
+check("FA / FB / FC counted (1 / 1 / 2)", (s["fa"], s["fb"], s["fc"]) == (1, 1, 2), s)
+
+# ---- a stop and restart is a gap, not an interval
+block(41_000_000)
+rx(0xF8, 41_500_000)
+block(42_000_000)
+n0 = stats(0)["n"]
+rx(0xF8, 41_500_000 + TICK * 40)                    # 40 ticks later: a restart
+block(41_500_000 + TICK * 40 + 5)
+check("a pause longer than the gap limit adds no interval", stats(0)["n"] == n0, (n0, stats(0)["n"]))
+
+# ---- overflow: more stamps than the ring holds between two blocks
+for i in range(12):
+    rx(0xF8, 60_000_000 + i * 1000)
+block(60_100_000)
+s = stats(0)
+check("12 ticks in one block: 4 lost, counted", s["over"] == 4, s["over"])
+
+# ---- USB: clock events inside event packets, other packets ignored, the stock copy still done
+slot_before = e.r32(MGR + 0x5C74)
+usb([[0x09, 0x90, 0x3C, 0x7F], [0x0F, 0xF8, 0, 0], [0x1F, 0xF8, 0, 0], [0x0B, 0xB0, 0x01, 0x40], [0x0F, 0xFA, 0, 0]], 70_000_000)
+block(70_100_000)
+s = stats(1)
+check("USB: 2 ticks and a start in one packet buffer", (s["f8"], s["fa"], s["fb"], s["fc"]) == (2, 1, 0, 0), s)
+check("USB: the stock ring write slot advanced (the stock copy ran)", e.r32(MGR + 0x5C74) == slot_before + 1,
+      (slot_before, e.r32(MGR + 0x5C74)))
+check("the jack's counters are untouched by USB", stats(0)["f8"] == N + 2 + 12 and stats(0)["fa"] == 1, stats(0))
+
+# ---- reset
+e.w32(MEM + O_RESET, 1)
+block(80_000_000)
+s0, s1 = stats(0), stats(1)
+check("reset: counters and intervals start again", s0["f8"] == 0 and s0["n"] == 0 and s0["over"] == 0 and s0["fa"] == 0 and s1["f8"] == 0,
+      (s0, s1))
+rx(0xF8, 80_100_000)
+rx(0xF8, 80_100_000 + TICK)
+block(80_200_000)
+s0 = stats(0)
+check("after a reset it counts again (2 ticks, 1 interval)", s0["f8"] == 2 and s0["n"] == 1 and close(s0["bpm"], 120.0, 0.05), s0)
+
+print(f"{fails} failure(s)")
+raise SystemExit(1 if fails else 0)

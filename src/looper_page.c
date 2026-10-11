@@ -372,7 +372,7 @@ int looper_page_hit(int x, int d, int *track, float *val)
         }
         if (P->mode == M_SMPLR || P->mode == M_TRIG) {            /* the sheets (track >= 10 tells Z_TAB apart) */
             int sh = (x - 3) / 60;
-            if (x >= 3 && sh < (P->mode == M_TRIG ? 3 : SM_SHEETS) && (x - 3) % 60 < 58) {
+            if (x >= 3 && sh < (P->mode == M_TRIG ? 4 : SM_SHEETS) && (x - 3) % 60 < 58) {
                 *track = 10 + sh;
                 return Z_TAB;
             }
@@ -1097,8 +1097,8 @@ static void draw_footer(const struct lay *L)
     }
     int x0 = 3 + NTABS * (TAB_W + 2) + 4;
     if (P->mode == M_TRIG) {                                      /* Trigger2MIDI: a page of its own (third page of SONG); sheets in the footer */
-        static const char *const sh_name[3] = {"HITS", "DETECT", "OUT"};
-        for (int i = 0; i < 3; i++) {
+        static const char *const sh_name[4] = {"HITS", "DETECT", "OUT", "CLK"};
+        for (int i = 0; i < 4; i++) {
             int on = t2m_page_sheet_now() == i;
             frame(3 + 60 * i, L->foot_y + 2, 58, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
             text_c(3 + 60 * i, L->foot_y + 4, 58, sh_name[i], on ? C_CYAN : C_GREY, 1);
