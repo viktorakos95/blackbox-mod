@@ -67,13 +67,30 @@ Same as the patch (not a bug): a hit into a still-ringing note re-sends note-on 
 - VEL fixed sets SCAN to 0 (the old value is kept and comes back when VEL goes to DYN, unless SCAN was changed by hand meanwhile).
   Note the decision window is `max(Scan, 3 x Speed)`: with SCAN 0 it is 3 x Speed (9 ms at Speed 3.0), so SPEED sets the delay then.
 
-## Latency (corrected; the first estimate "about 5 ms" left out the scan window)
-- The detector needs the true peak for the velocity. It decides after `max(Scan, 3 x Speed)`: at the patch defaults (Scan 2.0 ms, Speed
-  3.0 ms) that is **9 ms** after the threshold is crossed; Speed 1.0 -> 3 ms, 0.7 -> 2.1 ms, 0.2 -> 0.6 ms (more false triggers).
-- Then up to one audio block (5.33 ms, the whole block must be captured before the task runs), then about 1 ms for 3 MIDI bytes on the
-  jack. A pad target adds nothing: it is started in the same block, before the render.
-- So roughly **10-16 ms at the defaults, 3-9 ms at Speed 1.0**. Not 0 ms. A fixed-velocity "instant" mode (send at the threshold
-  crossing, no peak search) would cut it to block + wire (about 1-6 ms); not built.
+## Latency (corrected; measured in the emulator with `tools/t2m_latency.py`)
+Real firmware code (`looper_in` -> `t2m_audio` -> detector), hits with a 0.5 ms attack whose first sample lands at 16 phases of the
+256-sample block. "decide" = threshold crossing to the sample where the detector decides = `max(Scan, 3 x Speed)`; "queued" = to the end
+of the block holding that sample (the audio task runs when the block is captured; the MIDI is queued then and sent by the render in
+the same block); wire = 0.96 ms for 3 bytes on the jack.
+
+| setting | decide ms | queued ms (min / avg / max) | + wire (avg) |
+|---|---|---|---|
+| defaults: Speed 3.0, Scan 2.0 | 9.0 | 9.3 / 11.8 / 14.3 | 12.8 |
+| Speed 1.0, Scan 2.0 | 3.0 | 3.3 / 5.8 / 8.3 | 6.8 |
+| VEL fixed (Scan 0), Speed 3.0 | 9.0 | 9.3 / 11.8 / 14.3 | 12.8 |
+| VEL fixed (Scan 0), Speed 1.0 | 3.0 | 3.3 / 5.8 / 8.3 | 6.8 |
+| VEL fixed (Scan 0), Speed 0.5 | 1.5 | 1.7 / 4.2 / 6.7 | 5.1 |
+| VEL fixed (Scan 0), Speed 0.2 | 0.7 | 0.7 / 3.2 / 5.7 | 4.1 |
+| ... plus a pad target | 0.7 | 0.7 / 3.2 / 5.7 | none (same block) |
+
+- Not 0 ms: the block wait alone is 0 .. 5.33 ms (avg 2.67). Scan 0 alone changes nothing at Speed 3.0 (the window is 3 x Speed).
+- Dynamic velocity with Scan 0 and Speed 0.2 reads low (120 / 44 instead of 127 / 48 for this 0.5 ms attack; slower attacks read lower).
+- False triggers at lower Speed (a loud noise bed above the threshold, 4 s): 2 at Speed >= 1.0, 3 at Speed <= 0.5. Isolated 3-sample clicks trigger
+  at every setting (12 of 12): they look like hits to this algorithm.
+- CPU of `looper_in` with both inputs on: about 35,000 instructions per block (busiest 38,500), roughly 0.1 ms of the 5.33 ms block.
+- NOT measured (hardware): the codec's own input latency, the audio task's start after the block is captured, the UART start,
+  USB scheduling, the pad voice's output latency, and anything the GUI task does. An "instant" mode (send at the threshold crossing,
+  no peak search) is not built.
 
 ## Next
 
