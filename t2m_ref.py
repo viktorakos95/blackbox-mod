@@ -62,7 +62,7 @@ class Gen:
         self.peak_band_high = 0.0
         self.best_diff_db = -200.0
 
-    def step(self, in1, in2, in3, in4, in5, in6, in7, in8, in9, in10, in11):
+    def step(self, in1, in2, in3, in4, in5, in6, in7, in8, in9, in10, in11, floor_db=-60.0):
         s = self
         samplerate = SAMPLERATE
 
@@ -71,7 +71,7 @@ class Gen:
 
         SLOW_MS = 80.0
         OFF_THRESH_DB = 3.0
-        FLOOR_DB = -60.0
+        FLOOR_DB = floor_db                  # the codebox's constant -60.0; a parameter here so the page can lower it
         LN10 = 2.302585093
         PI = 3.14159265358979
 
@@ -322,7 +322,7 @@ class Glue:
         return ev
 
 
-DEFAULTS = dict(sens=2.0, thresh=2.0, retrig=8.0, mask_ms=15.0, scan_ms=2.0, curve=0.6, strict_db=8.0, speed_ms=3.0,
+DEFAULTS = dict(floor_db=-60.0, sens=2.0, thresh=2.0, retrig=8.0, mask_ms=15.0, scan_ms=2.0, curve=0.6, strict_db=8.0, speed_ms=3.0,
                 spec_strict=0.15, spec_range=0.15, note_on=1, note=38, vel_mode=0, vel_fixed=100, len_mode=0,
                 len_ms=50, cc_on=0, cc_num=1, cc_mode=0, cc_fixed=100, channel=1)
 
@@ -333,6 +333,6 @@ def run(signal, p):
     thr = 0.01 + (p["thresh"] - 0.0) / (31.0 - 0.0) * (0.1 - 0.01)
     for i, x in enumerate(signal):
         outs = g.step(x * p["sens"], thr, p["scan_ms"], p["mask_ms"], p["retrig"], p["curve"], 0.0, p["strict_db"],
-                      p["speed_ms"], p["spec_strict"], p["spec_range"])
+                      p["speed_ms"], p["spec_strict"], p["spec_range"], p.get("floor_db", -60.0))
         ev += glue.step(outs, i)
     return ev

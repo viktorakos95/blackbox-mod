@@ -16,6 +16,7 @@ typedef struct {
     float speed_ms;      /* Onset Speed 0.2 .. 10 ms */
     float spec_strict;   /* Anti-bleed Strict 0 .. 0.6 (0 = off) */
     float spec_range;    /* Anti-bleed Range 0 .. 1 (0 = off) */
+    float floor_db;      /* the codebox's FLOOR_DB: a hit starts only when the slow level is above this (-60; lower = clicks and soft starts pass) */
     uint16_t len_ms;     /* Note Length Ms 5 .. 2000 (Fixed length) */
     uint8_t note_on;     /* Note Out */
     uint8_t note;        /* Target MIDI note 0 .. 127 */

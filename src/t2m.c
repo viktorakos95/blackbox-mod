@@ -103,7 +103,6 @@ static float absf(float x) { return x < 0.0f ? -x : x; }
 #define DIP_FRACTION        0.5f
 #define SLOW_MS             80.0
 #define OFF_THRESH_DB       3.0
-#define FLOOR_DB            -60.0
 #define LN10                2.302585093
 #define PI                  3.14159265358979
 #define NOTE_OFF_QUIET_MS   60.0
@@ -150,7 +149,7 @@ static void derive(t2m_state *t, const t2m_params *p)
 
     t->off_ratio = db_ratio(OFF_THRESH_DB);
     t->strict_ratio = db_ratio(p->strict_db);
-    t->floor_lin = db_ratio(FLOOR_DB);                  /* slow_db > FLOOR_DB  <=>  max(slow, 1e-6) > this */
+    t->floor_lin = db_ratio((double)p->floor_db);       /* slow_db > floor_db  <=>  max(slow, 1e-6) > this */
     t->len_n = (uint32_t)(p->len_ms * SR / 1000.0 + 0.5);
 
     t->cached = *p;

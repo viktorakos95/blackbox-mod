@@ -53,7 +53,7 @@ void bkp_enable(void);
 
 static const t2m_params defaults = {
     .sens = 2.0f, .thresh = 2.0f, .retrig = 8.0f, .mask_ms = 15.0f, .scan_ms = 2.0f, .curve = 0.6f,
-    .strict_db = 8.0f, .speed_ms = 3.0f, .spec_strict = 0.15f, .spec_range = 0.15f, .len_ms = 50,
+    .strict_db = 8.0f, .speed_ms = 3.0f, .spec_strict = 0.15f, .spec_range = 0.15f, .floor_db = -60.0f, .len_ms = 50,
     .note_on = 1, .note = 38, .vel_mode = 0, .vel_fixed = 100, .len_mode = 0,
     .cc_on = 0, .cc_num = 1, .cc_mode = 0, .cc_fixed = 100, .channel = 1,
 };

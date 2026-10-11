@@ -92,6 +92,20 @@ the same block); wire = 0.96 ms for 3 bytes on the jack.
   USB scheduling, the pad voice's output latency, and anything the GUI task does. An "instant" mode (send at the threshold crossing,
   no peak search) is not built.
 
+## Clicks, fast trains and two new settings (tools/t2m_fast.py)
+- **Clicks (finding):** the gen~ code starts a hit only if the slow level (80 ms follower) is above FLOOR_DB = -60 dB. From digital silence
+  that follower fills at about 0.00026 x the level per sample, so a 1-sample impulse never triggers, nor does a soft 3-sample tick, nor a soft
+  2 ms click (0 of 16 at every Speed / Scan). Louder or longer sounds do (the follower catches up within a few samples to ms).
+  **FLOOR** (DETECT sheet, default -60 dB = the patch; -120 .. -40) lowers or raises that gate: at -100 dB all clicks are found, at the same
+  latency (Speed 0.5, Scan 0: queued 1.7 / 4.2 / 6.7 ms min / avg / max), and no new false triggers on noise.
+- **Fast notes (finding):** after a hit the detector is dead for its decision window and then MASK (counted from the decision, not from the
+  onset): 9 + 15 = 24 ms at the defaults, 0.6 + 15 at Speed 0.2. Closer hits are dropped (every other one at 12-20 ms). The reference shows
+  the same, so it is the design, not a port bug. MASK now goes down to 1 ms (the patch's range: 15 .. 64); default unchanged.
+  Trains of 8 equal hits found 8 of 8 at: defaults >= 25 ms; Speed 1.0 >= 20 ms; Speed 0.2 >= 16 ms; Speed 0.5, Scan 0, Mask 5 >= 8 ms;
+  with Mask 2, Retrig 1, FLOOR -100 down to 5 ms (snare-like and click trains).
+- Cost of the aggressive settings: Mask 2 + Retrig 1 gave 14 false triggers in 4 s of loud steady noise (3 at Mask 15); one ringing tom hit
+  never double-triggered in any setting tried.
+
 ## Next
 
 - Hardware: detection feel, MIDI on TRS and USB, knob speed (40 counts a step is a guess from SAMPLR's envelope).

@@ -33,7 +33,7 @@ MEM, OBJ, ENGINE = 0x30100000, 0x30050000, 0x2400A9C0
 INL, INR, PTRS = 0x30010000, 0x30011000, 0x30012000
 
 fields = ["on", "pad_on", "pad_id", "p", "st", "hits"]
-pf = ["sens", "thresh", "retrig", "mask_ms", "scan_ms", "curve", "strict_db", "speed_ms", "spec_strict", "spec_range",
+pf = ["sens", "thresh", "retrig", "mask_ms", "scan_ms", "curve", "strict_db", "speed_ms", "spec_strict", "spec_range", "floor_db",
       "note_on", "vel_mode", "vel_fixed"]
 os.makedirs("out/t2m_test", exist_ok=True)
 open("out/t2m_test/lat_off.c", "w").write(
@@ -174,28 +174,34 @@ def spikes_and_noise(cfg):
     return clicks, noise
 
 
-print(f"{'setting':58} {'decide':>13} {'queued (block end)':>21} {'+ MIDI wire':>13} {'velocity':>9} {'false trigs':>12}")
-print(f"{'':58} {'ms min/avg/max':>13} {'ms min/avg/max':>21} {'avg ms':>13} {'loud/soft':>9} {'clicks/noise':>12}")
-res = {}
-for name, cfg in CONFIGS:
-    rows, ins = measure(cfg, 0.8, PHASES)
-    miss = sum(r is None for r in rows)
-    ok = [r for r in rows if r]
-    soft = [r for r in measure(cfg, 0.12, PHASES[::4])[0] if r]
-    d, q = stats([r[0] for r in ok]), stats([r[1] for r in ok])
-    fc = spikes_and_noise(cfg)
-    res[name] = (d, q, ok, ins)
-    pad = cfg.get("pad")
-    wire = "-" if pad else f"{q[1] + WIRE_MS:.1f}"
-    vel = f"{round(sum(r[2] for r in ok) / len(ok))}/{round(sum(r[2] for r in soft) / max(1, len(soft)))}"
-    print(f"{name:58} {d[0]:4.1f}/{d[1]:4.1f}/{d[2]:4.1f} {q[0]:6.1f}/{q[1]:5.1f}/{q[2]:5.1f} {wire:>13} {vel:>9} {fc[0]:>6}/{fc[1]:<5}"
-          + (f"   MISSED {miss}" if miss else ""))
-    if pad:
-        print(f"{'':58} pad command dispatched in the same block as the decision for {sum(1 for r in ok if r[4])} of {len(ok)} hits"
-              f" (MIDI sent for {sum(1 for r in ok if r[3])})")
+def main():
+    global res
+    print(f"{'setting':58} {'decide':>13} {'queued (block end)':>21} {'+ MIDI wire':>13} {'velocity':>9} {'false trigs':>12}")
+    print(f"{'':58} {'ms min/avg/max':>13} {'ms min/avg/max':>21} {'avg ms':>13} {'loud/soft':>9} {'clicks/noise':>12}")
+    res = {}
+    for name, cfg in CONFIGS:
+        rows, ins = measure(cfg, 0.8, PHASES)
+        miss = sum(r is None for r in rows)
+        ok = [r for r in rows if r]
+        soft = [r for r in measure(cfg, 0.12, PHASES[::4])[0] if r]
+        d, q = stats([r[0] for r in ok]), stats([r[1] for r in ok])
+        fc = spikes_and_noise(cfg)
+        res[name] = (d, q, ok, ins)
+        pad = cfg.get("pad")
+        wire = "-" if pad else f"{q[1] + WIRE_MS:.1f}"
+        vel = f"{round(sum(r[2] for r in ok) / len(ok))}/{round(sum(r[2] for r in soft) / max(1, len(soft)))}"
+        print(f"{name:58} {d[0]:4.1f}/{d[1]:4.1f}/{d[2]:4.1f} {q[0]:6.1f}/{q[1]:5.1f}/{q[2]:5.1f} {wire:>13} {vel:>9} {fc[0]:>6}/{fc[1]:<5}"
+              + (f"   MISSED {miss}" if miss else ""))
+        if pad:
+            print(f"{'':58} pad command dispatched in the same block as the decision for {sum(1 for r in ok if r[4])} of {len(ok)} hits"
+                  f" (MIDI sent for {sum(1 for r in ok if r[3])})")
 
-ins = res[CONFIGS[0][0]][3]
-busy = sorted(ins)[-1]
-print(f"\nCPU: looper_in with both inputs on, {sorted(ins)[len(ins) // 2]} instructions in a typical block, {busy} in the busiest; "
-      f"at one instruction a cycle and 400 MHz the busiest is {busy / 400:.0f} us of the 5333 us block.")
-print(f"Block wait for a hit at a random phase is 0 .. {N / MS:.2f} ms (avg {N / MS / 2:.2f}); MIDI wire time {WIRE_MS:.2f} ms.")
+    ins = res[CONFIGS[0][0]][3]
+    busy = sorted(ins)[-1]
+    print(f"\nCPU: looper_in with both inputs on, {sorted(ins)[len(ins) // 2]} instructions in a typical block, {busy} in the busiest; "
+          f"at one instruction a cycle and 400 MHz the busiest is {busy / 400:.0f} us of the 5333 us block.")
+    print(f"Block wait for a hit at a random phase is 0 .. {N / MS:.2f} ms (avg {N / MS / 2:.2f}); MIDI wire time {WIRE_MS:.2f} ms.")
+
+
+if __name__ == "__main__":
+    main()

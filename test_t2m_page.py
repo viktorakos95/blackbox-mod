@@ -34,7 +34,7 @@ open("out/t2m_test/off2.c", "w").write(
     + "".join(f'printf("{f} %zu\\n", offsetof(struct t2m_mem, {f}));\n' for f in FIELDS)
     + 'printf("PSIZE %zu\\n", sizeof(t2m_params));\n'
     + "".join(f'printf("p_{f} %zu\\n", offsetof(t2m_params, {f}));\n' for f in
-            ("sens", "scan_ms", "note", "note_on", "vel_mode", "vel_fixed", "cc_on", "cc_num", "len_mode", "len_ms"))
+            ("sens", "mask_ms", "floor_db", "scan_ms", "note", "note_on", "vel_mode", "vel_fixed", "cc_on", "cc_num", "len_mode", "len_ms"))
     + "}\n")
 subprocess.run(["gcc", "-o", "out/t2m_test/off2", "out/t2m_test/off2.c"], check=True)
 O = {l.split()[0]: int(l.split()[1]) for l in
@@ -192,6 +192,23 @@ tap(3 + 60 + 10, 216)
 check("footer: DETECT", e.r8(MEM + O["ui"] + 2) == 1)
 f = picture("detect")
 check("DETECT sheet: inside the screen", inside(f))
+fl = lambda off: struct.unpack("<f", e.uc.mem_read(MEM + O["p"] + off, 4))[0]
+tap(150, 54 + 10)                                          # DETECT row 0: SENS THRESH RETRIG MASK
+knob(3, -40 * 30)
+check(f"DETECT: MASK goes down to 1 ms (the patch's range stopped at 15): {fl(O['p_mask_ms']):.0f} ms", fl(O["p_mask_ms"]) == 1.0, fl(O["p_mask_ms"]))
+knob(3, 40 * 14)
+check("... one ms a step: back to 15", fl(O["p_mask_ms"]) == 15.0, fl(O["p_mask_ms"]))
+tap(150, 134 + 10)                                         # DETECT row 2: BLEED RANGE FLOOR
+knob(2, -40 * 40)
+check(f"DETECT: FLOOR -60 dB down 40 steps: {fl(O['p_floor_db']):.0f} dB", fl(O["p_floor_db"]) == -100.0, fl(O["p_floor_db"]))
+knob(2, -40 * 60)
+check("... stops at -120 dB", fl(O["p_floor_db"]) == -120.0)
+f = picture("detect_floor")
+check("... and the cell shows it", inside(f))
+knob(2, 40 * 120)
+check("FLOOR up stops at -40 dB", fl(O["p_floor_db"]) == -40.0)
+knob(2, -40 * 20)
+check("... back to the patch's -60 dB", fl(O["p_floor_db"]) == -60.0, fl(O["p_floor_db"]))
 touch("down", 3 + 120 + 10, 216)
 touch("up", 3 + 120 + 10, 216)
 check("footer: OUT", e.r8(MEM + O["ui"] + 2) == 2)

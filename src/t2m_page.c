@@ -8,7 +8,7 @@
  *   HITS       two pads that light up on a hit (colour = velocity, note and velocity in them), the input levels with the
  *              threshold, and the last 4 s of hits per input as bars (height = velocity). The knobs turn SENS, THRESH,
  *              RETRIG, MASK of the input shown, to set the threshold while watching the meter.
- *   DETECT     SENS THRESH RETRIG MASK / SCAN STRICT SPEED CURVE / BLEED RANGE, and the meter
+ *   DETECT     SENS THRESH RETRIG MASK / SCAN STRICT SPEED CURVE / BLEED RANGE FLOOR, and the meter
  *   OUT        NOTE VEL LEN CHAN / CC CC VAL / PAD PAD NOTE LEARN
  * On DETECT and OUT a tap on a row hands it to the four knobs (pink frame): knob n turns the row's n-th value (the
  * Looper page's knob order). NOTE OFF = no MIDI note (hits still show and still reach a pad); CC OFF = no CC; VEL / CC VAL /
@@ -50,13 +50,13 @@ void lp_vline(int x, int d, int h, int color);
 
 enum { SH_HITS, SH_DETECT, SH_OUT, SH_CLK, SHEETS };
 enum { V_SENS, V_THRESH, V_RETRIG, V_MASK, V_SCAN, V_STRICT, V_SPEED, V_CURVE, V_NOTE, V_VEL, V_LEN, V_CHAN, V_CC, V_CCVAL,
-       V_BLEED, V_RANGE, V_PAD, V_PNOTE, V_LEARN, VALUES, V_NONE = -1 };
+       V_BLEED, V_RANGE, V_PAD, V_PNOTE, V_LEARN, V_FLOOR, VALUES, V_NONE = -1 };
 static const char *const val_name[VALUES] = {"SENS", "THRESH", "RETRIG", "MASK", "SCAN", "STRICT", "SPEED", "CURVE",
                                              "NOTE", "VEL", "LEN", "CHAN", "CC", "CC VAL", "BLEED", "RANGE",
-                                             "PAD", "PAD NOTE", ""};
+                                             "PAD", "PAD NOTE", "", "FLOOR"};
 /* the settings sheets: three rows of four; the HITS sheet's knobs are DETECT's first row */
 static const int8_t sheet_vals[2][12] = {
-    {V_SENS, V_THRESH, V_RETRIG, V_MASK, V_SCAN, V_STRICT, V_SPEED, V_CURVE, V_BLEED, V_RANGE, V_NONE, V_NONE},
+    {V_SENS, V_THRESH, V_RETRIG, V_MASK, V_SCAN, V_STRICT, V_SPEED, V_CURVE, V_BLEED, V_RANGE, V_FLOOR, V_NONE},
     {V_NOTE, V_VEL, V_LEN, V_CHAN, V_CC, V_CCVAL, V_NONE, V_NONE, V_PAD, V_PNOTE, V_LEARN, V_NONE},
 };
 
@@ -139,6 +139,7 @@ static void value_text(const struct t2m_mem *m, int k, int v, char *b)
     case V_CCVAL: p = q->cc_mode ? put_u(p, q->cc_fixed) : put_s(p, "DYN"); break;
     case V_BLEED: p = q->spec_strict < .005f ? put_s(p, "OFF") : put_f(p, q->spec_strict, 2); break;
     case V_RANGE: p = q->spec_range < .005f ? put_s(p, "OFF") : put_f(p, q->spec_range, 2); break;
+    case V_FLOOR: *p++ = '-'; p = put_u(p, (unsigned)(-q->floor_db + .5f)); p = put_s(p, "dB"); break;
     case V_PAD:
         if (!m->pad_on[k]) {
             p = put_s(p, m->pad_id[k] ? "OFF" : "NONE");
@@ -170,7 +171,7 @@ static void step_params(t2m_params *q, int v, int s)
     case V_SENS: q->sens = clampf(q->sens + (q->sens < 2.f ? .05f : .1f) * (float)s, .1f, 10.f); break;
     case V_THRESH: q->thresh = clampf(q->thresh + .25f * (float)s, 0.f, 31.f); break;
     case V_RETRIG: q->retrig = clampf(q->retrig + .25f * (float)s, 1.f, 16.f); break;
-    case V_MASK: q->mask_ms = clampf(q->mask_ms + (float)s, 15.f, 64.f); break;
+    case V_MASK: q->mask_ms = clampf(q->mask_ms + (float)s, 1.f, 64.f); break;      /* the patch's range is 15 .. 64; lower passes fast notes */
     case V_SCAN: q->scan_ms = clampf(q->scan_ms + .1f * (float)s, 0.f, 4.f); break;
     case V_STRICT: q->strict_db = clampf(q->strict_db + .25f * (float)s, 0.f, 20.f); break;
     case V_SPEED: q->speed_ms = clampf(q->speed_ms + .1f * (float)s, .2f, 10.f); break;
@@ -220,6 +221,7 @@ static void step_params(t2m_params *q, int v, int s)
     }
     case V_BLEED: q->spec_strict = clampf(q->spec_strict + .01f * (float)s, 0.f, .6f); break;
     case V_RANGE: q->spec_range = clampf(q->spec_range + .01f * (float)s, 0.f, 1.f); break;
+    case V_FLOOR: q->floor_db = clampf(q->floor_db + (float)s, -120.f, -40.f); break;
     }
 }
 

@@ -56,7 +56,7 @@ print(f"ARM code size: {size} bytes")
 class Params(ctypes.Structure):
     _fields_ = [(n, ctypes.c_float) for n in
                 ("sens", "thresh", "retrig", "mask_ms", "scan_ms", "curve", "strict_db", "speed_ms", "spec_strict",
-                 "spec_range")] + [("len_ms", ctypes.c_uint16)] + [(n, ctypes.c_uint8) for n in
+                 "spec_range", "floor_db")] + [("len_ms", ctypes.c_uint16)] + [(n, ctypes.c_uint8) for n in
                 ("note_on", "note", "vel_mode", "vel_fixed", "len_mode", "cc_on", "cc_num", "cc_mode", "cc_fixed",
                  "channel")]
 
@@ -69,7 +69,7 @@ def make_params(d):
     """The C struct and the same values (floats rounded to float32) for the reference."""
     p = Params(**d)
     r = dict(d)
-    for k, _ in Params._fields_[:10]:
+    for k, _ in Params._fields_[:11]:
         r[k] = f32(d[k])
     return p, r
 
@@ -236,6 +236,9 @@ def param_sets():
             ("fixed velocity: Scan 0, Speed 3 / 1 / 0.2 ms", dict(ref.DEFAULTS, scan_ms=0.0, vel_mode=1, vel_fixed=100, speed_ms=1.0)),
             ("Scan 0, Speed 0.2 ms, fixed velocity, CC on", dict(ref.DEFAULTS, scan_ms=0.0, vel_mode=1, vel_fixed=64, speed_ms=0.2, cc_on=1)),
             ("Scan 0 with the default speed", dict(ref.DEFAULTS, scan_ms=0.0)),
+            ("FLOOR -90 dB (clicks pass), Speed 0.5, Scan 0, Mask 3", dict(ref.DEFAULTS, floor_db=-90.0, speed_ms=0.5, scan_ms=0.0, mask_ms=3.0)),
+            ("FLOOR -120 dB, Mask 1, Retrig 1", dict(ref.DEFAULTS, floor_db=-120.0, mask_ms=1.0, retrig=1.0)),
+            ("FLOOR -40 dB (stricter)", dict(ref.DEFAULTS, floor_db=-40.0)),
             ("anti-bleed strong (Strict 0.5, Range 1), slow onset", dict(ref.DEFAULTS, spec_strict=0.5, spec_range=1.0,
                                                                         strict_db=2.0, speed_ms=1.0)),
             ("anti-bleed medium (Strict 0.3, Range 0.6)", dict(ref.DEFAULTS, spec_strict=0.3, spec_range=0.6))]
@@ -243,9 +246,9 @@ def param_sets():
     for k in range(8):
         sets.append((f"random settings {k}", dict(
             ref.DEFAULTS, sens=rng.uniform(0.1, 10), thresh=rng.uniform(0, 31), retrig=rng.uniform(1, 16),
-            mask_ms=rng.uniform(15, 64), scan_ms=rng.uniform(0, 4), curve=rng.uniform(0.1, 1.5),
+            mask_ms=rng.uniform(1, 64), scan_ms=rng.uniform(0, 4), curve=rng.uniform(0.1, 1.5),
             strict_db=rng.uniform(0, 20), speed_ms=rng.uniform(0.2, 10), spec_strict=rng.uniform(0, 0.6),
-            spec_range=rng.uniform(0, 1), note=rng.randint(0, 127), vel_mode=rng.randint(0, 1),
+            spec_range=rng.uniform(0, 1), floor_db=rng.uniform(-120, -40), note=rng.randint(0, 127), vel_mode=rng.randint(0, 1),
             vel_fixed=rng.randint(1, 127), len_mode=rng.randint(0, 1), len_ms=rng.randint(5, 2000),
             cc_on=rng.randint(0, 1), cc_num=rng.randint(0, 127), cc_mode=rng.randint(0, 1),
             cc_fixed=rng.randint(1, 127), channel=rng.randint(1, 16))))
