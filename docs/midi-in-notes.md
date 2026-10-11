@@ -35,10 +35,33 @@ Confidence tags: [Certain] read straight from code, [Likely] inferred, [Guessing
 - Ring 0 is 512 bytes and drained once per block: a SysEx dump (Machinedrum, TurboMIDI at 4x-8x) would arrive faster than
   31250 baud * 5.33 ms = ~16 bytes per block, so overflow is not a risk at 31250 baud (needs more than 512 bytes per block).
 
+## USB MIDI receive path (mapped in step 1b)
+- The USB MIDI class OUT-endpoint callback (`0x08044ef8`, interrupt context) memsets / re-arms a 512-byte buffer `0x24009710`
+  and calls `0x080446da(mgr, buf, 0x200, 0)`, which copies the packet into one of 4 slots (stride 0x300, base `mgr+0x5070`,
+  index `mgr+0x5c74`) and bumps the write index; then `0x080467cc` re-arms the endpoint. [Certain]
+- The render drains those slots each block: `0x08044844` (called at `0x0804cb4e`, the top of the poll block) runs
+  `0x08044708` over each slot, which converts 4-byte USB-MIDI event packets (CIN in the high nibble of byte 0) into the same
+  5-byte messages and puts them in the software queue (`mgr+0x4b60` read idx, `mgr+0x4b64` write idx, 5-byte entries at
+  `mgr+0x4b68..`), which `0x0804495e` polls last. So USB input is also block-quantised, and it arrives packet-wise (a 512-byte
+  buffer can hold many events). [Certain]
+- USB output is the mirror: `0x08044ad8` -> `0x08044896` converts queued messages into USB packets (CIN 0x9 = note on, ...).
+- The 512-byte buffer size suggests a high-speed bulk endpoint (OTG_HS), so USB arrival jitter depends on the host's schedule,
+  not on byte timing. [Guessing]
+
+## Interrupt priorities (step 1b)
+- `HAL_NVIC_SetPriority` is `0x08078bc8` (args irq, preempt, sub). Its callers set: SysTick / PendSV = 15, OTG_FS (irq 101)
+  = 7, several DMA / SAI-type irqs = 5..9, 0x58 / 0x5a (irq 88 / 90) = 14. No call for irq 71 (USART6) or irq 52 (UART4). So
+  USART6 stays at the reset priority 0 (the highest) unless something writes `NVIC_IPR` directly. [Likely]
+- Consequence: the USART6 ISR preempts everything, including audio DMA handlers. Any code we add to the RxCplt callback
+  runs at top priority at up to one byte per 320 us, so it must stay tiny (tens of cycles) and never block. [Certain on the
+  consequence, Likely on the priority]
+- Only USART6 is initialised (`0x08044da0`, called once from `0x08044264`: 31250 baud). The manager and the vector table
+  also carry a second UART path (UART4, irq 52, handle `0x240099a0`), but I found no code that initialises it: it looks like
+  dead framework code, not a second physical port. [Likely]
+
 ## Not found yet
-- USART6 NVIC priority (no `HAL_NVIC_SetPriority(71, ..)` call found by the `movs r0,#0x47` pattern; only enable / disable
-  at `0x08044dc4`, `0x08044ed8`, `0x08044ef0`). If it is left at reset value 0 it outranks everything, including SysTick.
-  Check `HAL_UART_MspInit` and the SCB/NVIC init.
+- Whether any direct write to `NVIC_IPR` (0xE000E400) gives USART6 a different priority (HAL call not found).
 - What the 64-bit value at the start of the sequencer object is (confirm it is the audio sample counter).
 - Whether the clock-in path can be smoothed by the stock code (does `0x08070304` low-pass the tick interval?).
+- Which USB IRQ number this is (OTG_HS vs OTG_FS) and its real packet cadence.
 - SD / FatFs API (step 2).
