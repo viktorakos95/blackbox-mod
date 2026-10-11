@@ -14,12 +14,13 @@ trigger2midi (viktorakos95/trigger2midi) has the Max patch the detector was port
   `out/<names joined by +>/BLACKBOX.bin`. Tests: `test_t2m.py`, `test_t2m_bb.py`, `test_t2m_page.py`, `test_looper.py`,
   `test_looper_v4.py`, `test_samplr.py` (all passed at the last commit).
 
-## Trigger2MIDI: state (commits 51dc954, d890c5a, 91dac44; notes in docs/t2m-notes.md)
+## Trigger2MIDI: state (notes in docs/t2m-notes.md)
 - `t2m_ref.py` = the gen~ codebox transcribed literally; `src/t2m.c` = the port; `test_t2m.py` requires identical MIDI
   (1,372 messages, host and Cortex-M7 builds, planted bugs are caught).
 - `src/t2m_bb.c`: memory from the stock allocator at boot, detectors run from `looper_in` every audio block, MIDI sent with the
   stock `FUN_08044a0e(mgr=0x24002e88, msg, uart, usb)` (queues flushed by the render in the same block).
-- `src/t2m_page.c`: the TRIG tab (sixth footer tab of the Looper page).
+- `src/t2m_page.c`: the TRIG page = third page of the SONG button (SAMPLR, TRIG, stock song), sheets HITS / DETECT / OUT; pad target
+  (experimental) with LEARN via `src/t2m_thunk.S`. See docs/t2m-notes.md (incl. the corrected latency numbers).
 - NOT yet on hardware. The user flashes `out/deliver/BLACKBOX.bin` and reports: hit feel, missed / doubled hits, velocities,
   knob speed (40 counts a step is a guess), TRS / USB output.
 - Open: settings are lost at power-off (need the preset save / load hooks); MIDI learn in needs MIDI-in work.

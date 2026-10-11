@@ -1,8 +1,8 @@
-"""The TRIG tab (src/t2m_page.c inside src/looper_page.c) under Unicorn, on the patched image.
+"""The TRIG page (src/t2m_page.c inside src/looper_page.c, third page of the SONG button) under Unicorn, on the patched image.
 
 Uses test_looper.py's setup (the fake pool, the mixer view with the real 256 x 224 grid, the drawing stubs) by running
-that file up to its first page draw, then: the TRIG tab from the footer, the page's switches, rows and knobs, the
-redraw signature, and a PNG of the page (out/t2m_test/trig_page.png, colours from the firmware's palette).
+that file up to its first page draw, then: the SONG button's three pages, the footer's sheets, the page's switches, rows
+and knobs, LEARN, the redraw signature, and a PNG of each sheet (out/t2m_test/trig_*.png, colours from the firmware's palette).
 
 python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper cave && python3 test_t2m_page.py
 """
@@ -26,21 +26,23 @@ def check(label, cond, detail=""):
     fails += not cond
 
 
-# struct offsets from the header (same layout on the host)
+FIELDS = ["on", "port", "last_vel", "last_note", "hits", "peak", "blocks", "hit_blk", "pad_on", "pad_note", "learn", "pad_id",
+          "pad_sent", "hist_n", "hist", "ui", "p"]
 os.makedirs("out/t2m_test", exist_ok=True)
 open("out/t2m_test/off2.c", "w").write(
-    '#include <stdio.h>\n#include <stddef.h>\n#include "../../src/t2m_bb.h"\nint main(void){printf("%zu %zu %zu %zu %zu '
-    '%zu %zu %zu %zu %zu %zu %zu %zu %zu\\n", offsetof(struct t2m_mem, on), offsetof(struct t2m_mem, port), '
-    'offsetof(struct t2m_mem, ui), offsetof(struct t2m_mem, p), sizeof(t2m_params), offsetof(t2m_params, note), '
-    'offsetof(t2m_params, note_on), offsetof(t2m_params, vel_mode), offsetof(t2m_params, vel_fixed), '
-    'offsetof(t2m_params, cc_on), offsetof(t2m_params, cc_num), offsetof(t2m_params, sens), '
-    'offsetof(struct t2m_mem, hits), offsetof(struct t2m_mem, peak));}\n')
+    '#include <stdio.h>\n#include <stddef.h>\n#include "../../src/t2m_bb.h"\nint main(void){\n'
+    + "".join(f'printf("{f} %zu\\n", offsetof(struct t2m_mem, {f}));\n' for f in FIELDS)
+    + 'printf("PSIZE %zu\\n", sizeof(t2m_params));\n'
+    + "".join(f'printf("p_{f} %zu\\n", offsetof(t2m_params, {f}));\n' for f in
+            ("sens", "note", "note_on", "vel_mode", "vel_fixed", "cc_on", "cc_num", "len_mode", "len_ms"))
+    + "}\n")
 subprocess.run(["gcc", "-o", "out/t2m_test/off2", "out/t2m_test/off2.c"], check=True)
-(O_ON, O_PORT, O_UI, O_P, PSIZE, OP_NOTE, OP_NOTE_ON, OP_VMODE, OP_VFIX, OP_CC_ON, OP_CC_NUM, OP_SENS, O_HITS,
- O_PEAK) = map(int, subprocess.run(["out/t2m_test/off2"], capture_output=True, text=True, check=True).stdout.split())
+O = {l.split()[0]: int(l.split()[1]) for l in
+     subprocess.run(["out/t2m_test/off2"], capture_output=True, text=True, check=True).stdout.splitlines()}
+PSIZE = O["PSIZE"]
 
 # memory for Trigger2MIDI: the allocator stubbed (the looper test's boot ran with the real one: no memory)
-MEM = 0x30030000
+MEM, ENGINE_PAD = 0x30030000, 0x2400A9C0
 e.stub(0x080443F0, fn=lambda: e.uc.reg_write(A.UC_ARM_REG_R0, 3 << 20))
 e.stub(0x08044404, fn=lambda: e.uc.reg_write(A.UC_ARM_REG_R0, MEM))
 e.call("t2m_boot")
@@ -48,13 +50,18 @@ check("Trigger2MIDI has its memory", e.r32(0x38800984) == MEM)
 
 
 def p8(k, off):
-    return e.r8(MEM + O_P + k * PSIZE + off)
+    return e.r8(MEM + O["p"] + k * PSIZE + off)
 
 
 def touch(kind, x_rel, d):
     """As test_looper.py: fill-space point x = 3 + x_rel, y = 224 - d."""
     e.uc.mem_write(PTA, struct.pack("<2i", 3 + x_rel, 224 - d))
     e.call({"down": "solo_touch_down", "move": "solo_touch_move", "up": "solo_touch_up"}[kind], VIEW, PTA, 0)
+
+
+def tap(x, d):
+    touch("down", x, d)
+    touch("up", x, d)
 
 
 MSG = 0x2403A000
@@ -67,103 +74,36 @@ def knob(i, counts):
     e.call("looper_view_msg", VIEW, MSG)
 
 
-# ---- the TRIG tab: sixth button of the footer (x 3 + 5 x 36 = 183 .. 217, footer below d = 209)
-f = draw(0)
-check("the footer has a sixth tab", any(x[0] == 3 + 3 + 5 * 36 and x[2] == 34 and x[3] == 1 for x in f), [x for x in f if x[3] == 1][:4])
-touch("down", 190, 216)
-touch("up", 190, 216)
-check("tapping it opens the TRIG tab", e.r8(PAGE + 76) == 5, e.r8(PAGE + 76))
+def sig():
+    e.call("t2m_page_sig")
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+
+
+# ---- the SONG button: SAMPLR, TRIG, the stock song screen
+e.uc.mem_write(APP + 0x8CA4, b"\x2f")
+screens.clear()
+e.call("solo_song_pressed", APP, 0, 0, 0)
+check("SONG: the SAMPLR page first", screens == [] and e.r8(PAGE + 76) == 4, (screens, e.r8(PAGE + 76)))
+e.call("solo_song_pressed", APP, 0, 0, 0)
+check("SONG again: the TRIG page, no screen change", screens == [] and e.r8(PAGE + 76) == 5, (screens, e.r8(PAGE + 76)))
 e.call("looper_page_tab")
-check("looper_page_tab reports it as tab 6", e.uc.reg_read(A.UC_ARM_REG_R0) == 6)
-f = draw(0)
-check("TRIG page: everything inside the screen (x 3..317, y 0..224)",
-      all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f) and
-      all(3 <= px < 317 and 0 <= py < 224 for px, py, _ in pixels), [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317)][:3])
-check("TRIG page: no looper track columns (no 71 px record boxes)", not any(x[2] == 71 for x in f))
-check("TRIG page: text drawn", len(pixels) > 2000, len(pixels))
+check("looper_page_tab reports TRIG as 6", e.uc.reg_read(A.UC_ARM_REG_R0) == 6)
+e.call("solo_mix_pressed", APP, 0, 0, 0)
+check("MIX on the TRIG page goes to the Looper's MAIN tab", screens == [] and e.r8(PAGE + 76) == 0, (screens, e.r8(PAGE + 76)))
+e.call("looper_page_goto", VIEW, 5)
+e.call("solo_song_pressed", APP, 0, 0, 0)
+check("SONG from SAMPLR again TRIG, then once more the stock song screen (0x2d)", e.r8(PAGE + 76) == 5, e.r8(PAGE + 76))
+e.call("solo_song_pressed", APP, 0, 0, 0)
+check("... the stock song screen", screens == [0x2D], screens)
+
+e.call("looper_page_goto", VIEW, 6)
+check("the TRIG page is up (mode 5)", e.r8(PAGE + 76) == 5)
 
 
-# ---- switches (row at d 18 .. 34): IN L 4..42, IN R 46..84, ON 104..144, TRS 162..200, USB 204..242
-def tap(x, d):
-    touch("down", x, d)
-    touch("up", x, d)
-
-
-tap(60, 26)
-check("IN R: the page shows input R", e.r8(MEM + O_UI) == 1)
-tap(120, 26)
-check("ON: switches input R on", e.r8(MEM + O_ON + 1) == 1)
-tap(180, 26)
-check("TRS: input R's TRS output off (USB stays)", e.r8(MEM + O_PORT + 1) == 2, e.r8(MEM + O_PORT + 1))
-tap(180, 26)
-check("TRS again: back on", e.r8(MEM + O_PORT + 1) == 3)
-tap(20, 26)
-check("IN L: back to input L, R keeps its settings", e.r8(MEM + O_UI) == 0 and e.r8(MEM + O_ON + 1) == 1)
-
-# ---- rows (d from 54, 34 px each): tap the NOTE row, then the knobs (knob n = value n of the row)
-tap(150, 54 + 2 * 34 + 10)
-check("tapping the NOTE row hands it to the knobs", e.r8(MEM + O_UI + 1) == 2, e.r8(MEM + O_UI + 1))
-knob(0, 40)
-check("knob 1, one step (40 counts) up: NOTE 38 -> 39", p8(0, OP_NOTE) == 39, p8(0, OP_NOTE))
-knob(0, 20)
-knob(0, 20)
-check("two half steps make a step: 40", p8(0, OP_NOTE) == 40, p8(0, OP_NOTE))
-knob(0, -40 * 60)
-check("down past 0: NOTE OFF (no note)", p8(0, OP_NOTE_ON) == 0, (p8(0, OP_NOTE_ON), p8(0, OP_NOTE)))
-knob(0, 40 * 39)
-check("back up: note on again at 38", p8(0, OP_NOTE_ON) == 1 and p8(0, OP_NOTE) == 38, (p8(0, OP_NOTE_ON), p8(0, OP_NOTE)))
-knob(1, 40 * 100)
-check("knob 2: VEL from DYN to fixed 100", p8(0, OP_VMODE) == 1 and p8(0, OP_VFIX) == 100, (p8(0, OP_VMODE), p8(0, OP_VFIX)))
-knob(1, -40 * 200)
-check("... and back down to DYN", p8(0, OP_VMODE) == 0)
-tap(150, 54 + 3 * 34 + 10)
-knob(0, 40 * 75)
-check("CC row, knob 1: CC OFF -> CC 74", p8(0, OP_CC_ON) == 1 and p8(0, OP_CC_NUM) == 74, (p8(0, OP_CC_ON), p8(0, OP_CC_NUM)))
-tap(150, 54 + 10)
-knob(0, 40 * 20)
-sens = struct.unpack("<f", e.uc.mem_read(MEM + O_P + OP_SENS, 4))[0]
-check(f"DETECT row, knob 1: SENS 2.00 -> {sens:.2f} (0.1 steps above 2)", abs(sens - 4.0) < 1e-4, sens)
-knob(0, -40 * 500)
-sens = struct.unpack("<f", e.uc.mem_read(MEM + O_P + OP_SENS, 4))[0]
-check("SENS stops at 0.1", abs(sens - 0.1) < 1e-6, sens)
-knob(0, 40 * 38)
-check("the input R settings did not move", p8(1, OP_NOTE) == 38 and p8(1, OP_CC_ON) == 0)
-check("knobs on the TRIG page never move the looper's faders", abs(tr(0, O_LEVEL, "f") - 1.0) < 1e-6, tr(0, O_LEVEL, "f"))
-
-# ---- redraw signature follows hits and the meter
-e.call("t2m_page_sig")
-s0 = e.uc.reg_read(A.UC_ARM_REG_R0)
-e.w32(MEM + O_HITS, 5)
-e.call("t2m_page_sig")
-check("the page redraws when a hit is counted", e.uc.reg_read(A.UC_ARM_REG_R0) != s0)
-
-# ---- a picture: level and a few hits, so the meter and top bar show something
-e.uc.mem_write(MEM + O_PEAK, struct.pack("<f", 0.3))
-e.w32(MEM + O_HITS, 128)
-f = draw(0)
+# ---- a picture of the screen
 fw = open("firmware/BLACKBOX-3.1.9.bin", "rb").read()
 pal = [struct.unpack_from("<I", fw, 0x080F1D80 - 0x08040000 + 4 * i)[0] for i in range(48)]
-W, H = 320, 224
-img = bytearray(b"\x00" * (W * H * 3))
-
-
-def put(x, y, c):
-    if 0 <= x < W and 0 <= y < H:
-        a = pal[c] if c < len(pal) else 0xFFFF00FF
-        o = ((H - 1 - y) * W + x) * 3                    # fill space is y up
-        img[o:o + 3] = bytes(((a >> 16) & 255, (a >> 8) & 255, a & 255))
-
-
-for x, y, w, h, c, _ in f:
-    for yy in range(y, y + h):
-        for xx in range(x, x + w):
-            put(xx, yy, c)
-for x, y, c in pixels:
-    put(x, y, c)
-raw = b"".join(b"\x00" + bytes(img[r * W * 3:(r + 1) * W * 3]) for r in range(H))
-S = 3                                                     # scaled up for a phone screen
-big = b"".join(b"\x00" + b"".join(bytes(img[(r // S * W + c // S) * 3:(r // S * W + c // S) * 3 + 3]) for c in range(W * S))
-               for r in range(H * S))
+W, H, S = 320, 224, 3
 
 
 def png(path, w, h, data):
@@ -173,8 +113,169 @@ def png(path, w, h, data):
                            chunk(b"IDAT", zlib.compress(data, 9)) + chunk(b"IEND", b""))
 
 
-png("out/t2m_test/trig_page.png", W * S, H * S, big)
-print("wrote out/t2m_test/trig_page.png")
+def picture(name):
+    f = draw(0)
+    img = bytearray(b"\x00" * (W * H * 3))
+
+    def put(x, y, c):
+        if 0 <= x < W and 0 <= y < H:
+            a = pal[c] if c < len(pal) else 0xFFFF00FF
+            o = ((H - 1 - y) * W + x) * 3                    # fill space is y up
+            img[o:o + 3] = bytes(((a >> 16) & 255, (a >> 8) & 255, a & 255))
+    for x, y, w, h, c, _ in f:
+        for yy in range(y, y + h):
+            for xx in range(x, x + w):
+                put(xx, yy, c)
+    for x, y, c in pixels:
+        put(x, y, c)
+    big = b"".join(b"\x00" + b"".join(bytes(img[(r // S * W + c // S) * 3:(r // S * W + c // S) * 3 + 3]) for c in range(W * S))
+                   for r in range(H * S))
+    png(f"out/t2m_test/trig_{name}.png", W * S, H * S, big)
+    return f
+
+
+def inside(f):
+    return (all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f) and
+            all(3 <= px < 317 and 0 <= py < 224 for px, py, _ in pixels))
+
+
+# ---- footer: three sheets
+f = draw(0)
+check("TRIG page: no looper tab strip, no looper track columns", not any(x[2] == 71 for x in f) and not any(x[2] == 34 and x[3] == 1 for x in f))
+check("footer: the three sheets (HITS, DETECT, OUT), 58 px wide at 60 px pitch",
+      all(any(x[0] == 3 + 3 + 60 * i and x[2] == 58 and x[3] == 1 for x in f) for i in range(3)), [x for x in f if x[3] == 1 and x[2] == 58][:4])
+check("TRIG page: inside the screen, text drawn", inside(f) and len(pixels) > 1500, len(pixels))
+check("HITS is the first sheet", e.r8(MEM + O["ui"] + 2) == 0)
+
+# ---- the HITS sheet: pads, meters, history
+# input L: five hits over the last 3.7 s (ages in audio blocks of 5.33 ms), the last one 5 blocks ago; input R: two
+e.w32(MEM + O["blocks"], 100000)
+for k, hits in ((0, [(700, 40, 38), (520, 70, 38), (360, 100, 38), (200, 127, 38), (5, 90, 38)]), (1, [(600, 55, 45), (150, 120, 45)])):
+    for i, (age, vel, note) in enumerate(hits):
+        e.uc.mem_write(MEM + O["hist"] + (k * 24 + i) * 8, struct.pack("<IBBxx", 100000 - age, vel, note))
+    e.w32(MEM + O["hits"] + 4 * k, 120 + len(hits))
+    e.w32(MEM + O["hit_blk"] + 4 * k, 100000 - hits[-1][0])
+    e.uc.mem_write(MEM + O["last_vel"] + k, bytes([hits[-1][1]]))
+    e.uc.mem_write(MEM + O["last_note"] + k, bytes([hits[-1][2]]))
+e.uc.mem_write(MEM + O["on"] + 1, b"\x01")
+e.uc.mem_write(MEM + O["peak"], struct.pack("<ff", 0.35, 0.02))
+f = picture("hits")
+check("HITS sheet: inside the screen", inside(f))
+check("HITS sheet: input L's pad is lit in the colour of velocity 90 (yellow, 0x14), R's is not",
+      any(x[4] == 0x14 and x[2] > 100 and x[3] > 40 for x in f) and not any(x[4] in (0x0B, 0x06) and x[2] > 100 and x[3] > 40 for x in f))
+check("HITS sheet: the seven hits of the last 4 s are bars (3 px wide), taller for harder hits",
+      sum(1 for x in f if x[2] == 3 and x[4] in (0x1B, 0x14, 0x0F)) == 7 and
+      sorted(x[3] for x in f if x[2] == 3 and x[4] == 0x1B)[0] < sorted(x[3] for x in f if x[2] == 3 and x[4] == 0x1B)[-1],
+      [(x[3], x[4]) for x in f if x[2] == 3])
+check("HITS sheet: the newest hit's bar is white (still lit)", any(x[2] == 3 and x[4] == 0x0F for x in f))
+tap(200, 60)
+check("HITS: a tap on R's pad shows input R", e.r8(MEM + O["ui"]) == 1)
+tap(60, 26)
+check("IN R / ... the switch row works on this sheet", e.r8(MEM + O["ui"]) == 1)
+tap(20, 26)
+knob(0, 40 * 20)
+sens = struct.unpack("<f", e.uc.mem_read(MEM + O["p"], 4))[0]
+check(f"HITS: knob 1 turns SENS of the input shown: 2.00 -> {sens:.2f}", abs(sens - 4.0) < 1e-4, sens)
+knob(1, 40 * 4)
+thr = struct.unpack("<f", e.uc.mem_read(MEM + O["p"] + 4, 4))[0]
+check(f"HITS: knob 2 turns THRESH: 2.00 -> {thr:.2f}", abs(thr - 3.0) < 1e-4, thr)
+s_now = sig()
+e.w32(MEM + O["blocks"], 100016)
+check("HITS: the page redraws as the history scrolls while it holds a recent hit", sig() != s_now)
+e.w32(MEM + O["blocks"], 200000)
+s_now = sig()
+e.w32(MEM + O["blocks"], 200016)
+check("HITS: ... and stops redrawing once the last 4 s are empty", sig() == s_now)
+
+# ---- the sheets of the footer
+tap(3 + 60 + 10, 216)
+check("footer: DETECT", e.r8(MEM + O["ui"] + 2) == 1)
+f = picture("detect")
+check("DETECT sheet: inside the screen", inside(f))
+touch("down", 3 + 120 + 10, 216)
+touch("up", 3 + 120 + 10, 216)
+check("footer: OUT", e.r8(MEM + O["ui"] + 2) == 2)
+f = picture("out")
+check("OUT sheet: inside the screen", inside(f))
+
+
+# ---- switches (row at d 18 .. 34): IN L 4..42, IN R 46..84, ON 104..144, TRS 162..200, USB 204..242
+tap(60, 26)
+check("IN R: the page shows input R", e.r8(MEM + O["ui"]) == 1)
+tap(120, 26)
+check("ON: switches input R off (it was on)", e.r8(MEM + O["on"] + 1) == 0)
+tap(120, 26)
+tap(180, 26)
+check("TRS: input R's TRS output off (USB stays)", e.r8(MEM + O["port"] + 1) == 2, e.r8(MEM + O["port"] + 1))
+tap(180, 26)
+tap(20, 26)
+check("IN L: back to input L", e.r8(MEM + O["ui"]) == 0)
+
+# ---- OUT rows (d 40, 80, 120; 40 px each): NOTE VEL LEN CHAN / CC CC VAL / PAD PAD NOTE LEARN
+tap(150, 40 + 10)
+check("tapping the NOTE row hands it to the knobs", e.r8(MEM + O["ui"] + 1) == 0)
+knob(0, 40)
+check("knob 1, one step up: NOTE 38 -> 39", p8(0, O["p_note"]) == 39, p8(0, O["p_note"]))
+knob(0, -40 * 60)
+check("down past 0: NOTE OFF", p8(0, O["p_note_on"]) == 0)
+knob(0, 40 * 39)
+check("back up: note on again at 38", p8(0, O["p_note_on"]) == 1 and p8(0, O["p_note"]) == 38)
+knob(1, 40 * 100)
+check("knob 2: VEL from DYN to fixed 100", p8(0, O["p_vel_mode"]) == 1 and p8(0, O["p_vel_fixed"]) == 100)
+knob(1, -40 * 200)
+check("... and back down to DYN", p8(0, O["p_vel_mode"]) == 0)
+knob(2, 40 * 3)
+check("knob 3: LEN from DYN: the first step lands on 5 ms", p8(0, O["p_len_mode"]) == 1 and e.r16(MEM + O["p"] + O["p_len_ms"]) == 5, e.r16(MEM + O["p"] + O["p_len_ms"]))
+knob(2, 40 * 2)
+check("... then 5 ms a step: 15 ms", e.r16(MEM + O["p"] + O["p_len_ms"]) == 15, e.r16(MEM + O["p"] + O["p_len_ms"]))
+knob(2, -40 * 5)
+check("... and back to DYN", p8(0, O["p_len_mode"]) == 0)
+tap(150, 80 + 10)
+knob(0, 40 * 75)
+check("CC row, knob 1: CC OFF -> CC 74", p8(0, O["p_cc_on"]) == 1 and p8(0, O["p_cc_num"]) == 74)
+knob(0, -40 * 200)
+check("... and OFF again", p8(0, O["p_cc_on"]) == 0)
+
+# PAD row (d 120): PAD, PAD NOTE, LEARN
+tap(60, 120 + 10)
+knob(0, 40)
+check("PAD with nothing learned: stays off", e.r8(MEM + O["pad_on"]) == 0)
+knob(1, 40 * 2)
+check("PAD NOTE: 60 -> 62", e.r8(MEM + O["pad_note"]) == 62, e.r8(MEM + O["pad_note"]))
+tap(170, 120 + 10)
+check("LEARN: a tap arms it for the input shown", e.r8(MEM + O["learn"]) == 1)
+f = picture("learn")
+check("LEARN armed: the cell says HIT A PAD (text drawn, page inside the screen)", inside(f))
+tap(170, 120 + 10)
+check("a second tap disarms it", e.r8(MEM + O["learn"]) == 0)
+tap(170, 120 + 10)
+touch("down", 3 + 60 + 10, 216)
+touch("up", 3 + 60 + 10, 216)
+check("changing the sheet disarms LEARN", e.r8(MEM + O["learn"]) == 0)
+touch("down", 3 + 120 + 10, 216)
+touch("up", 3 + 120 + 10, 216)
+tap(170, 120 + 10)
+e.call("t2m_learn", ENGINE_PAD, 0x00020105, 64, 0)
+check("a stock pad hit while armed: the pad is learned (id, note), the target is on, disarmed",
+      e.r32(MEM + O["pad_id"]) == 0x00020105 and e.r8(MEM + O["pad_note"]) == 64 and e.r8(MEM + O["pad_on"]) == 1 and e.r8(MEM + O["learn"]) == 0)
+f = picture("out_learned")
+check("... and the OUT sheet shows it", inside(f))
+tap(60, 120 + 10)
+knob(0, -40)
+check("PAD knob down: the target is off, the learned pad kept", e.r8(MEM + O["pad_on"]) == 0 and e.r32(MEM + O["pad_id"]) == 0x00020105)
+knob(0, 40)
+check("PAD knob up: on again (a pad is learned)", e.r8(MEM + O["pad_on"]) == 1)
+check("the input R settings did not move", p8(1, O["p_note"]) == 38 and p8(1, O["p_cc_on"]) == 0 and e.r32(MEM + O["pad_id"] + 4) == 0)
+check("knobs on the TRIG page never move the looper's faders", abs(tr(0, O_LEVEL, "f") - 1.0) < 1e-6, tr(0, O_LEVEL, "f"))
+
+# ---- the signature follows what the page shows
+s0 = sig()
+e.w32(MEM + O["hits"], 5)
+check("the page redraws when a hit is counted", sig() != s0)
+s0 = sig()
+e.uc.mem_write(MEM + O["learn"], b"\x01")
+check("... and when LEARN is armed", sig() != s0)
+e.uc.mem_write(MEM + O["learn"], b"\x00")
 
 print("ALL PASS" if not fails else f"{fails} FAILED")
 sys.exit(1 if fails else 0)

@@ -40,23 +40,42 @@ Same as the patch (not a bug): a hit into a still-ringing note re-sends note-on 
   right manager / flags / block, R silent while off, USB-only routing, note-off when an input is switched off, no
   allocation when memory is short. The looper and SAMPLR tests still pass.
 
-## Done: the TRIG page (step 3)
+## Done: the TRIG page (steps 3 and 4)
 
-- `src/t2m_page.c`: the Looper page's sixth footer tab, TRIG. Top bar: both inputs' hit counts and last velocity.
-  Switch row: IN L / IN R (the input being edited), ON / OFF, TRS and USB (each on or off). Meter: the input after
-  SENS, -48..0 dB, the threshold as a red tick, green for 128 ms after each hit. Four rows of four values; a tap on a
-  row gives it to the four knobs (knob n = the n-th value, the tracks' order): DETECT (SENS THRESH RETRIG MASK), ONSET
-  (SCAN STRICT SPEED CURVE), NOTE (NOTE / OFF, VEL DYN / 1-127, LEN DYN / 5-2000 ms, CHAN), CC (CC OFF / 0-127,
-  CC VAL DYN / 1-127, BLEED, RANGE). 40 knob counts a step.
-- `src/looper_page.c` only hooks it: the tab, the draw / touch / knob dispatch, the redraw signature, and `lp_*`
-  wrappers of its drawing for the TRIG file.
-- `test_t2m_page.py`: test_looper.py's setup, then the tab, switches, rows, knobs, the signature, and a PNG of the
-  page (`out/t2m_test/trig_page.png`).
+- TRIG is the **third page of the SONG button**: SONG -> SAMPLR -> TRIG -> the stock song screen (`solo_song_pressed`); MIX on it goes
+  to the Looper's MAIN. `src/t2m_page.c` draws it; `src/looper_page.c` only hooks it (mode `M_TRIG`, tab 6, footer sheets, hit test,
+  knobs, redraw signature, `lp_*` wrappers). The hardware REC / BACK / STOP / PLAY buttons go to the stock firmware on this page.
+- Footer sheets: **HITS** (two pads that light up on a hit, colour = velocity 50 / 100 split green / yellow / red, note and velocity in
+  them; the input levels with the threshold; the last 4 s of hits per input as bars, height = velocity, newest white; the knobs turn
+  SENS THRESH RETRIG MASK of the input shown), **DETECT** (SENS THRESH RETRIG MASK / SCAN STRICT SPEED CURVE / BLEED RANGE, with
+  the meter), **OUT** (NOTE VEL LEN CHAN / CC CC VAL / PAD PAD NOTE LEARN). Switch row on every sheet: IN L / IN R, ON / OFF, TRS, USB.
+  A tap on a row gives it to the four knobs (pink frame), 40 counts a step. NOTE OFF = no MIDI note, hits still show and still reach a pad.
+- **Pad target (experimental, untested on hardware, off until learned).** `t2m_bb.c` builds the engine's note-on / note-off command
+  (id 0x42 / 0x43, 24 bytes: pad argument at +8, note +0xc, a4 = 0 at +0x10, half 1 at +0x14, velocity half at +0x16) exactly as
+  `FUN_0804c61c` / `FUN_0804c5d4` do, and calls the dispatcher `FUN_080520ec(obj, cmd)` directly (obj = `*(0x2400a9c0 + 0x9a74)`).
+  The stock path queues the command with `FUN_08051738`, a queue only the GUI task may write; the render drains it in the audio task
+  and calls the dispatcher, so calling it from the audio task (the input hook, before the render) has no second writer. Both note
+  commands go to one handler (`0x080521b8`) that forwards to the per-module command queue (`0x0805f460`).
+  Which pad: **LEARN** (OUT sheet): `t2m_thunk.S` replaces the first two instructions of `FUN_0804c61c` with a jump that tells
+  `t2m_learn` the pad argument and note of every stock note-on (pads and Keys screen); while LEARN waits, the next one is stored
+  (the pad argument packs bank << 16 | row << 8 | col as far as the Keys handler shows; we never interpret it, we replay it).
+  Velocity = the hit's (VEL fixed applies), note-off = the hit ending (Dynamic length: the detector's note_active; Fixed: after LEN).
+- `test_t2m_bb.py` checks the dispatched command byte for byte against what the stock builders queue (run in the emulator).
+  NOT checked (needs hardware): that the engine plays the pad when called from the input stage; the velocity range the engine
+  expects (assumed 1-127, the Keys screen test uses 77); whether a pad plays at its own pitch with the note LEARN took.
+
+## Latency (corrected; the first estimate "about 5 ms" left out the scan window)
+- The detector needs the true peak for the velocity. It decides after `max(Scan, 3 x Speed)`: at the patch defaults (Scan 2.0 ms, Speed
+  3.0 ms) that is **9 ms** after the threshold is crossed; Speed 1.0 -> 3 ms, 0.7 -> 2.1 ms, 0.2 -> 0.6 ms (more false triggers).
+- Then up to one audio block (5.33 ms, the whole block must be captured before the task runs), then about 1 ms for 3 MIDI bytes on the
+  jack. A pad target adds nothing: it is started in the same block, before the render.
+- So roughly **10-16 ms at the defaults, 3-9 ms at Speed 1.0**. Not 0 ms. A fixed-velocity "instant" mode (send at the threshold
+  crossing, no peak search) would cut it to block + wire (about 1-6 ms); not built.
 
 ## Next
 
 - Hardware: detection feel, MIDI on TRS and USB, knob speed (40 counts a step is a guess from SAMPLR's envelope).
 - Settings survive only until power-off (like the looper's); saving them needs the preset save / load hooks.
-- Old page note: the patch's controls per input (Sens, Thresh, Retrig, Mask, Scan, Strict, Speed, anti-bleed, Curve, Note out /
+- Old page note (superseded by the TRIG page above): the patch's controls per input (Sens, Thresh, Retrig, Mask, Scan, Strict, Speed, anti-bleed, Curve, Note out /
   note, velocity / CC / length modes, CC number, channel, port), saved in the backup SRAM like the looper's state.
 - Later: MIDI learn (needs MIDI in).
