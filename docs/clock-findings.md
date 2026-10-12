@@ -31,3 +31,8 @@ Measured on hardware by the user (photos of the CLK sheet); the reasoning is min
 - The analog sync-in jack path (not an EXTI interrupt; probably a timer capture or polling): not mapped, not on the sheet.
 - Whether stock accepts our ticks (to drive stock from a filtered clock) - unknown.
 - Transport start on the 1: unverified; depends on the tick-size mismatch above.
+
+## Change made: SEQ_TPB 960 (src/looper.c)
+The looper / SAMPLR grid (looper_grid_cross, looper_grid_exact) now use SEQ_TPB = 960 ticks a beat instead of 3840, the rate measured on
+the unit. The SAMPLR emulator fixtures (test_samplr.py) were rewritten to 960 a beat and fail with 3840. To be checked on hardware:
+the looper / SAMPLR sync lines against the stock beat grid. To undo: set SEQ_TPB back to 3840.0 in src/looper.c.

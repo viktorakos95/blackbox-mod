@@ -38,7 +38,7 @@ typedef void (*player_fn)(uint8_t *seq, const void *clock, int32_t a, int32_t b,
 #define EVENT_SIZE    0x18
 #define EVENT_START   0x04
 #define EVENT_ID      0x0c
-#define GRACE         240        /* ticks (960 per 16th = a 64th): a note placed this close behind the playhead
+#define GRACE         240        /* ticks (960 a beat = a 16th; measured on the unit, docs/clock-findings.md): a note placed this close behind the playhead
                                     still plays, a hair late; his report: notes "close" ahead did not sound */
 
 void bkp_enable(void);
@@ -52,7 +52,7 @@ struct seq_clock {
         const void *seq;
         int64_t now;
     } slot[SLOTS];
-    uint32_t now_lo, now_hi;     /* the sequencer time (ticks, 960 per 16th) the player was last given: SAMPLR's grid lines */
+    uint32_t now_lo, now_hi;     /* the sequencer time (ticks, 960 a beat) the player was last given: SAMPLR's grid lines */
 };
 #define CLK ((volatile struct seq_clock *)0x38800700u)   /* backup SRAM, after comp.c's state */
 #define MAGIC 0x53514331u        /* "SQC1" */
@@ -142,7 +142,7 @@ void seq_del(uint8_t *seq, uint32_t id, unsigned idx)
     fix_index(seq, idx, 0);
 }
 
-/* The sequencer time of the last block, in ticks (960 per 16th, 3840 a beat) - what the note player compares the notes with. */
+/* The sequencer time of the last block, in ticks (960 a beat) - what the note player compares the notes with. */
 double seqfix_now(void)
 {
     return (double)CLK->now_hi * 4294967296.0 + (double)CLK->now_lo;

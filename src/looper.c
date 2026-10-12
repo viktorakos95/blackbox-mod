@@ -68,6 +68,7 @@ void bkp_enable(void);
 void looper_ui_poke(void);
 #include "samplr.h"
 double seqfix_now(void);
+#define SEQ_TPB 960.0     /* sequencer ticks a beat: measured on the unit (1924 ticks a second at 120 bpm, 2880 at 180), exact whatever the tempo */
 void solo_boot_reset(void);
 void looper_page_boot(void);
 
@@ -1959,9 +1960,9 @@ int looper_grid_cross(float beats, double prev, int n, float sph)
         return -1;
     if (!S->cur_ok)
         return looper_grid_offset(beats, sph, n);
-    double g = 3840.0 * (double)beats, cur = seqfix_now(), adv = cur - prev;   /* (exact: a beat is 3840 ticks, whatever the tempo) */
+    double g = SEQ_TPB * (double)beats, cur = seqfix_now(), adv = cur - prev;   /* (exact: a beat is SEQ_TPB ticks, whatever the tempo) */
     if (!(adv > 0.0 && adv < 4.0 * g))                           /* no usable previous block (the first one, a restart, a jump): the measured speed */
-        adv = (double)n * 3840.0 / (double)beat_frames();
+        adv = (double)n * SEQ_TPB / (double)beat_frames();
     if (!(adv > 0.0))
         return -1;
     double ph = dmod(cur, g);
@@ -1969,7 +1970,7 @@ int looper_grid_cross(float beats, double prev, int n, float sph)
     return (ph > 0.0 ? ph <= adv : g <= adv) ? 0 : -1;
 }
 
-/* The same grid at its exact frame (what a sample-accurate click would give): frames from the start of this block to the next line of the sequencer time, 3840 ticks a beat
+/* The same grid at its exact frame (what a sample-accurate click would give): frames from the start of this block to the next line of the sequencer time, SEQ_TPB ticks a beat
  * and beat_frames() frames a beat, or -1. Without a clock the free-running grid. */
 int looper_grid_exact(float beats, float sph, int n)
 {
@@ -1977,10 +1978,10 @@ int looper_grid_exact(float beats, float sph, int n)
         return -1;
     if (!S->cur_ok)
         return looper_grid_offset(beats, sph, n);
-    double g = 3840.0 * (double)beats, ph = dmod(seqfix_now(), g);
+    double g = SEQ_TPB * (double)beats, ph = dmod(seqfix_now(), g);
     if (ph < 1e-6)
         return 0;
-    double fr = (g - ph) * (double)beat_frames() * (1.0 / 3840.0);
+    double fr = (g - ph) * (double)beat_frames() * (1.0 / SEQ_TPB);
     return fr < (double)n ? (int)fr : -1;
 }
 
