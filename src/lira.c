@@ -39,7 +39,7 @@
 #define PT_BITS       44000.0f   /* PT2399 memory */
 #define TD_MIN        0.031f     /* s, PT2399 at 22 MHz */
 #define MOD_MAX       0.45f      /* (assumed) maximum clock modulation, relative */
-#define ADM_MIN       0.0015f    /* (assumed) adaptive delta codec step limits */
+#define ADM_MIN       0.0006f    /* (assumed) adaptive delta codec step limits */
 #define ADM_MAX       0.25f
 
 static inline float fabs_(float x) { return x < 0.f ? -x : x; }
@@ -401,7 +401,11 @@ static inline float line_run(lira_line *ln, float in, float mv, float k_ratio, f
             r += ln->len;
         raw = ln->buf[r];                                 /* zero-order hold: the converter's staircase */
     }
-    float y = lop(&ln->out1, raw, c[2]);
+    /* the output filter follows the clock: a slowed PT2399 is dark, which is what keeps its steps from sounding as hiss */
+    float oc = ratio >= 1.f ? c[2] : c[2] * fmax_(ratio, 0.3f);
+    float y = lop(&ln->out1, raw, oc);
+    if (ratio < 1.f)
+        y = lop(&ln->out2, y, oc);
     lop(&ln->self_lp, y, c[3]);
     return y;
 }
@@ -531,7 +535,7 @@ void lira_process(lira_t *l, float *out, int n)
 
             /* dual PT2399 delay with one shared feedback loop */
             float u = mix * 0.166667f;
-            float lin = u + rnd(l) * 0.0008f + fbl * l->loop_lp, wet = 0.f;   /* the noise is the delay's (converters, clock) */
+            float lin = u + rnd(l) * 0.0002f + fbl * l->loop_lp, wet = 0.f;   /* the noise is the delay's (converters, clock) */
             for (int i = 0; i < 2; i++) {
                 lira_line *ln = &l->line[i];
                 float mv = delmod == 0 ? ln->self_lp * 0.5f : lfom;

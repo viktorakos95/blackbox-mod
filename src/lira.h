@@ -66,7 +66,7 @@ typedef struct {
     int len, w;
     float acc, est, stp;
     int pbit;
-    float hp_x, in1, in2, out1, self_lp;
+    float hp_x, in1, in2, out1, out2, self_lp;
     lira_ramp time, mod;                  /* seconds at the clock set by the knob; relative clock modulation depth */
 } lira_line;
 
