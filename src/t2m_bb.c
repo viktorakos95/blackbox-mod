@@ -86,7 +86,7 @@ void t2m_boot(void)
     R->magic = MAGIC;
 }
 
-/* From looper_clock (src/looper.c): the stock sequencer's position, once per audio block while the transport plays. */
+/* From seq_play (src/seqfix.c): the stock sequencer's musical time, once per sequence per audio block while it plays. */
 void t2m_seq(uint32_t lo, int32_t hi)
 {
     struct t2m_mem *m = t2m_mem();

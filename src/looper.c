@@ -754,7 +754,6 @@ void looper_in(void *obj, float **bufs, int frames)
 /* Called by the sequencer's note player (seqfix.c): once a block, while the transport plays. */
 void looper_clock(uint32_t lo, int32_t hi)
 {
-    t2m_seq(lo, hi);                              /* the clock monitor's transport readout (src/clkmon.c) */
     if (S->magic != MAGIC)
         return;
     uint32_t t = S->ticks;

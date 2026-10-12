@@ -289,6 +289,7 @@ for k in range(1, 801):                                 # internal clock, 120 BP
     t += BLK_CYC
     block(t)
     seq(int(20.48 * k))
+    seq(int(20.48 * k) - 5000)                          # the player runs once per sequence: a second call in the block is ignored
 a = xp()
 check(f"sample rate measured against the core clock: {a['fs']:.0f} Hz", close(a["fs"], 48000, 30), a["fs"])
 check(f"internal clock: the position gives {a['bpm']:.2f} BPM", close(a["bpm"], 120.0, 0.1), a["bpm"])
@@ -319,6 +320,15 @@ c_ = xp()
 check(f"following 120 BPM: the position moves in steps ({c_['dt_min']}-{c_['dt_max']} ticks a block)", (c_["dt_min"], c_["dt_max"]) == (0, 160), c_)
 check(f"... and strays {c_['res_min']:.0f} .. {c_['res_max']:.0f} us off the line (a staircase is far from a line)", c_["res_max"] - c_["res_min"] > 1500, c_)
 check(f"... and the tempo from a 32-block window of it is only roughly right ({c_['bpm']:.1f} BPM)", close(c_["bpm"], 120.0, 5.0), c_["bpm"])
+
+# ---- wiring: seq_play (src/seqfix.c) hands the monitor the musical time from the stock clock conversion, not the clock position
+got = []
+e.stub(e.sym["t2m_seq"], fn=lambda: got.append((e.arg(0), e.arg(1))))
+e.stub(0x08069C94, fn=lambda: e.uc.mem_write(e.arg(0), struct.pack("<q", 123456)))    # clock position -> musical time
+e.stub(0x0805D1D8)                                                                        # the player itself
+e.uc.mem_write(0x30010000, struct.pack("<q", 7_000_000))                                  # the clock: a sample position
+e.call("seq_play", 0x30011000, 0x30010000, 128, 0, 0, count=2_000_000)
+check("seq_play passes the musical time (960 per 16th) to the monitor, not the sample position", got == [(123456, 0)], got)
 
 print(f"{fails} failure(s)")
 raise SystemExit(1 if fails else 0)

@@ -271,7 +271,9 @@ static float fs_now(const struct clkmon *c)
     return cyc > 0.f ? (float)c->fs_samples * c->mhz * 1e6f / cyc : 0.f;
 }
 
-/* The stock sequencer's position at this block: `lo` is the low word of its time in ticks (960 per 16th). A straight line is
+/* The stock sequencer's position at this block (seq_play in src/seqfix.c, after the stock clock-to-time conversion): `lo` is
+ * the low word of its musical time in ticks (960 per 16th). The player is called once per sequence; only the first call of a
+ * block counts. A straight line is
  * fitted through the last CLK_XPW calls (x = frames of audio, y = ticks); the new point is judged against the line of the
  * ones before it, in microseconds of audio time. A plugin host's position would sit on that line to the frame. */
 void clkmon_seq(struct clkmon *c, uint32_t lo, int32_t hi)
@@ -279,6 +281,8 @@ void clkmon_seq(struct clkmon *c, uint32_t lo, int32_t hi)
     (void)hi;
     struct clk_xp *x = &c->xp;
     uint32_t s = c->samples;
+    if (x->have && s == x->last_s)
+        return;                          /* the player runs once per sequence: take the block's first call only */
     if (x->have) {
         uint32_t ds = s - x->last_s;
         int32_t dt = (int32_t)(lo - x->last_t);
