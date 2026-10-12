@@ -169,12 +169,8 @@ static void gen_setup(lira_t *l, lira_gen *g)
     g->vib_ph = urand(l, 0.f, 1.f);
 }
 
-/* Frequency modulation is additive: the modulator pulls current through a resistor into the timing node, so the deviation
-   in Hz is proportional to the modulation and to the voice's own timing capacitor (DIY docs): a voice tuned high deviates
-   by the same Hz as when tuned low, which is why it is less sensitive. The table is the deviation at full modulation,
-   per unit of modulation: the geometric middle of each voice's TUNE range. When the sum goes below zero the oscillator
-   stalls (a frequency cannot be negative). */
-static const float FM_HZ[8] = {75.6f, 75.6f, 233.1f, 233.1f, 421.8f, 421.8f, 812.6f, 938.3f};
+/* Frequency modulation follows the plugin: f * (1 + mod), the oscillator stalls when that goes below zero. (The hardware
+   notes suggest an additive deviation in Hz instead; the plugin's law is kept because it is the reference sound.) */
 
 /* Vibrato rates of the eight voices: 30..56 k resistors with 10 uF (DIY BOM), 3.5-6.5 Hz; which voice has which varies per unit. */
 static const float VIB_HZ[8] = {6.47f, 5.89f, 5.40f, 4.98f, 4.62f, 4.52f, 3.81f, 3.47f};
@@ -519,7 +515,7 @@ void lira_process(lira_t *l, float *out, int n)
                     lira_gen *gn = &vo->g[k];
                     float tri, sq;
                     float cpl = COUPLE * 0.5f * (l->sq[(o + 1) & 7] + l->sq[(o + 7) & 7]);
-                    gen_tick(gn, fmax_(vf[o] + mv * FM_HZ[o], 0.f), cpl, isr, &tri, &sq);
+                    gen_tick(gn, fmax_(vf[o] * (1.f + mv), 0.f), cpl, isr, &tri, &sq);
                     l->sq[o] = gn->s ? 1.f : -1.f;
                     float wave = TRI_AMP * (1.f - sh) * tri + SQ_AMP * sh * sq;
                     float ga = vgain[o];

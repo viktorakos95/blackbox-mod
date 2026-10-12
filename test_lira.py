@@ -260,8 +260,8 @@ def fm_spread(tune):
 
 
 (dev_lo, f_lo), (dev_hi, f_hi) = fm_spread(40), fm_spread(112)
-check("FM: the higher the voice is tuned, the less it is modulated (relative spread %.3f at %.0f Hz vs %.3f at %.0f Hz)" % (dev_lo, f_lo, dev_hi, f_hi),
-      dev_lo > 0.01 and dev_hi < 0.2 * dev_lo)
+check("FM as in the plugin, f * (1 + mod): the same relative spread at any tuning (relative spread %.3f at %.0f Hz vs %.3f at %.0f Hz)" % (dev_lo, f_lo, dev_hi, f_hi),
+      dev_lo > 0.01 and 0.5 < dev_hi / dev_lo < 2.0)
 
 # ---------------------------------------------------------------- delay (PT2399 model)
 def td_of(knob):
