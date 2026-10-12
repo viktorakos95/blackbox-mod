@@ -27,12 +27,14 @@ out (new FX, fixes). That's all the list is for.
 - **Reverb Type**: Plate (stock) or Room.
 - **Delay Type**: Delay (stock) or Munchi (a port of the CHOMPI TEMPO granular delay).
 - **Sequencer fix**: a note added just ahead of the playhead plays on that pass.
-- **LIRA-8 on a pad** (test build 3.1.r): a port of Mike Moreno DSP's LIRA-8 (an emulation of
+- **LIRA-8 on a pad** (test build 3.1.s): a port of Mike Moreno DSP's LIRA-8 (an emulation of
   the SOMA Lyra-8 drone synth). On a pad in **Sample** mode (not Clip / Slicer / Granular), set Fidelity to **LIRA**: the pad plays LIRA instead of its sample.
   Load any sample on the pad and set Loop Mode on, so the voice lasts while the pad is held (Launch Mode Toggle = a
   drone you switch on and off). A pad tap holds all eight sensors; on the Keys screen, the notes 1 to 8 semitones above
-  the root hold sensors 1 to 8 one by one. The loop page shows Sharp, Tune 1-8, Pitch and Hold; the LFO page shows Touch
-  (Fast/Slow), FM Depth/Source, LFO A/B, Drive, Dist Mix, the dual delay and Vibrato. The pad's Level, envelope (Release fades it), filter,
+  the root hold sensors 1 to 8 one by one. The pad's pages 2, 3 and 4 become LIRA's controls while Fidelity is LIRA: page 2 Loop Mode and
+  Tune 1-8; page 3 Touch (Fast/Slow), Sharp, Pitch, Hold, FM Depth/Source, Vibrato, LFO A/B; page 4 the dual delay (Time 1/2,
+  Feedback, Dly Mix, Dly Mod, Mod Src), Drive and Dist Mix. Pages 1 and 5 stay as they are (page 5 holds Fidelity). These
+  settings are not saved with the project yet: a power cycle returns them to LIRA-8's defaults. The pad's Level, envelope (Release fades it), filter,
   FX sends and sequencer work as on any pad. Two LIRA pads can play at once.
 
 ### Known issues
@@ -45,9 +47,12 @@ out (new FX, fixes). That's all the list is for.
   envelopes (about 23 s to fade out), additive FM, bleed between voices, a PT2399-style delay), see docs/LIRA-analog-notes.md.
   3.1.o only clicked on pads made before it (their LIRA settings read as all zero) and skipped the
   pad's Level and envelope; both fixed in 3.1.p. Each playing LIRA pad is about 1,400 instructions per sample (roughly 20 % of
-  the CPU, watch the meter on the version label); it reserves about 0.7 MB of sample memory at boot. Only the first
-  10 entries of a pad page may be reachable on screen, in which case Pitch and Hold (loop page) and Dly Mix, Dly Mod,
-  Mod Src and Vibrato (LFO page) are off the end. 
+  the CPU, watch the meter on the version label); it reserves about 0.7 MB of sample memory at boot. 3.1.p and 3.1.r never showed the
+  LIRA pages (their page and default hooks looked for the wrong store type: a Sample pad is type 3 with 59 of 64 entries, not
+  type 0x4c); 3.1.s keeps the 25 values per pad position in the LIRA pool and answers the firmware's store getter and
+  setter for them.
+
+
 ## Install
 
 1. Download **blackbox 3.1.9** from <https://1010music.com/downloads> and unzip it. You need the `BLACKBOX.bin` inside.

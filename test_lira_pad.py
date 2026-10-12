@@ -67,8 +67,14 @@ check("one SDRAM allocation, 0.5..2 MB", len(allocs) == 1 and 1 << 19 < allocs[0
 check("pool pointer in backup SRAM, rewritten this boot",
       e.r32(0x38800F00) & 0xFFFFFFFF == 0xC0000000 and e.r32(0x38800F04) & 0xFFFFFFFF == 0x4C495241 ^ 0xC0000000)
 
-# ---- 2. pad defaults: + the 25 controls, within the store's 64 ----
-STORE, ARR = 0x24061000, 0x24061100
+# ---- 2. the pad stores: LIRA's values live in the pool (a Sample pad's store is full); see test_lira_ui.py for pages ----
+APP_PADS = 0x24020088 + 0x1840
+POOL_SIDE = 0xC0000000 + 4                       # side[pad position][control] int16, first in the pool
+got = {i: e.r16(POOL_SIDE + 2 * i) for i in range(NCTL)}     # the first position: LIRA-8's defaults
+check("pool: every pad position starts at LIRA-8's defaults (Tune 2 = 78/127, Touch = Fast, Mod Src = LFO)",
+      got[1] == round(78 * 1000 / 127) and got[24] == 1 and got[21] == 2, str(got))
+DEFAULTS = {P0 + i: got[i] for i in range(NCTL)}
+SLOT0 = 4 + 2 * 20 * NCTL                        # the pool's first instance (its pad pointer)
 
 
 def make_store(addr, arr, entries, cap=64, vtable=0):
@@ -77,61 +83,7 @@ def make_store(addr, arr, entries, cap=64, vtable=0):
     e.uc.mem_write(addr, struct.pack("<IIHHH", vtable, arr, 0, len(entries), cap))   # count @+0xa, capacity @+0xc
 
 
-make_store(STORE, ARR, [(0x100 + i, 0) for i in range(36)])
-e.call("lira_defaults", STORE, 0xF1, 0)
-n = e.r16(STORE + 10)
-got = {e.r16(ARR + 8 * i): e.r32(ARR + 8 * i + 4) for i in range(n)}
-check("defaults: Fidelity + 25 controls, 62 of 64", n == 62 and 0xF1 in got and all(P0 + i in got for i in range(NCTL)),
-      "count %d" % n)
-check("defaults: Tune 2 = 78/127, Touch = Fast, Mod Src = LFO",
-      got.get(P0 + 1) == round(78 * 1000 / 127) and got.get(P0 + 24) == 1 and got.get(P0 + 21) == 2)
-DEFAULTS = {k: v for k, v in got.items() if P0 <= k < P0 + NCTL}
-
-# ---- 3. pages: a LIRA Sample pad's pages 2 and 3 list LIRA's controls ----
-APP, CELL, LIST, REC, RARR, VT = 0x24020088, 0x24062000, 0x24062100, 0x24062600, 0x24062700, 0x24062F00
-e.w32(VT, 0x0807FF01)
-e.stub(0x0807FF00, value=0x4C)                    # the record's vtable slot 0: cell type = pad
-e.stub(0x08098D0C, value=REC)                    # pad record lookup
-
-
-def stock_pages():                               # the stock builder: one entry, whatever the page
-    e.uc.mem_write(LIST, struct.pack("<I", 1) + struct.pack("<HHHHI", 0x777, 0, 0, 0, 5))   # entry: id @+4, value @+0xc
-
-
-e.stub(0x08098D40, stock_pages, value=1)
-
-
-def pad_record(fidelity, mode=0, extra=()):
-    make_store(REC, RARR, [(0x8B, mode), (0xF1, fidelity), (0x8E, 1)] + list(DEFAULTS.items()) + list(extra), vtable=VT)
-
-
-def page(p, cell_id=0x0012):
-    e.uc.mem_write(CELL + 4, struct.pack("<H", cell_id))
-    e.call("lira_pages", APP, CELL, LIST, p)
-    r = e.uc.reg_read(UC_ARM_REG_R0)
-    cnt = e.r32(LIST)
-    return r, [e.r16(LIST + 12 * i + 4) for i in range(cnt)]
-
-
-pad_record(INTERP_LIRA)
-r, p1 = page(1)
-check("page 2: Loop Mode, Sharp, Tune 1..8, Pitch, Hold",
-      r == 1 and p1 == [0x8E, P0 + 9] + list(range(P0, P0 + 9)) + [P0 + 10], str([hex(x) for x in p1]))
-r, p2 = page(2)
-check("page 3: Touch, FM Depth/Source, LFO A/B, Drive, Dist Mix, then the delay, Vibrato last",
-      p2 == [P0 + k for k in (24, 11, 12, 14, 15, 22, 23, 16, 17, 18, 19, 20, 21, 13)], str([hex(x) for x in p2]))
-check("every control is on a page exactly once", sorted(p1[1:] + p2) == list(range(P0, P0 + NCTL)))
-r, p0 = page(0)
-check("pages 1, 4, 5 unchanged", p0 == [0x777] and page(4)[1] == [0x777])
-pad_record(0)
-check("Fidelity Normal: stock pages", page(1)[1] == [0x777])
-pad_record(INTERP_LIRA, mode=2)
-check("Slicer pad: stock pages", page(1)[1] == [0x777])
-pad_record(INTERP_LIRA)
-check("FX cell (not a pad): stock pages", page(1, cell_id=0x0312)[1] == [0x777])
-
 # ---- 4. playing: the voice's audio is replaced before the voice render (Level, ADSR, filter) ----
-APP_PADS = 0x24020088 + 0x1840
 PADS = [0x24063000, 0x24063200, 0x24063400]
 OBJ, OBJ2, BUF, LBUF, RBUF, SRC = 0x24064000, 0x24064400, 0x24064800, 0x24065000, 0x24066000, 0x24064900
 N = 256
@@ -139,11 +91,12 @@ rendered = []
 e.stub(0x08055BB8, lambda: rendered.append((e.arg(0), e.arg(1), e.arg(2), e.arg(3))))   # the stock voice render
 
 
-def app_pad(i, fidelity=INTERP_LIRA, extra=(), lira_entries=True):
+def app_pad(i, fidelity=INTERP_LIRA, extra=()):
     row, col = 1, i
     store, arr = APP_PADS + row * 0xF0 + col * 0x30, 0x24068000 + i * 0x400
-    lira = {**DEFAULTS, **dict(extra)} if lira_entries else {}
-    make_store(store, arr, [(0x8B, 0), (0xF1, fidelity)] + list(lira.items()))
+    make_store(store, arr, [(0x8B, 0), (0xF1, fidelity)])
+    for k, v in {**DEFAULTS, **dict(extra)}.items():
+        e.call("lira_set_c", store, k, v)
     e.w32(PADS[i] + 0x18, row << 8 | col)
 
 
@@ -206,40 +159,12 @@ for b in range(30):                               # pads 0 and 1 stop; pad 2 pla
     lc, _ = voice(PADS[2])
 check("third pad takes an idle instance", rms(lc) > 0.0, "rms %.4f" % rms(lc))
 
-# a pad from before 3.1.o: Fidelity LIRA but no LIRA entries in its store -> LIRA's defaults, not all-zero (clicks)
-def drone(**kw):
-    app_pad(0, **kw)
-    now[0] += 3_000_000_000
-    e.uc.mem_write(0xC0000000 + 4, b"\0" * 4)     # pool slot 0 free: a fresh instance
-    out = []
-    for b in range(60):
-        l, _ = voice(PADS[0])
-        out += l
-    tail = out[-20 * N:]
-    return rms(tail), sum(1 for a, b in zip(tail, tail[1:]) if (a < 0) != (b < 0))
-
-
-zero = drone(extra={P0 + i: 0 for i in range(NCTL)})
-missing = drone(lira_entries=False)
-check("pad without LIRA entries plays LIRA's defaults, not the all-zero settings 3.1.o read (clicks)",
-      missing[0] > 0.01 and missing[1] > 4 * max(zero[1], 1),
-      "missing: rms %.3f, %d crossings; all zero: rms %.3f, %d crossings" % (missing + zero))
-pad_record(INTERP_LIRA)
-make_store(REC, RARR, [(0x8B, 0), (0xF1, INTERP_LIRA), (0x8E, 1)], vtable=VT)
-page(1)
-n = e.r16(REC + 10)
-have = {e.r16(RARR + 8 * i) for i in range(n)}
-check("opening a LIRA page adds the missing entries (so the knobs work and save)",
-      all(P0 + i in have for i in range(NCTL)) and n == 3 + NCTL, "count %d" % n)
-page(2)
-check("... once", e.r16(REC + 10) == 3 + NCTL)
-
 # sensors from pitch: one sensor (3 semitones up) is quieter than the root's eight
 def level_with(rate, blocks=80):
     for i in range(3):
         app_pad(i, extra={P0 + 19: 0})            # delay mix 0, for a clean level
     now[0] += 3_000_000_000                       # a long silence: fresh instances
-    e.uc.mem_write(0xC0000000 + 4, b"\0" * 4)
+    e.uc.mem_write(0xC0000000 + SLOT0, b"\0" * 4)
     out = []
     for b in range(blocks):
         l, _ = voice(PADS[0], rate=rate)

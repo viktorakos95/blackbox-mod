@@ -17,9 +17,12 @@
  * only hold sensors. Its own touch envelopes (Touch: Fast 100 ms / Slow 200 ms in, 8 s out) shape the sound; keep the
  * pad's Sustain up.
  *
- * Settings: 25 new pad parameters (0x1db..0x1f3), saved with the pad, shown on the pad's pages 2 and 3 in place of
- * the loop and LFO pages while Fidelity is LIRA (the loop page keeps Loop Mode first). Fixed at LIRA-8's defaults: LFO
- * combine (sum), LFO link (on), FM switch, total feedback, delay LFO shape (triangle), quantize, volume.
+ * Settings: 25 new pad parameters (0x1db..0x1f3), shown on the pad's pages 2, 3 and 4 in place of the loop, LFO and
+ * (empty) fourth page while Fidelity is LIRA (page 2 keeps Loop Mode first). A Sample pad's store (cell type 3) holds
+ * 59 of its 64 entries, so the new values do not live there: they are kept per pad position in the pool (below) and the
+ * firmware's store getter / setter (0x08093e9c / 0x08093ecc, lira_thunk.S) answer for them. They are NOT saved with
+ * the project: a power cycle returns them to LIRA-8's defaults. Fixed at LIRA-8's defaults: LFO combine (sum), LFO link
+ * (on), FM switch, total feedback, delay LFO shape (triangle), quantize, volume.
  *
  * Memory: LIRA_MAX instances (state + two 44,000-entry delay memories each, ~0.7 MB in all) are taken from the SDRAM heap once,
  * at boot, while the parameter table is built (the stock delay takes its lines from the same allocator). The pointer
@@ -69,7 +72,9 @@ float park_rate(const uint8_t *pad);                   /* filter.c: rate of the 
 #define FS          48000.0f
 #define LIRA_MAX    2
 #define DLEN        LIRA_DL_LEN                        /* one PT2399's 44,000-entry memory per delay line */
-#define CELL_PAD    0x4c
+#define CELL_PAD    3                                  /* store type of a full pad (59 ids) */
+#define CELL_PAD2   0x4c                               /* the reduced pad store (37 ids) */
+#define APP_PADS    (0x24020088u + 0x1840u)
 #define P_MODE      0x8b                               /* pad mode: 0 = Sample */
 #define P_LOOP      0x8e                               /* Loop Mode */
 #define TYPE_INT    1
@@ -130,10 +135,11 @@ static const struct ctl ctls[] = {
 #define NCTL ((int)(sizeof ctls / sizeof ctls[0]))
 _Static_assert(P0 + NCTL - 1 <= 0x1f3, "parameter ids must stay below the table's 500 slots");
 
-/* Page order, most used first (stock pad pages hold at most 10 entries; whether the screen scrolls past 10 is
-   untested). -1 = the stock Loop Mode. */
-static const int8_t page_loop[] = {-1, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 10};
-static const int8_t page_lfo[] = {24, 11, 12, 14, 15, 22, 23, 16, 17, 18, 19, 20, 21, 13};
+/* Three pages of at most ten (a stock page holds at most ten): the oscillators, the voices' shaping and modulation, the
+   delay and output. -1 = the stock Loop Mode. */
+static const int8_t page_a[] = {-1, 0, 1, 2, 3, 4, 5, 6, 7};
+static const int8_t page_b[] = {24, 9, 8, 10, 11, 12, 13, 14, 15};
+static const int8_t page_c[] = {16, 17, 18, 19, 20, 21, 22, 23};
 
 /* ---- instances, in SDRAM ---- */
 struct slot {
@@ -147,8 +153,10 @@ struct slot {
     uint8_t clearing;            /* 1..CLEAR_STEPS: delay lines still being cleared, a slice per block; 0 = done */
     lira_t l;
 };
+#define NPADS 20                                       /* 4 rows x 5 columns of pad stores */
 struct pool {
     uint32_t magic;
+    int16_t side[NPADS][NCTL];   /* the 25 controls of every pad position (stored value: 0..1000 or list index) */
     struct slot s[LIRA_MAX];
     float dl[LIRA_MAX][2][DLEN];
 };
@@ -178,6 +186,57 @@ static int store_value(const uint8_t *store, unsigned id, int def)
     return def;
 }
 
+/* Which pad position (row * 5 + col) a settings store is, -1 if it is not one of the 20 pad stores. */
+static int pad_index(const uint8_t *store)
+{
+    uint32_t d = (uint32_t)store - APP_PADS;
+    if (d >= 4u * 0xf0u)
+        return -1;
+    uint32_t row = d / 0xf0u, rem = d - row * 0xf0u;
+    if (rem % 0x30u)
+        return -1;
+    return (int)(row * 5u + rem / 0x30u);
+}
+
+/* The pad's control i (0..NCTL-1): its value, or the default while the pool is missing. */
+static int ctl_value(struct pool *p, const uint8_t *pad, int i)
+{
+    int pi = pad_index(pad_store(pad));
+    return p && pi >= 0 ? p->side[pi][i] : ctls[i].def;
+}
+
+/* The firmware's store getter (0x08093e9c): the value of id, 0 when absent. LIRA's ids on a pad store come from the pool. */
+int lira_get_c(const uint8_t *store, unsigned id)
+{
+    if (id - P0 < (unsigned)NCTL) {
+        struct pool *p = pool();
+        int pi = pad_index(store);
+        if (p && pi >= 0)
+            return p->side[pi][id - P0];
+    }
+    return store_value(store, id, 0);
+}
+
+/* ... and the setter (0x08093ecc): changes an existing entry (nothing when absent). */
+void lira_set_c(uint8_t *store, unsigned id, int value)
+{
+    if (id - P0 < (unsigned)NCTL) {
+        struct pool *p = pool();
+        int pi = pad_index(store);
+        if (p && pi >= 0) {
+            p->side[pi][id - P0] = (int16_t)value;
+            return;
+        }
+    }
+    unsigned n = *(const uint16_t *)(store + 0xa);
+    uint8_t *e = *(uint8_t *const *)(store + 4);
+    for (unsigned i = 0; i < n; i++, e += 8)
+        if (*(const uint16_t *)e == id) {
+            *(int32_t *)(e + 4) = value;
+            return;
+        }
+}
+
 /* Called from interp_register (filter.c) while the parameter table is built at boot: register the controls, take
    the instances' memory. */
 void lira_register(void *table)
@@ -197,27 +256,21 @@ void lira_register(void *table)
     }
     for (int i = 0; i < LIRA_MAX; i++)
         p->s[i].pad = 0;
+    for (int k = 0; k < NPADS; k++)
+        for (int i = 0; i < NCTL; i++)
+            p->side[k][i] = ctls[i].def;
     p->magic = MAGIC;
     POOL = p;
     POOL_CHECK = MAGIC ^ (uint32_t)p;
 }
 
-/* Replaces the pad cell's Fidelity default (bl @0x0809435a): then the LIRA controls' defaults. The store holds 64;
-   stock pads use 37. */
-void lira_defaults(void *store, int param, int value)
-{
-    fw_store_add(store, param, value);
-    for (int i = 0; i < NCTL; i++)
-        fw_store_add(store, ctls[i].id, ctls[i].def);
-}
-
 extern const unsigned interp_lira;                      /* filter.c: the "LIRA" entry of the Fidelity list */
 
-/* Replaces the six calls of the settings page builder: a LIRA pad's pages 2 and 3 (index 1, 2) list its controls. */
+/* Replaces the six calls of the settings page builder: a LIRA pad's pages 2, 3 and 4 (index 1..3) list its controls. */
 int lira_pages(uint8_t *app, uint8_t *cell, void *list, int page)
 {
     int r = fw_pages(app, cell, list, page);
-    if ((page != 1 && page != 2) || !cell)
+    if (page < 1 || page > 3 || !cell)
         return r;
     unsigned id = *(const uint16_t *)(cell + 4);
     if (id == 0x40 || id == 0x41 || id == 0x42 || ((id >> 8) & 0x1f) != 0)
@@ -226,17 +279,13 @@ int lira_pages(uint8_t *app, uint8_t *cell, void *list, int page)
     if (!rec)
         return r;
     int (*cell_type)(void *) = **(int (***)(void *))rec;    /* vtable slot 0, as the page builder asks it */
-    if (cell_type(rec) != CELL_PAD)
+    int t = cell_type(rec);
+    if (t != CELL_PAD && t != CELL_PAD2)
         return r;
     if (fw_setting(rec, P_MODE) != 0 || (unsigned)fw_setting(rec, 0xf1) != interp_lira)
         return r;
-    /* pads from before 3.1.o have no LIRA entries: add them (UI task, like the stock store edits), so the knobs work
-       and the values save with the project from now on */
-    for (int i = 0; i < NCTL; i++)
-        if (store_value(rec, ctls[i].id, -32768) == -32768)
-            fw_store_add(rec, ctls[i].id, ctls[i].def);
-    const int8_t *order = page == 1 ? page_loop : page_lfo;
-    int n = page == 1 ? (int)sizeof page_loop : (int)sizeof page_lfo;
+    const int8_t *order = page == 1 ? page_a : page == 2 ? page_b : page_c;
+    int n = page == 1 ? (int)sizeof page_a : page == 2 ? (int)sizeof page_b : (int)sizeof page_c;
     fw_list_clear(list);
     for (int i = 0; i < n; i++) {
         unsigned pid = order[i] < 0 ? P_LOOP : ctls[order[i]].id;
@@ -246,13 +295,13 @@ int lira_pages(uint8_t *app, uint8_t *cell, void *list, int page)
 }
 
 /* ---- audio task ---- */
-static void apply(struct slot *s, int force)
+static void apply(struct pool *p, struct slot *s, int force)
 {
     for (int i = 0; i < NCTL; i++) {
         const struct ctl *c = &ctls[i];
         if (s->clearing && (i == C_FEEDBACK || i == C_DELMIX))
             continue;
-        int v = store_value(pad_store(s->pad), c->id, c->def);
+        int v = ctl_value(p, s->pad, i);
         if (!force && v == s->vals[i])
             continue;
         s->vals[i] = (int16_t)v;
@@ -292,7 +341,7 @@ static struct slot *claim(struct pool *p, const uint8_t *pad, uint32_t now)
     fr->owner = 0;
     fr->owner_t = now;
     fr->ticks = 0;
-    apply(fr, 1);
+    apply(p, fr, 1);
     lira_param(&fr->l, LIRA_FEEDBACK, 0.0f);
     lira_param(&fr->l, LIRA_DEL_MIX, 0.0f);
     lira_settle(&fr->l);
@@ -404,11 +453,11 @@ static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
         if (++s->clearing > CLEAR_STEPS) {
             s->clearing = 0;
             s->vals[C_FEEDBACK] = s->vals[C_DELMIX] = -1;     /* apply them now: they fade in over 23 ms */
-            apply(s, 0);
+            apply(p, s, 0);
         }
     }
     if ((s->ticks++ & 3) == 0)
-        apply(s, 0);
+        apply(p, s, 0);
     float *ch[2] = {0, 0};
     int n = fw_buf_frames(buf);
     fw_buf_chans(buf, &ch[0], &ch[1]);
