@@ -15,7 +15,9 @@
  *   ARR  the interval between two ticks as they arrived (the interrupt's view),
  *   STK  the same interval as the stock sequencer gets it (stamped at the audio block that takes the tick),
  *   LAT  how long a tick waits for that block.
- * The core clock is not known to the patch; it is found from the audio blocks (256 frames at 48 kHz).
+ * The core clock comes from the SysTick reload register: the firmware sets the FreeRTOS tick to 1 kHz from its core clock
+ * (vPortSetupTimerInterrupt, 0x080880e8: reload = SystemCoreClock / 1000 - 1), and the cycle counter runs at that clock.
+ * The tempo is one beat's worth of ticks (24 intervals) over the time they took, so it follows a change within a beat.
  */
 #include <stdint.h>
 
@@ -25,6 +27,7 @@
 #define DWT_CTRL   (*(volatile uint32_t *)0xe0001000u)
 #define DWT_CYCCNT (*(volatile uint32_t *)0xe0001004u)
 #define DWT_LAR    (*(volatile uint32_t *)0xe0001fb0u)
+#define SYST_RVR   (*(volatile uint32_t *)0xe000e014u)
 #define RCC_AHB4ENR (*(volatile uint32_t *)0x580244e0u)
 #define BKPRAMEN    (1u << 28)
 #define PWR_CR1     (*(volatile uint32_t *)0x58024800u)
@@ -160,15 +163,18 @@ void clkmon_block(struct clkmon *c)
         return;
     if (c->reset) {
         c->reset = 0;
+        c->have_blk = c->blk_min = c->blk_max = 0;
         for (int k = 0; k < CLK_SRC; k++)
             clear_src(&c->r[k], &ISR->s[k]);
     }
-    if (c->have_blk) {                   /* calibrate the core clock from 256 blocks */
-        c->blk_sum += now - c->blk_prev;
-        if (++c->blk_n == 256) {
-            c->mhz = (float)c->blk_sum / (256.f * 5333.3333f);
-            c->blk_n = c->blk_sum = 0;
-        }
+    uint32_t rvr = SYST_RVR & 0xffffffu;
+    c->mhz = rvr >= 49999u && rvr <= 599999u ? (float)(rvr + 1u) / 1000.f : 0.f;     /* 50 .. 600 MHz */
+    if (c->have_blk) {
+        uint32_t d = now - c->blk_prev;
+        if (!c->blk_max || d < c->blk_min)
+            c->blk_min = d;
+        if (d > c->blk_max)
+            c->blk_max = d;
     }
     c->blk_prev = now;
     c->have_blk = 1;
@@ -180,6 +186,8 @@ void clkmon_block(struct clkmon *c)
             r->over += wr - r->rd - CLK_RING;
             r->rd = wr - CLK_RING;
         }
+        if (r->span && c->mhz > 0.f && now - r->last_arr > (uint32_t)(c->mhz * 1e6f))
+            r->span = 0;                 /* no tick for a second: no tempo */
         while (r->rd != wr) {
             uint32_t t = s->ring[r->rd & (CLK_RING - 1)];
             r->rd++;
@@ -188,8 +196,19 @@ void clkmon_block(struct clkmon *c)
             r->n_lat++;
             if (lat > r->lat_max)
                 r->lat_max = lat;
+            if (r->have_arr && t - r->last_arr >= GAP_CYCLES) {        /* a stop / start: the tempo window starts again */
+                r->win_n = 0;
+                r->span = 0;
+            }
             if (r->have_arr && t - r->last_arr < GAP_CYCLES)
                 add_interval(&r->n_arr, &r->arr_min, &r->arr_max, &r->arr_mean, &r->arr_m2, t - r->last_arr);
+            r->win[r->win_n % 25u] = t;
+            uint32_t k = r->win_n < 24u ? r->win_n : 24u;              /* intervals in the window so far */
+            if (k >= 4u) {
+                r->span = t - r->win[(r->win_n - k) % 25u];
+                r->span_k = k;
+            }
+            r->win_n++;
             r->last_arr = t;
             r->have_arr = 1;
             if (r->have_stk && now - r->last_stk < GAP_CYCLES)
@@ -205,6 +224,12 @@ float clkmon_mhz(const struct clkmon *c)
     return c->mhz;
 }
 
+float clkmon_blk_ms(const struct clkmon *c, int max)
+{
+    float mhz = c->mhz > 50.f ? c->mhz : 400.f;
+    return (float)(max ? c->blk_max : c->blk_min) / (mhz * 1000.f);
+}
+
 void clkmon_stats(const struct clkmon *c, int src, struct clk_stats *o)
 {
     const struct clk_rd *r = &c->r[src];
@@ -217,7 +242,7 @@ void clkmon_stats(const struct clkmon *c, int src, struct clk_stats *o)
     o->fc = (uint16_t)(s->n_fc - r->base_fc);
     o->over = r->over;
     o->n = r->n_arr;
-    o->bpm = r->n_arr && r->arr_mean > 0.f ? 2.5e6f / (r->arr_mean * us) : 0.f;
+    o->bpm = r->span ? 60e6f * mhz * (float)r->span_k / (24.f * (float)r->span) : 0.f;
     o->arr_min = r->n_arr ? (float)r->arr_min * us : 0.f;
     o->arr_max = r->n_arr ? (float)r->arr_max * us : 0.f;
     o->arr_sd = r->n_arr > 1 ? fsqrt(r->arr_m2 / (float)(r->n_arr - 1)) * us : 0.f;

@@ -38,10 +38,10 @@ def check(label, cond, detail=""):
 
 os.makedirs("out/clk_test", exist_ok=True)
 open("out/clk_test/off.c", "w").write(
-    '#include <stdio.h>\n#include <stddef.h>\n#include "../../src/clkmon.h"\nint main(void){printf("%zu %zu %zu %zu %zu", '
-    'sizeof(struct clkmon), sizeof(struct clk_stats), sizeof(struct clk_isr), offsetof(struct clkmon, reset), offsetof(struct clkmon, mhz));}\n')
+    '#include <stdio.h>\n#include <stddef.h>\n#include "../../src/clkmon.h"\nint main(void){printf("%zu %zu %zu %zu %zu %zu %zu", '
+    'sizeof(struct clkmon), sizeof(struct clk_stats), sizeof(struct clk_isr), offsetof(struct clkmon, reset), offsetof(struct clkmon, mhz), offsetof(struct clkmon, blk_min), offsetof(struct clkmon, blk_max));}\n')
 subprocess.run(["gcc", "-o", "out/clk_test/off", "out/clk_test/off.c"], check=True)
-SZ, STSZ, ISZ, O_RESET, O_MHZ = map(int, subprocess.run(["out/clk_test/off"], capture_output=True, text=True, check=True).stdout.split())
+SZ, STSZ, ISZ, O_RESET, O_MHZ, O_BMIN, O_BMAX = map(int, subprocess.run(["out/clk_test/off"], capture_output=True, text=True, check=True).stdout.split())
 check("the interrupt block fits its backup SRAM window (0x38800988..0x38800a00)", ISZ <= 0x78, ISZ)
 
 e = Emu(IMG, "out/cave.elf")
@@ -55,6 +55,8 @@ e.stub(0x080467CC)                                  # USB endpoint re-arm
 e.uc.mem_write(MGR + 0x20D, b"\x01")                # the stock ring of port 0 is active
 bkp_on = lambda on: (e.w32(RCC, (1 << 28) if on else 0), e.w32(PWR, (1 << 8) if on else 0))
 cyc = lambda v: e.w32(CYC, v)
+RVR = 0xE000E014                                     # SysTick reload: the firmware's 1 kHz tick from its core clock
+e.w32(RVR, 400_000 - 1)
 
 
 def rx(byte, t, port=0):
@@ -141,7 +143,8 @@ lat = [b - a for a, b in zip(arr, take)]
 us = lambda c: c / MHZ
 close = lambda a, b, tol: abs(a - b) <= tol
 check(f"{N} ticks counted", s["f8"] == N and s["n"] == N - 1, s)
-check(f"core clock found from the blocks: {MHZ} MHz", close(struct.unpack("<f", bytes(e.uc.mem_read(MEM + O_MHZ, 4)))[0], MHZ, 0.5))
+check(f"core clock read from the SysTick reload: {MHZ} MHz", close(struct.unpack("<f", bytes(e.uc.mem_read(MEM + O_MHZ, 4)))[0], MHZ, 0.01))
+check(f"audio block gaps seen: {BLOCK} cycles each", e.r32(MEM + O_BMIN) == BLOCK and e.r32(MEM + O_BMAX) == BLOCK, (e.r32(MEM + O_BMIN), e.r32(MEM + O_BMAX)))
 check(f"tempo 120 BPM (got {s['bpm']:.2f})", close(s["bpm"], 120.0, 0.05), s["bpm"])
 check(f"arrival interval min / max {us(min(iv)):.1f} / {us(max(iv)):.1f} us",
       close(s["arr_min"], us(min(iv)), 0.1) and close(s["arr_max"], us(max(iv)), 0.1), (s["arr_min"], s["arr_max"]))
@@ -187,6 +190,32 @@ check("USB: the stock ring write slot advanced (the stock copy ran)", e.r32(MGR 
       (slot_before, e.r32(MGR + 0x5C74)))
 check("the jack's counters are untouched by USB", stats(0)["f8"] == N + 2 + 12 and stats(0)["fa"] == 1, stats(0))
 
+# ---- the tempo follows a change within a beat (a cumulative mean would take minutes)
+def run_ticks(n, interval, t0):
+    t = t0
+    for _ in range(n):
+        t += interval
+        rx(0xF8, t)
+        block(t + 1000)
+    return t
+
+
+t = run_ticks(30, TICK, 100_000_000)
+check("tempo 120.0 BPM after 30 ticks", close(stats(0)["bpm"], 120.0, 0.05), stats(0)["bpm"])
+t = run_ticks(12, TICK * 2, t)
+mid = stats(0)["bpm"]
+check(f"12 ticks into a change to 60 BPM: between the two ({mid:.1f})", 60 < mid < 120, mid)
+t = run_ticks(24, TICK * 2, t)
+check(f"24 ticks later: 60.0 BPM, a beat after the change ({stats(0)['bpm']:.2f})", close(stats(0)["bpm"], 60.0, 0.05), stats(0)["bpm"])
+t = run_ticks(30, TICK // 2, t)
+check(f"and 240 BPM after another change ({stats(0)['bpm']:.1f})", close(stats(0)["bpm"], 240.0, 0.2), stats(0)["bpm"])
+block(t + 450_000_000)
+check("no tick for a second: no tempo shown", stats(0)["bpm"] == 0.0, stats(0)["bpm"])
+e.w32(RVR, 0)
+block(t + 460_000_000)
+check("a SysTick reload that is not a plausible core clock: CORE not shown (0)", struct.unpack("<f", bytes(e.uc.mem_read(MEM + O_MHZ, 4)))[0] == 0.0)
+e.w32(RVR, 400_000 - 1)
+
 # ---- reset
 e.w32(MEM + O_RESET, 1)
 block(80_000_000)
@@ -197,7 +226,12 @@ rx(0xF8, 80_100_000)
 rx(0xF8, 80_100_000 + TICK)
 block(80_200_000)
 s0 = stats(0)
-check("after a reset it counts again (2 ticks, 1 interval)", s0["f8"] == 2 and s0["n"] == 1 and close(s0["bpm"], 120.0, 0.05), s0)
+check("after a reset it counts again (2 ticks, 1 interval; the tempo needs 4 intervals)", s0["f8"] == 2 and s0["n"] == 1 and s0["bpm"] == 0.0, s0)
+rx(0xF8, 80_100_000 + 2 * TICK)
+rx(0xF8, 80_100_000 + 3 * TICK)
+rx(0xF8, 80_100_000 + 4 * TICK)
+block(80_300_000 + 4 * TICK)
+check("... and shows 120 BPM from the fourth interval on", close(stats(0)["bpm"], 120.0, 0.05), stats(0)["bpm"])
 
 print(f"{fails} failure(s)")
 raise SystemExit(1 if fails else 0)

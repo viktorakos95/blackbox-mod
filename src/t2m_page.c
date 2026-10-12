@@ -395,7 +395,7 @@ static void draw_clk(struct t2m_mem *m, int w, int foot)
     char b[48], *p;
     lp_text(6, 3, "CLK", C_CYAN, 1);
     lp_text(36, 3, "MIDI CLOCK IN, US", C_GREY, 1);
-    int d0 = TOP + 3, st = (foot - d0 - 12) / 9;
+    int d0 = TOP + 3, st = (foot - d0 - 12) / 10;
     st = st > 14 ? 14 : st < 8 ? 8 : st;
     clk_col(c, 0, 4, d0, st);
     clk_col(c, 1, w / 2 + 2, d0, st);
@@ -418,9 +418,16 @@ static void draw_clk(struct t2m_mem *m, int w, int foot)
     p = put_s(p, "  TAP=RESET");
     *p = 0;
     lp_text(4, d0 + 5 * st, b, C_GREY, 1);
-    lp_text(4, d0 + 6 * st + 4, "ARR  tick to tick as it arrives (the interrupt)", C_GREEN, 1);
-    lp_text(4, d0 + 7 * st + 4, "STK  tick to tick as the stock sequencer gets it", C_YELLOW, 1);
-    lp_text(4, d0 + 8 * st + 4, "LAT  how long a tick waits for the audio block", C_LIGHT, 1);
+    p = put_s(b, "BLK ");
+    p = put_f(p, clkmon_blk_ms(c, 0), 2);
+    *p++ = '-';
+    p = put_f(p, clkmon_blk_ms(c, 1), 2);
+    p = put_s(p, "MS  AUDIO BLOCK GAPS");
+    *p = 0;
+    lp_text(4, d0 + 6 * st, b, C_GREY, 1);
+    lp_text(4, d0 + 7 * st + 4, "ARR  tick to tick as it arrives (the interrupt)", C_GREEN, 1);
+    lp_text(4, d0 + 8 * st + 4, "STK  tick to tick as the stock sequencer gets it", C_YELLOW, 1);
+    lp_text(4, d0 + 9 * st + 4, "LAT  how long a tick waits for the audio block", C_LIGHT, 1);
 }
 
 void t2m_page_draw(int w, int foot)

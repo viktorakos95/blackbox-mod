@@ -311,6 +311,7 @@ e.uc.mem_write(MEM + O["learn"], b"\x00")
 import random  # noqa: E402
 
 CYC, MGR = 0xE0001004, 0x24002E88
+e.w32(0xE000E014, 400_000 - 1)                              # SysTick reload: a 400 MHz core
 e.w32(0x580244E0, 1 << 28)                                # RCC: backup SRAM clock
 e.w32(0x58024800, 1 << 8)                                 # PWR: backup domain writes
 e.uc.mem_write(MGR + 0x20D, b"\x01")
