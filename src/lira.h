@@ -35,9 +35,9 @@ enum {
 };
 
 typedef struct { float cur, tgt, step; int n; } lira_ramp;
-typedef struct { float ph, last, pwh, lp; } lira_osc;
+typedef struct { float ph, pwh, lp, a; } lira_osc;
 typedef struct { float env, atk, rel; } lira_comp;
-typedef struct { float acc, prev; int cnt, init; lira_ramp red; } lira_exp;
+typedef struct { float acc, prev, g, gt; int cnt, init; lira_ramp red; } lira_exp;
 
 typedef struct {
     lira_osc osc[2];
@@ -64,7 +64,7 @@ typedef struct {
     lira_ramp hold[2];
     float bus[4];        /* voice outputs (high-passed) read by the others, one sample late */
     float total_fb;      /* master output, high-passed, one sample late */
-    float pa, pb, sqa, sqb;
+    float pa, pb;        /* hyper-LFO phases */
     lira_ramp lfo_a, lfo_b;
     lira_line line[2];
     lira_ramp fbline, dmix, drv_g, dst, vol;
@@ -74,6 +74,10 @@ typedef struct {
 int lira_size(void);
 /* dl1, dl2: delay buffers of `len` samples each (caller-owned). The delay-time knob maps up to len/sr (max 5.94 s). */
 void lira_init(lira_t *l, float sample_rate, float *dl1, float *dl2, int len, uint32_t seed);
+/* lira_init without clearing the delay buffers (the caller clears them, e.g. a slice per audio block) */
+void lira_reset(lira_t *l, float sample_rate, float *dl1, float *dl2, int len, uint32_t seed);
+/* every parameter ramp to its target at once */
+void lira_settle(lira_t *l);
 void lira_param(lira_t *l, int id, float value);
 void lira_key(lira_t *l, int sensor /* 0..7 */, int on);
 void lira_process(lira_t *l, float *out, int n);

@@ -7,14 +7,18 @@
  *    delay loops are one sample late rather than one block late (delay lines keep Pd's 64-sample minimum);
  *  - line~ ramps are exact per-sample ramps; the delay taps use linear interpolation (Pd: 4-point);
  *  - expander level is a 512-sample rectangular-window mean square (Pd: env~ with a Hann window);
- *  - no libm: small polynomial exp2/log2/cos.
+ *  - no libm: small polynomial exp2/log2/cos;
+ *  - for the Cortex-M7's budget everything slow runs once per LIRA_CR-sample block: all line~ ramps (they step every
+ *    LIRA_CR samples), the hyper-LFO, vibrato, touch envelopes, the oscillators' low-pass coefficients (from the
+ *    unmodulated frequency) and the expander gain. Oscillators, cross-FM, delays and saturation run per sample.
  * pow~ 31 in the master (Pd) is taken as positive-only (0 for negative input).
  */
 #include "lira.h"
 
-#pragma GCC optimize("O2")
+#pragma GCC optimize("O2", "no-tree-loop-distribute-patterns")   /* no libc to call */
 
 #define TWO_PI 6.2831853f
+#define LIRA_CR 16          /* control block, samples */
 
 static inline float fabs_(float x) { return x < 0.f ? -x : x; }
 static inline float fmin_(float a, float b) { return a < b ? a : b; }
@@ -82,14 +86,17 @@ static void rset(lira_ramp *r, float tgt, int n)
     r->n = n;
     r->step = (tgt - r->cur) / (float)n;
 }
-static inline float rtick(lira_ramp *r)
+static void rstep(lira_ramp *r, int m)    /* advance a ramp by m samples at once */
 {
-    if (r->n) {
-        r->cur += r->step;
-        if (--r->n == 0)
-            r->cur = r->tgt;
+    if (!r->n)
+        return;
+    if (r->n <= m) {
+        r->cur = r->tgt;
+        r->n = 0;
+    } else {
+        r->cur += r->step * (float)m;
+        r->n -= m;
     }
-    return r->cur;
 }
 
 static float rnd(lira_t *l)    /* -1 .. 1 */
@@ -128,23 +135,31 @@ static float blep(float t, float dt)
     return r;
 }
 
-static void osc_run(lira_osc *o, float f, float pw, float sr, float *sq, float *tri)
+/* one sample; o->a (the low-pass coefficient) is set at control rate by the caller */
+static inline float osc_tick(lira_osc *o, float f, float pw, float isr, float *tri)
 {
-    float dt = fabs_(f) / sr;
+    float dt = fabs_(f) * isr;
     if (dt < 1e-7f)
         dt = 1e-7f;
-    o->ph += dt;
-    o->ph -= floor_(o->ph);
-    if (o->ph < o->last)
+    float ph = o->ph + dt;
+    if (ph >= 1.f) {
+        ph -= floor_(ph);
         o->pwh = clip_(pw, 0.f, 1.f);       /* samphold~: sampled when the phasor wraps */
-    o->last = o->ph;
-    float p2 = wrap1(o->ph + o->pwh);
-    float s = (2.f * o->ph - 1.f + blep(o->ph, dt)) - (2.f * p2 - 1.f + blep(p2, dt)) + 2.f * o->pwh - 1.f;
-    float fc = clip_(fmax_(fabs_(f) * 0.25f, 100.f), 0.f, sr * 0.5f);
-    float a = fexp2(-TWO_PI * fc / sr * 1.44269504f);
-    o->lp = s * (1.f - a) + a * o->lp;
-    *sq = s * 0.59f;
+    }
+    o->ph = ph;
+    float p2 = ph + o->pwh;
+    if (p2 >= 1.f)
+        p2 -= 1.f;
+    float s = 2.f * (ph - p2) + blep(ph, dt) - blep(p2, dt) + 2.f * o->pwh - 1.f;
+    o->lp = s + o->a * (o->lp - s);
     *tri = o->lp * 2.65f - 0.145f;
+    return s * 0.59f;
+}
+
+static float lp_coef(float f, float sr)  /* rpole~ coefficient of os.triangle~'s low-pass at max(|f| / 4, 100) Hz */
+{
+    float fc = clip_(fmax_(fabs_(f) * 0.25f, 100.f), 0.f, sr * 0.5f);
+    return fexp2(-TWO_PI * 1.44269504f * fc / sr);
 }
 
 /* ---- compressor~ (attack/release 2.5 ms, threshold -12 dB, ratio 5) ---- */
@@ -173,7 +188,8 @@ static float exp_run(lira_exp *e, float x, int n11)
         }
         rset(&e->red, red, n11);
     }
-    return x * db2lin(rtick(&e->red));
+    e->g += 0.0625f * (e->gt - e->g);       /* gt: 10^(red/20), set once per control block */
+    return x * e->g;
 }
 
 /* ---- helpers ---- */
@@ -266,7 +282,7 @@ void lira_key(lira_t *l, int s, int on)
 
 int lira_size(void) { return (int)sizeof(lira_t); }
 
-void lira_init(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t seed)
+void lira_reset(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t seed)
 {
     char *p = (char *)l;
     for (unsigned i = 0; i < sizeof *l; i++)
@@ -279,8 +295,6 @@ void lira_init(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t se
     l->line[1].buf = dl2;
     for (int i = 0; i < 2; i++) {
         l->line[i].len = len;
-        for (int k = 0; k < len; k++)
-            l->line[i].buf[k] = 0.f;
         l->line[i].comp.atk = l->line[i].comp.rel = fexp2(-4.60517f * 1.44269504f / (2.5f * sr / 1000.f));
     }
     for (int v = 0; v < 4; v++)
@@ -291,13 +305,26 @@ void lira_init(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t se
         2, 0, 0};
     for (int i = 0; i < LIRA_NPARAMS; i++)
         lira_param(l, i, defs[i]);
-    /* everything starts at its target, as after Pd's loadbang + settling */
+    lira_settle(l);
+    for (int v = 0; v < 4; v++)
+        l->v[v].osc[0].pwh = l->v[v].osc[1].pwh = 0.53125f;
+}
+
+void lira_init(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t seed)
+{
+    for (int k = 0; k < len; k++)
+        dl1[k] = dl2[k] = 0.f;
+    lira_reset(l, sr, dl1, dl2, len, seed);
+}
+
+/* Every ramp to its target now, as after Pd's loadbang + settling. Touch envelopes too: they rest where they are. */
+void lira_settle(lira_t *l)
+{
     for (int v = 0; v < 4; v++) {
         lira_voice *vo = &l->v[v];
         rjump(&vo->tune[0], vo->tune[0].tgt); rjump(&vo->tune[1], vo->tune[1].tgt);
         rjump(&vo->sharp, vo->sharp.tgt); rjump(&vo->mod, vo->mod.tgt); rjump(&vo->vib, vo->vib.tgt);
-        rjump(&vo->env[0], 0.f); rjump(&vo->env[1], 0.f);
-        vo->osc[0].pwh = vo->osc[1].pwh = 0.53125f;
+        rjump(&vo->env[0], vo->env[0].tgt); rjump(&vo->env[1], vo->env[1].tgt);
     }
     rjump(&l->hold[0], l->hold[0].tgt); rjump(&l->hold[1], l->hold[1].tgt);
     rjump(&l->lfo_a, l->lfo_a.tgt); rjump(&l->lfo_b, l->lfo_b.tgt);
@@ -326,12 +353,10 @@ static float tap(const lira_line *ln, float d)
 
 void lira_process(lira_t *l, float *out, int n)
 {
-    const float sr = l->sr;
-    const float hp3c = 1.f - 3.f * TWO_PI / sr, hp1c = 1.f - 1.f * TWO_PI / sr;
-    const float hp20c = 1.f - 20.f * TWO_PI / sr, hp10c = 1.f - 10.f * TWO_PI / sr;
-    const float lp4k = clip_(4000.f * TWO_PI / sr, 0.f, 1.f), lp689 = clip_(689.f * TWO_PI / sr, 0.f, 1.f);
-    const int src[4] = {(int)l->params[LIRA_SOURCE12], (int)l->params[LIRA_SOURCE34],
-                        (int)l->params[LIRA_SOURCE56], (int)l->params[LIRA_SOURCE78]};
+    const float sr = l->sr, isr = 1.f / sr;
+    const float hp3c = 1.f - 3.f * TWO_PI * isr, hp1c = 1.f - 1.f * TWO_PI * isr;
+    const float hp20c = 1.f - 20.f * TWO_PI * isr, hp10c = 1.f - 10.f * TWO_PI * isr;
+    const float lp4k = clip_(4000.f * TWO_PI * isr, 0.f, 1.f), lp689 = clip_(689.f * TWO_PI * isr, 0.f, 1.f);
     static const int busa[4] = {1, 0, 3, 2}, busb[4] = {3, 0, 1, 2};
     const float sw = l->params[LIRA_SWITCH] > 0.5f, tfb = l->params[LIRA_TOTAL_FB] > 0.5f;
     const float gsa = 0.999f * (sw == 0.f) + 0.001f, gsb = 0.999f * sw + 0.001f;
@@ -339,83 +364,121 @@ void lira_process(lira_t *l, float *out, int n)
     const float andor = l->params[LIRA_ANDOR];
     const float link = l->params[LIRA_LINK] > 0.5f ? 1.f : 0.f;
     const int delmod = (int)l->params[LIRA_DEL_MOD], lfowav = (int)l->params[LIRA_LFO_WAV];
+    const float msr = sr * 0.001f, dmax = (float)(l->line[0].len - 3);
+    float g0[4], g2[4];
+    for (int v = 0; v < 4; v++) {
+        int src = (int)l->params[LIRA_SOURCE12 + v];
+        g0[v] = 0.999f * (src == 0) + 0.001f;
+        g2[v] = 0.999f * (src == 2) + 0.001f;
+    }
 
-    for (int s = 0; s < n; s++) {
-        /* hyper-LFO */
-        float fa = rtick(&l->lfo_a), fb = rtick(&l->lfo_b);
-        l->pa = wrap1(l->pa + fa / sr);
-        float sqa = clip_(1000.f * fcos(l->pa), -1.f, 1.f);
-        l->pb = wrap1(l->pb + (fb + link * sqa * fb * 0.5f) / sr);
-        float sqb = clip_(1000.f * fcos(l->pb), -1.f, 1.f);
+    while (n > 0) {
+        const int m = n < LIRA_CR ? n : LIRA_CR;
+
+        /* ---- control block: ramps, LFOs, vibrato, envelopes, coefficients ---- */
+        rstep(&l->lfo_a, m);
+        rstep(&l->lfo_b, m);
+        float sqa = clip_(1000.f * fcos(l->pa), -1.f, 1.f), sqb = clip_(1000.f * fcos(l->pb), -1.f, 1.f);
         float sqsum = (sqa + sqb) * 0.5f;
         float sqr_lfo = andor == 0.f ? sqa * sqb : andor * sqsum;
         float tri_lfo = ((fabs_(l->pa - 0.5f) * 4.f - 1.f) + (fabs_(l->pb - 0.5f) * 4.f - 1.f)) * 0.5f;
+        float fb = l->lfo_b.cur;
+        l->pa = wrap1(l->pa + l->lfo_a.cur * isr * (float)m);
+        l->pb = wrap1(l->pb + (fb + link * sqa * fb * 0.5f) * isr * (float)m);
+        float lfo_fm = sqr_lfo * gnf;       /* the square-LFO half of the "lfo" source; the feedback half is per sample */
 
-        /* voices */
-        float mix = 0.f, busn[4], hold2[2] = {rtick(&l->hold[0]), rtick(&l->hold[1])};
+        rstep(&l->hold[0], m);
+        rstep(&l->hold[1], m);
+        float vmod[4], vsh[4], vpw[4], vf[8], vgain[8], vbump[8];
         for (int v = 0; v < 4; v++) {
             lira_voice *vo = &l->v[v];
-            float g0 = 0.999f * (src[v] == 0) + 0.001f, g2 = 0.999f * (src[v] == 2) + 0.001f;
-            float msrc = g0 * (l->bus[busa[v]] * gsa + l->bus[busb[v]] * gsb) +
-                         g2 * (l->total_fb * gfb + sqr_lfo * gnf);
-            float m = msrc * rtick(&vo->mod);
-            vo->vib_ph = wrap1(vo->vib_ph + vo->vib_rate / sr);
-            float vs = fcos(vo->vib_ph - 0.25f) * rtick(&vo->vib);   /* osc~ is sine */
-            float pw = 0.53125f + vs * 0.025f, sharp = rtick(&vo->sharp);
-            float hold = hold2[v >> 1];
-            float y = 0.f;
+            rstep(&vo->mod, m);
+            rstep(&vo->vib, m);
+            rstep(&vo->sharp, m);
+            vo->vib_ph = wrap1(vo->vib_ph + vo->vib_rate * isr * (float)m);
+            float vs = fcos(vo->vib_ph - 0.25f) * vo->vib.cur;       /* osc~ is a sine */
+            vmod[v] = vo->mod.cur;
+            vsh[v] = vo->sharp.cur;
+            vpw[v] = 0.53125f + vs * 0.025f;
+            float hold = l->hold[v >> 1].cur;
             for (int k = 0; k < 2; k++) {
-                float f0 = rtick(&vo->tune[k]);
-                float fv = f0 + f0 * vs * 0.005f;
-                float sq, tr;
-                osc_run(&vo->osc[k], fv + fv * m, pw, sr, &sq, &tr);
-                float e = rtick(&vo->env[k]);
-                float gain = fmin_(e * e + hold, 1.f);
-                float bump = 0.5f * fcos(e - 0.25f);
-                y += (sq * sharp + tr * (1.f - sharp) + bump) * gain;
+                rstep(&vo->tune[k], m);
+                rstep(&vo->env[k], m);
+                float f = vo->tune[k].cur * (1.f + vs * 0.005f), e = vo->env[k].cur;
+                vf[2 * v + k] = f;
+                vo->osc[k].a = lp_coef(f, sr);
+                vgain[2 * v + k] = fmin_(e * e + hold, 1.f);
+                vbump[2 * v + k] = vo->env[k].n ? 0.5f * fcos(e - 0.25f) : 0.f;   /* 0 once at rest at 0 or 1 */
             }
-            mix += y;
-            busn[v] = hip(&vo->hp, y, hp3c);
         }
-        for (int v = 0; v < 4; v++)
-            l->bus[v] = busn[v];
 
-        /* dual delay */
-        float u = mix * 0.166667f + rnd(l) * 0.001f;
-        float fbl = rtick(&l->fbline);
-        float lfo = (lfowav ? (sqsum) : tri_lfo);
-        float wet = 0.f;
+        rstep(&l->fbline, m);
+        rstep(&l->dmix, m);
+        rstep(&l->drv_g, m);
+        rstep(&l->dst, m);
+        rstep(&l->vol, m);
+        const float fbl = l->fbline.cur, wetg = 0.5f / fmax_(fbl, 1.5f), dm = l->dmix.cur;
+        const float g = l->drv_g.cur, ig = 1.f / clip_(g, 1.f, 4.f), dstm = l->dst.cur, vol = l->vol.cur;
+        const float lfom = delmod == 2 ? (lfowav ? sqsum : tri_lfo) : 0.f;
+        float ltime[2], lmod[2];
         for (int i = 0; i < 2; i++) {
             lira_line *ln = &l->line[i];
-            float self = delmod == 0 ? lop(&ln->tap_lp, tap(ln, 64.f) * 0.5f, lp689) : lop(&ln->tap_lp, 0.f, lp689);
-            float modv = (self + (delmod == 2 ? lfo : 0.f)) * rtick(&ln->mod);
-            float ms = rtick(&ln->time) + modv;
-            float d = clip_(ms * sr * 0.001f, 64.f, (float)(ln->len - 3));
-            float y = tap(ln, d);
-            y = hip(&ln->hp_x, y, hp1c);
-            y = lop(&ln->lp_in, y, lp4k);
-            y = comp_run(&ln->comp, y);
-            y = exp_run(&ln->ex, y, l->n11);
-            wet += y;
-            ln->buf[ln->w] = u + y * fbl;
-            if (++ln->w >= ln->len)
-                ln->w = 0;
+            rstep(&ln->time, m);
+            rstep(&ln->mod, m);
+            rstep(&ln->ex.red, m);
+            ln->ex.gt = db2lin(ln->ex.red.cur);
+            ltime[i] = ln->time.cur;
+            lmod[i] = ln->mod.cur;
         }
-        float fbm = fmax_(fbl, 1.5f);
-        float dm = rtick(&l->dmix);
-        float dly = u * (1.f - dm) + dm * ptanh(wet * 0.5f / fbm);
 
-        /* master: drive -> tanh (+ positive spike) -> mix with dry -> tanh -> volume */
-        float g = rtick(&l->drv_g);
-        float x = hip(&l->hp1, dly * g, hp20c), t = ptanh(x), pw31 = 0.f;
-        if (t > 0.f) {
-            float t2 = t * t, t4 = t2 * t2, t8 = t4 * t4, t16 = t8 * t8;
-            pw31 = t16 * t8 * t4 * t2 * t;
+        /* ---- audio ---- */
+        for (int s = 0; s < m; s++) {
+            float mix = 0.f, busn[4];
+            for (int v = 0; v < 4; v++) {
+                lira_voice *vo = &l->v[v];
+                float msrc = g0[v] * (l->bus[busa[v]] * gsa + l->bus[busb[v]] * gsb) +
+                             g2[v] * (l->total_fb * gfb + lfo_fm);
+                float fm = 1.f + msrc * vmod[v], sh = vsh[v], y = 0.f;
+                for (int k = 0; k < 2; k++) {
+                    int o = 2 * v + k;
+                    float tr, sq = osc_tick(&vo->osc[k], vf[o] * fm, vpw[v], isr, &tr);
+                    y += (tr + sh * (sq - tr) + vbump[o]) * vgain[o];
+                }
+                mix += y;
+                busn[v] = hip(&vo->hp, y, hp3c);
+            }
+            for (int v = 0; v < 4; v++)
+                l->bus[v] = busn[v];
+
+            /* dual delay */
+            float u = mix * 0.166667f + rnd(l) * 0.001f, wet = 0.f;
+            for (int i = 0; i < 2; i++) {
+                lira_line *ln = &l->line[i];
+                float self = lop(&ln->tap_lp, delmod == 0 ? tap(ln, 64.f) * 0.5f : 0.f, lp689);
+                float d = clip_((ltime[i] + (self + lfom) * lmod[i]) * msr, 64.f, dmax);
+                float y = tap(ln, d);
+                y = hip(&ln->hp_x, y, hp1c);
+                y = lop(&ln->lp_in, y, lp4k);
+                y = comp_run(&ln->comp, y);
+                y = exp_run(&ln->ex, y, l->n11);
+                wet += y;
+                ln->buf[ln->w] = u + y * fbl;
+                if (++ln->w >= ln->len)
+                    ln->w = 0;
+            }
+            float dly = u + dm * (ptanh(wet * wetg) - u);
+
+            /* master: drive -> tanh (+ positive spike) -> mix with dry -> tanh -> volume */
+            float t = ptanh(hip(&l->hp1, dly * g, hp20c)), pw31 = 0.f;
+            if (t > 0.f) {
+                float t2 = t * t, t4 = t2 * t2, t8 = t4 * t4, t16 = t8 * t8;
+                pw31 = t16 * t8 * t4 * t2 * t;
+            }
+            float dist = hip(&l->hp2, t + pw31 * 0.25f, hp10c) * ig;
+            float yv = ptanh(dly * (1.f - dstm) + (dly * 0.1f + dist) * dstm);
+            l->total_fb = hip(&l->hp3, yv, hp3c);
+            *out++ = yv * vol;
         }
-        float dist = hip(&l->hp2, t + pw31 * 0.25f, hp10c) / clip_(g, 1.f, 4.f);
-        float dstm = rtick(&l->dst);
-        float yv = ptanh(dly * (1.f - dstm) + (dly * 0.1f + dist) * dstm);
-        l->total_fb = hip(&l->hp3, yv, hp3c);
-        out[s] = yv * rtick(&l->vol);
+        n -= m;
     }
 }

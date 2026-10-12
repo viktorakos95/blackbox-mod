@@ -286,7 +286,7 @@ reset()
 setup(0.0, interp=7 + 1)
 l, _ = run(sine(997), pad=0)
 check("no Interp location passed: no crunch", all(abs(p - q) < 1e-7 for p, q in zip(l, sine(997))))
-for v, name in ((0, "Normal"), (1, "HighQ"), (14, "a value past the list")):
+for v, name in ((0, "Normal"), (1, "HighQ"), (15, "a value past the list")):   # 14 is LIRA (lira_pad.c)
     reset()
     setup(0.0, interp=v)
     l, _ = run(sine(997))
@@ -358,12 +358,16 @@ check("Clip pad page: same (Interp added)", page(0x080EFA68) == [0xDB, 0xF1, 0x9
 
 # --- Interp list
 seen = {}
-e.stub(0x0808C0D8, lambda: seen.update(names=e.arg(3), count=e.r32(e.uc.reg_read(UC_ARM_REG_SP)), param=e.arg(1), label=e.cstr(e.arg(2)), xml=e.cstr(e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 4))))
+e.stub(0x0808C0D8, lambda: e.arg(1) == 0xF1 and seen.update(names=e.arg(3), count=e.r32(e.uc.reg_read(UC_ARM_REG_SP)), param=e.arg(1), label=e.cstr(e.arg(2)), xml=e.cstr(e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 4))))
+e.stub(0x0808C12C)                               # LIRA's controls (test_lira_pad.py checks them)
+e.stub(0x0804436C, value=0)                      # LIRA's memory: none here, LIRA stays off
+e.uc.mem_map(0x38800000, 0x1000)                 # backup SRAM
+e.uc.mem_map(0x58024000, 0x1000)                 # RCC + PWR
 e.w32(STACK, 2)
 e.w32(STACK + 4, 0x080CC794)
 e.call("interp_register", 0x24001000, 0xF1, 0, 0x080EB7E0)
 names = [e.cstr(e.r32(seen["names"] + 4 * i)) for i in range(seen["count"])]
-check("Fidelity list: Normal, HighQ, SP1200, SP-12, S950, MPC60, SP Raw, 16k .. 2k", names == ["Normal", "HighQ", "SP1200", "SP-12", "S950", "MPC60", "SP Raw", "16k", "12k", "10k", "8k", "6k", "4k", "2k"] and seen["param"] == 0xF1, names)
+check("Fidelity list: Normal, HighQ, SP1200, SP-12, S950, MPC60, SP Raw, 16k .. 2k, LIRA", names == ["Normal", "HighQ", "SP1200", "SP-12", "S950", "MPC60", "SP Raw", "16k", "12k", "10k", "8k", "6k", "4k", "2k", "LIRA"] and seen["param"] == 0xF1, names)
 
 check("label reads 'Fidelity:', xml name stays 'interpqual'", seen["label"] == "Fidelity:" and seen["xml"] == "interpqual", (seen["label"], seen["xml"]))
 
