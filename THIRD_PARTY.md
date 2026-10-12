@@ -1,7 +1,7 @@
 # Third-party work
 
 The patch (source and the compiled bytes in `docs/blackbox-mod-*.json`) includes or derives from the following.
-All of it is MIT-licensed, and these notices travel with every copy.
+All of it is MIT-licensed except LIRA-8, which is under its author's BSD-style license; the notices travel with every copy.
 
 | Component | Copyright | License | Where |
 |---|---|---|---|
@@ -9,6 +9,7 @@ All of it is MIT-licensed, and these notices travel with every copy.
 | CHOMPI TEMPO 1.0 firmware (granular delay, compressor, crossfades) | © CHOMPI Club | MIT | `src/munchi/tempo/` |
 | `reverb.h`, `fx_engine.h` | © Émilie Gillet (Mutable Instruments) | MIT | `src/munchi/tempo/`, notices in the files |
 | DaisySP `dsp.h` | © Electrosmith, Corp. | MIT | `src/munchi/daisysp/` |
+| LIRA-8 ([MikeMorenoDSP/LIRA-8](https://github.com/MikeMorenoDSP/LIRA-8), emulation of the SOMA Lab Lyra-8) | © Miguel Moreno | "Standard Improved BSD" (3 clauses) | signal flow ported to C in `src/lira.c`; license in `src/lira/LICENSE` |
 | State-variable filter, after stmlib `dsp/filter.h` (`Svf`) | © 2014 Émilie Gillet | MIT | reimplemented in `src/filter.c` |
 
 ## Not included
@@ -19,6 +20,6 @@ supplied by you.
 
 ## Trademarks
 
-"1010music" and "Blackbox" are trademarks of 1010music LLC. CHOMPI is a trademark of CHOMPI Club. SP-1200, SP-12,
+"1010music" and "Blackbox" are trademarks of 1010music LLC. CHOMPI is a trademark of CHOMPI Club. Lyra-8 and SOMA are trademarks of SOMA Laboratory; LIRA-8 and this port are not affiliated with them. SP-1200, SP-12,
 S950, MPC60 and Elektron are trademarks of their owners, named here only to describe what a mode is modelled on.
 This project is independent and is not affiliated with, endorsed by, or supported by any of them.
