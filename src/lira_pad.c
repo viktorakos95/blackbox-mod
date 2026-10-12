@@ -135,11 +135,11 @@ static const struct ctl ctls[] = {
 #define NCTL ((int)(sizeof ctls / sizeof ctls[0]))
 _Static_assert(P0 + NCTL - 1 <= 0x1f3, "parameter ids must stay below the table's 500 slots");
 
-/* A pad has four pages (Main, Loop, LFO, Pad) and shows ten entries at most: LIRA takes the first three. Values >= 1000 are
-   stock ids (+1000), the others index ctls[]. Mod Src (21) stays at its default. */
-static const int16_t page_a[] = {1004, 1000 + 0x3c, 1000 + 0x3e, 1000 + 0x3f, 1000 + 0x40, 16, 17, 18, 19, 20};
-static const int16_t page_b[] = {1000 + P_LOOP, 0, 1, 2, 3, 4, 5, 6, 7, 9};
-static const int16_t page_c[] = {24, 8, 10, 11, 12, 13, 14, 15, 22, 23};
+/* A pad has four pages (Main, Loop, LFO, Pad) and the screen shows eight entries of a page: LIRA takes the first three.
+   Values >= 1000 are stock ids (+1000), the others index ctls[]. Left at their defaults: Mod Src, Dly Mod, Vibrato. */
+static const int16_t page_a[] = {1004, 16, 17, 18, 19, 22, 23, 7};
+static const int16_t page_b[] = {1000 + P_LOOP, 0, 1, 2, 3, 4, 5, 6};
+static const int16_t page_c[] = {24, 9, 8, 10, 11, 12, 14, 15};
 
 /* ---- instances, in SDRAM ---- */
 struct slot {
@@ -285,7 +285,7 @@ int lira_pages(uint8_t *app, uint8_t *cell, void *list, int page)
     if (fw_setting(rec, P_MODE) != 0 || (unsigned)fw_setting(rec, 0xf1) != interp_lira)
         return r;
     const int16_t *order = page == 0 ? page_a : page == 1 ? page_b : page_c;
-    int n = 10;
+    int n = 8;
     fw_list_clear(list);
     for (int i = 0; i < n; i++) {
         unsigned pid = order[i] >= 1000 ? (unsigned)order[i] - 1000 : ctls[order[i]].id;
