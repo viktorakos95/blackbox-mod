@@ -35,6 +35,4 @@ PATCHES = [
     # the key events' second ring (audio task): PLAY / STOP / REC dropped while the page shows (solo.c looper_key_pop)
     hook(0x0804CCC8, 0x08043A2C, "looper_key_pop"),
     hook(0x0804CE30, 0x08043A2C, "looper_key_pop"),
-    # Trigger2MIDI (src/t2m_bb.c): every stock pad note-on tells it which pad is being played (LEARN)
-    (0x0804C61C, bytes.fromhex("7f2a00d9"), b_w(0x0804C61C, sym["t2m_note_thunk"])),
 ]

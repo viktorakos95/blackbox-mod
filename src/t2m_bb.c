@@ -1,6 +1,6 @@
 /*
  * Trigger2MIDI on the Blackbox: the detector (src/t2m.c) on the two audio inputs, MIDI out through the stock MIDI port,
- * and optionally a pad of the Blackbox itself as a target. Original 1010music Blackbox, firmware 3.1.9.
+ * and optionally the Blackbox's own MIDI in (INT). Original 1010music Blackbox, firmware 3.1.9.
  *
  * Input: looper_in (src/looper.c, the input stage's tail call) hands every 256-frame block's input L / R floats here
  * (full scale +-1.0), before the render. Each input has its own detector, settings and output port.
@@ -11,12 +11,11 @@
  * render (0x0804d004, 0x0804d1e2), and the render sends the queues out (FUN_08044ad8 @0x0804ced8) in the same audio
  * block. A message is 5 bytes: status, data 1, data 2, unused, length.
  *
- * A pad of the Blackbox: the Keys screen and the pads play a pad with the engine command 0x42 (note on) / 0x43 (note off),
- * built by FUN_0804c61c / FUN_0804c5d4 and queued for the engine (FUN_08051738, a queue only the GUI task may write). The
- * render drains that queue in the audio task and calls FUN_080520ec(obj, command) for each command. This file is also in
- * the audio task, so it builds the same 24-byte command and calls the dispatcher directly: no queue, no second writer.
- * Which pad: the stock note-on's pad argument is learned (t2m_learn, a thunk on FUN_0804c61c): arm LEARN on the page and
- * hit a pad. EXPERIMENTAL: untested on hardware, off until a pad has been learned.
+ * INT (the Blackbox's own MIDI in): the render polls incoming messages with FUN_0804495e(mgr, out_msg, flag): the UART rings first,
+ * then a software ring of 256 five-byte messages (entries at mgr + 0x4660 + 5 * n, read index mgr + 0x4b60, write index
+ * mgr + 0x4b64; the USB receive path fills it, FUN_08044708 @0x08044744), and handles each message by its status byte like any MIDI
+ * in. This file runs in the audio task like that USB conversion, so putting a message into that ring the same way is a MIDI
+ * message arriving in the Blackbox: which pad or key plays follows its own MIDI settings (channel, note), nothing is guessed here.
  *
  * Memory: the settings and the two detectors (about 1.6 KB) come from the stock SDRAM allocator once at boot (from
  * looper_boot, after the sample pool has its memory, so nothing else is allocating then), only if well over that is
@@ -32,14 +31,12 @@
 typedef void *(*alloc_fn)(uint32_t bytes);
 typedef uint32_t (*free_fn)(void);
 typedef void (*midi_send_fn)(void *mgr, const uint8_t *msg, int uart, int usb);
-typedef void (*dispatch_fn)(void *obj, const void *cmd);
 
 #define fw_alloc     ((alloc_fn)FN(0x08044404))
 #define fw_ext_free  ((free_fn)FN(0x080443f0))
 #define fw_midi_send ((midi_send_fn)FN(0x08044a0e))
-#define fw_dispatch  ((dispatch_fn)FN(0x080520ec))
 #define MIDI_MGR     ((void *)0x24002e88u)
-#define ENGINE       0x2400a9c0u         /* the engine pointer the Keys screen passes to FUN_0804c61c; +0x9a74 holds the command queue's object */
+#define MGR_RING     (0x24002e88u + 0x4000u)   /* the software incoming ring: entries +0x660 + 5 n, read index +0xb60, write index +0xb64 */
 
 struct t2m_root {
     uint32_t magic;
@@ -75,9 +72,7 @@ void t2m_boot(void)
     for (int k = 0; k < T2M_INPUTS; k++) {
         m->p[k] = defaults;
         m->port[k] = T2M_PORT_TRS | T2M_PORT_USB;
-        m->pad_note[k] = 60;
         m->scan_saved[k] = defaults.scan_ms;
-        m->pad_held[k] = -1;
         t2m_reset(&m->st[k]);
     }
     clkmon_boot(&m->clk);                       /* the cycle counter and the clock monitor's interrupt block */
@@ -106,50 +101,35 @@ static void midi_out(const struct t2m_mem *m, int k, uint8_t status, uint8_t d1,
     fw_midi_send(MIDI_MGR, msg, m->port[k] & T2M_PORT_TRS, m->port[k] & T2M_PORT_USB);
 }
 
-/* ---- a pad of the Blackbox: the engine command 0x42 / 0x43 exactly as FUN_0804c61c / FUN_0804c5d4 build it (24 bytes:
- * id, 7 zero bytes, pad argument at +8, note +0xc, a4 = 0 at +0x10, half 1 at +0x14, velocity half at +0x16) */
-static void pad_cmd(uint32_t pad, unsigned note, unsigned vel, int on)
+/* ---- INT: one message into the Blackbox's own MIDI in, as the USB receive path puts one (0 if its ring is full) */
+static int midi_int(uint8_t status, uint8_t d1, uint8_t d2)
 {
-    if (note > 127)
-        return;
-    uint8_t *obj = *(uint8_t *volatile *)(ENGINE + 0x9000u + 0xa74u);
-    if (!obj || ((uintptr_t)obj & 3) || (uintptr_t)obj < 0x20000000u || (uintptr_t)obj >= 0xd0000000u)
-        return;                                 /* the engine is not up */
-    uint32_t cmd[6] = {0, 0, pad, note, 0, 0};
-    ((uint8_t *)cmd)[0] = on ? 0x42 : 0x43;
-    ((uint16_t *)cmd)[10] = 1;
-    ((uint16_t *)cmd)[11] = (uint16_t)vel;
-    fw_dispatch(obj, cmd);
-}
-
-static void pad_event(struct t2m_mem *m, int k, int on, unsigned vel)
-{
-    if (on) {
-        pad_cmd(m->pad_id[k], m->pad_note[k], vel, 1);
-        m->pad_held[k] = (int8_t)m->pad_note[k];
-        m->pad_sent[k]++;
-    } else if (m->pad_held[k] >= 0) {
-        pad_cmd(m->pad_id[k], (unsigned)m->pad_held[k], 0, 0);
-        m->pad_held[k] = -1;
-    }
-}
-
-/* Every stock note-on to a pad (hardware pad hits, the Keys screen): the pad hit that LEARN waits for. GUI task. */
-void t2m_learn(void *engine, uint32_t pad, uint32_t note, uint32_t a4)
-{
-    (void)engine;
-    (void)a4;
-    struct t2m_mem *m = t2m_mem();
-    if (!m || !m->learn || note > 127)
-        return;
-    int k = m->learn - 1;
-    m->learn = 0;
-    if (k < 0 || k >= T2M_INPUTS)
-        return;
-    m->pad_id[k] = pad;
-    m->pad_note[k] = (uint8_t)note;
+    volatile uint32_t *rd = (volatile uint32_t *)(MGR_RING + 0xb60u), *wr = (volatile uint32_t *)(MGR_RING + 0xb64u);
+    uint32_t w = *wr;
+    if (w - *rd >= 255u)
+        return 0;
+    volatile uint8_t *e = (volatile uint8_t *)(MGR_RING + 0x660u + (w & 0xffu) * 5u);
+    e[0] = status;
+    e[1] = d1;
+    e[2] = d2;
+    e[3] = 0;
+    e[4] = 3;
     __asm volatile("dmb" ::: "memory");
-    m->pad_on[k] = 1;                           /* last: the audio task sees a complete target */
+    *wr = w + 1u;                                                       /* last: the reader sees a complete entry */
+    return 1;
+}
+
+/* a message to this input's outputs: the MIDI jack, USB, and / or the Blackbox itself */
+static void out(struct t2m_mem *m, int k, uint8_t status, uint8_t d1, uint8_t d2)
+{
+    if (m->port[k] & (T2M_PORT_TRS | T2M_PORT_USB))
+        midi_out(m, k, status, d1, d2);
+    if (m->port[k] & T2M_PORT_INT) {
+        if (midi_int(status, d1, d2))
+            m->looped[k]++;
+        else
+            m->looped_lost[k]++;
+    }
 }
 
 static void record(struct t2m_mem *m, int k, uint8_t vel, uint8_t note)
@@ -188,38 +168,29 @@ void t2m_audio(const float *l, const float *r, int frames)
             if (t->held >= 0 || t->n_offs) {                            /* switched off: end what sounds */
                 if (m->p[k].note_on) {
                     if (t->held >= 0)
-                        midi_out(m, k, 0x80 | ch, (uint8_t)t->held, 0);
+                        out(m, k, 0x80 | ch, (uint8_t)t->held, 0);
                     for (uint32_t j = 0; j < t->n_offs; j++)
-                        midi_out(m, k, 0x80 | ch, t->offs[j].note, 0);
+                        out(m, k, 0x80 | ch, t->offs[j].note, 0);
                 }
                 t2m_reset(t);
             }
-            if (m->pad_held[k] >= 0)
-                pad_event(m, k, 0, 0);
             continue;
         }
-        if (!m->pad_on[k] && m->pad_held[k] >= 0)
-            pad_event(m, k, 0, 0);                                      /* the pad target was switched off while a note sounded */
         t2m_params pe = m->p[k];
-        pe.note_on = 1;                          /* every hit gives a note-on event (the history, the pad and the page need it);
+        pe.note_on = 1;                          /* every hit gives a note-on event (the history and the page need it);
                                                     the MIDI note itself is sent only when Note Out is on */
         uint32_t n = t2m_process(t, &pe, in[k], (uint32_t)frames);
         for (uint32_t j = 0; j < n; j++) {
             const t2m_event *e = &t->events[j];
             unsigned hi = e->status & 0xf0u;
             if (hi == 0xb0) {
-                midi_out(m, k, e->status, e->d1, e->d2);
+                out(m, k, e->status, e->d1, e->d2);
                 continue;
             }
             if (m->p[k].note_on)
-                midi_out(m, k, e->status, e->d1, e->d2);
-            if (hi == 0x90) {
+                out(m, k, e->status, e->d1, e->d2);
+            if (hi == 0x90)
                 record(m, k, e->d2, e->d1);
-                if (m->pad_on[k])
-                    pad_event(m, k, 1, e->d2);
-            } else if (m->pad_on[k] || m->pad_held[k] >= 0) {
-                pad_event(m, k, 0, 0);
-            }
         }
     }
 }

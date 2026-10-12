@@ -48,21 +48,21 @@ Same as the patch (not a bug): a hit into a still-ringing note re-sends note-on 
 - Footer sheets: **HITS** (two pads that light up on a hit, colour = velocity 50 / 100 split green / yellow / red, note and velocity in
   them; the input levels with the threshold; the last 4 s of hits per input as bars, height = velocity, newest white; the knobs turn
   SENS THRESH RETRIG MASK of the input shown), **DETECT** (SENS THRESH RETRIG MASK / SCAN STRICT SPEED CURVE / BLEED RANGE, with
-  the meter), **OUT** (NOTE VEL LEN CHAN / CC CC VAL / PAD PAD NOTE LEARN). Switch row on every sheet: IN L / IN R, ON / OFF, TRS, USB.
+  the meter), **OUT** (NOTE VEL LEN CHAN / CC CC VAL). Switch row on every sheet: IN L / IN R, ON / OFF, TRS, USB, INT.
   A tap on a row gives it to the four knobs (pink frame), 40 counts a step. NOTE OFF = no MIDI note, hits still show and still reach a pad.
-- **Pad target (experimental, untested on hardware, off until learned).** `t2m_bb.c` builds the engine's note-on / note-off command
-  (id 0x42 / 0x43, 24 bytes: pad argument at +8, note +0xc, a4 = 0 at +0x10, half 1 at +0x14, velocity half at +0x16) exactly as
-  `FUN_0804c61c` / `FUN_0804c5d4` do, and calls the dispatcher `FUN_080520ec(obj, cmd)` directly (obj = `*(0x2400a9c0 + 0x9a74)`).
-  The stock path queues the command with `FUN_08051738`, a queue only the GUI task may write; the render drains it in the audio task
-  and calls the dispatcher, so calling it from the audio task (the input hook, before the render) has no second writer. Both note
-  commands go to one handler (`0x080521b8`) that forwards to the per-module command queue (`0x0805f460`).
-  Which pad: **LEARN** (OUT sheet): `t2m_thunk.S` replaces the first two instructions of `FUN_0804c61c` with a jump that tells
-  `t2m_learn` the pad argument and note of every stock note-on (pads and Keys screen); while LEARN waits, the next one is stored
-  (the pad argument packs bank << 16 | row << 8 | col as far as the Keys handler shows; we never interpret it, we replay it).
-  Velocity = the hit's (VEL fixed applies), note-off = the hit ending (Dynamic length: the detector's note_active; Fixed: after LEN).
-- `test_t2m_bb.py` checks the dispatched command byte for byte against what the stock builders queue (run in the emulator).
-  NOT checked (needs hardware): that the engine plays the pad when called from the input stage; the velocity range the engine
-  expects (assumed 1-127, the Keys screen test uses 77); whether a pad plays at its own pitch with the note LEARN took.
+- **INT (replaces the pad target; the first build's direct pad command did not work on hardware).** The first version built the engine's
+  note-on command (0x42) for a pad learned with LEARN and dispatched it from the audio task. On the unit the learned pad flashed but made no
+  sound and another pad played. Likely causes, from the firmware: LEARN took the first stock call to `FUN_0804c61c`, and several stock callers
+  are control calls (pad argument `0x401`, or a pad id with note 0 and velocity 0: `0x0809f480`, `0x080a1176`, `0x080a167e`, `0x080a2824`), so it
+  could learn note 0 (about 5 octaves below anything audible); hardware pad hits on the pad / mixer screens do not use command 0x42 at all
+  (only the Keys screen does, `0x080a0aa2`). The other pad that sounded fits MIDI feedback (the default note D1 = 38 is mapped to a pad of
+  the Blackbox's own MIDI in) when the output is looped back. The command path, LEARN and `t2m_thunk.S` are removed.
+  **INT** is a third port next to TRS and USB: the same notes and CCs are put into the stock software incoming ring (entries at
+  `mgr + 0x4660 + 5 n`, read index `mgr + 0x4b60`, write index `mgr + 0x4b64`, written by the USB receive conversion at `0x08044744`; the render's poll
+  `FUN_0804495e` reads it after the UART rings and the render handles the message by its status byte, `0x0804cba8`). Same task as the USB
+  conversion, so no race. Which pad plays follows the Blackbox's own MIDI settings (channel, note); nothing about pad ids is assumed. The
+  OUT sheet shows how many messages went in (and how many were lost to a full ring). If TRS or USB is looped back into the Blackbox, switch
+  them off for that input (otherwise a pad plays twice).
 
 - VEL fixed sets SCAN to 0 (the old value is kept and comes back when VEL goes to DYN, unless SCAN was changed by hand meanwhile).
   Note the decision window is `max(Scan, 3 x Speed)`: with SCAN 0 it is 3 x Speed (9 ms at Speed 3.0), so SPEED sets the delay then.
@@ -81,7 +81,7 @@ the same block); wire = 0.96 ms for 3 bytes on the jack.
 | VEL fixed (Scan 0), Speed 1.0 | 3.0 | 3.3 / 5.8 / 8.3 | 6.8 |
 | VEL fixed (Scan 0), Speed 0.5 | 1.5 | 1.7 / 4.2 / 6.7 | 5.1 |
 | VEL fixed (Scan 0), Speed 0.2 | 0.7 | 0.7 / 3.2 / 5.7 | 4.1 |
-| ... plus a pad target | 0.7 | 0.7 / 3.2 / 5.7 | none (same block) |
+| ... INT (into the Blackbox) | 0.7 | 0.7 / 3.2 / 5.7 | none (put in before the render) |
 
 - Not 0 ms: the block wait alone is 0 .. 5.33 ms (avg 2.67). Scan 0 alone changes nothing at Speed 3.0 (the window is 3 x Speed).
 - Dynamic velocity with Scan 0 and Speed 0.2 reads low (120 / 44 instead of 127 / 48 for this 0.5 ms attack; slower attacks read lower).

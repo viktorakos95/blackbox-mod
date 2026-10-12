@@ -2,7 +2,7 @@
 
 Uses test_looper.py's setup (the fake pool, the mixer view with the real 256 x 224 grid, the drawing stubs) by running
 that file up to its first page draw, then: the SONG button's three pages, the footer's sheets, the page's switches, rows
-and knobs, LEARN, the redraw signature, and a PNG of each sheet (out/t2m_test/trig_*.png, colours from the firmware's palette).
+and knobs, INT, the redraw signature, and a PNG of each sheet (out/t2m_test/trig_*.png, colours from the firmware's palette).
 
 python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper cave && python3 test_t2m_page.py
 """
@@ -26,8 +26,8 @@ def check(label, cond, detail=""):
     fails += not cond
 
 
-FIELDS = ["on", "port", "last_vel", "last_note", "hits", "peak", "blocks", "hit_blk", "pad_on", "pad_note", "learn", "pad_id",
-          "pad_sent", "hist_n", "hist", "ui", "p", "clk"]
+FIELDS = ["on", "port", "last_vel", "last_note", "hits", "peak", "blocks", "hit_blk", "looped", "looped_lost", "hist_n", "hist", "ui", "p",
+          "clk"]
 os.makedirs("out/t2m_test", exist_ok=True)
 open("out/t2m_test/off2.c", "w").write(
     '#include <stdio.h>\n#include <stddef.h>\n#include "../../src/t2m_bb.h"\nint main(void){\n'
@@ -228,7 +228,7 @@ tap(180, 26)
 tap(20, 26)
 check("IN L: back to input L", e.r8(MEM + O["ui"]) == 0)
 
-# ---- OUT rows (d 40, 80, 120; 40 px each): NOTE VEL LEN CHAN / CC CC VAL / PAD PAD NOTE LEARN
+# ---- OUT rows (d 40, 80; 40 px each): NOTE VEL LEN CHAN / CC CC VAL
 tap(150, 40 + 10)
 check("tapping the NOTE row hands it to the knobs", e.r8(MEM + O["ui"] + 1) == 0)
 knob(0, 40)
@@ -266,36 +266,26 @@ check("CC row, knob 1: CC OFF -> CC 74", p8(0, O["p_cc_on"]) == 1 and p8(0, O["p
 knob(0, -40 * 200)
 check("... and OFF again", p8(0, O["p_cc_on"]) == 0)
 
-# PAD row (d 120): PAD, PAD NOTE, LEARN
-tap(60, 120 + 10)
-knob(0, 40)
-check("PAD with nothing learned: stays off", e.r8(MEM + O["pad_on"]) == 0)
-knob(1, 40 * 2)
-check("PAD NOTE: 60 -> 62", e.r8(MEM + O["pad_note"]) == 62, e.r8(MEM + O["pad_note"]))
-tap(170, 120 + 10)
-check("LEARN: a tap arms it for the input shown", e.r8(MEM + O["learn"]) == 1)
-f = picture("learn")
-check("LEARN armed: the cell says HIT A PAD (text drawn, page inside the screen)", inside(f))
-tap(170, 120 + 10)
-check("a second tap disarms it", e.r8(MEM + O["learn"]) == 0)
-tap(170, 120 + 10)
-touch("down", 3 + 60 + 10, 216)
-touch("up", 3 + 60 + 10, 216)
-check("changing the sheet disarms LEARN", e.r8(MEM + O["learn"]) == 0)
-touch("down", 3 + 120 + 10, 216)
-touch("up", 3 + 120 + 10, 216)
-tap(170, 120 + 10)
-e.call("t2m_learn", ENGINE_PAD, 0x00020105, 64, 0)
-check("a stock pad hit while armed: the pad is learned (id, note), the target is on, disarmed",
-      e.r32(MEM + O["pad_id"]) == 0x00020105 and e.r8(MEM + O["pad_note"]) == 64 and e.r8(MEM + O["pad_on"]) == 1 and e.r8(MEM + O["learn"]) == 0)
-f = picture("out_learned")
-check("... and the OUT sheet shows it", inside(f))
-tap(60, 120 + 10)
-knob(0, -40)
-check("PAD knob down: the target is off, the learned pad kept", e.r8(MEM + O["pad_on"]) == 0 and e.r32(MEM + O["pad_id"]) == 0x00020105)
-knob(0, 40)
-check("PAD knob up: on again (a pad is learned)", e.r8(MEM + O["pad_on"]) == 1)
-check("the input R settings did not move", p8(1, O["p_note"]) == 38 and p8(1, O["p_cc_on"]) == 0 and e.r32(MEM + O["pad_id"] + 4) == 0)
+# INT: the Blackbox's own MIDI in (switch row, sixth button at x 234 .. 272)
+check("INT starts off", e.r8(MEM + O["port"]) == 3, e.r8(MEM + O["port"]))
+tap(250, 26)
+check("INT: a tap switches the Blackbox's own MIDI in on for the input shown (TRS and USB stay on)", e.r8(MEM + O["port"]) == 7, e.r8(MEM + O["port"]))
+tap(170, 26)
+tap(210, 26)
+check("... TRS and USB off: INT only", e.r8(MEM + O["port"]) == 4, e.r8(MEM + O["port"]))
+e.w32(MEM + O["looped"], 12)
+f = picture("out_int")
+check("OUT sheet with INT on: inside the screen, the sent counter and the explanation are drawn", inside(f))
+tap(250, 26)
+tap(170, 26)
+tap(210, 26)
+check("... INT off, the jack and USB back on", e.r8(MEM + O["port"]) == 3, e.r8(MEM + O["port"]))
+tap(60, 26)
+tap(250, 26)
+check("input R has its own port byte", e.r8(MEM + O["port"] + 1) == 7 and e.r8(MEM + O["port"]) == 3, (e.r8(MEM + O["port"]), e.r8(MEM + O["port"] + 1)))
+tap(250, 26)
+tap(20, 26)
+check("the input R settings did not move", p8(1, O["p_note"]) == 38 and p8(1, O["p_cc_on"]) == 0)
 check("knobs on the TRIG page never move the looper's faders", abs(tr(0, O_LEVEL, "f") - 1.0) < 1e-6, tr(0, O_LEVEL, "f"))
 
 # ---- the signature follows what the page shows
@@ -303,9 +293,8 @@ s0 = sig()
 e.w32(MEM + O["hits"], 5)
 check("the page redraws when a hit is counted", sig() != s0)
 s0 = sig()
-e.uc.mem_write(MEM + O["learn"], b"\x01")
-check("... and when LEARN is armed", sig() != s0)
-e.uc.mem_write(MEM + O["learn"], b"\x00")
+e.w32(MEM + O["looped"], 99)
+check("... and when a note is put into the Blackbox", sig() != s0)
 
 # ---- the CLK sheet (src/clkmon.c): a measurement of the incoming MIDI clock, a fourth sheet of the footer
 import random  # noqa: E402
