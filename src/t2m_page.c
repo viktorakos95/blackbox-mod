@@ -418,16 +418,42 @@ static void draw_clk(struct t2m_mem *m, int w, int foot)
     p = put_s(p, "  TAP=RESET");
     *p = 0;
     lp_text(4, d0 + 5 * st, b, C_GREY, 1);
+    struct clk_xp_stats xp;
+    clkmon_xp_stats(c, &xp);
     p = put_s(b, "BLK ");
     p = put_f(p, clkmon_blk_ms(c, 0), 2);
     *p++ = '-';
     p = put_f(p, clkmon_blk_ms(c, 1), 2);
-    p = put_s(p, "MS  AUDIO BLOCK GAPS");
+    p = put_s(p, "MS  FS ");
+    if (xp.fs > 0.f)
+        p = put_u(p, (unsigned)(xp.fs + .5f));
+    else
+        p = put_s(p, "..");
+    p = put_s(p, "HZ");
     *p = 0;
     lp_text(4, d0 + 6 * st, b, C_GREY, 1);
-    lp_text(4, d0 + 7 * st + 4, "ARR  tick to tick as it arrives (the interrupt)", C_GREEN, 1);
-    lp_text(4, d0 + 8 * st + 4, "STK  tick to tick as the stock sequencer gets it", C_YELLOW, 1);
-    lp_text(4, d0 + 9 * st + 4, "LAT  how long a tick waits for the audio block", C_LIGHT, 1);
+    p = put_s(b, "SEQ BPM ");
+    p = put_f(p, xp.bpm, 1);
+    p = put_s(p, "  TICKS/BLK ");
+    p = put_u(p, (unsigned)xp.dt_min);
+    *p++ = '-';
+    p = put_u(p, (unsigned)xp.dt_max);
+    p = put_s(p, "  N ");
+    p = put_u(p, xp.calls);
+    *p = 0;
+    lp_text(4, d0 + 7 * st + 2, b, xp.calls ? C_LIGHT : C_GREY, 1);
+    p = put_s(b, "SEQ OFF-LINE ");
+    p = put_s(p, xp.res_min < 0.f ? "-" : "+");
+    p = put_us(p, xp.res_min < 0.f ? -xp.res_min : xp.res_min);
+    p = put_s(p, "..");
+    p = put_s(p, xp.res_max < 0.f ? "-" : "+");
+    p = put_us(p, xp.res_max < 0.f ? -xp.res_max : xp.res_max);
+    p = put_s(p, " sd");
+    p = put_us(p, xp.res_sd);
+    p = put_s(p, " US");
+    *p = 0;
+    lp_text(4, d0 + 8 * st + 2, b, xp.calls ? C_YELLOW : C_GREY, 1);
+    lp_text(4, d0 + 9 * st + 4, "SEQ = stock sequencer position vs audio time", C_GREY, 1);
 }
 
 void t2m_page_draw(int w, int foot)

@@ -86,6 +86,14 @@ void t2m_boot(void)
     R->magic = MAGIC;
 }
 
+/* From looper_clock (src/looper.c): the stock sequencer's position, once per audio block while the transport plays. */
+void t2m_seq(uint32_t lo, int32_t hi)
+{
+    struct t2m_mem *m = t2m_mem();
+    if (m)
+        clkmon_seq(&m->clk, lo, hi);
+}
+
 struct t2m_mem *t2m_mem(void)
 {
     return R->magic == MAGIC ? R->mem : 0;
@@ -165,7 +173,7 @@ void t2m_audio(const float *l, const float *r, int frames)
         return;
     const float *in[T2M_INPUTS] = {l, r};
     m->blocks++;
-    clkmon_block(&m->clk);
+    clkmon_block(&m->clk, frames);
     for (int k = 0; k < T2M_INPUTS; k++) {
         t2m_state *t = &m->st[k];
         float pk = 0.f, g = m->p[k].sens;

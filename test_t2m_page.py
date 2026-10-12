@@ -326,7 +326,7 @@ for t, is_tick in ev:
     if is_tick:
         e.call("clkmon_rx", MGR, 0xF8, 0)
     else:
-        e.call("clkmon_block", MEM + O["clk"])
+        e.call("clkmon_block", MEM + O["clk"], 128)
 e.w32(CYC, 2_100_000_000)
 e.call("clkmon_rx", MGR, 0xFA, 0)
 f = picture("clk")
@@ -340,7 +340,7 @@ n0 = p8(0, O["p_note"])
 knob(0, 40 * 20)
 check("knobs do nothing on the CLK sheet", p8(0, O["p_note"]) == n0 and e.r8(MEM + O["ui"] + 2) == 3)
 tap(100, 100)
-e.call("clkmon_block", MEM + O["clk"])
+e.call("clkmon_block", MEM + O["clk"], 128)
 e.call("clkmon_stats", MEM + O["clk"], 0, 0x30038000)
 check("a tap on the sheet resets the numbers (counted from zero after the next block)",
       e.r32(0x30038000) == 0 and e.r32(0x30038014) == 0, (e.r32(0x30038000), e.r32(0x30038014)))

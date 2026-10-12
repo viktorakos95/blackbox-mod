@@ -74,7 +74,7 @@ def usb(packets, t):
 
 def block(t):
     cyc(t)
-    e.call("clkmon_block", MEM, count=2_000_000)
+    e.call("clkmon_block", MEM, 128, count=2_000_000)
 
 
 def stats(src):
@@ -269,6 +269,56 @@ rx(0xF8, 301_000_000)
 block(300_500_000)                                  # the counter reads earlier than the stamp
 s0 = stats(0)
 check("a stamp newer than the block's clock gives latency 0, not 4 billion cycles", s0["lat_max"] == 0.0 and s0["lat_avg"] == 0.0, (s0["lat_avg"], s0["lat_max"]))
+
+# ---- the stock sequencer's position against audio time (what a plugin host's position would be judged by)
+def seq(lo):
+    e.call("clkmon_seq", MEM, lo & 0xFFFFFFFF, 0, count=2_000_000)
+
+
+def xp():
+    e.call("clkmon_xp_stats", MEM, OUT, count=2_000_000)
+    v = struct.unpack("<IIii5f", bytes(e.uc.mem_read(OUT, 36)))
+    return dict(zip("calls restarts dt_min dt_max bpm res_min res_max res_sd fs".split(), v))
+
+
+BLK_CYC = round(MHZ * 1e6 * 128 / 48000)               # cycles per 128-frame block at 48 kHz
+e.w32(MEM + O_RESET, 1)
+t = 500_000_000
+block(t)
+for k in range(1, 801):                                 # internal clock, 120 BPM: 20.48 ticks a block, whole ticks
+    t += BLK_CYC
+    block(t)
+    seq(int(20.48 * k))
+a = xp()
+check(f"sample rate measured against the core clock: {a['fs']:.0f} Hz", close(a["fs"], 48000, 30), a["fs"])
+check(f"internal clock: the position gives {a['bpm']:.2f} BPM", close(a["bpm"], 120.0, 0.1), a["bpm"])
+check(f"... advances {a['dt_min']}-{a['dt_max']} ticks a block", (a["dt_min"], a["dt_max"]) == (20, 21), a)
+check(f"... and sits on its line to within {a['res_min']:.0f} .. {a['res_max']:.0f} us (whole ticks: about +-65 plus the fit)", -110 < a["res_min"] and a["res_max"] < 110, a)
+
+# a stop (no calls for a while) and a restart from 0: the window starts again, the numbers stay clean
+for _ in range(20):
+    t += BLK_CYC
+    block(t)
+for k in range(0, 100):
+    t += BLK_CYC
+    block(t)
+    seq(int(20.48 * k))
+b = xp()
+check("a stop and a restart from position 0: one window restart, residuals still clean",
+      b["restarts"] == a["restarts"] + 1 and -110 < b["res_min"] and b["res_max"] < 110, (a["restarts"], b))
+
+# following an external clock: stock moves the position a whole tick (160) at the block that takes the F8, not smoothly
+e.w32(MEM + O_RESET, 1)
+t += BLK_CYC
+block(t)
+for k in range(1, 801):
+    t += BLK_CYC
+    block(t)
+    seq(160 * int(k * 128 / 48000 / (60 / 120 / 24)))   # 120 BPM, a step of 160 ticks per F8
+c_ = xp()
+check(f"following 120 BPM: the position moves in steps ({c_['dt_min']}-{c_['dt_max']} ticks a block)", (c_["dt_min"], c_["dt_max"]) == (0, 160), c_)
+check(f"... and strays {c_['res_min']:.0f} .. {c_['res_max']:.0f} us off the line (a staircase is far from a line)", c_["res_max"] - c_["res_min"] > 1500, c_)
+check(f"... and the tempo from a 32-block window of it is only roughly right ({c_['bpm']:.1f} BPM)", close(c_["bpm"], 120.0, 5.0), c_["bpm"])
 
 print(f"{fails} failure(s)")
 raise SystemExit(1 if fails else 0)

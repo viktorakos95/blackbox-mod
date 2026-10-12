@@ -187,7 +187,7 @@ static void tempo_fit(struct clk_rd *r, float mhz)
         r->bpm = est;
 }
 
-void clkmon_block(struct clkmon *c)
+void clkmon_block(struct clkmon *c, int frames)
 {
     uint32_t now = DWT_CYCCNT;
     if (!bkp_on())
@@ -195,6 +195,11 @@ void clkmon_block(struct clkmon *c)
     if (c->reset) {
         c->reset = 0;
         c->have_blk = c->blk_min = c->blk_max = 0;
+        c->fs_samples = c->fs_lo = c->fs_hi = 0;
+        struct clk_xp *x = &c->xp;
+        uint32_t *q = (uint32_t *)x;
+        for (unsigned i = 0; i < sizeof *x / 4; i++)
+            q[i] = 0;
         for (int k = 0; k < CLK_SRC; k++)
             clear_src(&c->r[k], &ISR->s[k]);
     }
@@ -202,6 +207,10 @@ void clkmon_block(struct clkmon *c)
     c->mhz = rvr >= 49999u && rvr <= 599999u ? (float)(rvr + 1u) / 1000.f : 0.f;     /* 50 .. 600 MHz */
     if (c->have_blk) {
         uint32_t d = now - c->blk_prev;
+        uint32_t lo = c->fs_lo + d;
+        c->fs_hi += lo < d;               /* the cycle count between audio blocks, 64 bit */
+        c->fs_lo = lo;
+        c->fs_samples += (uint32_t)c->last_frames;
         if (!c->blk_max || d < c->blk_min)
             c->blk_min = d;
         if (d > c->blk_max)
@@ -209,6 +218,8 @@ void clkmon_block(struct clkmon *c)
     }
     c->blk_prev = now;
     c->have_blk = 1;
+    c->last_frames = (uint32_t)frames;
+    c->samples += (uint32_t)frames;
     for (int k = 0; k < CLK_SRC; k++) {
         struct clk_rd *r = &c->r[k];
         volatile struct clk_isr_src *s = &ISR->s[k];
@@ -249,6 +260,96 @@ void clkmon_block(struct clkmon *c)
             r->have_stk = 1;
         }
     }
+}
+
+/* The measured audio sample rate: frames between the audio blocks over the cycles they took (core clock from SysTick). */
+static float fs_now(const struct clkmon *c)
+{
+    if (c->mhz <= 0.f || c->fs_samples < 48000u)
+        return 0.f;
+    float cyc = (float)c->fs_hi * 4294967296.f + (float)c->fs_lo;
+    return cyc > 0.f ? (float)c->fs_samples * c->mhz * 1e6f / cyc : 0.f;
+}
+
+/* The stock sequencer's position at this block: `lo` is the low word of its time in ticks (960 per 16th). A straight line is
+ * fitted through the last CLK_XPW calls (x = frames of audio, y = ticks); the new point is judged against the line of the
+ * ones before it, in microseconds of audio time. A plugin host's position would sit on that line to the frame. */
+void clkmon_seq(struct clkmon *c, uint32_t lo, int32_t hi)
+{
+    (void)hi;
+    struct clk_xp *x = &c->xp;
+    uint32_t s = c->samples;
+    if (x->have) {
+        uint32_t ds = s - x->last_s;
+        int32_t dt = (int32_t)(lo - x->last_t);
+        if (ds > 4u * (c->last_frames ? c->last_frames : 128u) || dt < 0) {      /* a gap in the calls (stopped) or time going back (a jump) */
+            x->w_n = 0;
+            x->restarts++;
+        } else if (ds == c->last_frames) {
+            if (!x->dt_n || dt < x->dt_min)
+                x->dt_min = dt;
+            if (!x->dt_n || dt > x->dt_max)
+                x->dt_max = dt;
+            x->dt_n++;
+        }
+    }
+    if (x->w_n >= 8u) {
+        uint32_t n = x->w_n;
+        uint32_t i0 = (x->w_head + CLK_XPW - n) % CLK_XPW, bx = x->wx[i0], bt = x->wt[i0];
+        float sx = 0.f, sy = 0.f, sxx = 0.f, sxy = 0.f;
+        for (uint32_t j = 0; j < n; j++) {
+            uint32_t k = (i0 + j) % CLK_XPW;
+            float px = (float)(x->wx[k] - bx), py = (float)(int32_t)(x->wt[k] - bt);
+            sx += px;
+            sy += py;
+            sxx += px * px;
+            sxy += px * py;
+        }
+        float fn = (float)n, den = fn * sxx - sx * sx;
+        if (den > 0.f) {
+            float slope = (fn * sxy - sx * sy) / den, icpt = (sy - slope * sx) / fn;
+            float pred = icpt + slope * (float)(s - bx), act = (float)(int32_t)(lo - bt);
+            float fs = fs_now(c);
+            if (fs < 1000.f)
+                fs = 48000.f;
+            x->slope = slope;
+            if (slope > 0.f) {
+                float us = (act - pred) / slope / fs * 1e6f;             /* ticks off the line -> microseconds of audio */
+                if (!x->r_n || us < x->r_min)
+                    x->r_min = us;
+                if (!x->r_n || us > x->r_max)
+                    x->r_max = us;
+                x->r_n++;
+                float dl = us - x->r_mean;
+                x->r_mean += dl / (float)x->r_n;
+                x->r_m2 += dl * (us - x->r_mean);
+            }
+        }
+    }
+    x->wx[x->w_head] = s;
+    x->wt[x->w_head] = lo;
+    x->w_head = (x->w_head + 1u) % CLK_XPW;
+    if (x->w_n < CLK_XPW)
+        x->w_n++;
+    x->last_s = s;
+    x->last_t = lo;
+    x->have = 1;
+    x->calls++;
+}
+
+void clkmon_xp_stats(const struct clkmon *c, struct clk_xp_stats *o)
+{
+    const struct clk_xp *x = &c->xp;
+    float fs = fs_now(c);
+    o->calls = x->calls;
+    o->restarts = x->restarts;
+    o->dt_min = x->dt_n ? x->dt_min : 0;
+    o->dt_max = x->dt_n ? x->dt_max : 0;
+    o->fs = fs;
+    o->bpm = x->slope > 0.f ? x->slope * (fs > 1000.f ? fs : 48000.f) * 60.f / 3840.f : 0.f;    /* 3840 ticks a beat */
+    o->res_min = x->r_n ? x->r_min : 0.f;
+    o->res_max = x->r_n ? x->r_max : 0.f;
+    o->res_sd = x->r_n > 1 ? fsqrt(x->r_m2 / (float)(x->r_n - 1)) : 0.f;
 }
 
 float clkmon_mhz(const struct clkmon *c)
@@ -294,5 +395,6 @@ uint32_t clkmon_sig(const struct clkmon *c)
         h = (h ^ ISR->s[k].n_fa ^ ((uint32_t)ISR->s[k].n_fb << 8) ^ ((uint32_t)ISR->s[k].n_fc << 16)) * 16777619u;
         h = (h ^ c->r[k].n_arr ^ c->r[k].over) * 16777619u;
     }
+    h = (h ^ c->xp.calls ^ c->xp.restarts) * 16777619u;
     return (h ^ (uint32_t)(c->mhz * 10.f)) * 16777619u;
 }
