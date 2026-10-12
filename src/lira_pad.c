@@ -135,11 +135,11 @@ static const struct ctl ctls[] = {
 #define NCTL ((int)(sizeof ctls / sizeof ctls[0]))
 _Static_assert(P0 + NCTL - 1 <= 0x1f3, "parameter ids must stay below the table's 500 slots");
 
-/* Three pages of at most ten (a stock page holds at most ten): the oscillators, the voices' shaping and modulation, the
-   delay and output. -1 = the stock Loop Mode. */
-static const int8_t page_a[] = {-1, 0, 1, 2, 3, 4, 5, 6, 7};
-static const int8_t page_b[] = {24, 9, 8, 10, 11, 12, 13, 14, 15};
-static const int8_t page_c[] = {16, 17, 18, 19, 20, 21, 22, 23};
+/* A pad has four pages (Main, Loop, LFO, Pad) and shows ten entries at most: LIRA takes the first three. Values >= 1000 are
+   stock ids (+1000), the others index ctls[]. Mod Src (21) stays at its default. */
+static const int16_t page_a[] = {1004, 1000 + 0x3c, 1000 + 0x3e, 1000 + 0x3f, 1000 + 0x40, 16, 17, 18, 19, 20};
+static const int16_t page_b[] = {1000 + P_LOOP, 0, 1, 2, 3, 4, 5, 6, 7, 9};
+static const int16_t page_c[] = {24, 8, 10, 11, 12, 13, 14, 15, 22, 23};
 
 /* ---- instances, in SDRAM ---- */
 struct slot {
@@ -270,7 +270,7 @@ extern const unsigned interp_lira;                      /* filter.c: the "LIRA" 
 int lira_pages(uint8_t *app, uint8_t *cell, void *list, int page)
 {
     int r = fw_pages(app, cell, list, page);
-    if (page < 1 || page > 3 || !cell)
+    if (page < 0 || page > 2 || !cell)
         return r;
     unsigned id = *(const uint16_t *)(cell + 4);
     if (id == 0x40 || id == 0x41 || id == 0x42 || ((id >> 8) & 0x1f) != 0)
@@ -284,11 +284,11 @@ int lira_pages(uint8_t *app, uint8_t *cell, void *list, int page)
         return r;
     if (fw_setting(rec, P_MODE) != 0 || (unsigned)fw_setting(rec, 0xf1) != interp_lira)
         return r;
-    const int8_t *order = page == 1 ? page_a : page == 2 ? page_b : page_c;
-    int n = page == 1 ? (int)sizeof page_a : page == 2 ? (int)sizeof page_b : (int)sizeof page_c;
+    const int16_t *order = page == 0 ? page_a : page == 1 ? page_b : page_c;
+    int n = 10;
     fw_list_clear(list);
     for (int i = 0; i < n; i++) {
-        unsigned pid = order[i] < 0 ? P_LOOP : ctls[order[i]].id;
+        unsigned pid = order[i] >= 1000 ? (unsigned)order[i] - 1000 : ctls[order[i]].id;
         fw_list_add(list, pid, fw_setting(rec, pid));
     }
     return r;

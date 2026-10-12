@@ -106,11 +106,12 @@ check("stock builder on this pad record: page 2 = Loop Mode, Loop Fade, Reverse,
 make_pad(mode=0, fidelity=INTERP_LIRA)
 got = {p: ids(p) for p in range(5)}
 print("LIRA pages:", {p: [hex(x) for x in v] for p, v in got.items()})
-shown = [x for p in (1, 2, 3) for x in got[p] if x >= P0]
-check("every LIRA control is on pages 2..4 exactly once", sorted(shown) == list(range(P0, P0 + NCTL)))
+shown = [x for p in (0, 1, 2) for x in got[p] if x >= P0]
+check("every LIRA control but Mod Src is on pages 1..3 exactly once", sorted(shown) == [P0 + i for i in range(NCTL) if i != 21])
 check("no page lists more than 10 entries", all(len(v) <= 10 for v in got.values()))
-check("pages 1 and 5 are the stock ones", got[0] == stock[0] and got[4] == stock[4])
+check("page 5 is the stock one", got[4] == stock[4])
 check("Loop Mode is the first entry of page 2", got[1][0] == 0x8E)
+check("page 1 keeps Level and the ADSR", got[0][:5] == [4, 0x3c, 0x3e, 0x3f, 0x40])
 pg1 = dict(pages(1))
 check("a page lists the pool's values (Tune 2)", pg1[P0 + 1] == round(78 * 1000 / 127), str(pg1))
 e.call(SET, REC, P0 + 1, 321)

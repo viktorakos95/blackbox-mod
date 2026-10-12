@@ -27,13 +27,13 @@ out (new FX, fixes). That's all the list is for.
 - **Reverb Type**: Plate (stock) or Room.
 - **Delay Type**: Delay (stock) or Munchi (a port of the CHOMPI TEMPO granular delay).
 - **Sequencer fix**: a note added just ahead of the playhead plays on that pass.
-- **LIRA-8 on a pad** (test build 3.1.s): a port of Mike Moreno DSP's LIRA-8 (an emulation of
+- **LIRA-8 on a pad** (test build 3.1.t): a port of Mike Moreno DSP's LIRA-8 (an emulation of
   the SOMA Lyra-8 drone synth). On a pad in **Sample** mode (not Clip / Slicer / Granular), set Fidelity to **LIRA**: the pad plays LIRA instead of its sample.
   Load any sample on the pad and set Loop Mode on, so the voice lasts while the pad is held (Launch Mode Toggle = a
   drone you switch on and off). A pad tap holds all eight sensors; on the Keys screen, the notes 1 to 8 semitones above
-  the root hold sensors 1 to 8 one by one. The pad's pages 2, 3 and 4 become LIRA's controls while Fidelity is LIRA: page 2 Loop Mode and
-  Tune 1-8; page 3 Touch (Fast/Slow), Sharp, Pitch, Hold, FM Depth/Source, Vibrato, LFO A/B; page 4 the dual delay (Time 1/2,
-  Feedback, Dly Mix, Dly Mod, Mod Src), Drive and Dist Mix. Pages 1 and 5 stay as they are (page 5 holds Fidelity). These
+  the root hold sensors 1 to 8 one by one. While Fidelity is LIRA the pad's first three pages become LIRA's: page 1 Level, Attack, Decay, Sustain, Release and the delay
+  (Time 1/2, Feedback, Dly Mix, Dly Mod); page 2 Loop Mode (turn it on), Tune 1-8, Sharp; page 3 Touch, Pitch, Hold, FM Depth/Source,
+  Vibrato, LFO A/B, Drive, Dist Mix. Page 4 (with Fidelity) is unchanged. Filter and Pitch move off page 1 for LIRA pads. These
   settings are not saved with the project yet: a power cycle returns them to LIRA-8's defaults. The pad's Level, envelope (Release fades it), filter,
   FX sends and sequencer work as on any pad. Two LIRA pads can play at once.
 
