@@ -210,7 +210,7 @@ check("third pad takes an idle instance", rms(lc) > 0.0, "rms %.4f" % rms(lc))
 def drone(**kw):
     app_pad(0, **kw)
     now[0] += 3_000_000_000
-    e.uc.mem_write(0x38800F00 - 0x38800F00 + 0xC0000000 + 4, b"\0" * 4)   # free the instances: start afresh
+    e.uc.mem_write(0xC0000000 + 4, b"\0" * 4)     # pool slot 0 free: a fresh instance
     out = []
     for b in range(60):
         l, _ = voice(PADS[0])

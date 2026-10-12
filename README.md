@@ -42,7 +42,7 @@ out (new FX, fixes). That's all the list is for.
 - Chords need the pad out of Mono Poly Mode.
 - Presets saved with a Fidelity value on an older mod build may read a different value.
 - LIRA (3.1.p): 3.1.o only clicked on pads made before it (their LIRA settings read as all zero) and skipped the
-  pad's Level and envelope; both fixed in 3.1.p. each playing LIRA pad is about 1,350 instructions per sample (roughly 15-20 % of
+  pad's Level and envelope; both fixed in 3.1.p. Each playing LIRA pad is about 1,350 instructions per sample (roughly 15-20 % of
   the CPU, watch the meter on the version label); it reserves about 1.2 MB of sample memory at boot. Only the first
   10 entries of a pad page may be reachable on screen, in which case Pitch and Hold (loop page) and Dly Mix, Dly Mod,
   Mod Src and Vibrato (LFO page) are off the end. 
