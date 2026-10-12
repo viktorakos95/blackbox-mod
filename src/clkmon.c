@@ -276,12 +276,20 @@ static float fs_now(const struct clkmon *c)
  * last reset) and notes how far the others' times are from it in the same block. A straight line is fitted through its last
  * CLK_XPW blocks (x = frames of audio, y = ticks); each new point is judged against the line of the ones before it, in
  * microseconds of audio time. A plugin host's position would sit on that line to the frame. */
+static void seq_point(struct clkmon *c, uint32_t s, uint32_t lo);
+
 void clkmon_seq(struct clkmon *c, const void *seq, uint32_t lo, int32_t hi)
 {
     (void)hi;
     struct clk_xp *x = &c->xp;
     uint32_t s = c->samples, id = (uint32_t)seq;
-    if (x->blk_s != s || !x->blk_calls) {          /* a new block */
+    if (x->blk_s != s || !x->blk_calls) {          /* a new block: first, how far apart the sequences ended the last one */
+        if (x->blk_have_ref && x->blk_have_other) {
+            int32_t d = (int32_t)(x->blk_other - x->blk_ref);
+            uint32_t ad = (uint32_t)(d < 0 ? -d : d);
+            if (ad > x->spread)
+                x->spread = ad;
+        }
         x->blk_s = s;
         x->blk_calls = 0;
         x->blk_have_ref = x->blk_have_other = 0;
@@ -290,28 +298,26 @@ void clkmon_seq(struct clkmon *c, const void *seq, uint32_t lo, int32_t hi)
         x->seqs_max = x->blk_calls;
     if (!x->seq_id)
         x->seq_id = id;
-    if (id != x->seq_id) {                          /* another sequence: how far is its time from the followed one's */
-        if (x->blk_have_ref) {
-            int32_t d = (int32_t)(lo - x->blk_ref);
-            uint32_t ad = (uint32_t)(d < 0 ? -d : d);
-            if (ad > x->spread)
-                x->spread = ad;
-        } else if (!x->blk_have_other) {
-            x->blk_other = lo;
-            x->blk_have_other = 1;
-        }
+    if (id != x->seq_id) {                          /* another sequence: its latest time in this block, compared when the block ends */
+        x->blk_other = lo;
+        x->blk_have_other = 1;
         return;
     }
-    if (x->blk_have_ref)
-        return;                                     /* the followed sequence twice in one block: keep the first */
-    x->blk_ref = lo;
+    x->blk_ref = lo;                               /* the latest time of the followed sequence in this block */
     x->blk_have_ref = 1;
-    if (x->blk_have_other) {
-        int32_t d = (int32_t)(x->blk_other - lo);
-        uint32_t ad = (uint32_t)(d < 0 ? -d : d);
-        if (ad > x->spread)
-            x->spread = ad;
-    }
+    /* The player is called once per chunk of the block (the stock splits a block at loop ends and events), each time with the
+     * time at the end of its chunk; only the last call of a block is the block's end. So a block's point is taken when the next
+     * block's first call arrives. */
+    if (x->pend_have && x->pend_s != s)
+        seq_point(c, x->pend_s, x->pend_t);
+    x->pend_s = s;
+    x->pend_t = lo;
+    x->pend_have = 1;
+}
+
+static void seq_point(struct clkmon *c, uint32_t s, uint32_t lo)
+{
+    struct clk_xp *x = &c->xp;
     uint32_t fr = c->last_frames ? c->last_frames : 128u;
     if (x->have) {
         uint32_t ds = s - x->last_s;

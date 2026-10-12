@@ -291,12 +291,13 @@ block(t)
 for k in range(1, 801):                                 # internal clock, 120 BPM: 20.48 ticks a block, whole ticks
     t += BLK_CYC
     block(t)
-    seq(int(20.48 * k))
+    seq(int(20.48 * (k - 1)) + rng.randint(0, 20))       # the player runs per chunk of the block: an early chunk ends somewhere ...
     seq(int(20.48 * k) - 5000, SEQB)                    # a second sequence, 5000 ticks behind: noted as spread, not followed
+    seq(int(20.48 * k))                                 # ... and the block's last chunk ends at the block's end: this one counts
 a = xp()
 check(f"sample rate measured against the core clock: {a['fs']:.0f} Hz", close(a["fs"], 48000, 30), a["fs"])
 check(f"internal clock: the position moves {a['tps']:.1f} ticks a second (20.48 a block)", close(a["tps"], 7680.0, 5.0), a["tps"])
-check("... the second sequence is seen (2 a block) and its distance kept (5000 ticks), not mixed in", a["seqs"] == 2 and a["spread"] == 5000, a)
+check("... three calls a block seen, the second sequence's distance kept (5000 ticks), not mixed in", a["seqs"] == 3 and a["spread"] == 5000, a)
 check("... no stalls, slips or missed blocks", (a["stalls"], a["slips"], a["misses"]) == (0, 0, 0), a)
 check(f"... advances {a['dt_min']}-{a['dt_max']} ticks a block", (a["dt_min"], a["dt_max"]) == (20, 21), a)
 check(f"... and sits on its line to within {a['res_min']:.0f} .. {a['res_max']:.0f} us (whole ticks: about +-65 plus the fit)", -110 < a["res_min"] and a["res_max"] < 110, a)
@@ -345,6 +346,9 @@ block(t)
 t += BLK_CYC
 block(t)
 seq(int(5.12 * 202))
+t += BLK_CYC
+block(t)
+seq(int(5.12 * 203))                                    # (a block's point is taken when the next block starts)
 check("a block with no call in between is counted as a miss", xp()["misses"] == 1, xp())
 
 # ---- wiring: seq_play (src/seqfix.c) hands the monitor the musical time from the stock clock conversion, not the clock position

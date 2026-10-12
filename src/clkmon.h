@@ -58,6 +58,7 @@ struct clk_xp {
     uint32_t blk_s, blk_calls, seqs_max;  /* calls in the current block, the most seen in one block */
     uint32_t blk_ref, blk_have_ref, blk_other, blk_have_other;
     uint32_t spread;                 /* the largest difference between two sequences' times in one block, ticks */
+    uint32_t pend_have, pend_s, pend_t; /* the followed sequence's last time in the current block, fed in when the next block starts */
 };
 struct clkmon {
     struct clk_rd r[CLK_SRC];
