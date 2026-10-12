@@ -4,8 +4,10 @@
  *
  * Selecting: the pad's Fidelity list (filter.c) gains "LIRA" as its last entry. A Sample pad set to LIRA still plays
  * its sample's voices (load any sample, Loop Mode on so the voice lasts while the pad is held), but each voice's
- * audio is replaced by the LIRA output right before the pad's own filter (filter_process), so the pad's filter,
- * envelope, saturation, pan, FX sends and sequencer all apply to it.
+ * audio is replaced by the LIRA output where the sample reader hands it to the voice render (FUN_08055bb8: Level,
+ * ADSR, filter, mix; reached by tail calls at 0x080572ba and 0x0805825e), so the pad's Level, envelope, filter,
+ * saturation, pan, FX sends and sequencer all apply to it. (3.1.o put it after the ADSR, at the filter: no Level, no
+ * envelope, a hard cut when the voice ended.)
  *
  * Playing: every live voice of the pad holds LIRA sensors down. Which sensors comes from the voice's pitch relative to
  * the sample (the rate filter.c parks for the voice reader): the root note holds all eight; 1..8 semitones above it
@@ -44,6 +46,7 @@ typedef void (*list_clear_fn)(void *list);
 typedef void (*list_add_fn)(void *list, unsigned param, int value);
 typedef int (*buf_chans_fn)(void *buf, float **left, float **right);
 typedef int (*buf_int_fn)(void *buf);
+typedef int (*render_fn)(const uint8_t *pad, void *voice, void *out, void *src);
 
 #define fw_alloc         ((alloc_fn)FN(0x0804436c))          /* permanent SDRAM bump allocator (0xc0000000 up) */
 #define fw_register_list ((register_list_fn)FN(0x0808c0d8))
@@ -56,9 +59,11 @@ typedef int (*buf_int_fn)(void *buf);
 #define fw_list_add      ((list_add_fn)FN(0x080a5038))
 #define fw_buf_chans     ((buf_chans_fn)FN(0x0804d944))
 #define fw_buf_frames    ((buf_int_fn)FN(0x0804d8e8))
+#define fw_render        ((render_fn)FN(0x08055bb8))         /* voice render: Level, ADSR, filter, mix out into src */
 
 void bkp_enable(void);                                 /* od.c */
 unsigned pad_param(const uint8_t *pad, unsigned param); /* filter.c: app setting of an engine pad */
+const uint8_t *pad_store(const uint8_t *pad);          /* filter.c: the app's settings store of an engine pad */
 float park_rate(const uint8_t *pad);                   /* filter.c: rate of the voice just read for this pad */
 
 #define FS          48000.0f
@@ -159,6 +164,20 @@ static struct pool *pool(void)
     return p;
 }
 
+/* A store's value for id, or def when the store has no entry (pads made before 3.1.o: fw_setting would say 0, and
+   all-zero settings put every oscillator far below hearing, which 3.1.o users heard as clicks). */
+static int store_value(const uint8_t *store, unsigned id, int def)
+{
+    if (!store)
+        return def;
+    unsigned n = *(const uint16_t *)(store + 0xa);
+    const uint8_t *e = *(const uint8_t *const *)(store + 4);
+    for (unsigned i = 0; i < n; i++, e += 8)
+        if (*(const uint16_t *)e == id)
+            return *(const int32_t *)(e + 4);
+    return def;
+}
+
 /* Called from interp_register (filter.c) while the parameter table is built at boot: register the controls, take
    the instances' memory. */
 void lira_register(void *table)
@@ -211,6 +230,11 @@ int lira_pages(uint8_t *app, uint8_t *cell, void *list, int page)
         return r;
     if (fw_setting(rec, P_MODE) != 0 || (unsigned)fw_setting(rec, 0xf1) != interp_lira)
         return r;
+    /* pads from before 3.1.o have no LIRA entries: add them (UI task, like the stock store edits), so the knobs work
+       and the values save with the project from now on */
+    for (int i = 0; i < NCTL; i++)
+        if (store_value(rec, ctls[i].id, -32768) == -32768)
+            fw_store_add(rec, ctls[i].id, ctls[i].def);
     const int8_t *order = page == 1 ? page_loop : page_lfo;
     int n = page == 1 ? (int)sizeof page_loop : (int)sizeof page_lfo;
     fw_list_clear(list);
@@ -228,7 +252,7 @@ static void apply(struct slot *s, int force)
         const struct ctl *c = &ctls[i];
         if (s->clearing && (i == C_FEEDBACK || i == C_DELMIX))
             continue;
-        int v = (int)pad_param(s->pad, c->id);
+        int v = store_value(pad_store(s->pad), c->id, c->def);
         if (!force && v == s->vals[i])
             continue;
         s->vals[i] = (int16_t)v;
@@ -314,8 +338,25 @@ int lira_is_on(const uint8_t *pad)
     return pad && pad_param(pad, P_MODE) == 0 && pad_param(pad, 0xf1) == interp_lira;
 }
 
-/* From filter_process, for every voice of a LIRA pad, before the pad's filter: voice = the voice's filter object. */
-void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
+static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad);
+
+/* Replaces the tail calls of the voice render (b.w @0x080572ba, 0x0805825e): out holds the voice's sample audio,
+   about to get Level, ADSR, filter and be mixed into src. For a LIRA pad, LIRA's audio goes in instead. */
+int lira_render(const uint8_t *pad, void *voice, void *out, void *src)
+{
+    if (lira_is_on(pad)) {
+        int n = fw_buf_frames(src), cap = *(const int32_t *)out;
+        if (n > cap)
+            n = cap;
+        if (n > 0 && *(const int32_t *)((const uint8_t *)out + 4) < n)
+            *(int32_t *)((uint8_t *)out + 4) = n;           /* as the render's own setlen does next */
+        lira_pad_voice(voice, out, pad);
+    }
+    return fw_render(pad, voice, out, src);
+}
+
+/* For every voice of a LIRA pad: voice = the engine voice. */
+static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
 {
     struct pool *p = pool();
     if (!p) {

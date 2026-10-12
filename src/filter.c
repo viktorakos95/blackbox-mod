@@ -91,8 +91,7 @@ const char *const interp_names[INTERPS] = {
 };
 const unsigned interp_lira = INTERPS - 1;
 void lira_register(void *table);
-int lira_is_on(const uint8_t *pad);
-void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad);
+
 
 /* Replaces the Interp list registration call: 2 -> 9 entries, and the label "Interp:" -> "Fidelity:" (his pick of
    names; the xml name "interpqual" stays, so presets are unaffected). */
@@ -263,6 +262,18 @@ unsigned pad_param(const uint8_t *pad, unsigned param)
     return pad_setting(pad, param);
 }
 
+/* For lira_pad.c: the app's settings store of an engine pad (0 if the id is out of range) */
+const uint8_t *pad_store(const uint8_t *pad)
+{
+    if (!pad)
+        return 0;
+    uint32_t id = *(const uint32_t *)(pad + 0x18);
+    unsigned row = (id >> 8) & 0xff, col = id & 0xff;
+    if (row >= 4 || col >= 5)
+        return 0;
+    return (const uint8_t *)(APP_PADS + row * 0xf0u + col * 0x30u);
+}
+
 /* For od.c: this pad is in a machine mode, so its Saturation knob is the machine's input drive (applied here). */
 int pad_machine_mode(const uint8_t *pad)
 {
@@ -292,8 +303,6 @@ static void adc_drive(float **ch, int n, float d)
 /* Replaces the per-voice filter call. pad = the pad object the voice belongs to (thunks in filter_thunk.S). */
 void filter_process(uint8_t *obj, void *buf, const uint8_t *pad)
 {
-    if (lira_is_on(pad))
-        lira_pad_voice(obj, buf, pad);                              /* LIRA replaces the sample, then the filter runs */
     if (fw_buf_silent(buf))
         return;
     struct fstate *st = (struct fstate *)(obj + 4);

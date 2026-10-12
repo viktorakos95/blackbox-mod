@@ -1,8 +1,8 @@
 """LIRA-8 on a pad (src/lira_pad.c + the filter.c hooks) under Unicorn, on the patched image.
 
-Real firmware runs for: the settings store (lookup / add), the list add / clear, the audio-buffer accessors, the
-stock filter path up to the knob read. Stubbed: the registrars, the SDRAM allocator (returns a mapped area), the page
-builder and pad-record lookup (fake cell), the modulated-parameter read (Filter knob at 0 = filter bypassed).
+Real firmware runs for: the settings store (lookup / add), the list add / clear, the audio-buffer accessors.
+Stubbed: the registrars, the SDRAM allocator (returns a mapped area), the page builder and pad-record lookup (fake
+cell), the voice render after LIRA (Level / ADSR / filter / mix: the test reads what LIRA handed it).
 Time comes from the DWT cycle counter, written by the test between blocks.
 NOT checked: the knob screen itself, the Keys screen, sound against the Pd original, CPU on the device.
 """
@@ -130,18 +130,20 @@ check("Slicer pad: stock pages", page(1)[1] == [0x777])
 pad_record(INTERP_LIRA)
 check("FX cell (not a pad): stock pages", page(1, cell_id=0x0312)[1] == [0x777])
 
-# ---- 4. playing: the voice's audio is replaced before the pad's filter ----
+# ---- 4. playing: the voice's audio is replaced before the voice render (Level, ADSR, filter) ----
 APP_PADS = 0x24020088 + 0x1840
 PADS = [0x24063000, 0x24063200, 0x24063400]
-OBJ, OBJ2, BUF, LBUF, RBUF = 0x24064000, 0x24064400, 0x24064800, 0x24065000, 0x24066000
+OBJ, OBJ2, BUF, LBUF, RBUF, SRC = 0x24064000, 0x24064400, 0x24064800, 0x24065000, 0x24066000, 0x24064900
 N = 256
-e.stub(0x0806FB30, lambda: e.uc.reg_write(UC_ARM_REG_S0, 0))   # Filter knob at centre: filter bypassed
+rendered = []
+e.stub(0x08055BB8, lambda: rendered.append((e.arg(0), e.arg(1), e.arg(2), e.arg(3))))   # the stock voice render
 
 
-def app_pad(i, fidelity=INTERP_LIRA, extra=()):
+def app_pad(i, fidelity=INTERP_LIRA, extra=(), lira_entries=True):
     row, col = 1, i
     store, arr = APP_PADS + row * 0xF0 + col * 0x30, 0x24068000 + i * 0x400
-    make_store(store, arr, [(0x8B, 0), (0xF1, fidelity)] + list({**DEFAULTS, **dict(extra)}.items()))
+    lira = {**DEFAULTS, **dict(extra)} if lira_entries else {}
+    make_store(store, arr, [(0x8B, 0), (0xF1, fidelity)] + list(lira.items()))
     e.w32(PADS[i] + 0x18, row << 8 | col)
 
 
@@ -157,7 +159,10 @@ def voice(pad, obj=OBJ, rate=1.0, advance=True):
     e.uc.mem_write(LBUF, struct.pack(f"<{N}f", *([0.25] * N)))
     e.uc.mem_write(RBUF, struct.pack(f"<{N}f", *([0.25] * N)))
     e.uc.mem_write(BUF, struct.pack("<IIIIBB", N, N, LBUF, RBUF, 0, 1))
-    e.call("filter_process", obj, BUF, pad, count=5_000_000)
+    e.uc.mem_write(SRC, struct.pack("<IIIIBB", N, N, 0, 0, 0, 1))
+    rendered.clear()
+    e.call("lira_render", pad, obj, BUF, SRC, count=5_000_000)
+    assert rendered == [(pad, obj, BUF, SRC)], rendered       # the stock render always follows, same arguments
     l = struct.unpack(f"<{N}f", e.uc.mem_read(LBUF, 4 * N))
     r = struct.unpack(f"<{N}f", e.uc.mem_read(RBUF, 4 * N))
     return l, r
@@ -200,6 +205,34 @@ check("third LIRA pad while two play: silent", max(map(abs, lc)) == 0.0)
 for b in range(30):                               # pads 0 and 1 stop; pad 2 plays alone
     lc, _ = voice(PADS[2])
 check("third pad takes an idle instance", rms(lc) > 0.0, "rms %.4f" % rms(lc))
+
+# a pad from before 3.1.o: Fidelity LIRA but no LIRA entries in its store -> LIRA's defaults, not all-zero (clicks)
+def drone(**kw):
+    app_pad(0, **kw)
+    now[0] += 3_000_000_000
+    e.uc.mem_write(0x38800F00 - 0x38800F00 + 0xC0000000 + 4, b"\0" * 4)   # free the instances: start afresh
+    out = []
+    for b in range(60):
+        l, _ = voice(PADS[0])
+        out += l
+    tail = out[-20 * N:]
+    return rms(tail), sum(1 for a, b in zip(tail, tail[1:]) if (a < 0) != (b < 0))
+
+
+zero = drone(extra={P0 + i: 0 for i in range(NCTL)})
+missing = drone(lira_entries=False)
+check("pad without LIRA entries plays LIRA's defaults, not the all-zero settings 3.1.o read (clicks)",
+      missing[0] > 0.01 and missing[1] > 4 * max(zero[1], 1),
+      "missing: rms %.3f, %d crossings; all zero: rms %.3f, %d crossings" % (missing + zero))
+pad_record(INTERP_LIRA)
+make_store(REC, RARR, [(0x8B, 0), (0xF1, INTERP_LIRA), (0x8E, 1)], vtable=VT)
+page(1)
+n = e.r16(REC + 10)
+have = {e.r16(RARR + 8 * i) for i in range(n)}
+check("opening a LIRA page adds the missing entries (so the knobs work and save)",
+      all(P0 + i in have for i in range(NCTL)) and n == 3 + NCTL, "count %d" % n)
+page(2)
+check("... once", e.r16(REC + 10) == 3 + NCTL)
 
 # sensors from pitch: one sensor (3 semitones up) is quieter than the root's eight
 def level_with(rate, blocks=80):
