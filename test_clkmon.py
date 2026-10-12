@@ -200,15 +200,17 @@ def run_ticks(n, interval, t0):
     return t
 
 
+e.w32(MEM + O_RESET, 1)                             # a clean start: the ticks above were a test of overflow, not of tempo
+block(95_000_000)
 t = run_ticks(30, TICK, 100_000_000)
 check("tempo 120.0 BPM after 30 ticks", close(stats(0)["bpm"], 120.0, 0.05), stats(0)["bpm"])
 t = run_ticks(12, TICK * 2, t)
 mid = stats(0)["bpm"]
 check(f"12 ticks into a change to 60 BPM: between the two ({mid:.1f})", 60 < mid < 120, mid)
-t = run_ticks(24, TICK * 2, t)
-check(f"24 ticks later: 60.0 BPM, a beat after the change ({stats(0)['bpm']:.2f})", close(stats(0)["bpm"], 60.0, 0.05), stats(0)["bpm"])
-t = run_ticks(30, TICK // 2, t)
-check(f"and 240 BPM after another change ({stats(0)['bpm']:.1f})", close(stats(0)["bpm"], 240.0, 0.2), stats(0)["bpm"])
+t = run_ticks(60, TICK * 2, t)
+check(f"60 ticks after the change: 60.0 BPM ({stats(0)['bpm']:.2f})", close(stats(0)["bpm"], 60.0, 0.1), stats(0)["bpm"])
+t = run_ticks(60, TICK // 2, t)
+check(f"and 240 BPM after another change ({stats(0)['bpm']:.1f})", close(stats(0)["bpm"], 240.0, 0.3), stats(0)["bpm"])
 block(t + 450_000_000)
 check("no tick for a second: no tempo shown", stats(0)["bpm"] == 0.0, stats(0)["bpm"])
 e.w32(RVR, 0)
@@ -232,6 +234,41 @@ rx(0xF8, 80_100_000 + 3 * TICK)
 rx(0xF8, 80_100_000 + 4 * TICK)
 block(80_300_000 + 4 * TICK)
 check("... and shows 120 BPM from the fourth interval on", close(stats(0)["bpm"], 120.0, 0.05), stats(0)["bpm"])
+
+# ---- a sender whose own timer steps in 1 ms (the display must not flicker between neighbouring values at 240 BPM)
+e.w32(MEM + O_RESET, 1)
+block(90_000_000)
+ms = 400_000
+ticks = [200_000_000 + round(i * 10.4) * ms for i in range(1, 400)]                   # 240.385 BPM, each tick on a whole ms
+shown, t_blk = [], 200_000_000
+ev = sorted([(t, 1) for t in ticks] + [(200_000_000 + b * BLOCK // 2, 0) for b in range(1, ticks[-1] // (BLOCK // 2) - 99)])
+last_naive, naive = None, []
+seen = []
+for t, kind in ev:
+    if t > ticks[-1] + 1000:
+        break
+    if kind:
+        rx(0xF8, t)
+        seen.append(t)
+        block(t + 1000)
+        if len(seen) > 60:
+            shown.append(stats(0)["bpm"])
+            naive.append(60e6 * MHZ / (seen[-1] - seen[-25]))                           # the end-point estimate over one beat, for comparison
+    else:
+        block(t)
+spread, nspread = max(shown) - min(shown), max(naive) - min(naive)
+check(f"240.4 BPM from a 1 ms-stepped sender: shown tempo within {spread:.2f} BPM over {len(shown)} ticks (an end-point estimate wanders {nspread:.2f})",
+      spread <= 0.35 and spread < nspread / 2 and close(sum(shown) / len(shown), 60e6 / (24 * 10400), 0.3), (spread, nspread, sum(shown) / len(shown)))
+changes = sum(1 for a, b in zip(shown, shown[1:]) if a != b)
+check(f"... and it changed {changes} times in {len(shown)} ticks (the end-point estimate would flip nearly every tick)", changes <= len(shown) // 10, changes)
+
+# ---- a tick that arrives after the block read the clock must not look like it came from the future
+e.w32(MEM + O_RESET, 1)
+block(300_000_000)
+rx(0xF8, 301_000_000)
+block(300_500_000)                                  # the counter reads earlier than the stamp
+s0 = stats(0)
+check("a stamp newer than the block's clock gives latency 0, not 4 billion cycles", s0["lat_max"] == 0.0 and s0["lat_avg"] == 0.0, (s0["lat_avg"], s0["lat_max"]))
 
 print(f"{fails} failure(s)")
 raise SystemExit(1 if fails else 0)

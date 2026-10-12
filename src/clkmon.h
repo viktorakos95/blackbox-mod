@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #define CLK_SRC  2                   /* 0 = TRS jack (USART6), 1 = USB */
+#define CLK_WIN  48                  /* intervals the tempo fit looks at (2 beats) */
 #define CLK_RING 8                   /* arrival stamps the interrupt can hold between two audio blocks */
 
 /* The interrupt side lives in the backup SRAM (no allocation, nothing the interrupt could trip over before boot). */
@@ -31,8 +32,8 @@ struct clk_rd {
     float lat_sum;                   /* arrival -> the block that takes it */
     uint32_t over;                   /* stamps lost to a full ring */
     uint32_t base_f8, base_fa, base_fb, base_fc;     /* counters at the last reset */
-    uint32_t win[25], win_n;         /* the last 25 arrival stamps: 24 ticks = one beat, for the tempo */
-    uint32_t span, span_k;           /* cycles the last span_k (4..24) intervals took; span 0 = no clock right now */
+    uint32_t win[CLK_WIN + 1], win_n; /* the last arrival stamps, for the tempo: a straight-line fit through them */
+    float bpm;                       /* the tempo shown (0 = no clock right now); moves only when the fit moves by more than the noise */
 };
 struct clkmon {
     struct clk_rd r[CLK_SRC];

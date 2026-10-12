@@ -17,7 +17,9 @@
  *   LAT  how long a tick waits for that block.
  * The core clock comes from the SysTick reload register: the firmware sets the FreeRTOS tick to 1 kHz from its core clock
  * (vPortSetupTimerInterrupt, 0x080880e8: reload = SystemCoreClock / 1000 - 1), and the cycle counter runs at that clock.
- * The tempo is one beat's worth of ticks (24 intervals) over the time they took, so it follows a change within a beat.
+ * The tempo is the slope of a straight line fitted through the last 48 arrival stamps (2 beats): the senders' own timer
+ * jitter (often 1 ms steps) cancels much better in a fit than between two end points, and the shown value only moves
+ * when the fit moves by more than the noise, so it does not flicker between two neighbouring values.
  */
 #include <stdint.h>
 
@@ -156,6 +158,35 @@ static void clear_src(struct clk_rd *r, const volatile struct clk_isr_src *s)
     r->base_fc = s->n_fc;
 }
 
+/* The tempo: a straight line through the window's stamps (x = cycles since the oldest, y = tick number), its slope is the
+ * cycles per tick. Below 5 stamps there is no estimate. The shown value follows the fit only when it moves by more than
+ * 0.1 BPM or 0.1 % (whichever is more), which is about the noise of a sender with 1 ms timer steps. */
+static void tempo_fit(struct clk_rd *r, float mhz)
+{
+    uint32_t n = r->win_n < CLK_WIN + 1u ? r->win_n : CLK_WIN + 1u;
+    if (n < 5u || mhz <= 0.f)
+        return;
+    uint32_t base = r->win[(r->win_n - n) % (CLK_WIN + 1u)];
+    float sx = 0.f, sjx = 0.f;
+    for (uint32_t j = 0; j < n; j++) {
+        float x = (float)(r->win[(r->win_n - n + j) % (CLK_WIN + 1u)] - base);
+        sx += x;
+        sjx += (float)j * x;
+    }
+    float jbar = (float)(n - 1u) * .5f, sjj = (float)n * ((float)n * (float)n - 1.f) / 12.f;
+    float slope = (sjx - jbar * sx) / sjj;                      /* cycles per tick */
+    if (slope <= 0.f)
+        return;
+    float est = 60e6f * mhz / (24.f * slope);
+    float d = est - r->bpm, band = r->bpm * .001f;
+    if (d < 0.f)
+        d = -d;
+    if (band < .1f)
+        band = .1f;
+    if (r->bpm == 0.f || d > band)
+        r->bpm = est;
+}
+
 void clkmon_block(struct clkmon *c)
 {
     uint32_t now = DWT_CYCCNT;
@@ -182,38 +213,39 @@ void clkmon_block(struct clkmon *c)
         struct clk_rd *r = &c->r[k];
         volatile struct clk_isr_src *s = &ISR->s[k];
         uint32_t wr = s->wr;
+        uint32_t nk = DWT_CYCCNT;        /* read after wr: every stamp up to wr was taken before this (a tick arriving mid-block must not look like it is from the future) */
         if (wr - r->rd > CLK_RING) {
             r->over += wr - r->rd - CLK_RING;
             r->rd = wr - CLK_RING;
         }
-        if (r->span && c->mhz > 0.f && now - r->last_arr > (uint32_t)(c->mhz * 1e6f))
-            r->span = 0;                 /* no tick for a second: no tempo */
+        if (r->bpm != 0.f && c->mhz > 0.f && nk - r->last_arr > (uint32_t)(c->mhz * 1e6f)) {
+            r->bpm = 0.f;                /* no tick for a second: no tempo */
+            r->win_n = 0;
+        }
         while (r->rd != wr) {
             uint32_t t = s->ring[r->rd & (CLK_RING - 1)];
             r->rd++;
-            uint32_t lat = now - t;
+            uint32_t lat = nk - t;
+            if ((int32_t)lat < 0)
+                lat = 0;
             r->lat_sum += (float)lat;
             r->n_lat++;
             if (lat > r->lat_max)
                 r->lat_max = lat;
-            if (r->have_arr && t - r->last_arr >= GAP_CYCLES) {        /* a stop / start: the tempo window starts again */
+            if (r->have_arr && t - r->last_arr >= GAP_CYCLES) {        /* a stop / start: the tempo fit starts again */
                 r->win_n = 0;
-                r->span = 0;
+                r->bpm = 0.f;
             }
             if (r->have_arr && t - r->last_arr < GAP_CYCLES)
                 add_interval(&r->n_arr, &r->arr_min, &r->arr_max, &r->arr_mean, &r->arr_m2, t - r->last_arr);
-            r->win[r->win_n % 25u] = t;
-            uint32_t k = r->win_n < 24u ? r->win_n : 24u;              /* intervals in the window so far */
-            if (k >= 4u) {
-                r->span = t - r->win[(r->win_n - k) % 25u];
-                r->span_k = k;
-            }
+            r->win[r->win_n % (CLK_WIN + 1u)] = t;
             r->win_n++;
+            tempo_fit(r, c->mhz);
             r->last_arr = t;
             r->have_arr = 1;
-            if (r->have_stk && now - r->last_stk < GAP_CYCLES)
-                add_interval(&r->n_stk, &r->stk_min, &r->stk_max, &r->stk_mean, &r->stk_m2, now - r->last_stk);
-            r->last_stk = now;
+            if (r->have_stk && nk - r->last_stk < GAP_CYCLES)
+                add_interval(&r->n_stk, &r->stk_min, &r->stk_max, &r->stk_mean, &r->stk_m2, nk - r->last_stk);
+            r->last_stk = nk;
             r->have_stk = 1;
         }
     }
@@ -242,7 +274,7 @@ void clkmon_stats(const struct clkmon *c, int src, struct clk_stats *o)
     o->fc = (uint16_t)(s->n_fc - r->base_fc);
     o->over = r->over;
     o->n = r->n_arr;
-    o->bpm = r->span ? 60e6f * mhz * (float)r->span_k / (24.f * (float)r->span) : 0.f;
+    o->bpm = r->bpm;
     o->arr_min = r->n_arr ? (float)r->arr_min * us : 0.f;
     o->arr_max = r->n_arr ? (float)r->arr_max * us : 0.f;
     o->arr_sd = r->n_arr > 1 ? fsqrt(r->arr_m2 / (float)(r->n_arr - 1)) * us : 0.f;
