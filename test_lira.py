@@ -175,7 +175,8 @@ l.run(SR)
 part = rms(l.run(SR // 4))
 check("a light touch opens the envelope partly", 0.05 < part / full < 0.3, "%.1f dB" % db(part / full))
 
-for fast, lo, hi, what in ((1, 0.2, 0.6, "FAST: about 0.5 s"), (0, 12.0, 24.0, "slow: 20-30 s")):
+# -60 dB in ~0.5 s (FAST) / ~23 s (slow, tau 6.6 s = 3 Mohm x 2.2 uF; SoS ~20 s, Waveform ~30 s) means -40 dB in 2/3 of that
+for fast, lo, hi, what in ((1, 0.2, 0.6, "FAST: about 0.35 s"), (0, 11.0, 20.0, "slow: ~15 s")):
     ts = []
     for seed in (1, 2, 3):
         l = Lira(seed=seed, **{**CLEAN, "FAST12": fast})
@@ -260,7 +261,7 @@ def fm_spread(tune):
 
 (dev_lo, f_lo), (dev_hi, f_hi) = fm_spread(40), fm_spread(112)
 check("FM: the higher the voice is tuned, the less it is modulated (relative spread %.3f at %.0f Hz vs %.3f at %.0f Hz)" % (dev_lo, f_lo, dev_hi, f_hi),
-      dev_lo > 0.01 and dev_hi < 0.6 * dev_lo)
+      dev_lo > 0.01 and dev_hi < 0.2 * dev_lo)
 
 # ---------------------------------------------------------------- delay (PT2399 model)
 def td_of(knob):

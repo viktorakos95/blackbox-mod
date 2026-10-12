@@ -45,9 +45,9 @@ typedef struct {
     int s;                                /* gate output high */
     float sqp, trip;                      /* previous-sample square (PolyBLEP, one sample late) and triangle */
     float ve, drive;                      /* envelope voltage, touch drive (0 = not touched) */
-    float t_slow, t_fast;                 /* release times of this voice, s */
+    float t_slow, t_fast;                 /* release time constants of this voice, s */
     float trim, leak;                     /* level trim, bleed gain at 1 kHz */
-    float sens, leak_f;                   /* FM sensitivity and bleed at the current pitch (refreshed every 8th block) */
+    float leak_f;                         /* bleed at the current pitch (refreshed every 8th block) */
     float vib_ph, vib_rate, vib_depth;
     lira_ramp tune;                       /* Hz */
 } lira_gen;

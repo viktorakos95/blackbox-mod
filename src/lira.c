@@ -21,20 +21,19 @@
 #define LIRA_CR 16          /* control block, samples */
 
 /* ---- model constants; the ones marked (assumed) are judgement calls, see the notes ---- */
-#define VP_TYP        0.58f      /* HEF4093B at 5 V: 2.9 V / 5 V */
-#define VN_TYP        0.44f      /* 2.2 V / 5 V */
+#define VP_TYP        0.562f     /* HEF4093B on the Lyra-8's 5.87 V rail (DIY docs, "Tweaks"): 3.3 V / 5.87 V */
+#define VN_TYP        0.434f     /* 2.55 V / 5.87 V */
 #define TOL_THR       0.035f     /* (assumed) threshold spread, relative, per voice */
 #define TRI_AMP       0.80f
 #define SQ_AMP        0.59f
-#define FM_CORNER     600.0f     /* (assumed) Hz above which FM sensitivity falls (manual: higher voices are less sensitive) */
 #define LEAK_BASE     0.0005f    /* (assumed) bleed of a closed voice at 1 kHz, ~ -66 dB; rises with sqrt(f) */
 #define COUPLE        0.003f     /* (assumed) shared-supply coupling of neighbouring oscillators, in rail units */
 #define ENV_PITCH     0.003f     /* (assumed) the envelope pulls pitch: closed voices a little sharp */
 #define WSHAPE        0.25f      /* (assumed) transistor curve: bend grows as the envelope closes */
-#define REL_SLOW_LO   20.0f      /* s, SoS ~20 s, Waveform ~30 s, varying per voice */
-#define REL_SLOW_HI   30.0f
-#define REL_FAST      0.5f       /* s */
-#define ATTACK_TAU    0.05f      /* (assumed) s at full touch */
+#define REL_SLOW      6.6f       /* s, RC time constant: 3 Mohm x 2.2 uF (DIY BOM); the gain is the envelope squared, so -60 dB
+                                    takes ~3.5 tau = 23 s (SoS ~20 s, Waveform ~30 s); +-20 % per voice */
+#define REL_FAST      0.145f     /* s, FAST: -60 dB in 0.5 s */
+#define ATTACK_TAU    0.2f       /* (assumed) s at full touch: attack resistor 300 k-1 M with 2.2 uF (DIY docs) */
 #define HOLD_SLOW     0.5f       /* knob position where slow-envelope voices start to drone (12 o'clock) */
 #define HOLD_FAST     0.7f       /* ... FAST voices (2 o'clock) */
 #define PT_BITS       44000.0f   /* PT2399 memory */
@@ -86,7 +85,6 @@ static float fcos(float x) /* cos(2*pi*x), x in cycles */
 static float mtof(float m) { return m <= -1500.f ? 0.f : 440.f * fexp2((m - 69.f) * (1.f / 12.f)); }
 static float ftom(float f) { return f <= 0.f ? -1500.f : 69.f + 12.f * flog2(f * (1.f / 440.f)); }
 static float db2lin(float db) { return fexp2(db * 0.16609640f); }
-static float rsqrt_(float x) { return fexp2(-0.5f * flog2(x)); }          /* 1 / sqrt(x), x > 0 */
 static inline float expm_small(float x)     /* exp(-x), x < 0.2, error < 7e-5 (envelope steps) */
 {
     return 1.f - x * (1.f - x * 0.5f * (1.f - x * (1.f / 3.f)));
@@ -163,20 +161,29 @@ static void gen_setup(lira_t *l, lira_gen *g)
     g->inv_half = 2.f / (g->vp - g->vn);
     g->v = urand(l, g->vn, g->vp);
     g->s = rnd(l) > 0.f;
-    g->t_slow = urand(l, REL_SLOW_LO, REL_SLOW_HI);
+    g->t_slow = REL_SLOW * urand(l, 0.8f, 1.2f);
     g->t_fast = REL_FAST * urand(l, 0.8f, 1.25f);
     g->trim = db2lin(1.5f * rnd(l));                      /* SoS: some variation between voice levels */
     g->leak = LEAK_BASE * urand(l, 0.6f, 1.6f);
-    g->vib_rate = urand(l, 0.45f, 2.6f);                  /* slow, SoS: "a tad slow" */
     g->vib_depth = urand(l, 0.0035f, 0.0065f);
     g->vib_ph = urand(l, 0.f, 1.f);
 }
+
+/* Frequency modulation is additive: the modulator pulls current through a resistor into the timing node, so the deviation
+   in Hz is proportional to the modulation and to the voice's own timing capacitor (DIY docs): a voice tuned high deviates
+   by the same Hz as when tuned low, which is why it is less sensitive. The table is the deviation at full modulation,
+   per unit of modulation: the geometric middle of each voice's TUNE range. When the sum goes below zero the oscillator
+   stalls (a frequency cannot be negative). */
+static const float FM_HZ[8] = {75.6f, 75.6f, 233.1f, 233.1f, 421.8f, 421.8f, 812.6f, 938.3f};
+
+/* Vibrato rates of the eight voices: 30..56 k resistors with 10 uF (DIY BOM), 3.5-6.5 Hz; which voice has which varies per unit. */
+static const float VIB_HZ[8] = {6.47f, 5.89f, 5.40f, 4.98f, 4.62f, 4.52f, 3.81f, 3.47f};
 
 /* One sample of the oscillator. f = frequency, cpl = supply coupling from the neighbours (rail units). Returns the
    square and triangle one sample late (PolyBLEP corrects the sample before and after each edge). */
 static inline void gen_tick(lira_gen *g, float f, float cpl, float isr, float *tri, float *sq)
 {
-    float x = fabs_(f) * g->kt * isr;
+    float x = f * g->kt * isr;
     if (x > 0.5f)
         x = 0.5f;
     float a = x * (1.f - x * 0.5f * (1.f - x * (1.f / 3.f)));     /* 1 - exp(-x) */
@@ -297,9 +304,19 @@ void lira_reset(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t s
         l->line[i].stp = ADM_MIN;
         l->line[i].pbit = 1;
     }
+    int perm[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+    for (int i = 7; i > 0; i--) {
+        int j = (int)(0.5f * (rnd(l) + 1.f) * (float)(i + 1)), t = perm[i];
+        if (j > i)
+            j = i;
+        perm[i] = perm[j];
+        perm[j] = t;
+    }
     for (int v = 0; v < 4; v++)
-        for (int k = 0; k < 2; k++)
+        for (int k = 0; k < 2; k++) {
             gen_setup(l, &l->v[v].g[k]);
+            l->v[v].g[k].vib_rate = VIB_HZ[perm[2 * v + k]] * urand(l, 0.92f, 1.08f);
+        }
     static const float defs[LIRA_NPARAMS] = {
         0, 78, 74, 36, 27, 57, 60, 51, 1, 1, 1, 1, 14.3774f, 43.1321f, 103.038f, 71.8868f, 0, 0, 0, 0, 0, 0, 0, 0,
         66, 65, 0, 0, 0, 0, 1, 86, 69, 127, 42, 64, 1, 1, 94.5745f, 56.7447f, 54.0426f, 67.5532f, 40.7358f, 47.9245f,
@@ -325,7 +342,6 @@ void lira_settle(lira_t *l)
             lira_gen *g = &vo->g[k];
             rjump(&g->tune, g->tune.tgt);
             float f0 = g->tune.cur;
-            g->sens = rsqrt_(1.f + (f0 * (1.f / FM_CORNER)) * (f0 * (1.f / FM_CORNER)));
             g->leak_f = g->leak * fexp2(0.5f * flog2(fmax_(f0, 1.f) * 0.001f));
         }
         rjump(&vo->sharp, vo->sharp.tgt);
@@ -435,7 +451,7 @@ void lira_process(lira_t *l, float *out, int n)
         rstep(&l->hold[0], m);
         rstep(&l->hold[1], m);
         rstep(&l->vibsw, m);
-        float vmod[4], vsh[4], vf[8], vsens[8], vgain[8], vleak[8], vtrim[8];
+        float vmod[4], vsh[4], vf[8], vgain[8], vleak[8], vtrim[8];
         for (int v = 0; v < 4; v++) {
             lira_voice *vo = &l->v[v];
             rstep(&vo->mod, m);
@@ -456,15 +472,13 @@ void lira_process(lira_t *l, float *out, int n)
                 if (dr > gn->ve)
                     gn->ve += (dr - gn->ve) * (1.f - expm_small(dt * (0.3f + 0.7f * dr) / (ATTACK_TAU * (vo->fast ? 1.4f : 1.f))));
                 else if (gn->drive == 0.f)
-                    gn->ve *= expm_small(dt * 3.45f / (vo->fast ? gn->t_fast : gn->t_slow));   /* gain = ve^2: -60 dB in t */
+                    gn->ve *= expm_small(dt / (vo->fast ? gn->t_fast : gn->t_slow));   /* gain = ve^2 */
                 float f0 = gn->tune.cur;
                 vf[o] = f0 * (1.f + vib + ENV_PITCH * (1.f - gn->ve));
                 vgain[o] = fmin_(gn->ve * gn->ve + gh, 1.f);
-                if (((l->cb + o) & 7) == 0) {            /* slow functions of pitch: one oscillator per block, every 8th */
-                    gn->sens = rsqrt_(1.f + (f0 * (1.f / FM_CORNER)) * (f0 * (1.f / FM_CORNER)));
+                if (((l->cb + o) & 7) == 0) {            /* slow function of pitch: one oscillator per block, every 8th */
                     gn->leak_f = gn->leak * fexp2(0.5f * flog2(fmax_(f0, 1.f) * 0.001f));
                 }
-                vsens[o] = gn->sens;
                 vleak[o] = gn->leak_f;
                 vtrim[o] = gn->trim;
             }
@@ -501,7 +515,7 @@ void lira_process(lira_t *l, float *out, int n)
                     lira_gen *gn = &vo->g[k];
                     float tri, sq;
                     float cpl = COUPLE * 0.5f * (l->sq[(o + 1) & 7] + l->sq[(o + 7) & 7]);
-                    gen_tick(gn, vf[o] * (1.f + mv * vsens[o]), cpl, isr, &tri, &sq);
+                    gen_tick(gn, fmax_(vf[o] + mv * FM_HZ[o], 0.f), cpl, isr, &tri, &sq);
                     l->sq[o] = gn->s ? 1.f : -1.f;
                     float wave = TRI_AMP * (1.f - sh) * tri + SQ_AMP * sh * sq;
                     float ga = vgain[o];
