@@ -102,7 +102,6 @@ void looper_page_boot(void);
 #define UNDO_HOLD      375              /* 2 s on MUTE: undo */
 #define ERASE_HOLD     750              /* 4 s on MUTE: erase */
 #define TRANSPORT_GAP  60               /* no note player call for this long = the transport was stopped */
-#define TAIL_FRAMES    96000            /* keep the effects running this long after the last send */
 
 enum { G_IDLE, G_HOLD, G_WAIT2, G_LATCHED };
 enum { P_NONE, P_START, P_STOP };                      /* a pending start / stop of a take ... */
@@ -256,9 +255,6 @@ struct dsp {
 };
 _Static_assert(sizeof(struct dsp) <= 32768, "dsp state must fit in one 32 KB buffer");
 
-static const uint16_t comb_len[2][RV_COMBS] = {{1557, 1617, 1491, 1422}, {1580, 1640, 1514, 1445}};
-static const uint16_t ap_len[2][2] = {{556, 441}, {579, 464}};
-#define DSIZE 43200u                              /* delay line frames (0.9 s) */
 
 static inline struct dsp *DSP(void)
 {
@@ -289,7 +285,7 @@ void looper_boot(void *engine)
     S->dw = 0;
     S->gphase = 0.f;
     S->bpm = 0.f;
-    static const float defaults[LOOPER_OPTS] = {0.f, 0.f, 2.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 0.f};
+    static const float defaults[LOOPER_OPTS] = {0.f, 0.f, 2.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN) */
     for (int i = 0; i < LOOPER_OPTS; i++)
         S->opt[i] = defaults[i];
     for (int t = 0; t < LOOPER_TRACKS; t++) {
@@ -1607,71 +1603,6 @@ static void apply(int t, int b)
     }
 }
 
-/* --- effects: a tempo delay (ping-pong) and a reverb (four combs, two all-passes), fed by the tracks' sends */
-
-static inline int16_t *dline(int ch, uint32_t i)
-{
-    return (int16_t *)fxbuf(3 + ch * 3 + (int)(i >> 14)) + (i & 16383u);
-}
-
-static inline float *rvbuf(int ch, int c, int ap)
-{
-    static const uint16_t off[2][RV_COMBS + 2] = {{0, 1557, 3174, 4665, 6087, 6643}, {0, 1580, 3220, 4734, 6179, 6758}};
-    return (float *)fxbuf(1 + ch) + off[ch][ap ? RV_COMBS + c : c];
-}
-
-static void run_fx(struct dsp *d, float *bl, float *br, int n)
-{
-    float beat = beat_frames();
-    static const float mult[4] = {.5f, 1.f, .75f, 1.5f};
-    float dtime = beat * mult[opt_i(LOOPER_O_DTIME) & 3];
-    uint32_t dd = (uint32_t)fclampf(dtime, 2000.f, (float)(DSIZE - 1));
-    float fb = fclampf(S->opt[LOOPER_O_DFB], 0.f, .9f), dret = S->opt[LOOPER_O_DRET];
-    float size = fclampf(S->opt[LOOPER_O_RSIZE], 0.f, 1.f), rret = S->opt[LOOPER_O_RRET];
-    float cfb = .70f + .28f * size, damp = .35f;
-    uint32_t dw = S->dw;
-    for (int i = 0; i < n; i++) {
-        uint32_t rd = dw >= dd ? dw - dd : dw + DSIZE - dd;
-        float rl = (float)*dline(0, rd) * (1.f / 32767.f), rr = (float)*dline(1, rd) * (1.f / 32767.f);
-        d->dlp[0] += .45f * (rl - d->dlp[0]);
-        d->dlp[1] += .45f * (rr - d->dlp[1]);
-        *dline(0, dw) = sat16((d->acc[0][i] + fb * d->dlp[1]) * 32767.f);       /* ping-pong */
-        *dline(1, dw) = sat16((d->acc[1][i] + fb * d->dlp[0]) * 32767.f);
-        if (++dw >= DSIZE)
-            dw = 0;
-        float x = (d->acc[2][i] + d->acc[3][i]) * .125f;
-        float o[2];
-        for (int ch = 0; ch < 2; ch++) {
-            float sum = 0.f;
-            for (int c = 0; c < RV_COMBS; c++) {
-                float *b = rvbuf(ch, c, 0);
-                uint32_t ix = d->cidx[ch][c];
-                float y = b[ix];
-                d->cst[ch][c] = y * (1.f - damp) + d->cst[ch][c] * damp;
-                b[ix] = x + d->cst[ch][c] * cfb;
-                if (++ix >= comb_len[ch][c])
-                    ix = 0;
-                d->cidx[ch][c] = ix;
-                sum += y;
-            }
-            for (int a = 0; a < 2; a++) {
-                float *b = rvbuf(ch, a, 1);
-                uint32_t ix = d->aidx[ch][a];
-                float bo = b[ix];
-                b[ix] = sum + bo * .5f;
-                sum = bo - sum;
-                if (++ix >= ap_len[ch][a])
-                    ix = 0;
-                d->aidx[ch][a] = ix;
-            }
-            o[ch] = sum;
-        }
-        bl[i] += rl * dret + o[0] * rret;
-        br[i] += rr * dret + o[1] * rret;
-    }
-    S->dw = dw;
-}
-
 /* One block of the whole looper: bl / br = the Out 1 bus (read as the "mix" source, then the loop is added to it). */
 static int run(float *bl, float *br, int n)
 {
@@ -1811,22 +1742,13 @@ static int run(float *bl, float *br, int n)
         bl[i] += d->out[0][i];
         br[i] += d->out[1][i];
     }
-    if (opt_i(LOOPER_O_ROUTE) == LOOPER_ROUTE_STOCK) {            /* keep this block's sends for the Blackbox's FX nodes */
-        for (int w = 0; w < 2; w++) {
-            for (int i = 0; i < n; i++) {
-                d->snd[w][0][i] = d->acc[2 * w][i];
-                d->snd[w][1][i] = d->acc[2 * w + 1][i];
-            }
-            d->snd_tick[w] = S->ticks;
-            d->snd_nz[w] = (uint32_t)sends;
+    for (int w = 0; w < 2; w++) {                                 /* keep this block's sends for the Blackbox's own delay and reverb nodes */
+        for (int i = 0; i < n; i++) {
+            d->snd[w][0][i] = d->acc[2 * w][i];
+            d->snd[w][1][i] = d->acc[2 * w + 1][i];
         }
-    } else {
-        if (sends)
-            S->fx_tail = TAIL_FRAMES;
-        if (S->fx_tail) {
-            run_fx(d, bl, br, n);
-            S->fx_tail = S->fx_tail > (uint32_t)n ? S->fx_tail - (uint32_t)n : 0;
-        }
+        d->snd_tick[w] = S->ticks;
+        d->snd_nz[w] = (uint32_t)sends;
     }
     if (S->mlen) {
         if (S->mpos + (uint32_t)n >= S->mlen)
@@ -2013,7 +1935,7 @@ uint8_t *looper_scratch(int i)
  * the node, bufs the block's bus set; which = 0 delay, 1 reverb. Done once per block per effect. */
 int looper_fx_inject(uint8_t *obj, void *bufs, int which)
 {
-    if (S->magic != MAGIC || !S->ok || opt_i(LOOPER_O_ROUTE) != LOOPER_ROUTE_STOCK)
+    if (S->magic != MAGIC || !S->ok)
         return 0;
     struct dsp *d = DSP();
     if (S->ticks - d->snd_tick[which] > 2 || !d->snd_nz[which] || d->snd_used[which] == S->ticks)

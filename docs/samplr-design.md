@@ -350,3 +350,11 @@ takes three overdub layers.
 - Report: at !4 the readout showed C 70/90, 75/100, 74/89, 78/86 - averages of 70-78 %. The "recent worst block over 96 %" rule counted a single spike (a pad starting, a sample load) as
   stress and stepped up every 16 blocks for as long as it was remembered. Now the spikes are counted (blocks over 95 %, a count that fades over ~50 blocks): above 2 steps up, the
   smoothed load over 85 % steps up as before; stepping down needs the smoothed load under 78 % (was 70) and no recent spikes, for ~2 s. One spike every 100 blocks does nothing.
+
+## Build 32 (looper: no own delay / reverb, GRAIN by default, REC walks the tracks)
+- The looper's own delay and reverb are gone: the FX ROUTE option and the OWN DLY / RVB sliders (MORE tab), the engine (run_fx, the delay line, the reverb) and the tail logic. The sends of
+  the tracks (and of SAMPLR) always go to the Blackbox's own delay and reverb nodes. The option slots stay in the enum, unused. MORE is MONITOR INPUT (K1) and SPEED PITCH.
+- SPEED PITCH starts on GRAIN (keep the pitch) instead of TAPE.
+- The hardware REC button on the Looper page: a tap that ENDS a take (the selected track is recording or overdubbing) selects the next track (1-2-3-4-1...), so REC, REC, REC...
+  records in the four tracks in turn.
+- SAMPLR tests that used the own route now check that the stock delay / reverb nodes are handed the send (`looper_fx_inject`).

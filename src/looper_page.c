@@ -308,13 +308,7 @@ static const struct optrow rows_setup[] = {
     {"HW STOP PLAY", LOOPER_O_HWBTN, 2, {"LOOPER", "+STOCK", 0, 0}},
 };
 static const struct optrow rows_more[] = {
-    {"FX ROUTE", LOOPER_O_ROUTE, 2, {"STOCK", "OWN", 0, 0}},
-    {"OWN DLY TIME", LOOPER_O_DTIME, 4, {"1/8", "1/4", "D.1/8", "D.1/4"}},
-    {"OWN DLY FB K1", LOOPER_O_DFB, 0, {0, 0, 0, 0}},
-    {"OWN DLY RET K2", LOOPER_O_DRET, 0, {0, 0, 0, 0}},
-    {"OWN RVB SIZE K3", LOOPER_O_RSIZE, 0, {0, 0, 0, 0}},
-    {"OWN RVB RET K4", LOOPER_O_RRET, 0, {0, 0, 0, 0}},
-    {"MONITOR INPUT", LOOPER_O_MON, 0, {0, 0, 0, 0}},
+    {"MONITOR INPUT K1", LOOPER_O_MON, 0, {0, 0, 0, 0}},
     {"SPEED PITCH", LOOPER_O_PITCH, 3, {"TAPE", "GRAIN", "SMOOTH", 0}},
 };
 #define OPT_ROWS opt_rows()                                       /* rows above the buttons row: 7 on SETUP, 6 on MORE */
@@ -322,7 +316,7 @@ static int opt_rows(void);
 
 static int opt_rows(void)
 {
-    return P->mode == M_MORE ? 8 : 7;
+    return P->mode == M_MORE ? 2 : 7;
 }
 
 static const struct optrow *page_rows(void)
@@ -802,9 +796,9 @@ static void draw_top(int t, const struct lay *L, const struct looper_info *k)
     char b[24], *p = b;
     if (P->mode == M_SETUP || P->mode == M_MORE) {                /* what the knobs turn */
         static const char *const nm_s[4] = {"GAIN ", "", "", ""};
-        static const char *const nm_m[4] = {"FB ", "RET ", "SIZE ", "RET "};
+        static const char *const nm_m[4] = {"MON ", "", "", ""};
         static const uint8_t op_s[4] = {LOOPER_O_GAIN, 0, 0, 0};
-        static const uint8_t op_m[4] = {LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET};
+        static const uint8_t op_m[4] = {LOOPER_O_MON, 0, 0, 0};
         const char *nm = P->mode == M_SETUP ? nm_s[t] : nm_m[t];
         for (const char *q = nm; *q; q++)
             *p++ = *q;
@@ -2073,10 +2067,11 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             if (P->mode == M_SMPLR) {
             } else if (P->mode == M_SETUP || P->mode == M_MORE) {
                 static const uint8_t op_s[4] = {LOOPER_O_GAIN, 0, 0, 0};
-                static const uint8_t op_m[4] = {LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET};
-                if (P->mode == M_MORE)
-                    looper_set_opt(op_m[knob], looper_get_opt(op_m[knob]) + step);
-                else if (knob == 0)
+                static const uint8_t op_m[4] = {LOOPER_O_MON, 0, 0, 0};
+                if (P->mode == M_MORE) {
+                    if (knob == 0)
+                        looper_set_opt(op_m[0], looper_get_opt(op_m[0]) + step);
+                } else if (knob == 0)
                     looper_set_opt(op_s[0], looper_get_opt(op_s[0]) + step);
             } else if (P->mode == M_FX) {
                 int p = FX_GROUP * 4 + knob_slot[knob & 3], tk = P->sel & 3;             /* knob n turns the n-th control of the pink square, on the selected track */
@@ -2223,10 +2218,16 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     P->info_on = 0;
                     P->entered = 0;
                     break;
-                case B_REC:
+                case B_REC: {
+                    struct looper_info ki;
+                    looper_track(P->sel & 3, &ki);
+                    int ends = ki.mode == LOOPER_REC || ki.mode == LOOPER_DUB;   /* this tap ends a take */
                     looper_event(P->sel, LOOPER_EV_REC_DOWN);      /* the selected track: a tap (the sequencer never sees REC here) */
                     looper_event(P->sel, LOOPER_EV_REC_UP);
+                    if (ends)
+                        P->sel = (uint8_t)((P->sel + 1) & 3);      /* and the next tap records on the next track: REC, REC, REC... fills the four in turn */
                     break;
+                }
                 case B_BACK:
                     looper_event(P->sel, LOOPER_EV_UNDO);          /* BACK: undo on the selected track */
                     break;

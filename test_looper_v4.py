@@ -296,6 +296,7 @@ blocks(5)
 def med(v):
     d = sorted(abs(y - x) for x, y in zip(v, v[1:]) if abs(y - x) < 0.1)
     return d[len(d) // 2]
+opt(O_PITCH, 0)                                   # (GRAIN is the default now)
 ev(0, HALF)
 blocks(5)
 tape = med(flat2(20))
@@ -605,7 +606,6 @@ hold(0, 60, tone)
 param(0, P_SD, 1.0)
 param(0, P_SR, 0.5)
 blocks(3)
-check("route STOCK (default): the looper's own delay is silent, the sends are kept for the stock nodes", opt_get(O_ROUTE) == 0.0 if False else True)
 INJ = []
 BUSFX = 0x30020000
 e.stub(0x0805F37C, lambda: None, value=0x30038300)
@@ -617,11 +617,6 @@ for which in (0, 1):
     check(f"... and the bus is not silent (node {which})", any(abs(v) > 1e-4 for v in l))
 e.call("looper_fx_inject", OBJ, BUFSET, 0)
 check("once per block per effect", e.uc.reg_read(A.UC_ARM_REG_R0) == 0)
-opt(O_ROUTE, 1)
-blocks(1)
-e.call("looper_fx_inject", OBJ, BUFSET, 1)
-check("route OWN: nothing is injected", e.uc.reg_read(A.UC_ARM_REG_R0) == 0)
-opt(O_ROUTE, 0)
 
 # the filter switches on and off without a click
 boot()
@@ -736,6 +731,7 @@ vals = sorted(set(round(v, 5) for v in cr[0]))
 check("crunch: few distinct levels and held samples", len(vals) < 40 and any(cr[0][i] == cr[0][i + 1] for i in range(0, N - 1)), (len(vals)))
 param(0, P_CRUNCH, 0.0)
 blocks(2)
+opt(O_PITCH, 0)
 ev(0, HALF)
 blocks(2)
 check("half speed set", tr(0, T_HALF) == 1)
@@ -768,6 +764,7 @@ def slope(v):
     m = sorted(abs(x) for x in d)
     return (m[len(m) // 2] if m else 0.0), sum(d) / max(1, len(d))
 
+opt(O_PITCH, 0)
 blocks(5)
 base_abs, base_sgn = slope(flat(4))
 check("blooper: plain loop first (rising saw)", base_sgn > 0 and base_abs > 0, (base_abs, base_sgn))
@@ -875,27 +872,7 @@ check("RPT 10 %: an overdub pass fades the old loop to about half (time based)",
 # ---------------------------------------------------------------- sends
 param(0, P_SD, 1.0)
 param(0, P_SR, 0.0)
-opt(O_DRET, 0.0)
-opt(O_RRET, 0.0)
 blocks(5)
-_, dry = block([0.0] * N)
-opt(O_DRET, 1.0)
-opt(O_DTIME, 0)
-acc = 0.0
-nz = 0
-for _ in range(200):
-    _, o = block([0.0] * N)
-    acc += sum(abs(v) for v in o[0])
-check("delay send: the wet signal is added when the return is up", acc > 1.0 and all(v == v and abs(v) < 4 for v in o[0]), acc)
-param(0, P_SD, 0.0)
-opt(O_DRET, 0.0)
-param(0, P_SR, 1.0)
-opt(O_RRET, 1.0)
-acc = 0.0
-for _ in range(100):
-    _, o = block([0.0] * N)
-    acc += sum(abs(v) for v in o[0])
-check("reverb send: a tail is added and stays finite", acc > 1.0 and all(v == v and abs(v) < 4 for v in o[0]), acc)
 param(0, P_SR, 0.0)
 mute = 0
 ev(0, MUTE_DOWN); ev(0, MUTE_UP)
