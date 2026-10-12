@@ -48,7 +48,7 @@ struct t2m_mem {
 void t2m_boot(void);
 struct t2m_mem *t2m_mem(void);       /* 0 if there was no memory for it this boot */
 void t2m_audio(const float *l, const float *r, int frames);
-void t2m_seq(uint32_t lo, int32_t hi);   /* the stock sequencer's musical time, from seq_play (src/seqfix.c) */
+void t2m_seq(const void *seq, uint32_t lo, int32_t hi);   /* the stock sequencer's musical time, from seq_play (src/seqfix.c) */
 /* every stock note-on to a pad (hardware pad hits and the Keys screen), through src/t2m_thunk.S */
 void t2m_learn(void *engine, uint32_t pad, uint32_t note, uint32_t a4);
 

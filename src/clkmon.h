@@ -36,7 +36,8 @@ struct clk_rd {
     uint32_t win[CLK_WIN + 1], win_n; /* the last arrival stamps, for the tempo: a straight-line fit through them */
     float bpm;                       /* the tempo shown (0 = no clock right now); moves only when the fit moves by more than the noise */
 };
-/* The stock sequencer's position (src/seqfix.c hands it over once per audio block while the transport plays; 960 ticks per 16th)
+/* The stock sequencer's musical time (src/seqfix.c hands it over for every sequence the player runs, once per audio block while
+ * the transport plays; the tick size is what the hardware readout is for)
  * against the audio's own time (frames processed), the way a plugin host's position would be judged. */
 struct clk_xp {
     uint32_t have;                   /* a previous call to compare with */
@@ -50,6 +51,13 @@ struct clk_xp {
     uint32_t r_n;
     float r_mean, r_m2, r_min, r_max; /* the newest point against the fit of the earlier ones, in microseconds */
     uint32_t restarts;               /* the window started again: a stop, a loop jump, a gap in the calls */
+    uint32_t seq_id;                 /* the sequence followed (the first one seen since the last reset) */
+    uint32_t stalls;                 /* blocks where its time did not move although the audio did */
+    uint32_t slips;                  /* points more than 1 ms off the line */
+    uint32_t misses;                 /* blocks with no call for it in between two that had one */
+    uint32_t blk_s, blk_calls, seqs_max;  /* calls in the current block, the most seen in one block */
+    uint32_t blk_ref, blk_have_ref, blk_other, blk_have_other;
+    uint32_t spread;                 /* the largest difference between two sequences' times in one block, ticks */
 };
 struct clkmon {
     struct clk_rd r[CLK_SRC];
@@ -67,9 +75,10 @@ struct clkmon {
 struct clk_xp_stats {
     uint32_t calls, restarts;
     int32_t dt_min, dt_max;          /* ticks per block */
-    float bpm;                       /* from the fit; 0 = no fit yet */
+    float tps;                       /* ticks per second from the fit; 0 = no fit yet */
     float res_min, res_max, res_sd;  /* microseconds */
     float fs;                        /* audio sample rate measured against the core clock (Hz); 0 = not yet */
+    uint32_t stalls, slips, misses, seqs_max, spread;
 };
 
 struct clk_stats {
@@ -83,7 +92,7 @@ struct clk_stats {
 
 void clkmon_boot(struct clkmon *c);                  /* from t2m_boot, with the backup SRAM on */
 void clkmon_block(struct clkmon *c, int frames);      /* from t2m_audio, once per audio block of `frames` frames */
-void clkmon_seq(struct clkmon *c, uint32_t lo, int32_t hi);   /* the stock sequencer's position, from looper_clock (once per block while playing) */
+void clkmon_seq(struct clkmon *c, const void *seq, uint32_t lo, int32_t hi);   /* a sequence's musical time, from seq_play (once per sequence per block) */
 void clkmon_xp_stats(const struct clkmon *c, struct clk_xp_stats *o);
 void clkmon_stats(const struct clkmon *c, int src, struct clk_stats *o);
 float clkmon_mhz(const struct clkmon *c);            /* 0 until the first audio block */

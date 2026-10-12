@@ -87,11 +87,11 @@ void t2m_boot(void)
 }
 
 /* From seq_play (src/seqfix.c): the stock sequencer's musical time, once per sequence per audio block while it plays. */
-void t2m_seq(uint32_t lo, int32_t hi)
+void t2m_seq(const void *seq, uint32_t lo, int32_t hi)
 {
     struct t2m_mem *m = t2m_mem();
     if (m)
-        clkmon_seq(&m->clk, lo, hi);
+        clkmon_seq(&m->clk, seq, lo, hi);
 }
 
 struct t2m_mem *t2m_mem(void)

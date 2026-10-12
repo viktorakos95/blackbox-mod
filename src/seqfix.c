@@ -43,7 +43,7 @@ typedef void (*player_fn)(uint8_t *seq, const void *clock, int32_t a, int32_t b,
 
 void bkp_enable(void);
 void looper_clock(uint32_t lo, int32_t hi);
-void t2m_seq(uint32_t lo, int32_t hi);
+void t2m_seq(const void *seq, uint32_t lo, int32_t hi);
 
 #define SLOTS 32
 struct seq_clock {
@@ -92,7 +92,7 @@ void seq_play(uint8_t *seq, const void *clock, int32_t a, int32_t b, uint32_t e)
         CLK->slot[i].now = now;
     CLK->now_lo = (uint32_t)now;
     CLK->now_hi = (uint32_t)(now >> 32);
-    t2m_seq((uint32_t)now, (int32_t)(now >> 32));    /* the clock monitor's transport readout (src/clkmon.c): musical time, 960 per 16th */
+    t2m_seq(seq, (uint32_t)now, (int32_t)(now >> 32));    /* the clock monitor's transport readout (src/clkmon.c): this sequence's musical time */
     looper_clock((uint32_t)t, (int32_t)(t >> 32));   /* the looper follows the transport: restarts, grid lines, where the loops are */
     fw_player(seq, clock, a, b, e);
 }

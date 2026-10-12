@@ -432,9 +432,9 @@ static void draw_clk(struct t2m_mem *m, int w, int foot)
     p = put_s(p, "HZ");
     *p = 0;
     lp_text(4, d0 + 6 * st, b, C_GREY, 1);
-    p = put_s(b, "SEQ BPM ");
-    p = put_f(p, xp.bpm, 1);
-    p = put_s(p, "  TICKS/BLK ");
+    p = put_s(b, "SEQ ");
+    p = put_u(p, (unsigned)(xp.tps + .5f));
+    p = put_s(p, " T/S  T/BLK ");
     p = put_u(p, (unsigned)xp.dt_min);
     *p++ = '-';
     p = put_u(p, (unsigned)xp.dt_max);
@@ -453,7 +453,18 @@ static void draw_clk(struct t2m_mem *m, int w, int foot)
     p = put_s(p, " US");
     *p = 0;
     lp_text(4, d0 + 8 * st + 2, b, xp.calls ? C_YELLOW : C_GREY, 1);
-    lp_text(4, d0 + 9 * st + 4, "SEQ = stock sequencer position vs audio time", C_GREY, 1);
+    p = put_s(b, "STALL ");
+    p = put_u(p, xp.stalls);
+    p = put_s(p, " SLIP ");
+    p = put_u(p, xp.slips);
+    p = put_s(p, " MISS ");
+    p = put_u(p, xp.misses);
+    p = put_s(p, " SEQS ");
+    p = put_u(p, xp.seqs_max);
+    p = put_s(p, " SPREAD ");
+    p = put_u(p, xp.spread);
+    *p = 0;
+    lp_text(4, d0 + 9 * st + 2, b, xp.calls ? C_LIGHT : C_GREY, 1);
 }
 
 void t2m_page_draw(int w, int foot)

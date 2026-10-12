@@ -271,14 +271,17 @@ s0 = stats(0)
 check("a stamp newer than the block's clock gives latency 0, not 4 billion cycles", s0["lat_max"] == 0.0 and s0["lat_avg"] == 0.0, (s0["lat_avg"], s0["lat_max"]))
 
 # ---- the stock sequencer's position against audio time (what a plugin host's position would be judged by)
-def seq(lo):
-    e.call("clkmon_seq", MEM, lo & 0xFFFFFFFF, 0, count=2_000_000)
+SEQA, SEQB = 0x30020000, 0x30021000                     # two sequence objects (only their addresses matter)
+
+
+def seq(lo, sq=SEQA):
+    e.call("clkmon_seq", MEM, sq, lo & 0xFFFFFFFF, 0, count=2_000_000)
 
 
 def xp():
     e.call("clkmon_xp_stats", MEM, OUT, count=2_000_000)
-    v = struct.unpack("<IIii5f", bytes(e.uc.mem_read(OUT, 36)))
-    return dict(zip("calls restarts dt_min dt_max bpm res_min res_max res_sd fs".split(), v))
+    v = struct.unpack("<IIii5f5I", bytes(e.uc.mem_read(OUT, 56)))
+    return dict(zip("calls restarts dt_min dt_max tps res_min res_max res_sd fs stalls slips misses seqs spread".split(), v))
 
 
 BLK_CYC = round(MHZ * 1e6 * 128 / 48000)               # cycles per 128-frame block at 48 kHz
@@ -289,10 +292,12 @@ for k in range(1, 801):                                 # internal clock, 120 BP
     t += BLK_CYC
     block(t)
     seq(int(20.48 * k))
-    seq(int(20.48 * k) - 5000)                          # the player runs once per sequence: a second call in the block is ignored
+    seq(int(20.48 * k) - 5000, SEQB)                    # a second sequence, 5000 ticks behind: noted as spread, not followed
 a = xp()
 check(f"sample rate measured against the core clock: {a['fs']:.0f} Hz", close(a["fs"], 48000, 30), a["fs"])
-check(f"internal clock: the position gives {a['bpm']:.2f} BPM", close(a["bpm"], 120.0, 0.1), a["bpm"])
+check(f"internal clock: the position moves {a['tps']:.1f} ticks a second (20.48 a block)", close(a["tps"], 7680.0, 5.0), a["tps"])
+check("... the second sequence is seen (2 a block) and its distance kept (5000 ticks), not mixed in", a["seqs"] == 2 and a["spread"] == 5000, a)
+check("... no stalls, slips or missed blocks", (a["stalls"], a["slips"], a["misses"]) == (0, 0, 0), a)
 check(f"... advances {a['dt_min']}-{a['dt_max']} ticks a block", (a["dt_min"], a["dt_max"]) == (20, 21), a)
 check(f"... and sits on its line to within {a['res_min']:.0f} .. {a['res_max']:.0f} us (whole ticks: about +-65 plus the fit)", -110 < a["res_min"] and a["res_max"] < 110, a)
 
@@ -319,16 +324,37 @@ for k in range(1, 801):
 c_ = xp()
 check(f"following 120 BPM: the position moves in steps ({c_['dt_min']}-{c_['dt_max']} ticks a block)", (c_["dt_min"], c_["dt_max"]) == (0, 160), c_)
 check(f"... and strays {c_['res_min']:.0f} .. {c_['res_max']:.0f} us off the line (a staircase is far from a line)", c_["res_max"] - c_["res_min"] > 1500, c_)
-check(f"... and the tempo from a 32-block window of it is only roughly right ({c_['bpm']:.1f} BPM)", close(c_["bpm"], 120.0, 5.0), c_["bpm"])
+check(f"... and its rate from a 32-block window is only roughly right ({c_['tps']:.0f} ticks a second)", close(c_["tps"], 7680.0, 400.0), c_["tps"])
+
+# a stall: the time stands still for one block, then catches up (what the hardware showed: 0 then 10 ticks a block)
+e.w32(MEM + O_RESET, 1)
+t += BLK_CYC
+block(t)
+pos = 0
+for k in range(1, 201):
+    t += BLK_CYC
+    block(t)
+    if k != 120:
+        pos = int(5.12 * k)
+    seq(pos)
+d = xp()
+check(f"one stalled block is counted ({d['stalls']} stall, {d['slips']} slip, {d['res_min']:.0f} us off the line)", d["stalls"] == 1 and d["slips"] >= 1 and d["res_min"] < -2000, d)
+# a block without a call for the followed sequence
+t += BLK_CYC
+block(t)
+t += BLK_CYC
+block(t)
+seq(int(5.12 * 202))
+check("a block with no call in between is counted as a miss", xp()["misses"] == 1, xp())
 
 # ---- wiring: seq_play (src/seqfix.c) hands the monitor the musical time from the stock clock conversion, not the clock position
 got = []
-e.stub(e.sym["t2m_seq"], fn=lambda: got.append((e.arg(0), e.arg(1))))
+e.stub(e.sym["t2m_seq"], fn=lambda: got.append((e.arg(0), e.arg(1), e.arg(2))))
 e.stub(0x08069C94, fn=lambda: e.uc.mem_write(e.arg(0), struct.pack("<q", 123456)))    # clock position -> musical time
 e.stub(0x0805D1D8)                                                                        # the player itself
 e.uc.mem_write(0x30010000, struct.pack("<q", 7_000_000))                                  # the clock: a sample position
 e.call("seq_play", 0x30011000, 0x30010000, 128, 0, 0, count=2_000_000)
-check("seq_play passes the musical time (960 per 16th) to the monitor, not the sample position", got == [(123456, 0)], got)
+check("seq_play passes the sequence and its musical time to the monitor, not the sample position", got == [(0x30011000, 123456, 0)], got)
 
 print(f"{fails} failure(s)")
 raise SystemExit(1 if fails else 0)

@@ -271,30 +271,66 @@ static float fs_now(const struct clkmon *c)
     return cyc > 0.f ? (float)c->fs_samples * c->mhz * 1e6f / cyc : 0.f;
 }
 
-/* The stock sequencer's position at this block (seq_play in src/seqfix.c, after the stock clock-to-time conversion): `lo` is
- * the low word of its musical time in ticks (960 per 16th). The player is called once per sequence; only the first call of a
- * block counts. A straight line is
- * fitted through the last CLK_XPW calls (x = frames of audio, y = ticks); the new point is judged against the line of the
- * ones before it, in microseconds of audio time. A plugin host's position would sit on that line to the frame. */
-void clkmon_seq(struct clkmon *c, uint32_t lo, int32_t hi)
+/* A sequence's musical time at this block (seq_play in src/seqfix.c, after the stock clock-to-time conversion): `lo` is the low
+ * word of its time in ticks. The player runs once per sequence; the readout follows one sequence (the first seen since the
+ * last reset) and notes how far the others' times are from it in the same block. A straight line is fitted through its last
+ * CLK_XPW blocks (x = frames of audio, y = ticks); each new point is judged against the line of the ones before it, in
+ * microseconds of audio time. A plugin host's position would sit on that line to the frame. */
+void clkmon_seq(struct clkmon *c, const void *seq, uint32_t lo, int32_t hi)
 {
     (void)hi;
     struct clk_xp *x = &c->xp;
-    uint32_t s = c->samples;
-    if (x->have && s == x->last_s)
-        return;                          /* the player runs once per sequence: take the block's first call only */
+    uint32_t s = c->samples, id = (uint32_t)seq;
+    if (x->blk_s != s || !x->blk_calls) {          /* a new block */
+        x->blk_s = s;
+        x->blk_calls = 0;
+        x->blk_have_ref = x->blk_have_other = 0;
+    }
+    if (++x->blk_calls > x->seqs_max)
+        x->seqs_max = x->blk_calls;
+    if (!x->seq_id)
+        x->seq_id = id;
+    if (id != x->seq_id) {                          /* another sequence: how far is its time from the followed one's */
+        if (x->blk_have_ref) {
+            int32_t d = (int32_t)(lo - x->blk_ref);
+            uint32_t ad = (uint32_t)(d < 0 ? -d : d);
+            if (ad > x->spread)
+                x->spread = ad;
+        } else if (!x->blk_have_other) {
+            x->blk_other = lo;
+            x->blk_have_other = 1;
+        }
+        return;
+    }
+    if (x->blk_have_ref)
+        return;                                     /* the followed sequence twice in one block: keep the first */
+    x->blk_ref = lo;
+    x->blk_have_ref = 1;
+    if (x->blk_have_other) {
+        int32_t d = (int32_t)(x->blk_other - lo);
+        uint32_t ad = (uint32_t)(d < 0 ? -d : d);
+        if (ad > x->spread)
+            x->spread = ad;
+    }
+    uint32_t fr = c->last_frames ? c->last_frames : 128u;
     if (x->have) {
         uint32_t ds = s - x->last_s;
         int32_t dt = (int32_t)(lo - x->last_t);
-        if (ds > 4u * (c->last_frames ? c->last_frames : 128u) || dt < 0) {      /* a gap in the calls (stopped) or time going back (a jump) */
+        if (ds > 4u * fr || dt < 0) {               /* a gap in the calls (stopped) or time going back (a jump) */
             x->w_n = 0;
             x->restarts++;
-        } else if (ds == c->last_frames) {
-            if (!x->dt_n || dt < x->dt_min)
-                x->dt_min = dt;
-            if (!x->dt_n || dt > x->dt_max)
-                x->dt_max = dt;
-            x->dt_n++;
+        } else {
+            if (ds > fr)
+                x->misses += ds / fr - 1u;
+            if (ds == fr) {
+                if (!x->dt_n || dt < x->dt_min)
+                    x->dt_min = dt;
+                if (!x->dt_n || dt > x->dt_max)
+                    x->dt_max = dt;
+                x->dt_n++;
+                if (dt == 0 && x->slope > 0.f)
+                    x->stalls++;
+            }
         }
     }
     if (x->w_n >= 8u) {
@@ -323,6 +359,8 @@ void clkmon_seq(struct clkmon *c, uint32_t lo, int32_t hi)
                     x->r_min = us;
                 if (!x->r_n || us > x->r_max)
                     x->r_max = us;
+                if (us > 1000.f || us < -1000.f)
+                    x->slips++;
                 x->r_n++;
                 float dl = us - x->r_mean;
                 x->r_mean += dl / (float)x->r_n;
@@ -350,7 +388,12 @@ void clkmon_xp_stats(const struct clkmon *c, struct clk_xp_stats *o)
     o->dt_min = x->dt_n ? x->dt_min : 0;
     o->dt_max = x->dt_n ? x->dt_max : 0;
     o->fs = fs;
-    o->bpm = x->slope > 0.f ? x->slope * (fs > 1000.f ? fs : 48000.f) * 60.f / 3840.f : 0.f;    /* 3840 ticks a beat */
+    o->tps = x->slope > 0.f ? x->slope * (fs > 1000.f ? fs : 48000.f) : 0.f;
+    o->stalls = x->stalls;
+    o->slips = x->slips;
+    o->misses = x->misses;
+    o->seqs_max = x->seqs_max;
+    o->spread = x->spread;
     o->res_min = x->r_n ? x->r_min : 0.f;
     o->res_max = x->r_n ? x->r_max : 0.f;
     o->res_sd = x->r_n > 1 ? fsqrt(x->r_m2 / (float)(x->r_n - 1)) : 0.f;
@@ -399,6 +442,6 @@ uint32_t clkmon_sig(const struct clkmon *c)
         h = (h ^ ISR->s[k].n_fa ^ ((uint32_t)ISR->s[k].n_fb << 8) ^ ((uint32_t)ISR->s[k].n_fc << 16)) * 16777619u;
         h = (h ^ c->r[k].n_arr ^ c->r[k].over) * 16777619u;
     }
-    h = (h ^ c->xp.calls ^ c->xp.restarts) * 16777619u;
+    h = (h ^ c->xp.calls ^ c->xp.restarts ^ (c->xp.spread << 8)) * 16777619u;
     return (h ^ (uint32_t)(c->mhz * 10.f)) * 16777619u;
 }
