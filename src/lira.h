@@ -11,6 +11,8 @@
 
 #include <stdint.h>
 
+#define LIRA_DL_LEN 44032   /* the PT2399's 44,000 entries plus margin */
+
 /* Parameter ids: the 47 controls of the Pd patch in the same order as its parameters.txt (all 0..127 unless noted). */
 enum {
     LIRA_TUNE1, LIRA_TUNE2, LIRA_TUNE3, LIRA_TUNE4, LIRA_TUNE5, LIRA_TUNE6, LIRA_TUNE7, LIRA_TUNE8, /* osc pitch */
@@ -35,44 +37,61 @@ enum {
 };
 
 typedef struct { float cur, tgt, step; int n; } lira_ramp;
-typedef struct { float ph, pwh, lp, a; } lira_osc;
-typedef struct { float env, atk, rel; } lira_comp;
-typedef struct { float acc, prev, g, gt; int cnt, init; lira_ramp red; } lira_exp;
+
+/* One tone generator: an HEF4093 Schmitt-trigger relaxation oscillator (timing capacitor v between two thresholds, gate
+   output s), its envelope (RC), vibrato and per-unit tolerances. See docs/LIRA-analog-notes.md. */
+typedef struct {
+    float v, kt, vp, vn, mid, inv_half;   /* capacitor voltage (rail = 1), ln-sum of the half periods, thresholds */
+    int s;                                /* gate output high */
+    float sqp, trip;                      /* previous-sample square (PolyBLEP, one sample late) and triangle */
+    float ve, drive;                      /* envelope voltage, touch drive (0 = not touched) */
+    float t_slow, t_fast;                 /* release times of this voice, s */
+    float trim, leak;                     /* level trim, bleed gain at 1 kHz */
+    float sens, leak_f;                   /* FM sensitivity and bleed at the current pitch (refreshed every 8th block) */
+    float vib_ph, vib_rate, vib_depth;
+    lira_ramp tune;                       /* Hz */
+} lira_gen;
 
 typedef struct {
-    lira_osc osc[2];
-    lira_ramp tune[2], env[2], sharp, mod, vib;
-    float vib_ph, vib_rate, hp;
-    int key[2];
+    lira_gen g[2];
+    lira_ramp sharp, mod;
+    float hp;
+    int fast;
 } lira_voice;
 
+/* One PT2399: 44,000-entry memory clocked by a VCO. Above ratio 1 (clock faster than the audio rate) it is a tap; below,
+   it steps at the clock and the input goes through an adaptive 1-bit delta codec. */
 typedef struct {
     float *buf;
     int len, w;
-    lira_ramp time, mod;
-    float lp_in, hp_x, tap_lp;
-    lira_comp comp;
-    lira_exp ex;
+    float acc, est, stp;
+    int pbit;
+    float hp_x, in1, in2, out1, self_lp;
+    lira_ramp time, mod;                  /* seconds at the clock set by the knob; relative clock modulation depth */
 } lira_line;
 
 typedef struct {
     float params[LIRA_NPARAMS];
     float sr;
-    int n23, n11;
-    uint32_t rng;
+    int n23;
+    uint32_t rng, cb;    /* cb: control block counter */
     lira_voice v[4];
     lira_ramp hold[2];
+    lira_ramp vibsw;
     float bus[4];        /* voice outputs (high-passed) read by the others, one sample late */
     float total_fb;      /* master output, high-passed, one sample late */
     float pa, pb;        /* hyper-LFO phases */
+    float sqa_s, sqb_s;  /* hyper-LFO square edges, slewed */
+    float sq[8];         /* gate outputs (+-1), for the neighbour coupling */
     lira_ramp lfo_a, lfo_b;
     lira_line line[2];
+    float loop_lp;       /* shared delay feedback path */
     lira_ramp fbline, dmix, drv_g, dst, vol;
-    float hp1, hp2, hp3;
+    float hp1, hp2, hp3, lf, hf;
 } lira_t;
 
 int lira_size(void);
-/* dl1, dl2: delay buffers of `len` samples each (caller-owned). The delay-time knob maps up to len/sr (max 5.94 s). */
+/* dl1, dl2: PT2399 memories of `len` >= LIRA_DL_LEN floats each (caller-owned, zeroed). */
 void lira_init(lira_t *l, float sample_rate, float *dl1, float *dl2, int len, uint32_t seed);
 /* lira_init without clearing the delay buffers (the caller clears them, e.g. a slice per audio block) */
 void lira_reset(lira_t *l, float sample_rate, float *dl1, float *dl2, int len, uint32_t seed);
@@ -80,6 +99,8 @@ void lira_reset(lira_t *l, float sample_rate, float *dl1, float *dl2, int len, u
 void lira_settle(lira_t *l);
 void lira_param(lira_t *l, int id, float value);
 void lira_key(lira_t *l, int sensor /* 0..7 */, int on);
+/* touch with a pressure/velocity: drive 0 = released, 0..1 = how far the envelope opens and how fast */
+void lira_touch(lira_t *l, int sensor, float drive);
 void lira_process(lira_t *l, float *out, int n);
 
 #endif

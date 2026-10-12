@@ -63,7 +63,7 @@ check("Fidelity list: 15 entries, the last one LIRA",
 ids = sorted(r[1] for r in regs if r[1] != 0xF1)
 check("25 LIRA controls at 0x1db..0x1f3", ids == list(range(P0, P0 + NCTL)), str([hex(i) for i in ids]))
 check("percent controls are 0..1000", all(r[2] == 8 and r[3] == 1000 for r in regs if r[0] == "num"))
-check("one SDRAM allocation, 1..2 MB", len(allocs) == 1 and 1 << 20 < allocs[0] < 2 << 20, str(allocs))
+check("one SDRAM allocation, 0.5..2 MB", len(allocs) == 1 and 1 << 19 < allocs[0] < 2 << 20, str(allocs))
 check("pool pointer in backup SRAM, rewritten this boot",
       e.r32(0x38800F00) & 0xFFFFFFFF == 0xC0000000 and e.r32(0x38800F04) & 0xFFFFFFFF == 0x4C495241 ^ 0xC0000000)
 

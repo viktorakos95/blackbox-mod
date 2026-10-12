@@ -1,17 +1,17 @@
 /*
- * LIRA-8 engine, see lira.h. Port of the signal flow of LIRA-8_Pd_Standalone/_LIRA-8.pd and its abstractions
- * (lira.voice, os.triangle~, prm.*, compressor~, expander~, ma.tanh~) by Mike Moreno DSP.
+ * LIRA-8 engine, see lira.h. The signal flow (8 voices in 4 pairs with cross-FM, hyper-LFO, dual delay, drive) follows
+ * Mike Moreno DSP's LIRA-8 plugin (Pure Data); the circuits follow what is known of the SOMA Lyra-8 hardware:
+ * docs/LIRA-analog-notes.md lists every source and which constants are assumptions.
  *
- * Differences from Pd, all on purpose:
- *  - per-sample processing instead of 64-sample blocks, so the voice-to-voice "delay buses", the master feedback and the
- *    delay loops are one sample late rather than one block late (delay lines keep Pd's 64-sample minimum);
- *  - line~ ramps are exact per-sample ramps; the delay taps use linear interpolation (Pd: 4-point);
- *  - expander level is a 512-sample rectangular-window mean square (Pd: env~ with a Hann window);
- *  - no libm: small polynomial exp2/log2/cos;
- *  - for the Cortex-M7's budget everything slow runs once per LIRA_CR-sample block: all line~ ramps (they step every
- *    LIRA_CR samples), the hyper-LFO, vibrato, touch envelopes, the oscillators' low-pass coefficients (from the
- *    unmodulated frequency) and the expander gain. Oscillators, cross-FM, delays and saturation run per sample.
- * pow~ 31 in the master (Pd) is taken as positive-only (0 for negative input).
+ *  - voices: HEF4093 Schmitt relaxation oscillators, simulated directly (timing capacitor between two thresholds, exact
+ *    crossing time, PolyBLEP on the square); the triangle is the capacitor voltage. Per-unit tolerances from a seed.
+ *  - envelope: RC charge / discharge, part of the oscillator: it bends the waveform and the pitch a little; there is no
+ *    output VCA, so closed voices leak and neighbours couple through the shared supply.
+ *  - delay: two PT2399 (44,000-entry memory, VCO clock, 1-bit codec at long times) with one shared feedback loop; the
+ *    modulation moves the clock, not a tap.
+ *
+ * For the Cortex-M7's budget everything slow runs once per LIRA_CR-sample block (ramps, LFOs, envelopes, coefficients);
+ * oscillators, FM, the delay and the output stage run per sample. No libm: small polynomial exp2/log2/cos.
  */
 #include "lira.h"
 
@@ -20,33 +20,57 @@
 #define TWO_PI 6.2831853f
 #define LIRA_CR 16          /* control block, samples */
 
+/* ---- model constants; the ones marked (assumed) are judgement calls, see the notes ---- */
+#define VP_TYP        0.58f      /* HEF4093B at 5 V: 2.9 V / 5 V */
+#define VN_TYP        0.44f      /* 2.2 V / 5 V */
+#define TOL_THR       0.035f     /* (assumed) threshold spread, relative, per voice */
+#define TRI_AMP       0.80f
+#define SQ_AMP        0.59f
+#define FM_CORNER     600.0f     /* (assumed) Hz above which FM sensitivity falls (manual: higher voices are less sensitive) */
+#define LEAK_BASE     0.0005f    /* (assumed) bleed of a closed voice at 1 kHz, ~ -66 dB; rises with sqrt(f) */
+#define COUPLE        0.003f     /* (assumed) shared-supply coupling of neighbouring oscillators, in rail units */
+#define ENV_PITCH     0.003f     /* (assumed) the envelope pulls pitch: closed voices a little sharp */
+#define WSHAPE        0.25f      /* (assumed) transistor curve: bend grows as the envelope closes */
+#define REL_SLOW_LO   20.0f      /* s, SoS ~20 s, Waveform ~30 s, varying per voice */
+#define REL_SLOW_HI   30.0f
+#define REL_FAST      0.5f       /* s */
+#define ATTACK_TAU    0.05f      /* (assumed) s at full touch */
+#define HOLD_SLOW     0.5f       /* knob position where slow-envelope voices start to drone (12 o'clock) */
+#define HOLD_FAST     0.7f       /* ... FAST voices (2 o'clock) */
+#define PT_BITS       44000.0f   /* PT2399 memory */
+#define TD_MIN        0.031f     /* s, PT2399 at 22 MHz */
+#define MOD_MAX       0.45f      /* (assumed) maximum clock modulation, relative */
+#define ADM_MIN       0.0015f    /* (assumed) adaptive delta codec step limits */
+#define ADM_MAX       0.25f
+
 static inline float fabs_(float x) { return x < 0.f ? -x : x; }
 static inline float fmin_(float a, float b) { return a < b ? a : b; }
 static inline float fmax_(float a, float b) { return a > b ? a : b; }
 static inline float clip_(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
 static inline float floor_(float x) { int i = (int)x; return (float)(i - ((float)i > x)); }
 
-static float fexp2(float x)
+static float fexp2(float x)    /* 2^x, relative error < 3e-9 (envelopes apply it every 0.4 ms: it must be accurate near 0) */
 {
     if (x < -126.f)
         return 0.f;
     if (x > 126.f)
         x = 126.f;
-    float fl = floor_(x), f = x - fl;
-    float p = 1.f + f * (0.69314718f + f * (0.24022651f + f * (0.05550411f + f * (0.00961813f + f * 0.00133336f))));
+    float r = floor_(x + 0.5f), f = x - r;
+    float p = 1.f + f * (0.693147207f + f * (0.240226512f + f * (0.055503272f + f * (0.009618026f +
+              f * (0.001340043f + f * 0.000154697f)))));
     union { float f; uint32_t u; } v;
-    v.u = (uint32_t)((int)fl + 127) << 23;
+    v.u = (uint32_t)((int)r + 127) << 23;
     return p * v.f;
 }
 
-static float flog2(float x)
+static float flog2(float x)    /* log2, |error| < 2e-5 */
 {
     union { float f; uint32_t u; } v;
     v.f = x;
     float e = (float)((int)((v.u >> 23) & 255) - 127);
     v.u = (v.u & 0x7fffffu) | 0x3f800000u;
-    float m = v.f;
-    return e + (-1.7417939f + (2.8212026f + (-1.4699568f + (0.44717955f - 0.056570851f * m) * m) * m) * m);
+    float t = v.f - 1.f;
+    return e + t * (1.44159208f + t * (-0.70725343f + t * (0.41156148f + t * (-0.18983245f + t * 0.04392863f))));
 }
 
 static float fpow(float b, float e) { return b > 0.f ? fexp2(e * flog2(b)) : 0.f; }
@@ -62,6 +86,11 @@ static float fcos(float x) /* cos(2*pi*x), x in cycles */
 static float mtof(float m) { return m <= -1500.f ? 0.f : 440.f * fexp2((m - 69.f) * (1.f / 12.f)); }
 static float ftom(float f) { return f <= 0.f ? -1500.f : 69.f + 12.f * flog2(f * (1.f / 440.f)); }
 static float db2lin(float db) { return fexp2(db * 0.16609640f); }
+static float rsqrt_(float x) { return fexp2(-0.5f * flog2(x)); }          /* 1 / sqrt(x), x > 0 */
+static inline float expm_small(float x)     /* exp(-x), x < 0.2, error < 7e-5 (envelope steps) */
+{
+    return 1.f - x * (1.f - x * 0.5f * (1.f - x * (1.f / 3.f)));
+}
 
 /* Pade tanh, as ma.tanh~ */
 static float ptanh(float x)
@@ -73,7 +102,7 @@ static float ptanh(float x)
 
 static float wrap1(float x) { return x - floor_(x); }
 
-/* ---- line~ ---- */
+/* ---- line~ (knob smoothing) ---- */
 static void rjump(lira_ramp *r, float v) { r->cur = r->tgt = v; r->n = 0; r->step = 0.f; }
 static void rset(lira_ramp *r, float tgt, int n)
 {
@@ -106,6 +135,7 @@ static float rnd(lira_t *l)    /* -1 .. 1 */
     l->rng ^= l->rng << 5;
     return (float)(int32_t)l->rng * (1.f / 2147483648.f);
 }
+static float urand(lira_t *l, float lo, float hi) { return lo + (hi - lo) * 0.5f * (rnd(l) + 1.f); }
 
 /* ---- Pd hip~ / lop~ ---- */
 static float hip(float *last, float x, float coef)
@@ -120,76 +150,65 @@ static float lop(float *y, float x, float coef)
     return *y;
 }
 
-/* ---- os.triangle~: PolyBLEP saw pair -> square, one-pole low-pass -> triangle ---- */
-static float blep(float t, float dt)
+/* ---- a tone generator ---- */
+static void gen_setup(lira_t *l, lira_gen *g)
 {
-    float r = 0.f, u;
-    if (t <= dt) {
-        u = t / dt - 1.f;
-        r = u * u;
-    }
-    if (t >= 1.f - dt) {
-        u = (t - 1.f) / dt + 1.f;
-        r -= u * u;
-    }
-    return r;
+    g->vp = VP_TYP * (1.f + TOL_THR * rnd(l));
+    g->vn = VN_TYP * (1.f + TOL_THR * rnd(l));
+    if (g->vp < g->vn + 0.08f)
+        g->vp = g->vn + 0.08f;
+    /* half periods of the RC loop: charge Vn -> Vp towards the rail, discharge Vp -> Vn towards ground */
+    g->kt = 0.69314718f * (flog2((1.f - g->vn) / (1.f - g->vp)) + flog2(g->vp / g->vn));
+    g->mid = 0.5f * (g->vp + g->vn);
+    g->inv_half = 2.f / (g->vp - g->vn);
+    g->v = urand(l, g->vn, g->vp);
+    g->s = rnd(l) > 0.f;
+    g->t_slow = urand(l, REL_SLOW_LO, REL_SLOW_HI);
+    g->t_fast = REL_FAST * urand(l, 0.8f, 1.25f);
+    g->trim = db2lin(1.5f * rnd(l));                      /* SoS: some variation between voice levels */
+    g->leak = LEAK_BASE * urand(l, 0.6f, 1.6f);
+    g->vib_rate = urand(l, 0.45f, 2.6f);                  /* slow, SoS: "a tad slow" */
+    g->vib_depth = urand(l, 0.0035f, 0.0065f);
+    g->vib_ph = urand(l, 0.f, 1.f);
 }
 
-/* one sample; o->a (the low-pass coefficient) is set at control rate by the caller */
-static inline float osc_tick(lira_osc *o, float f, float pw, float isr, float *tri)
+/* One sample of the oscillator. f = frequency, cpl = supply coupling from the neighbours (rail units). Returns the
+   square and triangle one sample late (PolyBLEP corrects the sample before and after each edge). */
+static inline void gen_tick(lira_gen *g, float f, float cpl, float isr, float *tri, float *sq)
 {
-    float dt = fabs_(f) * isr;
-    if (dt < 1e-7f)
-        dt = 1e-7f;
-    float ph = o->ph + dt;
-    if (ph >= 1.f) {
-        ph -= floor_(ph);
-        o->pwh = clip_(pw, 0.f, 1.f);       /* samphold~: sampled when the phasor wraps */
-    }
-    o->ph = ph;
-    float p2 = ph + o->pwh;
-    if (p2 >= 1.f)
-        p2 -= 1.f;
-    float s = 2.f * (ph - p2) + blep(ph, dt) - blep(p2, dt) + 2.f * o->pwh - 1.f;
-    o->lp = s + o->a * (o->lp - s);
-    *tri = o->lp * 2.65f - 0.145f;
-    return s * 0.59f;
-}
-
-static float lp_coef(float f, float sr)  /* rpole~ coefficient of os.triangle~'s low-pass at max(|f| / 4, 100) Hz */
-{
-    float fc = clip_(fmax_(fabs_(f) * 0.25f, 100.f), 0.f, sr * 0.5f);
-    return fexp2(-TWO_PI * 1.44269504f * fc / sr);
-}
-
-/* ---- compressor~ (attack/release 2.5 ms, threshold -12 dB, ratio 5) ---- */
-static float comp_run(lira_comp *c, float x)
-{
-    float a = fabs_(x), k = a > c->env ? c->atk : c->rel;
-    c->env = a * (1.f - k) + k * c->env;
-    float g = c->env > 1e-9f ? ((c->env - 0.25118864f) * 0.2f + 0.25118864f) / c->env : 0.f;
-    return x * ptanh(clip_(g, 0.f, 1.f));
-}
-
-/* ---- expander~ (threshold -60 dB, ratio 5, 11 ms gain smoothing) ---- */
-static float exp_run(lira_exp *e, float x, int n11)
-{
-    e->acc += x * x;
-    if (++e->cnt >= 256) {
-        float p = (e->acc + e->prev) * (1.f / 512.f);
-        e->prev = e->acc;
-        e->acc = 0.f;
-        e->cnt = 0;
-        float db = p > 1e-10f ? 3.0103f * flog2(p) : -100.f;
-        float red = 0.8f * fmin_(db + 60.f, 0.f);
-        if (!e->init) {
-            rjump(&e->red, red);
-            e->init = 1;
+    float x = fabs_(f) * g->kt * isr;
+    if (x > 0.5f)
+        x = 0.5f;
+    float a = x * (1.f - x * 0.5f * (1.f - x * (1.f / 3.f)));     /* 1 - exp(-x) */
+    float v0 = g->v, v = v0 + ((g->s ? 1.f : 0.f) + cpl - v0) * a;
+    float emit_sq = g->sqp, emit_tri = g->trip, d = 0.f, h = 0.f, thr = 0.f;
+    if (g->s) {
+        if (v >= g->vp) {
+            d = v > v0 ? clip_(1.f - (g->vp - v0) / (v - v0), 0.f, 1.f) : 1.f;   /* already past it: switch now */
+            g->s = 0;
+            h = -2.f;
+            thr = g->vp;
         }
-        rset(&e->red, red, n11);
+    } else if (v <= g->vn) {
+        d = v < v0 ? clip_(1.f - (g->vn - v0) / (v - v0), 0.f, 1.f) : 1.f;
+        g->s = 1;
+        h = 2.f;
+        thr = g->vn;
     }
-    e->g += 0.0625f * (e->gt - e->g);       /* gt: 10^(red/20), set once per control block */
-    return x * e->g;
+    if (h != 0.f) {          /* the rest of this sample, d of it, is spent charging towards the new target */
+        float xd = x * d, ad = xd * (1.f - xd * 0.5f * (1.f - xd * (1.f / 3.f)));
+        v = thr + ((g->s ? 1.f : 0.f) + cpl - thr) * ad;
+    }
+    g->v = v;
+    float cur = g->s ? 1.f : -1.f;
+    if (h != 0.f) {
+        emit_sq += 0.5f * h * d * d;
+        cur -= 0.5f * h * (1.f - d) * (1.f - d);
+    }
+    g->sqp = cur;
+    g->trip = (v - g->mid) * g->inv_half;
+    *sq = emit_sq;
+    *tri = emit_tri;
 }
 
 /* ---- helpers ---- */
@@ -202,16 +221,7 @@ static void retune(lira_t *l, int o)
     float f = mtof(lo[o] + p * (hi[o] - lo[o])) * pitch;
     if (l->params[LIRA_QUANTIZE] > 0.5f)
         f = mtof(floor_(ftom(f) + 0.5f));
-    rset(&l->v[o >> 1].tune[o & 1], f, l->n23);
-}
-
-static void trigger(lira_t *l, int s)
-{
-    int v = s >> 1;
-    int fast = l->params[LIRA_FAST12 + v] > 0.5f;
-    int on = l->v[v].key[s & 1];
-    float att = fast ? 100.f : 200.f, rel = fast ? 100.f : 8000.f;
-    rset(&l->v[v].env[s & 1], on ? 1.f : 0.f, (int)((on ? att : rel) * 0.001f * l->sr));
+    rset(&l->v[o >> 1].g[o & 1].tune, f, l->n23);
 }
 
 void lira_param(lira_t *l, int id, float x)
@@ -231,8 +241,7 @@ void lira_param(lira_t *l, int id, float x)
         break;
     }
     case LIRA_FAST12: case LIRA_FAST34: case LIRA_FAST56: case LIRA_FAST78:
-        trigger(l, (id - LIRA_FAST12) * 2);
-        trigger(l, (id - LIRA_FAST12) * 2 + 1);
+        l->v[id - LIRA_FAST12].fast = x > 0.5f;
         break;
     case LIRA_SHARP12: case LIRA_SHARP34: case LIRA_SHARP56: case LIRA_SHARP78:
         rset(&l->v[id - LIRA_SHARP12].sharp, d * d, n);
@@ -241,44 +250,35 @@ void lira_param(lira_t *l, int id, float x)
         rset(&l->v[id - LIRA_MOD12].mod, 2.f * d * d * d * d, n);
         break;
     case LIRA_HOLD1234: case LIRA_HOLD5678:
-        rset(&l->hold[id - LIRA_HOLD1234], d * d, n);
+        rset(&l->hold[id - LIRA_HOLD1234], d, n);
         break;
     case LIRA_VIBRATO:
-        for (int v = 0; v < 4; v++)
-            rset(&l->v[v].vib, x, n);
+        rset(&l->vibsw, x >= 0.5f ? 1.f : 0.f, n);
         break;
-    case LIRA_DRV: {
-        rset(&l->drv_g, db2lin(3.f + fpow(3.f, 2.f * d + 1.f)), n);
-        break;
-    }
+    case LIRA_DRV: rset(&l->drv_g, db2lin(3.f + fpow(3.f, 2.f * d + 1.f)), n); break;
     case LIRA_DST_MIX: rset(&l->dst, d, n); break;
     case LIRA_VOL: rset(&l->vol, d * d, n); break;
     case LIRA_F_A: rset(&l->lfo_a, mtof(fpow(d, 2.f) * 127.f - 75.f), n); break;
     case LIRA_F_B: rset(&l->lfo_b, mtof(fpow(d, 2.f) * 127.f - 75.f), n); break;
-    case LIRA_TIME1: case LIRA_TIME2: {
-        lira_line *ln = &l->line[id - LIRA_TIME1];
-        float ms = 1.45125f * fexp2(12.f * d);
-        float mx = (float)(ln->len - 4) * 1000.f / l->sr;
-        rset(&ln->time, fmin_(ms, mx), n);
+    case LIRA_TIME1: case LIRA_TIME2:   /* the pot sets the VCO current: exponential from the chip's 31 ms floor */
+        rset(&l->line[id - LIRA_TIME1].time, TD_MIN * fexp2(d * 7.5826f), n);
         break;
-    }
-    case LIRA_FEEDBACK:
-        rset(&l->fbline, fexp2(2.f * d) * d, n);
-        break;
+    case LIRA_FEEDBACK: rset(&l->fbline, fexp2(2.f * d) * d, n); break;
     case LIRA_DEL_MIX: rset(&l->dmix, d, n); break;
     case LIRA_MOD1: case LIRA_MOD2:
-        rset(&l->line[id - LIRA_MOD1].mod, 10.f * d * d, n);
+        rset(&l->line[id - LIRA_MOD1].mod, MOD_MAX * d * d, n);
         break;
     default:
         break;
     }
 }
 
-void lira_key(lira_t *l, int s, int on)
+void lira_touch(lira_t *l, int s, float drive)
 {
-    l->v[s >> 1].key[s & 1] = on != 0;
-    trigger(l, s);
+    l->v[s >> 1].g[s & 1].drive = clip_(drive, 0.f, 1.f);
 }
+
+void lira_key(lira_t *l, int s, int on) { lira_touch(l, s, on ? 1.f : 0.f); }
 
 int lira_size(void) { return (int)sizeof(lira_t); }
 
@@ -289,16 +289,17 @@ void lira_reset(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t s
         p[i] = 0;
     l->sr = sr;
     l->n23 = (int)(0.02322f * sr + 0.5f);
-    l->n11 = (int)(0.011f * sr + 0.5f);
     l->rng = seed ? seed : 0x9e3779b9u;
     l->line[0].buf = dl1;
     l->line[1].buf = dl2;
     for (int i = 0; i < 2; i++) {
         l->line[i].len = len;
-        l->line[i].comp.atk = l->line[i].comp.rel = fexp2(-4.60517f * 1.44269504f / (2.5f * sr / 1000.f));
+        l->line[i].stp = ADM_MIN;
+        l->line[i].pbit = 1;
     }
     for (int v = 0; v < 4; v++)
-        l->v[v].vib_rate = 0.5f + 3.f * (float)((rnd(l) + 1.f) * 500.f) * 0.001f;
+        for (int k = 0; k < 2; k++)
+            gen_setup(l, &l->v[v].g[k]);
     static const float defs[LIRA_NPARAMS] = {
         0, 78, 74, 36, 27, 57, 60, 51, 1, 1, 1, 1, 14.3774f, 43.1321f, 103.038f, 71.8868f, 0, 0, 0, 0, 0, 0, 0, 0,
         66, 65, 0, 0, 0, 0, 1, 86, 69, 127, 42, 64, 1, 1, 94.5745f, 56.7447f, 54.0426f, 67.5532f, 40.7358f, 47.9245f,
@@ -306,8 +307,6 @@ void lira_reset(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t s
     for (int i = 0; i < LIRA_NPARAMS; i++)
         lira_param(l, i, defs[i]);
     lira_settle(l);
-    for (int v = 0; v < 4; v++)
-        l->v[v].osc[0].pwh = l->v[v].osc[1].pwh = 0.53125f;
 }
 
 void lira_init(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t seed)
@@ -317,16 +316,23 @@ void lira_init(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t se
     lira_reset(l, sr, dl1, dl2, len, seed);
 }
 
-/* Every ramp to its target now, as after Pd's loadbang + settling. Touch envelopes too: they rest where they are. */
+/* Every ramp to its target now, as after Pd's loadbang + settling. Envelopes rest where they are. */
 void lira_settle(lira_t *l)
 {
     for (int v = 0; v < 4; v++) {
         lira_voice *vo = &l->v[v];
-        rjump(&vo->tune[0], vo->tune[0].tgt); rjump(&vo->tune[1], vo->tune[1].tgt);
-        rjump(&vo->sharp, vo->sharp.tgt); rjump(&vo->mod, vo->mod.tgt); rjump(&vo->vib, vo->vib.tgt);
-        rjump(&vo->env[0], vo->env[0].tgt); rjump(&vo->env[1], vo->env[1].tgt);
+        for (int k = 0; k < 2; k++) {
+            lira_gen *g = &vo->g[k];
+            rjump(&g->tune, g->tune.tgt);
+            float f0 = g->tune.cur;
+            g->sens = rsqrt_(1.f + (f0 * (1.f / FM_CORNER)) * (f0 * (1.f / FM_CORNER)));
+            g->leak_f = g->leak * fexp2(0.5f * flog2(fmax_(f0, 1.f) * 0.001f));
+        }
+        rjump(&vo->sharp, vo->sharp.tgt);
+        rjump(&vo->mod, vo->mod.tgt);
     }
     rjump(&l->hold[0], l->hold[0].tgt); rjump(&l->hold[1], l->hold[1].tgt);
+    rjump(&l->vibsw, l->vibsw.tgt);
     rjump(&l->lfo_a, l->lfo_a.tgt); rjump(&l->lfo_b, l->lfo_b.tgt);
     rjump(&l->fbline, l->fbline.tgt); rjump(&l->dmix, l->dmix.tgt); rjump(&l->drv_g, l->drv_g.tgt);
     rjump(&l->dst, l->dst.tgt); rjump(&l->vol, l->vol.tgt);
@@ -336,19 +342,52 @@ void lira_settle(lira_t *l)
     }
 }
 
-static float tap(const lira_line *ln, float d)
+/* ---- one PT2399 ---- */
+static inline float line_run(lira_line *ln, float in, float mv, float k_ratio, float d0, float depth, const float *c)
 {
-    float rp = (float)ln->w - d;
-    while (rp < 0.f)
-        rp += (float)ln->len;
-    int i = (int)rp;
-    float f = rp - (float)i;
-    int j = i + 1;
-    if (i >= ln->len)
-        i -= ln->len;
-    if (j >= ln->len)
-        j -= ln->len;
-    return ln->buf[i] + f * (ln->buf[j] - ln->buf[i]);
+    /* c: [0] 1 Hz high-pass, [1] input low-pass (5 kHz, two poles), [2] output low-pass (2.8 kHz, one pole: SoS "a single
+       capacitor"), [3] 689 Hz (self-modulation sense) */
+    float x = hip(&ln->hp_x, in, c[0]);
+    x = lop(&ln->in1, x, c[1]);
+    x = lop(&ln->in2, x, c[1]);
+    float den = fmax_(1.f + depth * mv, 0.25f);          /* the clock runs faster with positive modulation */
+    float ratio = k_ratio * den;                          /* memory steps per audio sample */
+    float raw;
+    if (ratio >= 1.f) {                                   /* clock above the audio rate: a tap */
+        ln->buf[ln->w] = x;
+        if (++ln->w >= ln->len)
+            ln->w = 0;
+        float dly = clip_(d0 / den, 4.f, PT_BITS), rp = (float)ln->w - dly;
+        if (rp < 0.f)
+            rp += (float)ln->len;
+        int i = (int)rp, j = i + 1;
+        float f = rp - (float)i;
+        if (i >= ln->len)
+            i -= ln->len;
+        if (j >= ln->len)
+            j -= ln->len;
+        raw = ln->buf[i] + f * (ln->buf[j] - ln->buf[i]);
+    } else {                                              /* clocked below the audio rate: steps, 1-bit adaptive codec */
+        ln->acc += ratio;
+        if (ln->acc >= 1.f) {
+            ln->acc -= 1.f;
+            float xi = clip_(x, -1.5f, 1.5f);
+            int bit = xi > ln->est ? 1 : -1;
+            ln->stp = clip_(ln->stp * (bit == ln->pbit ? 1.5f : 0.66f), ADM_MIN, ADM_MAX);
+            ln->pbit = bit;
+            ln->est = clip_(ln->est + (float)bit * ln->stp, -2.f, 2.f);
+            ln->buf[ln->w] = ln->est;
+            if (++ln->w >= ln->len)
+                ln->w = 0;
+        }
+        int r = ln->w - (int)PT_BITS;
+        if (r < 0)
+            r += ln->len;
+        raw = ln->buf[r];                                 /* zero-order hold: the converter's staircase */
+    }
+    float y = lop(&ln->out1, raw, c[2]);
+    lop(&ln->self_lp, y, c[3]);
+    return y;
 }
 
 void lira_process(lira_t *l, float *out, int n)
@@ -356,7 +395,10 @@ void lira_process(lira_t *l, float *out, int n)
     const float sr = l->sr, isr = 1.f / sr;
     const float hp3c = 1.f - 3.f * TWO_PI * isr, hp1c = 1.f - 1.f * TWO_PI * isr;
     const float hp20c = 1.f - 20.f * TWO_PI * isr, hp10c = 1.f - 10.f * TWO_PI * isr;
-    const float lp4k = clip_(4000.f * TWO_PI * isr, 0.f, 1.f), lp689 = clip_(689.f * TWO_PI * isr, 0.f, 1.f);
+    const float dc[4] = {hp1c, clip_(5000.f * TWO_PI * isr, 0.f, 1.f), clip_(2800.f * TWO_PI * isr, 0.f, 1.f),
+                         clip_(689.f * TWO_PI * isr, 0.f, 1.f)};
+    const float lp3k = clip_(3000.f * TWO_PI * isr, 0.f, 1.f), lp150 = clip_(150.f * TWO_PI * isr, 0.f, 1.f);
+    const float lp9k = clip_(9000.f * TWO_PI * isr, 0.f, 1.f);
     static const int busa[4] = {1, 0, 3, 2}, busb[4] = {3, 0, 1, 2};
     const float sw = l->params[LIRA_SWITCH] > 0.5f, tfb = l->params[LIRA_TOTAL_FB] > 0.5f;
     const float gsa = 0.999f * (sw == 0.f) + 0.001f, gsb = 0.999f * sw + 0.001f;
@@ -364,7 +406,6 @@ void lira_process(lira_t *l, float *out, int n)
     const float andor = l->params[LIRA_ANDOR];
     const float link = l->params[LIRA_LINK] > 0.5f ? 1.f : 0.f;
     const int delmod = (int)l->params[LIRA_DEL_MOD], lfowav = (int)l->params[LIRA_LFO_WAV];
-    const float msr = sr * 0.001f, dmax = (float)(l->line[0].len - 3);
     float g0[4], g2[4];
     for (int v = 0; v < 4; v++) {
         int src = (int)l->params[LIRA_SOURCE12 + v];
@@ -374,41 +415,58 @@ void lira_process(lira_t *l, float *out, int n)
 
     while (n > 0) {
         const int m = n < LIRA_CR ? n : LIRA_CR;
+        const float dt = (float)m * isr;
+        l->cb++;
 
-        /* ---- control block: ramps, LFOs, vibrato, envelopes, coefficients ---- */
+        /* ---- control block ---- */
         rstep(&l->lfo_a, m);
         rstep(&l->lfo_b, m);
         float sqa = clip_(1000.f * fcos(l->pa), -1.f, 1.f), sqb = clip_(1000.f * fcos(l->pb), -1.f, 1.f);
-        float sqsum = (sqa + sqb) * 0.5f;
-        float sqr_lfo = andor == 0.f ? sqa * sqb : andor * sqsum;
+        l->sqa_s += 0.35f * (sqa - l->sqa_s);               /* the analog LFO edges are soft */
+        l->sqb_s += 0.35f * (sqb - l->sqb_s);
+        float sqsum = (l->sqa_s + l->sqb_s) * 0.5f;
+        float sqr_lfo = andor == 0.f ? l->sqa_s * l->sqb_s : andor * sqsum;
         float tri_lfo = ((fabs_(l->pa - 0.5f) * 4.f - 1.f) + (fabs_(l->pb - 0.5f) * 4.f - 1.f)) * 0.5f;
         float fb = l->lfo_b.cur;
-        l->pa = wrap1(l->pa + l->lfo_a.cur * isr * (float)m);
-        l->pb = wrap1(l->pb + (fb + link * sqa * fb * 0.5f) * isr * (float)m);
-        float lfo_fm = sqr_lfo * gnf;       /* the square-LFO half of the "lfo" source; the feedback half is per sample */
+        l->pa = wrap1(l->pa + l->lfo_a.cur * dt);
+        l->pb = wrap1(l->pb + (fb + link * sqa * fb * 0.5f) * dt);
+        float lfo_fm = sqr_lfo * gnf;                        /* the square-LFO half of the "lfo" source */
 
         rstep(&l->hold[0], m);
         rstep(&l->hold[1], m);
-        float vmod[4], vsh[4], vpw[4], vf[8], vgain[8], vbump[8];
+        rstep(&l->vibsw, m);
+        float vmod[4], vsh[4], vf[8], vsens[8], vgain[8], vleak[8], vtrim[8];
         for (int v = 0; v < 4; v++) {
             lira_voice *vo = &l->v[v];
             rstep(&vo->mod, m);
-            rstep(&vo->vib, m);
             rstep(&vo->sharp, m);
-            vo->vib_ph = wrap1(vo->vib_ph + vo->vib_rate * isr * (float)m);
-            float vs = fcos(vo->vib_ph - 0.25f) * vo->vib.cur;       /* osc~ is a sine */
             vmod[v] = vo->mod.cur;
             vsh[v] = vo->sharp.cur;
-            vpw[v] = 0.53125f + vs * 0.025f;
-            float hold = l->hold[v >> 1].cur;
+            float h = l->hold[v >> 1].cur, h0 = vo->fast ? HOLD_FAST : HOLD_SLOW;
+            float gh = clip_((h - h0) / (1.f - h0), 0.f, 1.f);
+            gh *= gh;
             for (int k = 0; k < 2; k++) {
-                rstep(&vo->tune[k], m);
-                rstep(&vo->env[k], m);
-                float f = vo->tune[k].cur * (1.f + vs * 0.005f), e = vo->env[k].cur;
-                vf[2 * v + k] = f;
-                vo->osc[k].a = lp_coef(f, sr);
-                vgain[2 * v + k] = fmin_(e * e + hold, 1.f);
-                vbump[2 * v + k] = vo->env[k].n ? 0.5f * fcos(e - 0.25f) : 0.f;   /* 0 once at rest at 0 or 1 */
+                lira_gen *gn = &vo->g[k];
+                int o = 2 * v + k;
+                rstep(&gn->tune, m);
+                gn->vib_ph = wrap1(gn->vib_ph + gn->vib_rate * dt);
+                float vib = fcos(gn->vib_ph - 0.25f) * gn->vib_depth * l->vibsw.cur;
+                /* envelope: RC. FAST makes the sensors less sensitive; a light touch opens it partly and slowly */
+                float dr = vo->fast ? clip_((gn->drive - 0.15f) * (1.f / 0.85f), 0.f, 1.f) : gn->drive;
+                if (dr > gn->ve)
+                    gn->ve += (dr - gn->ve) * (1.f - expm_small(dt * (0.3f + 0.7f * dr) / (ATTACK_TAU * (vo->fast ? 1.4f : 1.f))));
+                else if (gn->drive == 0.f)
+                    gn->ve *= expm_small(dt * 3.45f / (vo->fast ? gn->t_fast : gn->t_slow));   /* gain = ve^2: -60 dB in t */
+                float f0 = gn->tune.cur;
+                vf[o] = f0 * (1.f + vib + ENV_PITCH * (1.f - gn->ve));
+                vgain[o] = fmin_(gn->ve * gn->ve + gh, 1.f);
+                if (((l->cb + o) & 7) == 0) {            /* slow functions of pitch: one oscillator per block, every 8th */
+                    gn->sens = rsqrt_(1.f + (f0 * (1.f / FM_CORNER)) * (f0 * (1.f / FM_CORNER)));
+                    gn->leak_f = gn->leak * fexp2(0.5f * flog2(fmax_(f0, 1.f) * 0.001f));
+                }
+                vsens[o] = gn->sens;
+                vleak[o] = gn->leak_f;
+                vtrim[o] = gn->trim;
             }
         }
 
@@ -417,18 +475,17 @@ void lira_process(lira_t *l, float *out, int n)
         rstep(&l->drv_g, m);
         rstep(&l->dst, m);
         rstep(&l->vol, m);
-        const float fbl = l->fbline.cur, wetg = 0.5f / fmax_(fbl, 1.5f), dm = l->dmix.cur;
+        const float fbl = l->fbline.cur, dm = l->dmix.cur;
         const float g = l->drv_g.cur, ig = 1.f / clip_(g, 1.f, 4.f), dstm = l->dst.cur, vol = l->vol.cur;
         const float lfom = delmod == 2 ? (lfowav ? sqsum : tri_lfo) : 0.f;
-        float ltime[2], lmod[2];
+        float k_ratio[2], d0[2], depth[2];
         for (int i = 0; i < 2; i++) {
             lira_line *ln = &l->line[i];
             rstep(&ln->time, m);
             rstep(&ln->mod, m);
-            rstep(&ln->ex.red, m);
-            ln->ex.gt = db2lin(ln->ex.red.cur);
-            ltime[i] = ln->time.cur;
-            lmod[i] = ln->mod.cur;
+            k_ratio[i] = PT_BITS * isr / ln->time.cur;
+            d0[i] = ln->time.cur * sr;
+            depth[i] = ln->mod.cur;
         }
 
         /* ---- audio ---- */
@@ -438,11 +495,19 @@ void lira_process(lira_t *l, float *out, int n)
                 lira_voice *vo = &l->v[v];
                 float msrc = g0[v] * (l->bus[busa[v]] * gsa + l->bus[busb[v]] * gsb) +
                              g2[v] * (l->total_fb * gfb + lfo_fm);
-                float fm = 1.f + msrc * vmod[v], sh = vsh[v], y = 0.f;
+                float mv = msrc * vmod[v], sh = vsh[v], y = 0.f;
                 for (int k = 0; k < 2; k++) {
                     int o = 2 * v + k;
-                    float tr, sq = osc_tick(&vo->osc[k], vf[o] * fm, vpw[v], isr, &tr);
-                    y += (tr + sh * (sq - tr) + vbump[o]) * vgain[o];
+                    lira_gen *gn = &vo->g[k];
+                    float tri, sq;
+                    float cpl = COUPLE * 0.5f * (l->sq[(o + 1) & 7] + l->sq[(o + 7) & 7]);
+                    gen_tick(gn, vf[o] * (1.f + mv * vsens[o]), cpl, isr, &tri, &sq);
+                    l->sq[o] = gn->s ? 1.f : -1.f;
+                    float wave = TRI_AMP * (1.f - sh) * tri + SQ_AMP * sh * sq;
+                    float ga = vgain[o];
+                    /* the envelope's transistor: gain, plus a bend that grows as it closes (waveshaper) */
+                    float cv = wave * ga + WSHAPE * (1.f - ga) * ga * wave * wave;
+                    y += (cv + wave * vleak[o]) * vtrim[o];
                 }
                 mix += y;
                 busn[v] = hip(&vo->hp, y, hp3c);
@@ -450,25 +515,19 @@ void lira_process(lira_t *l, float *out, int n)
             for (int v = 0; v < 4; v++)
                 l->bus[v] = busn[v];
 
-            /* dual delay */
-            float u = mix * 0.166667f + rnd(l) * 0.001f, wet = 0.f;
+            /* dual PT2399 delay with one shared feedback loop */
+            float u = mix * 0.166667f;
+            float lin = u + rnd(l) * 0.0008f + fbl * l->loop_lp, wet = 0.f;   /* the noise is the delay's (converters, clock) */
             for (int i = 0; i < 2; i++) {
                 lira_line *ln = &l->line[i];
-                float self = lop(&ln->tap_lp, delmod == 0 ? tap(ln, 64.f) * 0.5f : 0.f, lp689);
-                float d = clip_((ltime[i] + (self + lfom) * lmod[i]) * msr, 64.f, dmax);
-                float y = tap(ln, d);
-                y = hip(&ln->hp_x, y, hp1c);
-                y = lop(&ln->lp_in, y, lp4k);
-                y = comp_run(&ln->comp, y);
-                y = exp_run(&ln->ex, y, l->n11);
-                wet += y;
-                ln->buf[ln->w] = u + y * fbl;
-                if (++ln->w >= ln->len)
-                    ln->w = 0;
+                float mv = delmod == 0 ? ln->self_lp * 0.5f : lfom;
+                wet += line_run(ln, lin, mv, k_ratio[i], d0[i], depth[i], dc);
             }
-            float dly = u + dm * (ptanh(wet * wetg) - u);
+            wet *= 0.5f;
+            lop(&l->loop_lp, ptanh(wet), lp3k);               /* op-amp / PT2399 overload and the loop's filter */
+            float dly = u + dm * (ptanh(wet) - u);
 
-            /* master: drive -> tanh (+ positive spike) -> mix with dry -> tanh -> volume */
+            /* master: drive -> tanh (+ positive spike) -> mix with dry -> tanh -> tilt -> volume */
             float t = ptanh(hip(&l->hp1, dly * g, hp20c)), pw31 = 0.f;
             if (t > 0.f) {
                 float t2 = t * t, t4 = t2 * t2, t8 = t4 * t4, t16 = t8 * t8;
@@ -477,7 +536,9 @@ void lira_process(lira_t *l, float *out, int n)
             float dist = hip(&l->hp2, t + pw31 * 0.25f, hp10c) * ig;
             float yv = ptanh(dly * (1.f - dstm) + (dly * 0.1f + dist) * dstm);
             l->total_fb = hip(&l->hp3, yv, hp3c);
-            *out++ = yv * vol;
+            /* bass lifted a little, highs softer (manual) */
+            float yt = ptanh(lop(&l->hf, yv + 0.41f * lop(&l->lf, yv, lp150), lp9k));
+            *out++ = yt * vol;
         }
         n -= m;
     }

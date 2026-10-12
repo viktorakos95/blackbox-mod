@@ -21,10 +21,10 @@
  * the loop and LFO pages while Fidelity is LIRA (the loop page keeps Loop Mode first). Fixed at LIRA-8's defaults: LFO
  * combine (sum), LFO link (on), FM switch, total feedback, delay LFO shape (triangle), quantize, volume.
  *
- * Memory: LIRA_MAX instances (state + two 1.5 s delay lines each, ~1.2 MB in all) are taken from the SDRAM heap once,
+ * Memory: LIRA_MAX instances (state + two 44,000-entry delay memories each, ~0.7 MB in all) are taken from the SDRAM heap once,
  * at boot, while the parameter table is built (the stock delay takes its lines from the same allocator). The pointer
  * is kept in backup SRAM at 0x38800f00 and rewritten every boot. An instance stays with its pad while the pad plays;
- * when all are taken, a new LIRA pad takes the one silent longest (over ~50 ms), which starts afresh. CPU: about 1200 instructions per sample per playing instance
+ * when all are taken, a new LIRA pad takes the one silent longest (over ~50 ms), which starts afresh. CPU: about 1400 instructions per sample per playing instance
  * (Unicorn count), nothing while silent.
  */
 #include <stdint.h>
@@ -68,7 +68,7 @@ float park_rate(const uint8_t *pad);                   /* filter.c: rate of the 
 
 #define FS          48000.0f
 #define LIRA_MAX    2
-#define DLEN        72000                              /* 1.5 s per delay line */
+#define DLEN        LIRA_DL_LEN                        /* one PT2399's 44,000-entry memory per delay line */
 #define CELL_PAD    0x4c
 #define P_MODE      0x8b                               /* pad mode: 0 = Sample */
 #define P_LOOP      0x8e                               /* Loop Mode */

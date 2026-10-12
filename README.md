@@ -27,7 +27,7 @@ out (new FX, fixes). That's all the list is for.
 - **Reverb Type**: Plate (stock) or Room.
 - **Delay Type**: Delay (stock) or Munchi (a port of the CHOMPI TEMPO granular delay).
 - **Sequencer fix**: a note added just ahead of the playhead plays on that pass.
-- **LIRA-8 on a pad** (test build 3.1.p): a port of Mike Moreno DSP's LIRA-8 (an emulation of
+- **LIRA-8 on a pad** (test build 3.1.q): a port of Mike Moreno DSP's LIRA-8 (an emulation of
   the SOMA Lyra-8 drone synth). On a pad in **Sample** mode (not Clip / Slicer / Granular), set Fidelity to **LIRA**: the pad plays LIRA instead of its sample.
   Load any sample on the pad and set Loop Mode on, so the voice lasts while the pad is held (Launch Mode Toggle = a
   drone you switch on and off). A pad tap holds all eight sensors; on the Keys screen, the notes 1 to 8 semitones above
@@ -41,9 +41,11 @@ out (new FX, fixes). That's all the list is for.
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
 - Presets saved with a Fidelity value on an older mod build may read a different value.
-- LIRA (3.1.p): 3.1.o only clicked on pads made before it (their LIRA settings read as all zero) and skipped the
-  pad's Level and envelope; both fixed in 3.1.p. Each playing LIRA pad is about 1,350 instructions per sample (roughly 15-20 % of
-  the CPU, watch the meter on the version label); it reserves about 1.2 MB of sample memory at boot. Only the first
+- LIRA (3.1.q): the engine is now modelled on the Lyra-8 hardware instead of the plugin's clean DSP (Schmitt-trigger oscillators, RC
+  envelopes with 20-30 s releases, bleed between voices, a PT2399-style delay), see docs/LIRA-analog-notes.md.
+  3.1.o only clicked on pads made before it (their LIRA settings read as all zero) and skipped the
+  pad's Level and envelope; both fixed in 3.1.p. Each playing LIRA pad is about 1,400 instructions per sample (roughly 20 % of
+  the CPU, watch the meter on the version label); it reserves about 0.7 MB of sample memory at boot. Only the first
   10 entries of a pad page may be reachable on screen, in which case Pitch and Hold (loop page) and Dly Mix, Dly Mod,
   Mod Src and Vibrato (LFO page) are off the end. 
 ## Install
