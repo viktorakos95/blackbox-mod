@@ -7,6 +7,9 @@
  * that show "3.1.x" get " avg/peak%" appended, the average and the worst 5.33 ms block of the last second, and so
  * does the global cell's name (FUN_0809ad74, address 0x40), which is where the version actually shows on screen.
  * If the cycle counter never moves, the text reads " --%" instead, so a dead counter is visible, not silent.
+ * After the load (or right after the version, before there is one) comes the free external (SDRAM) memory in MB,
+ * " 41M": the number the stock boot log prints as
+ * "External = %dKB" (FUN_080443f0, allocation top minus floor). It sizes the looper's track buffers.
  * The labels are filled in when their screens are built; the meter rewrites their text from the audio task (a plain
  * character copy plus the label's own dirty flag), and only when the label still starts with "3.1.", so a stale
  * pointer from an earlier boot is never written through.
@@ -18,10 +21,14 @@
 typedef int (*receive_fn)(void *queue, void *item, uint32_t ticks, int peek);
 typedef int (*text_fn)(uint8_t *text, const char *s);
 typedef void (*label_fn)(uint8_t *label, const char *s);
+typedef uint32_t (*ext_free_fn)(void);
+char *looper_status(char *p);
+void bkp_enable(void);
 
 #define fw_receive  ((receive_fn)FN(0x08088756))     /* FreeRTOS queue receive */
 #define fw_text_set ((text_fn)FN(0x080c3b98))        /* text object: copy string (<= 31 chars), mark dirty */
 #define fw_label_set ((label_fn)FN(0x080a3dec))      /* label: text object at +0x34, then redraw */
+#define fw_ext_free ((ext_free_fn)FN(0x080443f0))    /* bytes left in the SDRAM allocator (two word reads) */
 
 #define VERSION     ((const char *)0x080cf290u)      /* "3.1.x" */
 #define TEXT_CHARS  0x31                             /* text object: characters */
@@ -77,7 +84,7 @@ static char *put_uint(char *p, unsigned v)
     return p;
 }
 
-/* "3.1.x 34/71%", "3.1.x --%", or just the version before the first second. Writes at most 16 bytes. */
+/* "3.1.x 34/71% 41M Lok", "3.1.x --% 41M Lok", or "3.1.x 41M Lok" before the first second. At most 30 bytes. */
 static void compose(char *buf)
 {
     char *p = buf;
@@ -95,12 +102,18 @@ static void compose(char *buf)
         *p++ = '-';
         *p++ = '%';
     }
+    *p++ = ' ';                  /* always, so it shows even where the load never does */
+    p = put_uint(p, fw_ext_free() >> 20);
+    *p++ = 'M';
+    *p++ = ' ';
+    bkp_enable();
+    p = looper_status(p);        /* the live looper: Lok, or why it is off */
     *p = 0;
 }
 
 static void report(void)
 {
-    char buf[24];
+    char buf[40];
     compose(buf);
     for (int i = 0; i < LABELS; i++) {
         uint8_t *t = M->text[i];
@@ -168,21 +181,28 @@ static void remember(int slot, uint8_t *text)
     M->text[slot] = text;
 }
 
-/* The three places that build a version label (screen constructors at boot). */
+/* The three places that build a version label (screen constructors at boot). They get the composed text right away,
+ * so a label the meter never reaches still shows the free memory as of the moment its screen was built. */
 void cpu_label_a(uint8_t *label, const char *s)            /* FUN_080c5450: a label, text at +0x34 */
 {
+    char buf[40];
     remember(0, label + LABEL_TEXT);
-    fw_label_set(label, s);
+    compose(buf);
+    fw_label_set(label, s == VERSION ? buf : s);
 }
 
 int cpu_text_b(uint8_t *text, const char *s)               /* FUN_080ae8f0 */
 {
+    char buf[40];
     remember(1, text);
-    return fw_text_set(text, s);
+    compose(buf);
+    return fw_text_set(text, s == VERSION ? buf : s);
 }
 
 int cpu_text_c(uint8_t *text, const char *s)               /* FUN_080c70b8 */
 {
+    char buf[40];
     remember(2, text);
-    return fw_text_set(text, s);
+    compose(buf);
+    return fw_text_set(text, s == VERSION ? buf : s);
 }
