@@ -33,6 +33,7 @@ enum {
     LIRA_DEL_MOD,     /* 0 self, 1 off, 2 LFO */
     LIRA_LFO_WAV,     /* 0 triangle, 1 square */
     LIRA_QUANTIZE,    /* 0/1 */
+    LIRA_EXT,         /* 0..127: external audio in level (the Blackbox's line inputs), mixed in ahead of the delay */
     LIRA_NPARAMS
 };
 
@@ -88,6 +89,9 @@ typedef struct {
     float loop_lp;       /* shared delay feedback path */
     lira_ramp fbline, dmix, drv_g, dst, vol;
     float hp1, hp2, hp3, lf, hf;
+    const float *ext_l, *ext_r;   /* the block's input, set by the caller before lira_process */
+    int ext_n;                    /* frames valid in them */
+    float ext_g;
 } lira_t;
 
 int lira_size(void);

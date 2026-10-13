@@ -268,6 +268,7 @@ void lira_param(lira_t *l, int id, float x)
         break;
     case LIRA_FEEDBACK: rset(&l->fbline, fexp2(2.f * d) * d, n); break;
     case LIRA_DEL_MIX: rset(&l->dmix, d, n); break;
+    case LIRA_EXT: l->ext_g = 2.f * d * d; break;
     case LIRA_MOD1: case LIRA_MOD2:
         rset(&l->line[id - LIRA_MOD1].mod, MOD_MAX * d * d, n);
         break;
@@ -316,7 +317,7 @@ void lira_reset(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t s
     static const float defs[LIRA_NPARAMS] = {
         0, 78, 74, 36, 27, 57, 60, 51, 1, 1, 1, 1, 14.3774f, 43.1321f, 103.038f, 71.8868f, 0, 0, 0, 0, 0, 0, 0, 0,
         66, 65, 0, 0, 0, 0, 1, 86, 69, 127, 42, 64, 1, 1, 94.5745f, 56.7447f, 54.0426f, 67.5532f, 40.7358f, 47.9245f,
-        2, 0, 0};
+        2, 0, 0, 0};
     for (int i = 0; i < LIRA_NPARAMS; i++)
         lira_param(l, i, defs[i]);
     lira_settle(l);
@@ -429,6 +430,7 @@ void lira_process(lira_t *l, float *out, int n)
         g2[v] = 0.999f * (src == 2) + 0.001f;
     }
 
+    int ei = 0;
     while (n > 0) {
         const int m = n < LIRA_CR ? n : LIRA_CR;
         const float dt = (float)m * isr;
@@ -531,6 +533,9 @@ void lira_process(lira_t *l, float *out, int n)
 
             /* dual PT2399 delay with one shared feedback loop */
             float u = mix * 0.166667f;
+            if (l->ext_g > 0.f && ei < l->ext_n)
+                u += l->ext_g * 0.5f * (l->ext_l[ei] + l->ext_r[ei]);
+            ei++;
             float lin = u + rnd(l) * 0.0002f + fbl * l->loop_lp, wet = 0.f;   /* the noise is the delay's (converters, clock) */
             for (int i = 0; i < 2; i++) {
                 lira_line *ln = &l->line[i];

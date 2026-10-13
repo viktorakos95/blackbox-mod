@@ -127,7 +127,7 @@ static const struct ctl ctls[] = {
     {P0 + 18, K_PCT, 1, {LIRA_FEEDBACK}, PCT(54.0426f), "Feedback:", "lirafeedback", 0, 0},
     {P0 + 19, K_PCT, 1, {LIRA_DEL_MIX}, PCT(67.5532f), "Dly Mix:", "liradelmix", 0, 0},
     {P0 + 20, K_PCT, 2, {LIRA_MOD1, LIRA_MOD2}, PCT(44.3f), "Dly Mod:", "liradelmod", 0, 0},
-    {P0 + 21, K_LIST, 1, {LIRA_DEL_MOD}, 2, "Mod Src:", "liradelmodsrc", source_names, 3},
+    {P0 + 21, K_PCT, 1, {LIRA_EXT}, PCT(0), "Ext In:", "liraext", 0, 0},
     {P0 + 22, K_PCT, 1, {LIRA_DRV}, PCT(86), "Drive:", "liradrive", 0, 0},
     {P0 + 23, K_PCT, 1, {LIRA_DST_MIX}, PCT(69), "Dist Mix:", "liradistmix", 0, 0},
     {P0 + 24, K_LIST, 4, {LIRA_FAST12, LIRA_FAST34, LIRA_FAST56, LIRA_FAST78}, 1, "Touch:", "liratouch", touch_names, 2},
@@ -136,8 +136,8 @@ static const struct ctl ctls[] = {
 _Static_assert(P0 + NCTL - 1 <= 0x1f3, "parameter ids must stay below the table's 500 slots");
 
 /* A pad has four pages (Main, Loop, LFO, Pad) and the screen shows eight entries of a page: LIRA takes the first three.
-   Values >= 1000 are stock ids (+1000), the others index ctls[]. Left at their defaults: Mod Src, Dly Mod, Vibrato. */
-static const int16_t page_a[] = {1004, 16, 17, 18, 19, 22, 23, 7};
+   Values >= 1000 are stock ids (+1000), the others index ctls[]. Left at their defaults: Tune 8, Dly Mod, Vibrato. */
+static const int16_t page_a[] = {1004, 16, 17, 18, 19, 22, 23, 21};
 static const int16_t page_b[] = {1000 + P_LOOP, 0, 1, 2, 3, 4, 5, 6};
 static const int16_t page_c[] = {24, 9, 8, 10, 11, 12, 14, 15};
 
@@ -463,6 +463,17 @@ static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
     fw_buf_chans(buf, &ch[0], &ch[1]);
     if (!ch[0] || n <= 0)
         return;
+    uint32_t eng = *(volatile uint32_t *)0x38800f08u;     /* audio engine object, captured by lira_in_capture */
+    s->l.ext_n = 0;
+    if (s->l.ext_g > 0.f && eng >= 0x20000000u && eng < 0xe0000000u && !(eng & 3u)) {
+        const float *el = *(const float *const *)(eng + 0x8fb0), *er = *(const float *const *)(eng + 0x8fb4);
+        int en = (int)*(volatile uint32_t *)0x38800f0cu;
+        if (el && er && ((uint32_t)el & 3u) == 0 && ((uint32_t)er & 3u) == 0 && en > 0 && en <= 1024) {
+            s->l.ext_l = el;
+            s->l.ext_r = er;
+            s->l.ext_n = en < n ? en : n;
+        }
+    }
     lira_process(&s->l, ch[0], n);
     if (ch[1])
         for (int i = 0; i < n; i++)

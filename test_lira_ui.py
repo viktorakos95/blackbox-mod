@@ -107,7 +107,7 @@ make_pad(mode=0, fidelity=INTERP_LIRA)
 got = {p: ids(p) for p in range(5)}
 print("LIRA pages:", {p: [hex(x) for x in v] for p, v in got.items()})
 shown = [x for p in (0, 1, 2) for x in got[p] if x >= P0]
-check("21 LIRA controls on pages 1..3 once each (Mod Src, Dly Mod, Vibrato stay at defaults)", sorted(shown) == [P0 + i for i in range(NCTL) if i not in (13, 20, 21)])
+check("22 LIRA controls on pages 1..3 once each (Tune 8, Dly Mod, Vibrato stay at defaults)", sorted(shown) == [P0 + i for i in range(NCTL) if i not in (7, 13, 20)])
 check("no LIRA page lists more than 8 entries", all(len(got[p]) <= 8 for p in (0, 1, 2)))
 check("page 5 is the stock one", got[4] == stock[4])
 check("Loop Mode is the first entry of page 2", got[1][0] == 0x8E)

@@ -71,8 +71,8 @@ check("pool pointer in backup SRAM, rewritten this boot",
 APP_PADS = 0x24020088 + 0x1840
 POOL_SIDE = 0xC0000000 + 4                       # side[pad position][control] int16, first in the pool
 got = {i: e.r16(POOL_SIDE + 2 * i) for i in range(NCTL)}     # the first position: LIRA-8's defaults
-check("pool: every pad position starts at LIRA-8's defaults (Tune 2 = 78/127, Touch = Fast, Mod Src = LFO)",
-      got[1] == round(78 * 1000 / 127) and got[24] == 1 and got[21] == 2, str(got))
+check("pool: every pad position starts at LIRA-8's defaults (Tune 2 = 78/127, Touch = Fast, Ext In = 0)",
+      got[1] == round(78 * 1000 / 127) and got[24] == 1 and got[21] == 0, str(got))
 DEFAULTS = {P0 + i: got[i] for i in range(NCTL)}
 SLOT0 = 4 + 2 * 20 * NCTL                        # the pool's first instance (its pad pointer)
 
@@ -176,6 +176,33 @@ root = level_with(1.0)
 one = level_with(2 ** (3 / 12))
 check("root note holds all 8 sensors, +3 semitones holds one (quieter)", root > one > 0.0,
       "root %.4f one %.4f" % (root, one))
+
+# Ext In: the block the audio task converted (engine + 0x8fb0 / 0x8fb4) is mixed in; silent at 0
+ENG, XL, XR = 0x24070000, 0x24071000, 0x24072000
+tone = [0.4 * math.sin(2 * math.pi * 200 * i / 48000) for i in range(N)]
+e.uc.mem_write(XL, struct.pack(f"<{N}f", *tone))
+e.uc.mem_write(XR, struct.pack(f"<{N}f", *tone))
+e.w32(ENG + 0x8FB0, XL)
+e.w32(ENG + 0x8FB4, XR)
+e.w32(0x38800F08, ENG)
+e.w32(0x38800F0C, N)
+
+
+def ext_level(g):
+    for i in range(3):
+        app_pad(i, extra={P0 + 19: 0, P0 + 21: g})
+    now[0] += 3_000_000_000
+    e.uc.mem_write(0xC0000000 + SLOT0, b"\0" * 4)
+    out = []
+    for b in range(80):
+        l, _ = voice(PADS[0], rate=2 ** (3 / 12))
+        out += l
+    return rms(out[-30 * N:])
+
+
+quiet, loud = ext_level(0), ext_level(1000)
+check("Ext In: the input block is mixed in (louder with it up, same pad otherwise)", loud > 1.2 * quiet and loud < 2.0,
+      "Ext 0: %.4f, Ext max: %.4f" % (quiet, loud))
 
 # CPU: instructions for one block of one playing instance (a Unicorn count, not cycles)
 ins[0] = 0

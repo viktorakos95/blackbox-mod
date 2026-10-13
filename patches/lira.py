@@ -30,6 +30,9 @@ PATCHES = [
     # the settings-store getter and setter: LIRA's ids on a pad store are answered from the pool (a Sample pad's store is full)
     entry(0x08093E9C, "lira_get"),
     entry(0x08093ECC, "lira_set"),
+    # the audio task's input conversion: LIRA's Ext In reads the converted block
+    hook(0x08041502, 0x0804CAA4, "lira_in_capture"),
+    hook(0x0804151E, 0x0804CAA4, "lira_in_capture"),
     # every call of the page builder: a LIRA pad's pages 2, 3 and 4 list LIRA's controls
     hook(0x080A7314, PAGES, "lira_pages"),
     hook(0x080AB94A, PAGES, "lira_pages"),
