@@ -30,8 +30,8 @@
 #define COUPLE        0.003f     /* (assumed) shared-supply coupling of neighbouring oscillators, in rail units */
 #define ENV_PITCH     0.003f     /* (assumed) the envelope pulls pitch: closed voices a little sharp */
 #define WSHAPE        0.25f      /* (assumed) transistor curve: bend grows as the envelope closes */
-#define REL_SLOW      6.6f       /* s, RC time constant: 3 Mohm x 2.2 uF (DIY BOM); the gain is the envelope squared, so -60 dB
-                                    takes ~3.5 tau = 23 s (SoS ~20 s, Waveform ~30 s); +-20 % per voice */
+#define REL_SLOW      3.3f       /* s, RC time constant (the hardware's 3 Mohm x 2.2 uF is 6.6 s; halved on request: it was far too long
+                                    to play with); the gain is the envelope squared, so -60 dB takes ~3.5 tau = 11.5 s; +-20 % per voice */
 #define REL_FAST      0.145f     /* s, FAST: -60 dB in 0.5 s */
 #define ATTACK_TAU    0.2f       /* (assumed) s at full touch: attack resistor 300 k-1 M with 2.2 uF (DIY docs) */
 #define HOLD_SLOW     0.5f       /* knob position where slow-envelope voices start to drone (12 o'clock) */
@@ -484,7 +484,7 @@ void lira_process(lira_t *l, float *out, int n)
                 if (vo->follow)
                     gn->ve += (fd - gn->ve) * (1.f - expm_small(dt / (fd > gn->ve ? 0.004f : 0.2f)));
                 else if (dr > gn->ve)
-                    gn->ve += (dr - gn->ve) * (1.f - expm_small(dt * (0.3f + 0.7f * dr) / (ATTACK_TAU * (vo->fast ? 1.4f : 1.f))));
+                    gn->ve += (dr - gn->ve) * (1.f - expm_small(dt * (0.3f + 0.7f * dr) / (ATTACK_TAU * (vo->fast ? 1.4f : 2.f))));
                 else if (gn->drive == 0.f)
                     gn->ve *= expm_small(dt / (vo->fast ? gn->t_fast : gn->t_slow));   /* gain = ve^2 */
                 float f0 = gn->tune.cur;

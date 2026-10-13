@@ -93,6 +93,10 @@ float park_rate(const uint8_t *pad);                   /* filter.c: rate of the 
 #define C_MODDEP 11                                    /* ctls[] indexes the page sets per pair instead */
 #define C_SOURCE 12
 #define C_TOUCH  24
+#define C_PITCH  8                                     /* ... and these, which the page splits (two Holds, two Pitches, Dly Mod 1 / 2, Sharp per pair) */
+#define C_SHARP  9
+#define C_HOLD   10
+#define C_DLYMOD 20
 #define IDLE_CYCLES  25000000u                         /* ~50 ms without a voice: the instance may go to another pad */
 
 /* ---- the 25 controls ---- */
@@ -163,6 +167,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     struct slot s;
     int16_t row[NCTL];           /* its controls, as a pad's side[] row */
     int16_t mod[4], level;       /* FM depth per pair (0..1000), output level */
+    int16_t ex[10];              /* the plugin's split controls: Hold 1234 / 5678, Pitch 1234 / 5678, Dly Mod 1 / 2, Sharp per pair */
     uint8_t touch[4], src[4];    /* Touch and FM Source per pair (list indexes) */
     uint8_t want[8], keyed[8];   /* sensors held on the page; sensors the engine has been told */
     uint8_t init, momentary, sel, ticks;
@@ -278,7 +283,13 @@ void lira_register(void *table)
     g->level = 700;
     for (int i = 0; i < NCTL; i++)
         g->row[i] = ctls[i].def;
+    for (int k = 0; k < 2; k++) {
+        g->ex[k] = ctls[C_HOLD].def;
+        g->ex[2 + k] = ctls[C_PITCH].def;
+        g->ex[4 + k] = ctls[C_DLYMOD].def;
+    }
     for (int k = 0; k < 4; k++) {
+        g->ex[6 + k] = ctls[C_SHARP].def;
         g->touch[k] = (uint8_t)ctls[C_TOUCH].def;
         g->src[k] = 0;
         g->mod[k] = 0;
@@ -327,7 +338,7 @@ static void apply_row(const int16_t *row, struct slot *s, int force, int page)
         const struct ctl *c = &ctls[i];
         if (s->clearing && (i == C_FEEDBACK || i == C_DELMIX))
             continue;
-        if (page && (i == C_MODDEP || i == C_SOURCE || i == C_TOUCH))
+        if (page && (i == C_MODDEP || i == C_SOURCE || i == C_TOUCH || i == C_PITCH || i == C_SHARP || i == C_HOLD || i == C_DLYMOD))
             continue;
         int v = row ? row[i] : c->def;
         if (!force && v == s->vals[i])
@@ -556,6 +567,10 @@ int lira_ui_get(int c)
         return g->src[c - 104];
     if (c >= 108 && c < 112)
         return g->mod[c - 108];
+    if (c >= 121 && c < 127)
+        return g->ex[c - 121];
+    if (c >= 130 && c < 134)
+        return g->ex[6 + c - 130];
     return c == 120 ? g->level : 0;
 }
 
@@ -575,6 +590,10 @@ void lira_ui_set(int c, int v)
         g->mod[c - 108] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
     else if (c == 120)
         g->level = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
+    else if (c >= 121 && c < 127)
+        g->ex[c - 121] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
+    else if (c >= 130 && c < 134)
+        g->ex[6 + c - 130] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
 }
 
 int lira_ui_key_get(int k)
@@ -633,6 +652,7 @@ void lira_page_run(float *l, float *r, int n)
     int any = 0;
     for (int k = 0; k < 8; k++)
         any |= g->want[k];
+    any |= g->ex[0] > 480 || g->ex[1] > 480;     /* Hold above 12 o'clock: the voices drone with no touch */
     if (!g->init) {
         if (!any)
             return;
@@ -683,6 +703,12 @@ void lira_page_run(float *l, float *r, int n)
             lira_param(&s->l, LIRA_FAST12 + k, (float)g->touch[k]);
             lira_param(&s->l, LIRA_SOURCE12 + k, (float)g->src[k]);
             lira_param(&s->l, LIRA_MOD12 + k, (float)g->mod[k] * (127.0f / 1000.0f));
+            lira_param(&s->l, LIRA_SHARP12 + k, (float)g->ex[6 + k] * (127.0f / 1000.0f));
+        }
+        for (int k = 0; k < 2; k++) {
+            lira_param(&s->l, LIRA_HOLD1234 + k, (float)g->ex[k] * (127.0f / 1000.0f));
+            lira_param(&s->l, LIRA_PITCH1234 + k, (float)g->ex[2 + k] * (127.0f / 1000.0f));
+            lira_param(&s->l, LIRA_MOD1 + k, (float)g->ex[4 + k] * (127.0f / 1000.0f));
         }
     }
     const float *xl = 0, *xr = 0;

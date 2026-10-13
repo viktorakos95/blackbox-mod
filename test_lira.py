@@ -175,8 +175,8 @@ l.run(SR)
 part = rms(l.run(SR // 4))
 check("a light touch opens the envelope partly", 0.05 < part / full < 0.3, "%.1f dB" % db(part / full))
 
-# -60 dB in ~0.5 s (FAST) / ~23 s (slow, tau 6.6 s = 3 Mohm x 2.2 uF; SoS ~20 s, Waveform ~30 s) means -40 dB in 2/3 of that
-for fast, lo, hi, what in ((1, 0.2, 0.6, "FAST: about 0.35 s"), (0, 11.0, 20.0, "slow: ~15 s")):
+# -60 dB in ~0.5 s (FAST) / ~11.5 s (slow, tau 3.3 s: half the hardware's, on request) means -40 dB in 2/3 of that
+for fast, lo, hi, what in ((1, 0.2, 0.6, "FAST: about 0.35 s"), (0, 5.0, 10.0, "slow: ~7.5 s")):
     ts = []
     for seed in (1, 2, 3):
         l = Lira(seed=seed, **{**CLEAN, "FAST12": fast})
