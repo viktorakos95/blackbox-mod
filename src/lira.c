@@ -460,7 +460,9 @@ void lira_process(lira_t *l, float *out, int n)
         rstep(&l->hold[0], m);
         rstep(&l->hold[1], m);
         rstep(&l->vibsw, m);
-        const float fd = clip_(l->fol * 3.f, 0.f, 1.f);      /* the external input's level, for Touch = Follow */
+        const float fx = l->fol * 14.f;                       /* the external input's level, for Touch = Follow: compressed so quiet
+                                                         hits still open the envelope (gain is ve squared, so it must reach 1) */
+        const float fd = clip_(1.25f * fx / (fx + 1.f), 0.f, 1.f);
         float vmod[4], vsh[4], vf[8], vgain[8], vleak[8], vtrim[8];
         for (int v = 0; v < 4; v++) {
             lira_voice *vo = &l->v[v];
@@ -480,7 +482,7 @@ void lira_process(lira_t *l, float *out, int n)
                 /* envelope: RC. FAST makes the sensors less sensitive; a light touch opens it partly and slowly */
                 float dr = vo->fast ? clip_((gn->drive - 0.15f) * (1.f / 0.85f), 0.f, 1.f) : gn->drive;
                 if (vo->follow)
-                    gn->ve += (fd - gn->ve) * (1.f - expm_small(dt / (fd > gn->ve ? 0.012f : 0.15f)));
+                    gn->ve += (fd - gn->ve) * (1.f - expm_small(dt / (fd > gn->ve ? 0.004f : 0.2f)));
                 else if (dr > gn->ve)
                     gn->ve += (dr - gn->ve) * (1.f - expm_small(dt * (0.3f + 0.7f * dr) / (ATTACK_TAU * (vo->fast ? 1.4f : 1.f))));
                 else if (gn->drive == 0.f)
