@@ -251,7 +251,7 @@ void lira_param(lira_t *l, int id, float x)
         rset(&l->v[id - LIRA_SHARP12].sharp, d * d, n);
         break;
     case LIRA_MOD12: case LIRA_MOD34: case LIRA_MOD56: case LIRA_MOD78:
-        rset(&l->v[id - LIRA_MOD12].mod, 2.f * d * d * d * d, n);
+        rset(&l->v[id - LIRA_MOD12].mod, 2.f * d * d, n);   /* the plugin has d^4; d^2 is audible from mid-knob */
         break;
     case LIRA_HOLD1234: case LIRA_HOLD5678:
         rset(&l->hold[id - LIRA_HOLD1234], d, n);
@@ -425,12 +425,14 @@ void lira_process(lira_t *l, float *out, int n)
     const float link = l->params[LIRA_LINK] > 0.5f ? 1.f : 0.f;
     const int delmod = (int)l->params[LIRA_DEL_MOD], lfowav = (int)l->params[LIRA_LFO_WAV];
     float g0[4], g2[4], g3[4];
+    int sidx[4];                                     /* FM Source P1..P4: the pair whose output modulates this one */
     const float ka = clip_(1.f / (0.003f * sr), 0.f, 1.f), kr = 1.f / (0.12f * sr);
     for (int v = 0; v < 4; v++) {
         int src = (int)l->params[LIRA_SOURCE12 + v];
         g0[v] = 0.999f * (src == 0) + 0.001f;
         g2[v] = 0.999f * (src == 2) + 0.001f;
         g3[v] = (src == 3) ? 1.f : 0.f;
+        sidx[v] = src >= 4 && src <= 7 ? src - 4 : -1;
     }
 
     int ei = 0;
@@ -520,7 +522,8 @@ void lira_process(lira_t *l, float *out, int n)
             for (int v = 0; v < 4; v++) {
                 lira_voice *vo = &l->v[v];
                 float msrc = g0[v] * (l->bus[busa[v]] * gsa + l->bus[busb[v]] * gsb) +
-                             g2[v] * (l->total_fb * gfb + lfo_fm) + g3[v] * ext;
+                             g2[v] * (l->total_fb * gfb + lfo_fm) + g3[v] * ext +
+                             (sidx[v] >= 0 ? l->bus[sidx[v]] : 0.f);
                 float mv = msrc * vmod[v], sh = vsh[v], y = 0.f;
                 for (int k = 0; k < 2; k++) {
                     int o = 2 * v + k;

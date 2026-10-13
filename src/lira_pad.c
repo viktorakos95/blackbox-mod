@@ -100,7 +100,7 @@ struct ctl {
     const char *const *names;
     uint8_t names_n;
 };
-static const char *const source_names[4] = {"Self", "Off", "LFO", "Ext"};
+static const char *const source_names[8] = {"Self", "Off", "LFO", "Ext", "Pair1", "Pair2", "Pair3", "Pair4"};
 static const char *const touch_names[3] = {"Slow", "Fast", "Follow"};
 #define PCT(x) ((int16_t)((x) * 1000.0f / 127.0f + 0.5f))
 #define P0 0x1db
@@ -118,7 +118,7 @@ static const struct ctl ctls[] = {
     {P0 + 10, K_PCT, 2, {LIRA_HOLD1234, LIRA_HOLD5678}, PCT(0), "Hold:", "lirahold", 0, 0},
     {P0 + 11, K_PCT, 4, {LIRA_MOD12, LIRA_MOD34, LIRA_MOD56, LIRA_MOD78}, PCT(0), "FM Depth:", "liramod", 0, 0},
     {P0 + 12, K_LIST, 4, {LIRA_SOURCE12, LIRA_SOURCE34, LIRA_SOURCE56, LIRA_SOURCE78}, 0, "FM Source:", "lirasource",
-     source_names, 4},
+     source_names, 8},
     {P0 + 13, K_PCT, 1, {LIRA_VIBRATO}, PCT(1), "Vibrato:", "liravibrato", 0, 0},
     {P0 + 14, K_PCT, 1, {LIRA_F_A}, PCT(42), "LFO A:", "liralfoa", 0, 0},
     {P0 + 15, K_PCT, 1, {LIRA_F_B}, PCT(64), "LFO B:", "liralfob", 0, 0},
