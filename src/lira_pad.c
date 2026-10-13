@@ -56,6 +56,7 @@ typedef int (*render_fn)(const uint8_t *pad, void *voice, void *out, void *src);
 #define fw_register_num  ((register_num_fn)FN(0x0808c12c))
 #define fw_store_add     ((store_add_fn)FN(0x08093ef6))
 #define fw_setting       ((setting_fn)FN(0x08093e9c))
+#define fw_set           ((store_add_fn)FN(0x08093ecc))      /* settings-store setter (store, id, value) */
 #define fw_pages         ((pages_fn)FN(0x08098d40))          /* a cell's settings page -> list */
 #define fw_pad_record    ((pad_record_fn)FN(0x08098d0c))
 #define fw_list_clear    ((list_clear_fn)FN(0x080a4fc2))
@@ -478,4 +479,29 @@ static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
     if (ch[1])
         for (int i = 0; i < n; i++)
             ch[1][i] = ch[0][i];
+}
+
+/* "LIRA" as a sixth pad-mode choice (the stock list has Sample, Clip, Slicer, Granular, New Rec). Behind it the pad is
+   a Sample pad with Fidelity LIRA and Loop Mode on, which is what the rest of this file keys on. */
+static const char *const mode_names[6] = {"Sample", "Clip", "Slicer", "Granular", "New Rec", "LIRA"};
+
+void mode_register(void *table, int param, const char *label, const char *const *names, int count, const char *xml)
+{
+    (void)names;
+    (void)count;
+    fw_register_list(table, param, label, mode_names, 6, xml);
+}
+
+/* Replaces the setter call that copies a chosen pad-mode value (0x8c) into the pad's mode (0x8b). */
+void lira_mode_set(void *store, unsigned id, int value)
+{
+    if (value == 5) {
+        fw_set(store, P_MODE, 0);
+        fw_set(store, 0xf1, (int)interp_lira);
+        fw_set(store, P_LOOP, 1);
+        return;
+    }
+    if (value == 0 && (unsigned)fw_setting(store, 0xf1) == interp_lira)
+        fw_set(store, 0xf1, 0);                              /* back to Sample: Fidelity Normal */
+    fw_set(store, id, value);
 }
