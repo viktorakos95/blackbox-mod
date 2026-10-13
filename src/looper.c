@@ -1770,7 +1770,7 @@ static int run(float *bl, float *br, int n)
     }
     int gb = -1, wb = -1;
     if (S->cur_ok) {                                  /* the grid lines of the sequencer's own clock */
-        double g = (double)gf * (double)S->rate;
+        double g = SEQ_TPB * (double)(int)(gf / beat_frames() * 4.f + .5f) * .25;   /* exact ticks, not bpm-derived frames */
         double ph = dmod(cpos, g);
         double fr = ph < g * 1e-6 ? 0.0 : (g - ph) / (double)S->rate;
         if (fr < (double)n)
