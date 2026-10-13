@@ -253,6 +253,22 @@ check("after touching MOD 1 the same encoder turns MOD 1", get(108) == min(1000,
 f = draw(0)
 check("redraw after the touches still inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")                                # the mixer view is showing
+# the eight hardware buttons are the plates: message 0xf9, index at +0xc
+e.stub(0x080A2E60, lambda: None)                                    # the stock app message handler (must not see them)
+def button(idx, id=0xF9):
+    e.uc.mem_write(MSG, struct.pack("<H", id) + bytes(10) + struct.pack("<I", idx))
+    e.call("looper_app_msg", APP, MSG)
+button(4)
+check("hardware button 5 toggles voice 5 on", key(4) == 1)
+e.uc.mem_write(0x24005000, b"")
+for _ in range(30):                                                 # time passes (audio blocks): looper_ticks counts them
+    pass
+button(4, 0xFA)
+check("its release message is swallowed (no second toggle)", key(4) == 1)
+button(2)
+check("another button toggles its own voice", key(2) == 1 and key(4) == 1)
+e.call("lira_ui_key", 4, 0)
+e.call("lira_ui_key", 2, 0)
 # the pad button on the page goes back to the stock pad screen; MIX goes to the looper's first page
 screens.clear()
 e.call("solo_pad_pressed", APP, 0, 0, 0)

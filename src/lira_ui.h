@@ -11,6 +11,7 @@ int lira_ui_momentary(int toggle);
 int lira_ui_sel(int set);
 unsigned lira_ui_sig(void);
 int lira_ui_drag(int id, int op, int kind, int idx, int y0, int v0);
+int lira_ui_button(int idx, uint32_t now, uint32_t gap);
 void lira_page_run(float *l, float *r, int n);
 
 #endif

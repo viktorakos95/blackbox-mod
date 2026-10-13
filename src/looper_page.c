@@ -1085,7 +1085,7 @@ static void draw_footer(const struct lay *L)
     }
     int x0 = 3 + NTABS * (TAB_W + 2) + 4;
     if (P->mode == M_LIRA) {
-        text(6, L->foot_y + 4, "PAD=pads  SONG=SMPLR  MIX=LOOP", C_GREY, 1);
+        text(6, L->foot_y + 4, "BUTTONS=VOICES  INFO+PAD/SONG/MIX=GO", C_GREY, 1);
         x0 = P->w;
     }
     if (P->mode == M_SMPLR) {                                     /* SAMPLR is a page of its own: SONG opens it, MIX goes to the Looper; the footer picks the sheet */
@@ -2196,6 +2196,13 @@ void looper_app_msg(void *app, const uint16_t *msg)
             P->btn_id = (uint16_t)id;
             P->btn_index = (uint16_t)idx;
         }
+        if (P->mode == M_LIRA && id == MSG_BUTTON && idx <= 7 && !P->info_on) {   /* LIRA page: the eight buttons are the eight plates */
+            if (lira_ui_button((int)idx, looper_ticks(), 20))
+                P->sig = 0;
+            return;
+        }
+        if (P->mode == M_LIRA && id == MSG_RELEASE && idx <= 7 && !P->info_on)
+            return;
         int is_mix = id == MSG_BUTTON && idx == BTN_MIX;
         int is_info = id == P->info_id && (id != MSG_BUTTON || idx == P->info_idx);
         if (special && !is_mix && !is_info) {

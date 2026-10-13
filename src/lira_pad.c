@@ -173,6 +173,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t init, momentary, sel, ticks;
     uint8_t dkind[4], didx[4];   /* per finger: what it is dragging (0 none, 1 plate, 2 FM slider, 3 dial) and which */
     int16_t dy0[4], dv0[4];      /* ... and where the drag began */
+    uint32_t btn_t[8];           /* when each hardware button last toggled its voice (a press and its release can both arrive) */
     uint32_t tail;               /* samples left to keep running after the last sensor went up */
 };
 struct pool {
@@ -763,4 +764,19 @@ int lira_ui_drag(int id, int op, int kind, int idx, int y0, int v0)
     default:
         return g->dv0[id];
     }
+}
+
+/* A hardware button 0..7 pressed on the page: toggles its voice, unless the same button did within `gap` ticks (one action per
+   press when the release arrives as a second message). Returns 1 when it toggled. */
+int lira_ui_button(int idx, uint32_t now, uint32_t gap)
+{
+    struct pool *p = pool();
+    if (!p || idx < 0 || idx > 7)
+        return 0;
+    struct pg *g = &p->pg;
+    if (g->btn_t[idx] && now - g->btn_t[idx] <= gap)
+        return 0;
+    g->btn_t[idx] = now ? now : 1;
+    g->want[idx] ^= 1;
+    return 1;
 }
