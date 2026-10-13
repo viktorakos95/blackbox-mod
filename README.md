@@ -32,7 +32,7 @@ out (new FX, fixes). That's all the list is for.
   Load any sample on the pad and set Loop Mode on, so the voice lasts while the pad is held (Launch Mode Toggle = a
   drone you switch on and off). A pad tap holds all eight sensors; on the Keys screen, the notes 1 to 8 semitones above
   the root hold sensors 1 to 8 one by one. While Fidelity is LIRA the pad's first three pages become LIRA's (the screen shows eight entries per page): page 1 Level,
-  Time 1/2, Feedback, Dly Mix, Drive, Dist Mix, **Ext In** (the Blackbox's audio input, mixed in ahead of the delay and drive like the Lyra-8's EXT IN: feed drums or anything into it; the pad must be playing); page 2 Loop Mode (turn it on), Tune 1-7; page 3 Touch, Sharp, Pitch,
+  Time 1/2, Feedback, Dly Mix, Drive, Dist Mix, **Ext In** (the Blackbox's audio input, mixed in ahead of the delay and drive like the Lyra-8's EXT IN: feed drums or anything into it; the pad must be playing). Two more uses of the input: **FM Source = Ext** (per voice pair) makes the input frequency-modulate that pair, and **Touch = Follow** (per pair) makes the pair's envelopes follow the input's level, so drums pulse the voices; page 2 Loop Mode (turn it on), Tune 1-7; page 3 Touch, Sharp, Pitch,
   Hold, FM Depth/Source, LFO A/B. Tune 8, Vibrato (on), Dly Mod and Mod Src stay at their defaults. Page 4 (with Fidelity) is unchanged. These
   settings are not saved with the project yet: a power cycle returns them to LIRA-8's defaults. The pad's Level, envelope (Release fades it), filter,
   FX sends and sequencer work as on any pad. Two LIRA pads can play at once.

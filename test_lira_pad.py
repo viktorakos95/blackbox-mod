@@ -204,6 +204,28 @@ quiet, loud = ext_level(0), ext_level(1000)
 check("Ext In: the input block is mixed in (louder with it up, same pad otherwise)", loud > 1.2 * quiet and loud < 2.0,
       "Ext 0: %.4f, Ext max: %.4f" % (quiet, loud))
 
+# Touch = Follow: the envelopes follow the input's level (silent without input, sounding with it); FM Source Ext stays finite
+def follow_level(amp, extra=None):
+    e.uc.mem_write(XL, struct.pack(f"<{N}f", *[amp * v / 0.4 for v in tone]))
+    e.uc.mem_write(XR, struct.pack(f"<{N}f", *[amp * v / 0.4 for v in tone]))
+    for i in range(3):
+        app_pad(i, extra={P0 + 19: 0, P0 + 21: 0, P0 + 24: 2, **(extra or {})})
+    now[0] += 3_000_000_000
+    e.uc.mem_write(0xC0000000 + SLOT0, b"\0" * 4)
+    out = []
+    for b in range(80):
+        l, _ = voice(PADS[0], rate=2 ** (3 / 12))
+        out += l
+    return rms(out[-30 * N:]), all(math.isfinite(v) and abs(v) <= 1.0 for v in out)
+
+
+silent, _ = follow_level(0.0)
+driven, fine = follow_level(0.4)
+check("Touch Follow: the voices sound with input and not without", driven > 5 * silent and driven > 0.003 and fine,
+      "no input %.5f, input %.5f" % (silent, driven))
+_, fine = follow_level(0.4, {P0 + 12: 3, P0 + 11: 900})
+check("FM Source Ext at high depth: finite and bounded", fine)
+
 # CPU: instructions for one block of one playing instance (a Unicorn count, not cycles)
 ins[0] = 0
 counting[0] = True

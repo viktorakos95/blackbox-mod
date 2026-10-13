@@ -58,6 +58,7 @@ typedef struct {
     lira_ramp sharp, mod;
     float hp;
     int fast;
+    int follow;                           /* Touch = Follow: the envelope follows the external input's level, not the sensors */
 } lira_voice;
 
 /* One PT2399: 44,000-entry memory clocked by a VCO. Above ratio 1 (clock faster than the audio rate) it is a tap; below,
@@ -92,6 +93,7 @@ typedef struct {
     const float *ext_l, *ext_r;   /* the block's input, set by the caller before lira_process */
     int ext_n;                    /* frames valid in them */
     float ext_g;
+    float fol;                    /* envelope follower of the external input */
 } lira_t;
 
 int lira_size(void);

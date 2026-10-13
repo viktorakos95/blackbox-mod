@@ -100,8 +100,8 @@ struct ctl {
     const char *const *names;
     uint8_t names_n;
 };
-static const char *const source_names[3] = {"Self", "Off", "LFO"};
-static const char *const touch_names[2] = {"Slow", "Fast"};
+static const char *const source_names[4] = {"Self", "Off", "LFO", "Ext"};
+static const char *const touch_names[3] = {"Slow", "Fast", "Follow"};
 #define PCT(x) ((int16_t)((x) * 1000.0f / 127.0f + 0.5f))
 #define P0 0x1db
 static const struct ctl ctls[] = {
@@ -118,7 +118,7 @@ static const struct ctl ctls[] = {
     {P0 + 10, K_PCT, 2, {LIRA_HOLD1234, LIRA_HOLD5678}, PCT(0), "Hold:", "lirahold", 0, 0},
     {P0 + 11, K_PCT, 4, {LIRA_MOD12, LIRA_MOD34, LIRA_MOD56, LIRA_MOD78}, PCT(0), "FM Depth:", "liramod", 0, 0},
     {P0 + 12, K_LIST, 4, {LIRA_SOURCE12, LIRA_SOURCE34, LIRA_SOURCE56, LIRA_SOURCE78}, 0, "FM Source:", "lirasource",
-     source_names, 3},
+     source_names, 4},
     {P0 + 13, K_PCT, 1, {LIRA_VIBRATO}, PCT(1), "Vibrato:", "liravibrato", 0, 0},
     {P0 + 14, K_PCT, 1, {LIRA_F_A}, PCT(42), "LFO A:", "liralfoa", 0, 0},
     {P0 + 15, K_PCT, 1, {LIRA_F_B}, PCT(64), "LFO B:", "liralfob", 0, 0},
@@ -130,7 +130,7 @@ static const struct ctl ctls[] = {
     {P0 + 21, K_PCT, 1, {LIRA_EXT}, PCT(0), "Ext In:", "liraext", 0, 0},
     {P0 + 22, K_PCT, 1, {LIRA_DRV}, PCT(86), "Drive:", "liradrive", 0, 0},
     {P0 + 23, K_PCT, 1, {LIRA_DST_MIX}, PCT(69), "Dist Mix:", "liradistmix", 0, 0},
-    {P0 + 24, K_LIST, 4, {LIRA_FAST12, LIRA_FAST34, LIRA_FAST56, LIRA_FAST78}, 1, "Touch:", "liratouch", touch_names, 2},
+    {P0 + 24, K_LIST, 4, {LIRA_FAST12, LIRA_FAST34, LIRA_FAST56, LIRA_FAST78}, 1, "Touch:", "liratouch", touch_names, 3},
 };
 #define NCTL ((int)(sizeof ctls / sizeof ctls[0]))
 _Static_assert(P0 + NCTL - 1 <= 0x1f3, "parameter ids must stay below the table's 500 slots");
@@ -465,7 +465,7 @@ static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
         return;
     uint32_t eng = *(volatile uint32_t *)0x38800f08u;     /* audio engine object, captured by lira_in_capture */
     s->l.ext_n = 0;
-    if (s->l.ext_g > 0.f && eng >= 0x20000000u && eng < 0xe0000000u && !(eng & 3u)) {
+    if (eng >= 0x20000000u && eng < 0xe0000000u && !(eng & 3u)) {
         const float *el = *(const float *const *)(eng + 0x8fb0), *er = *(const float *const *)(eng + 0x8fb4);
         int en = (int)*(volatile uint32_t *)0x38800f0cu;
         if (el && er && ((uint32_t)el & 3u) == 0 && ((uint32_t)er & 3u) == 0 && en > 0 && en <= 1024) {

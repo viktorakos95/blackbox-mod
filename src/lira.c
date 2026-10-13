@@ -245,6 +245,7 @@ void lira_param(lira_t *l, int id, float x)
     }
     case LIRA_FAST12: case LIRA_FAST34: case LIRA_FAST56: case LIRA_FAST78:
         l->v[id - LIRA_FAST12].fast = x > 0.5f;
+        l->v[id - LIRA_FAST12].follow = x > 1.5f;
         break;
     case LIRA_SHARP12: case LIRA_SHARP34: case LIRA_SHARP56: case LIRA_SHARP78:
         rset(&l->v[id - LIRA_SHARP12].sharp, d * d, n);
@@ -423,14 +424,18 @@ void lira_process(lira_t *l, float *out, int n)
     const float andor = l->params[LIRA_ANDOR];
     const float link = l->params[LIRA_LINK] > 0.5f ? 1.f : 0.f;
     const int delmod = (int)l->params[LIRA_DEL_MOD], lfowav = (int)l->params[LIRA_LFO_WAV];
-    float g0[4], g2[4];
+    float g0[4], g2[4], g3[4];
+    const float ka = clip_(1.f / (0.003f * sr), 0.f, 1.f), kr = 1.f / (0.12f * sr);
     for (int v = 0; v < 4; v++) {
         int src = (int)l->params[LIRA_SOURCE12 + v];
         g0[v] = 0.999f * (src == 0) + 0.001f;
         g2[v] = 0.999f * (src == 2) + 0.001f;
+        g3[v] = (src == 3) ? 1.f : 0.f;
     }
 
     int ei = 0;
+    const int have_ext = l->ext_l && l->ext_r && l->ext_n > 0;
+    float ext = 0.f;
     while (n > 0) {
         const int m = n < LIRA_CR ? n : LIRA_CR;
         const float dt = (float)m * isr;
@@ -453,6 +458,7 @@ void lira_process(lira_t *l, float *out, int n)
         rstep(&l->hold[0], m);
         rstep(&l->hold[1], m);
         rstep(&l->vibsw, m);
+        const float fd = clip_(l->fol * 3.f, 0.f, 1.f);      /* the external input's level, for Touch = Follow */
         float vmod[4], vsh[4], vf[8], vgain[8], vleak[8], vtrim[8];
         for (int v = 0; v < 4; v++) {
             lira_voice *vo = &l->v[v];
@@ -471,7 +477,9 @@ void lira_process(lira_t *l, float *out, int n)
                 float vib = fcos(gn->vib_ph - 0.25f) * gn->vib_depth * l->vibsw.cur;
                 /* envelope: RC. FAST makes the sensors less sensitive; a light touch opens it partly and slowly */
                 float dr = vo->fast ? clip_((gn->drive - 0.15f) * (1.f / 0.85f), 0.f, 1.f) : gn->drive;
-                if (dr > gn->ve)
+                if (vo->follow)
+                    gn->ve += (fd - gn->ve) * (1.f - expm_small(dt / (fd > gn->ve ? 0.012f : 0.15f)));
+                else if (dr > gn->ve)
                     gn->ve += (dr - gn->ve) * (1.f - expm_small(dt * (0.3f + 0.7f * dr) / (ATTACK_TAU * (vo->fast ? 1.4f : 1.f))));
                 else if (gn->drive == 0.f)
                     gn->ve *= expm_small(dt / (vo->fast ? gn->t_fast : gn->t_slow));   /* gain = ve^2 */
@@ -507,10 +515,12 @@ void lira_process(lira_t *l, float *out, int n)
         /* ---- audio ---- */
         for (int s = 0; s < m; s++) {
             float mix = 0.f, busn[4];
+            ext = have_ext && ei < l->ext_n ? 0.5f * (l->ext_l[ei] + l->ext_r[ei]) : 0.f;
+            l->fol += (fabs_(ext) - l->fol) * (fabs_(ext) > l->fol ? ka : kr);
             for (int v = 0; v < 4; v++) {
                 lira_voice *vo = &l->v[v];
                 float msrc = g0[v] * (l->bus[busa[v]] * gsa + l->bus[busb[v]] * gsb) +
-                             g2[v] * (l->total_fb * gfb + lfo_fm);
+                             g2[v] * (l->total_fb * gfb + lfo_fm) + g3[v] * ext;
                 float mv = msrc * vmod[v], sh = vsh[v], y = 0.f;
                 for (int k = 0; k < 2; k++) {
                     int o = 2 * v + k;
@@ -533,8 +543,7 @@ void lira_process(lira_t *l, float *out, int n)
 
             /* dual PT2399 delay with one shared feedback loop */
             float u = mix * 0.166667f;
-            if (l->ext_g > 0.f && ei < l->ext_n)
-                u += l->ext_g * 0.5f * (l->ext_l[ei] + l->ext_r[ei]);
+            u += l->ext_g * ext;
             ei++;
             float lin = u + rnd(l) * 0.0002f + fbl * l->loop_lp, wet = 0.f;   /* the noise is the delay's (converters, clock) */
             for (int i = 0; i < 2; i++) {
