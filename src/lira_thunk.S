@@ -26,13 +26,13 @@ lira_set:
 /*
  * Replaces the two calls of the audio task's input conversion (FUN_0804caa4(engine, rx buffer, words): interleaved int32
  * -> the engine's left / right float buffers at engine + 0x8fb0 / + 0x8fb4): remember the engine object and the frame
- * count in backup SRAM (0x38800f08 / 0x38800f0c) for LIRA's Ext In, then carry on into the stock function.
+ * count in backup SRAM (0x38800bf8 / 0x38800bfc) for LIRA's Ext In, then carry on into the stock function.
  */
     .global lira_in_capture
     .thumb_func
     .type lira_in_capture, %function
 lira_in_capture:
-    ldr     ip, =0x38800f08
+    ldr     ip, =0x38800bf8
     str     r0, [ip]
     lsrs    r3, r2, #1
     str     r3, [ip, #4]

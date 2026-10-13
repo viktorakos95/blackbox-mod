@@ -26,12 +26,13 @@
  *
  * Memory: LIRA_MAX instances (state + two 44,000-entry delay memories each, ~0.7 MB in all) are taken from the SDRAM heap once,
  * at boot, while the parameter table is built (the stock delay takes its lines from the same allocator). The pointer
- * is kept in backup SRAM at 0x38800f00 and rewritten every boot. An instance stays with its pad while the pad plays;
+ * is kept in backup SRAM at 0x38800bf0 and rewritten every boot. An instance stays with its pad while the pad plays;
  * when all are taken, a new LIRA pad takes the one silent longest (over ~50 ms), which starts afresh. CPU: about 1400 instructions per sample per playing instance
  * (Unicorn count), nothing while silent.
  */
 #include <stdint.h>
 #include "lira.h"
+#include "lira_ui.h"
 
 #pragma GCC optimize("O2", "no-tree-loop-distribute-patterns")
 
@@ -89,6 +90,9 @@ float park_rate(const uint8_t *pad);                   /* filter.c: rate of the 
 #define CLEAR_STEPS  8                                 /* blocks to clear a fresh instance's delay lines in */
 #define C_FEEDBACK   18                                /* ctls[] index of Feedback, Dly Mix: held at 0 while clearing */
 #define C_DELMIX     19
+#define C_MODDEP 11                                    /* ctls[] indexes the page sets per pair instead */
+#define C_SOURCE 12
+#define C_TOUCH  24
 #define IDLE_CYCLES  25000000u                         /* ~50 ms without a voice: the instance may go to another pad */
 
 /* ---- the 25 controls ---- */
@@ -155,14 +159,27 @@ struct slot {
     lira_t l;
 };
 #define NPADS 20                                       /* 4 rows x 5 columns of pad stores */
+struct pg {                      /* the LIRA page's own instance (Mixer screen page, no pad): see lira_page_run */
+    struct slot s;
+    int16_t row[NCTL];           /* its controls, as a pad's side[] row */
+    int16_t mod[4], level;       /* FM depth per pair (0..1000), output level */
+    uint8_t touch[4], src[4];    /* Touch and FM Source per pair (list indexes) */
+    uint8_t want[8], keyed[8];   /* sensors held on the page; sensors the engine has been told */
+    uint8_t init, momentary, sel, ticks;
+    uint8_t dkind[4], didx[4];   /* per finger: what it is dragging (0 none, 1 plate, 2 FM slider, 3 dial) and which */
+    int16_t dy0[4], dv0[4];      /* ... and where the drag began */
+    uint32_t tail;               /* samples left to keep running after the last sensor went up */
+};
 struct pool {
     uint32_t magic;
     int16_t side[NPADS][NCTL];   /* the 25 controls of every pad position (stored value: 0..1000 or list index) */
     struct slot s[LIRA_MAX];
+    struct pg pg;
     float dl[LIRA_MAX][2][DLEN];
+    float pdl[2][DLEN];          /* the page instance's delay lines */
 };
-#define POOL       (*(struct pool *volatile *)0x38800f00u)
-#define POOL_CHECK (*(volatile uint32_t *)0x38800f04u)
+#define POOL       (*(struct pool *volatile *)0x38800bf0u)
+#define POOL_CHECK (*(volatile uint32_t *)0x38800bf4u)
 #define MAGIC 0x4c495241u        /* "LIRA" */
 
 static struct pool *pool(void)
@@ -197,13 +214,6 @@ static int pad_index(const uint8_t *store)
     if (rem % 0x30u)
         return -1;
     return (int)(row * 5u + rem / 0x30u);
-}
-
-/* The pad's control i (0..NCTL-1): its value, or the default while the pool is missing. */
-static int ctl_value(struct pool *p, const uint8_t *pad, int i)
-{
-    int pi = pad_index(pad_store(pad));
-    return p && pi >= 0 ? p->side[pi][i] : ctls[i].def;
 }
 
 /* The firmware's store getter (0x08093e9c): the value of id, 0 when absent. LIRA's ids on a pad store come from the pool. */
@@ -260,6 +270,21 @@ void lira_register(void *table)
     for (int k = 0; k < NPADS; k++)
         for (int i = 0; i < NCTL; i++)
             p->side[k][i] = ctls[i].def;
+    struct pg *g = &p->pg;
+    g->init = 0;
+    g->momentary = 0;
+    g->sel = 0;
+    g->tail = 0;
+    g->level = 700;
+    for (int i = 0; i < NCTL; i++)
+        g->row[i] = ctls[i].def;
+    for (int k = 0; k < 4; k++) {
+        g->touch[k] = (uint8_t)ctls[C_TOUCH].def;
+        g->src[k] = 0;
+        g->mod[k] = 0;
+    }
+    for (int k = 0; k < 8; k++)
+        g->want[k] = g->keyed[k] = 0;
     p->magic = MAGIC;
     POOL = p;
     POOL_CHECK = MAGIC ^ (uint32_t)p;
@@ -296,13 +321,15 @@ int lira_pages(uint8_t *app, uint8_t *cell, void *list, int page)
 }
 
 /* ---- audio task ---- */
-static void apply(struct pool *p, struct slot *s, int force)
+static void apply_row(const int16_t *row, struct slot *s, int force, int page)
 {
     for (int i = 0; i < NCTL; i++) {
         const struct ctl *c = &ctls[i];
         if (s->clearing && (i == C_FEEDBACK || i == C_DELMIX))
             continue;
-        int v = ctl_value(p, s->pad, i);
+        if (page && (i == C_MODDEP || i == C_SOURCE || i == C_TOUCH))
+            continue;
+        int v = row ? row[i] : c->def;
         if (!force && v == s->vals[i])
             continue;
         s->vals[i] = (int16_t)v;
@@ -310,6 +337,12 @@ static void apply(struct pool *p, struct slot *s, int force)
         for (int k = 0; k < c->n; k++)
             lira_param(&s->l, c->lira[k], x);
     }
+}
+
+static void apply(struct pool *p, struct slot *s, int force)
+{
+    int pi = pad_index(pad_store(s->pad));
+    apply_row(p && pi >= 0 ? p->side[pi] : 0, s, force, 0);
 }
 
 /* The pad's instance; else a free one; else the one idle longest (over IDLE_CYCLES), which starts afresh. */
@@ -464,11 +497,11 @@ static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
     fw_buf_chans(buf, &ch[0], &ch[1]);
     if (!ch[0] || n <= 0)
         return;
-    uint32_t eng = *(volatile uint32_t *)0x38800f08u;     /* audio engine object, captured by lira_in_capture */
+    uint32_t eng = *(volatile uint32_t *)0x38800bf8u;     /* audio engine object, captured by lira_in_capture */
     s->l.ext_n = 0;
     if (eng >= 0x20000000u && eng < 0xe0000000u && !(eng & 3u)) {
         const float *el = *(const float *const *)(eng + 0x8fb0), *er = *(const float *const *)(eng + 0x8fb4);
-        int en = (int)*(volatile uint32_t *)0x38800f0cu;
+        int en = (int)*(volatile uint32_t *)0x38800bfcu;
         if (el && er && ((uint32_t)el & 3u) == 0 && ((uint32_t)er & 3u) == 0 && en > 0 && en <= 1024) {
             s->l.ext_l = el;
             s->l.ext_r = er;
@@ -504,4 +537,204 @@ void lira_mode_set(void *store, unsigned id, int value)
     if (value == 0 && (unsigned)fw_setting(store, 0xf1) == interp_lira)
         fw_set(store, 0xf1, 0);                              /* back to Sample: Fidelity Normal */
     fw_set(store, id, value);
+}
+
+/* ---- the LIRA page: one more instance, run by the looper's output stage (looper_stage), so it needs no pad or sample.
+   The page's UI (looper_page.c, lira_ui.inc) reads and writes it through these. Controls: 0..NCTL-1 are ctls[] (the
+   per-pair FM Depth, FM Source and Touch are 100+pair, 104+pair, 108+pair), 120 = level. */
+int lira_ui_get(int c)
+{
+    struct pool *p = pool();
+    if (!p)
+        return 0;
+    struct pg *g = &p->pg;
+    if (c >= 0 && c < NCTL)
+        return g->row[c];
+    if (c >= 100 && c < 104)
+        return g->touch[c - 100];
+    if (c >= 104 && c < 108)
+        return g->src[c - 104];
+    if (c >= 108 && c < 112)
+        return g->mod[c - 108];
+    return c == 120 ? g->level : 0;
+}
+
+void lira_ui_set(int c, int v)
+{
+    struct pool *p = pool();
+    if (!p)
+        return;
+    struct pg *g = &p->pg;
+    if (c >= 0 && c < NCTL)
+        g->row[c] = (int16_t)(v < 0 ? 0 : v > (ctls[c].kind == K_LIST ? ctls[c].names_n - 1 : 1000) ? (ctls[c].kind == K_LIST ? ctls[c].names_n - 1 : 1000) : v);
+    else if (c >= 100 && c < 104)
+        g->touch[c - 100] = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
+    else if (c >= 104 && c < 108)
+        g->src[c - 104] = (uint8_t)(v < 0 ? 0 : v > 7 ? 7 : v);
+    else if (c >= 108 && c < 112)
+        g->mod[c - 108] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
+    else if (c == 120)
+        g->level = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
+}
+
+int lira_ui_key_get(int k)
+{
+    struct pool *p = pool();
+    return p && k >= 0 && k < 8 ? p->pg.want[k] : 0;
+}
+
+void lira_ui_key(int k, int on)
+{
+    struct pool *p = pool();
+    if (p && k >= 0 && k < 8)
+        p->pg.want[k] = (uint8_t)(on != 0);
+}
+
+int lira_ui_momentary(int toggle)
+{
+    struct pool *p = pool();
+    if (!p)
+        return 0;
+    if (toggle)
+        p->pg.momentary ^= 1;
+    return p->pg.momentary;
+}
+
+int lira_ui_sel(int set)
+{
+    struct pool *p = pool();
+    if (!p)
+        return 0;
+    if (set >= 0)
+        p->pg.sel = (uint8_t)set;
+    return p->pg.sel;
+}
+
+/* Signature of what the page shows that the engine changes by itself: the sensors' state (for the repaint test). */
+unsigned lira_ui_sig(void)
+{
+    struct pool *p = pool();
+    unsigned h = 0;
+    if (!p)
+        return 0;
+    for (int k = 0; k < 8; k++)
+        h = h << 1 | p->pg.want[k];
+    return h | (unsigned)p->pg.momentary << 8 | (unsigned)p->pg.sel << 9;
+}
+
+/* Called from looper_stage every audio block, before the looper: adds the page's LIRA to the output bus. */
+void lira_page_run(float *l, float *r, int n)
+{
+    struct pool *p = pool();
+    if (!p || n <= 0)
+        return;
+    struct pg *g = &p->pg;
+    struct slot *s = &g->s;
+    int any = 0;
+    for (int k = 0; k < 8; k++)
+        any |= g->want[k];
+    if (!g->init) {
+        if (!any)
+            return;
+        lira_reset(&s->l, FS, p->pdl[0], p->pdl[1], DLEN, 0x6c697261u);
+        s->clearing = 1;
+        s->pad = (const uint8_t *)1;
+        for (int k = 0; k < 8; k++) {
+            g->keyed[k] = 0;
+            s->vals[k] = -1;
+        }
+        for (int i = 0; i < NCTL; i++)
+            s->vals[i] = -1;
+        apply_row(g->row, s, 1, 1);
+        lira_param(&s->l, LIRA_FEEDBACK, 0.0f);
+        lira_param(&s->l, LIRA_DEL_MIX, 0.0f);
+        lira_settle(&s->l);
+        s->ticks = 0;
+        g->init = 1;
+    }
+    if (any)
+        g->tail = (uint32_t)(14.0f * FS);
+    else if (g->tail >= (uint32_t)n)
+        g->tail -= (uint32_t)n;
+    else {
+        g->tail = 0;
+        return;
+    }
+    if (s->clearing) {
+        int a = (s->clearing - 1) * (DLEN / CLEAR_STEPS);
+        int b = s->clearing == CLEAR_STEPS ? DLEN : a + DLEN / CLEAR_STEPS;
+        for (int ln = 0; ln < 2; ln++)
+            for (int i = a; i < b; i++)
+                p->pdl[ln][i] = 0.0f;
+        if (++s->clearing > CLEAR_STEPS) {
+            s->clearing = 0;
+            s->vals[C_FEEDBACK] = s->vals[C_DELMIX] = -1;
+            apply_row(g->row, s, 0, 1);
+        }
+    }
+    for (int k = 0; k < 8; k++)
+        if (g->want[k] != g->keyed[k]) {
+            g->keyed[k] = g->want[k];
+            lira_key(&s->l, k, g->want[k]);
+        }
+    if ((s->ticks++ & 1) == 0) {
+        apply_row(g->row, s, 0, 1);
+        for (int k = 0; k < 4; k++) {
+            lira_param(&s->l, LIRA_FAST12 + k, (float)g->touch[k]);
+            lira_param(&s->l, LIRA_SOURCE12 + k, (float)g->src[k]);
+            lira_param(&s->l, LIRA_MOD12 + k, (float)g->mod[k] * (127.0f / 1000.0f));
+        }
+    }
+    const float *xl = 0, *xr = 0;
+    int xn = 0;
+    uint32_t eng = *(volatile uint32_t *)0x38800bf8u;
+    if (eng >= 0x20000000u && eng < 0xe0000000u && !(eng & 3u)) {
+        const float *el = *(const float *const *)(eng + 0x8fb0), *er = *(const float *const *)(eng + 0x8fb4);
+        int en = (int)*(volatile uint32_t *)0x38800bfcu;
+        if (el && er && ((uint32_t)el & 3u) == 0 && ((uint32_t)er & 3u) == 0 && en > 0 && en <= 1024) {
+            xl = el;
+            xr = er;
+            xn = en;
+        }
+    }
+    float gain = (float)g->level * (1.0f / 700.0f);
+    float tmp[128];
+    for (int i0 = 0; i0 < n; i0 += 128) {
+        int m = n - i0 < 128 ? n - i0 : 128;
+        s->l.ext_n = xn > i0 ? (xn - i0 < m ? xn - i0 : m) : 0;
+        s->l.ext_l = xl + i0;
+        s->l.ext_r = xr + i0;
+        lira_process(&s->l, tmp, m);
+        for (int i = 0; i < m; i++) {
+            l[i0 + i] += tmp[i] * gain;
+            r[i0 + i] += tmp[i] * gain;
+        }
+    }
+}
+
+/* A finger's drag on the page (state kept here: the cave has no .bss). op 0: set kind / idx / y0 / v0, 1: read kind, 2: idx,
+   3: y0, 4: v0. */
+int lira_ui_drag(int id, int op, int kind, int idx, int y0, int v0)
+{
+    struct pool *p = pool();
+    if (!p)
+        return 0;
+    struct pg *g = &p->pg;
+    id &= 3;
+    switch (op) {
+    case 0:
+        g->dkind[id] = (uint8_t)kind;
+        g->didx[id] = (uint8_t)idx;
+        g->dy0[id] = (int16_t)y0;
+        g->dv0[id] = (int16_t)v0;
+        return 0;
+    case 1:
+        return g->dkind[id];
+    case 2:
+        return g->didx[id];
+    case 3:
+        return g->dy0[id];
+    default:
+        return g->dv0[id];
+    }
 }

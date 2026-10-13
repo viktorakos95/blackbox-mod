@@ -265,7 +265,7 @@ void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
     (void)computed;
     ensure();
     int cur = app[APP_SCREEN], next = SCREEN_MIXER;
-    if (cur == SCREEN_MUTE && S->looper && S->view && looper_page_tab() == 5) {
+    if (cur == SCREEN_MUTE && S->looper && S->view && looper_page_tab() >= 5) {
         looper_page_goto(S->view, 0);                  /* from the SMPLR tab MIX goes to the Looper's own first page */
         return;
     }
@@ -284,6 +284,29 @@ void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
         next = SCREEN_MUTE;
     }
     fw_set_screen(app, next, a, b);
+}
+
+/* Replaces the set-screen call in the first button's handler (stock screen 2). A second press on that screen opens the LIRA
+ * page (Looper page, tab 6); on the page the button goes back to the stock screen. */
+void solo_pad_pressed(uint8_t *app, int computed, int a, int b)
+{
+    (void)computed;
+    ensure();
+    int cur = app[APP_SCREEN];
+    if (!looper_ready()) {
+        fw_set_screen(app, 2, a, b);
+    } else if (cur == SCREEN_MUTE && S->looper && S->view) {
+        if (looper_page_tab() == 6)
+            fw_set_screen(app, 2, a, b);
+        else
+            looper_page_goto(S->view, 6);
+    } else if (cur == 2) {
+        S->looper_pending = 1;
+        looper_page_want(6);
+        fw_set_screen(app, SCREEN_MUTE, a, b);
+    } else {
+        fw_set_screen(app, 2, a, b);
+    }
 }
 
 /* Replaces the set-screen call in the SONG button handler (screen 0x2d). SAMPLR is the first page of SONG: the button opens the

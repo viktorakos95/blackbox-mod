@@ -42,6 +42,7 @@
 
 #include "looper.h"
 #include "samplr.h"
+#include "lira_ui.h"
 
 #define FN(addr) ((addr) | 1u)
 
@@ -126,7 +127,7 @@ static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> til
 
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
 enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
-enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, MODES };
+enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, M_LIRA, MODES };
 #define SM_SHEETS 4
 #define SMS_REC 1
 #define SMS_FX 2
@@ -363,6 +364,8 @@ int looper_page_hit(int x, int d, int *track, float *val)
             *track = 94;
             return Z_OPTC;
         }
+        if (P->mode == M_LIRA)
+            return Z_NONE;
         if (P->mode == M_SMPLR) {                                 /* the sheets (track >= 10 tells Z_TAB apart) */
             int sh = (x - 3) / 60;
             if (x >= 3 && sh < SM_SHEETS && (x - 3) % 60 < 58) {
@@ -921,7 +924,7 @@ static void tab_select(int i)
         samplr_leave();
     if (i == 5 && P->mode != M_SMPLR)
         samplr_enter();
-    P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : i == 4 ? M_MORE : M_SMPLR);
+    P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : i == 4 ? M_MORE : i == 5 ? M_SMPLR : M_LIRA);
     if (i == 1 && FX_GROUP >= 2)
         set_fx_sel(0);
     else if (i == 2 && FX_GROUP < 2)
@@ -1074,13 +1077,17 @@ static void draw_footer(const struct lay *L)
 {
     box(1, L->foot_y + 1, P->w - 2, FOOT - 1, C_BG);
     static const char *const tab[NTABS] = {"MAIN", "FX", "FX2", "SETUP", "MORE"};
-    for (int i = 0; i < NTABS && P->mode != M_SMPLR; i++) {
+    for (int i = 0; i < NTABS && P->mode != M_SMPLR && P->mode != M_LIRA; i++) {
         int on = i == 0 ? P->mode == M_MAIN : i == 1 ? P->mode == M_FX && FX_GROUP < 2 : i == 2 ? P->mode == M_FX && FX_GROUP >= 2 :
                  i == 3 ? P->mode == M_SETUP : P->mode == M_MORE;
         frame(3 + i * (TAB_W + 2), L->foot_y + 2, TAB_W, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
         text_c(3 + i * (TAB_W + 2), L->foot_y + 4, TAB_W, tab[i], on ? C_CYAN : C_GREY, 1);
     }
     int x0 = 3 + NTABS * (TAB_W + 2) + 4;
+    if (P->mode == M_LIRA) {
+        text(6, L->foot_y + 4, "PAD=pads  SONG=SMPLR  MIX=LOOP", C_GREY, 1);
+        x0 = P->w;
+    }
     if (P->mode == M_SMPLR) {                                     /* SAMPLR is a page of its own: SONG opens it, MIX goes to the Looper; the footer picks the sheet */
         for (int i = 0; i < SM_SHEETS; i++) {
             int on = SM_SHEET == i;
@@ -1587,7 +1594,7 @@ static uint32_t signature(void)
               (uint32_t)(P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) << 29 | (uint32_t)(P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW) << 28)) * 16777619u;
     for (int o = 0; o < LOOPER_OPTS; o++)
         h = (h ^ (uint32_t)(looper_get_opt(o) * 1000.f + .5f)) * 16777619u;
-    return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : 0u);
+    return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : 0u) ^ (P->mode == M_LIRA ? lira_ui_sig() : 0u);
 }
 
 /* Called for every mixer cell while the page shows: the first cell draws the whole page, the others nothing.
@@ -1603,6 +1610,8 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
     paint(view);
     return 1;
 }
+
+#include "lira_ui.inc"
 
 /* The whole page, into the frame buffer the last stock draw pass handed over. */
 static void paint(uint8_t *view)
@@ -1622,7 +1631,7 @@ static void paint(uint8_t *view)
     frame(0, 0, P->w, P->hg, fc, 1);
     hline(1, TOPBAR + 1, P->w - 2, C_RAIL);
     hline(1, L.foot_y, P->w - 2, C_RAIL);
-    for (int t = 0; t < LOOPER_TRACKS && P->mode != M_SMPLR; t++) {
+    for (int t = 0; t < LOOPER_TRACKS && P->mode != M_SMPLR && P->mode != M_LIRA; t++) {
         struct looper_info k;
         looper_track(t, &k);
         layout(t, &L);
@@ -1639,6 +1648,8 @@ static void paint(uint8_t *view)
         draw_setup(&L);
     else if (P->mode == M_SMPLR)
         draw_samplr();
+    else if (P->mode == M_LIRA)
+        draw_lira();
     draw_footer(&L);
     P->sig = signature();
     looper_guard_drawing(0);
@@ -1772,7 +1783,7 @@ void looper_page_want(int tab)
 
 int looper_page_tab(void)
 {
-    return P->mode == M_SMPLR ? 5 : P->mode;
+    return P->mode == M_LIRA ? 6 : P->mode == M_SMPLR ? 5 : P->mode;
 }
 
 /* Switch the tab of the page that is up. */
@@ -1885,11 +1896,14 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
     probe(id, 0);
     P->pressed = P_NONE;
     to_page(pt, &x, &d);
-    if (P->mode == M_SMPLR) {
+    if (P->mode == M_SMPLR || P->mode == M_LIRA) {
         struct lay L;
         layout(0, &L);
         if (d < L.foot_y) {
-            sm_touch(0, id, x, d);
+            if (P->mode == M_LIRA)
+                lira_touch(0, id, x, d);
+            else
+                sm_touch(0, id, x, d);
             dirty_now(view);
             return;
         }
@@ -2003,6 +2017,13 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
 void looper_page_move(uint8_t *view, const int *pt, int id)
 {
     probe(id, 1);
+    if (P->mode == M_LIRA) {
+        int x, d;
+        to_page(pt, &x, &d);
+        lira_touch(1, id, x, d);
+        dirty_now(view);
+        return;
+    }
     if (P->mode == M_SMPLR) {
         int x, d;
         to_page(pt, &x, &d);
@@ -2032,6 +2053,12 @@ void looper_page_up(uint8_t *view, const int *pt, int id)
 {
     (void)pt;
     probe(id, 2);
+    if (P->mode == M_LIRA) {
+        lira_touch(2, id, 0, 0);
+        P->pressed = P_NONE;
+        dirty_now(view);
+        return;
+    }
     if (P->mode != M_SMPLR || !sm_up(id))
         samplr_touch(2, id & 3, 0, 0);
     if (P->pressed == P_REC)
@@ -2054,6 +2081,11 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             struct looper_info k;
             looper_track(knob, &k);
             float step = (float)counts * KNOB_SCALE;
+            if (P->mode == M_LIRA) {
+                lira_knob(knob, counts);
+                dirty_now(view);
+                return;
+            }
             if (P->mode == M_SMPLR) {
                 struct sm *sm = samplr();
                 if (sm && SM_SHEET == SMS_FX && P->info_on)
@@ -2189,6 +2221,11 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     return;
                 }
                 P->btn_t = looper_ticks();
+                if (P->mode == M_LIRA) {                           /* the LIRA page takes none of the looper's buttons */
+                    if (slot == B_FX)
+                        break;
+                    return;
+                }
                 if (P->mode == M_SMPLR) {                          /* on the SAMPLR page the buttons are SAMPLR's, never the looper's */
                     if (slot == B_FX)
                         break;                                     /* (FX stays the stock FX button) */

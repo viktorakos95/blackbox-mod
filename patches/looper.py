@@ -30,6 +30,8 @@ PATCHES = [
     (0x0808EE54, bytes.fromhex("2de9f04f"), b_w(0x0808EE54, sym["guard_text"])),
     # rectangle fill: stock fills in the side margins are dropped while the page shows (solo.c looper_fill_blocked)
     (0x0808F920, bytes.fromhex("30b585b0"), b_w(0x0808F920, sym["guard_fill"])),
+    # first button (stock screen 2): a second press opens the LIRA page
+    hook(0x080A326A, 0x0809EAEC, "solo_pad_pressed"),
     # app message dispatch: note hardware button messages (finding INFO)
     hook(0x080A23CC, 0x080A2E60, "looper_app_msg"),
     # the key events' second ring (audio task): PLAY / STOP / REC dropped while the page shows (solo.c looper_key_pop)

@@ -37,6 +37,8 @@ out (new FX, fixes). That's all the list is for.
   settings are not saved with the project yet: a power cycle returns them to LIRA-8's defaults. The pad's Level, envelope (Release fades it), filter,
   FX sends and sequencer work as on any pad. Two LIRA pads can play at once.
 
+- **LIRA page** (3.1.C): press the first button (PAD) a second time on the pad screen and the Looper page opens on a LIRA tab: eight touch plates (tap = on, tap = off; the top-right switch makes them HOLD instead), for each voice pair a Touch button (Slow / Fast / Follow), an FM Source button (Self, Off, LFO, Ext, Pair1-4) and an FM depth slider, and 23 dials (tuning 1-8, pitch, level, Ext In, sharp, hold, vibrato, LFO A/B, delay mod, time 1/2, feedback, delay mix, drive, distortion): touch a dial to select it and drag up or down; the left-bottom knob turns the selected dial, the other three Time 1, Time 2 and Feedback. It needs no pad or sample: LIRA runs in the looper's output stage, so the looper can record it (SOURCE = MIX). PAD again goes back to the pad screen, SONG to SAMPLR, MIX to the Looper. The settings are not saved.
+
 ### Known issues
 
 - Solo can stick: after un-soloing, pads may stay muted. Unmute them in Mute mode.
