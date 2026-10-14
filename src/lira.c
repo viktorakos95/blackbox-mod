@@ -312,7 +312,7 @@ void lira_key(lira_t *l, int s, int on) { lira_touch(l, s, on ? 1.f : 0.f); }
 
 int lira_size(void) { return (int)sizeof(lira_t); }
 
-void lira_reset(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t seed)
+void lira_reset(lira_t *l, float sr, int16_t *dl1, int16_t *dl2, int len, uint32_t seed)
 {
     char *p = (char *)l;
     for (unsigned i = 0; i < sizeof *l; i++)
@@ -349,10 +349,10 @@ void lira_reset(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t s
     lira_settle(l);
 }
 
-void lira_init(lira_t *l, float sr, float *dl1, float *dl2, int len, uint32_t seed)
+void lira_init(lira_t *l, float sr, int16_t *dl1, int16_t *dl2, int len, uint32_t seed)
 {
     for (int k = 0; k < len; k++)
-        dl1[k] = dl2[k] = 0.f;
+        dl1[k] = dl2[k] = 0;
     lira_reset(l, sr, dl1, dl2, len, seed);
 }
 
@@ -382,6 +382,14 @@ void lira_settle(lira_t *l)
 }
 
 /* ---- one PT2399 ---- */
+#define DL_SCALE 12000.f                                  /* 16-bit memory: +-2.7 in signal units, 83 microunits a step (-78 dB) */
+static inline void dl_put(lira_line *ln, int i, float v)
+{
+    v = clip_(v, -2.7f, 2.7f) * DL_SCALE;
+    ln->buf[i] = (int16_t)(v + (v >= 0.f ? 0.5f : -0.5f));
+}
+static inline float dl_get(const lira_line *ln, int i) { return (float)ln->buf[i] * (1.f / DL_SCALE); }
+
 static inline float line_run(lira_line *ln, float in, float mv, float k_ratio, float d0, float depth, const float *c)
 {
     /* c: [0] 1 Hz high-pass, [1] input low-pass (5 kHz, two poles), [2] output low-pass (2.8 kHz, one pole: SoS "a single
@@ -393,7 +401,7 @@ static inline float line_run(lira_line *ln, float in, float mv, float k_ratio, f
     float ratio = k_ratio * den;                          /* memory steps per audio sample */
     float raw;
     if (ratio >= 1.f) {                                   /* clock above the audio rate: a tap */
-        ln->buf[ln->w] = x;
+        dl_put(ln, ln->w, x);
         if (++ln->w >= ln->len)
             ln->w = 0;
         float dly = clip_(d0 / den, 4.f, PT_BITS), rp = (float)ln->w - dly;
@@ -405,7 +413,8 @@ static inline float line_run(lira_line *ln, float in, float mv, float k_ratio, f
             i -= ln->len;
         if (j >= ln->len)
             j -= ln->len;
-        raw = ln->buf[i] + f * (ln->buf[j] - ln->buf[i]);
+        float b0 = dl_get(ln, i);
+        raw = b0 + f * (dl_get(ln, j) - b0);
     } else {                                              /* clocked below the audio rate: steps, 1-bit adaptive codec */
         ln->acc += ratio;
         if (ln->acc >= 1.f) {
@@ -415,14 +424,14 @@ static inline float line_run(lira_line *ln, float in, float mv, float k_ratio, f
             ln->stp = clip_(ln->stp * (bit == ln->pbit ? 1.5f : 0.66f), ADM_MIN, ADM_MAX);
             ln->pbit = bit;
             ln->est = clip_(ln->est + (float)bit * ln->stp, -2.f, 2.f);
-            ln->buf[ln->w] = ln->est;
+            dl_put(ln, ln->w, ln->est);
             if (++ln->w >= ln->len)
                 ln->w = 0;
         }
         int r = ln->w - (int)PT_BITS;
         if (r < 0)
             r += ln->len;
-        raw = ln->buf[r];                                 /* zero-order hold: the converter's staircase */
+        raw = dl_get(ln, r);                              /* zero-order hold: the converter's staircase */
     }
     /* the output filter follows the clock: a slowed PT2399 is dark, which is what keeps its steps from sounding as hiss */
     float oc = ratio >= 1.f ? c[2] : c[2] * fmax_(ratio, 0.3f);

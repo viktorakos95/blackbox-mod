@@ -46,8 +46,8 @@ DL = 44032
 class Lira:
     def __init__(self, seed=1, **params):
         self.mem = ctypes.create_string_buffer(lib.lira_size())
-        self.d1 = (ctypes.c_float * DL)()
-        self.d2 = (ctypes.c_float * DL)()
+        self.d1 = (ctypes.c_int16 * DL)()
+        self.d2 = (ctypes.c_int16 * DL)()
         lib.lira_init(self.mem, SR, self.d1, self.d2, DL, seed)
         for k, v in params.items():
             self.set(k, v)

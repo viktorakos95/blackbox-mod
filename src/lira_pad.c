@@ -187,8 +187,8 @@ struct pool {
     int16_t side[NPADS][NCTL];   /* the 25 controls of every pad position (stored value: 0..1000 or list index) */
     struct slot s[LIRA_MAX];
     struct pg pg;
-    float dl[LIRA_MAX][2][DLEN];
-    float pdl[2][DLEN];          /* the page instance's delay lines */
+    int16_t dl[LIRA_MAX][2][DLEN];
+    int16_t pdl[2][DLEN];        /* the page instance's delay lines */
     float rec[2][2][1024];       /* what the recorder can take instead of the input: [DRONE, LOOPER][left, right], the last block */
     float scr[2][1024];          /* the bus as it was before the looper added its audio */
     uint32_t fil[0xc0];          /* a FatFs FIL for bbmod.bin (0x300 bytes: FIL is about 0x250) */
@@ -264,6 +264,13 @@ void lira_set_c(uint8_t *store, unsigned id, int value)
         }
 }
 
+/* Free SDRAM in KB (the allocator's top - floor), for the guard below and the page's readout. */
+unsigned lira_free_kb(void)
+{
+    uint32_t top = *(volatile uint32_t *)0x24000088u, floor_ = *(volatile uint32_t *)0x2400008cu;
+    return top > floor_ ? (top - floor_) >> 10 : 0;
+}
+
 /* Called from interp_register (filter.c) while the parameter table is built at boot: register the controls, take
    the instances' memory. */
 void lira_register(void *table)
@@ -275,8 +282,10 @@ void lira_register(void *table)
         else
             fw_register_num(table, c->id, TYPE_PCT, c->label, 0, 1000, c->xml);
     }
-    struct pool *p = (struct pool *)fw_alloc(sizeof(struct pool));
+    /* the firmware's SDRAM allocator: free bytes = top - floor (0x24000088 - 0x2400008c). It aborts when they meet, and sample loading
+       and recording take their buffers from what is left, so the synth takes its memory only if 1.5 MB would remain. */
     bkp_enable();
+    struct pool *p = lira_free_kb() * 1024u > sizeof(struct pool) + 1536u * 1024u ? (struct pool *)fw_alloc(sizeof(struct pool)) : 0;
     if (!p) {
         POOL = 0;
         return;
@@ -286,6 +295,8 @@ void lira_register(void *table)
     for (int k = 0; k < NPADS; k++)
         for (int i = 0; i < NCTL; i++)
             p->side[k][i] = ctls[i].def;
+    for (int i = 0; i < 1024; i++)                       /* the allocator's memory is not zeroed: the recorder reads these buffers before the first block fills them */
+        p->rec[0][0][i] = p->rec[0][1][i] = p->rec[1][0][i] = p->rec[1][1][i] = p->scr[0][i] = p->scr[1][i] = 0.0f;
     struct pg *g = &p->pg;
     g->init = 0;
     g->momentary = 0;
@@ -317,8 +328,14 @@ void lira_register(void *table)
         g->src[k] = 0;
         g->mod[k] = 0;
     }
-    for (int k = 0; k < 8; k++)
+    for (int k = 0; k < 8; k++) {
         g->want[k] = g->keyed[k] = 0;
+        g->btn_t[k] = 0;
+    }
+    for (int k = 0; k < 4; k++) {
+        g->dkind[k] = g->didx[k] = 0;
+        g->dy0[k] = g->dv0[k] = 0;
+    }
     p->magic = MAGIC;
     POOL = p;
     POOL_CHECK = MAGIC ^ (uint32_t)p;
@@ -521,7 +538,7 @@ static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
         int b = s->clearing == CLEAR_STEPS ? DLEN : a + DLEN / CLEAR_STEPS;
         for (int ln = 0; ln < 2; ln++)
             for (int i = a; i < b; i++)
-                p->dl[idx][ln][i] = 0.0f;
+                p->dl[idx][ln][i] = 0;
         if (++s->clearing > CLEAR_STEPS) {
             s->clearing = 0;
             s->vals[C_FEEDBACK] = s->vals[C_DELMIX] = -1;     /* apply them now: they fade in over 23 ms */
@@ -727,7 +744,7 @@ void lira_page_run(float *l, float *r, int n)
         int b = s->clearing == CLEAR_STEPS ? DLEN : a + DLEN / CLEAR_STEPS;
         for (int ln = 0; ln < 2; ln++)
             for (int i = a; i < b; i++)
-                p->pdl[ln][i] = 0.0f;
+                p->pdl[ln][i] = 0;
         if (++s->clearing > CLEAR_STEPS) {
             s->clearing = 0;
             s->vals[C_FEEDBACK] = s->vals[C_DELMIX] = -1;
@@ -1004,9 +1021,12 @@ void lira_rec_fill(void *bus)                              /* the recorder's inp
         n = 1024;
     const float (*src)[1024] = p->rec[p->pg.rec_src - 1];
     for (int i = 0; i < n; i++) {
-        l[i] = src[0][i];
+        float a = src[0][i], b = src[1][i];                 /* never hand the recorder anything that is not a sane sample */
+        a = a > 4.0f ? 4.0f : a < -4.0f ? -4.0f : a == a ? a : 0.0f;
+        b = b > 4.0f ? 4.0f : b < -4.0f ? -4.0f : b == b ? b : 0.0f;
+        l[i] = a;
         if (r)
-            r[i] = src[1][i];
+            r[i] = b;
     }
 }
 

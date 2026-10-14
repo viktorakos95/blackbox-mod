@@ -221,6 +221,8 @@ regs = []
 e.stub(0x0808C0D8)
 e.stub(0x0808C12C)
 e.stub(0x0804436C, value=0xC2000000)
+e.w32(0x24000088, 0xC4000000)                                   # the allocator's top and floor: 64 MB free
+e.w32(0x2400008C, 0xC0000000)
 e.call("interp_register", 0x24060000, 0xF1, 0, 0, 2, 0)
 PG = 0x38800F00 if False else None
 screens = []

@@ -66,7 +66,7 @@ typedef struct {
 /* One PT2399: 44,000-entry memory clocked by a VCO. Above ratio 1 (clock faster than the audio rate) it is a tap; below,
    it steps at the clock and the input goes through an adaptive 1-bit delta codec. */
 typedef struct {
-    float *buf;
+    int16_t *buf;                         /* the memory, 16-bit (half the RAM of floats; the PT2399 is a ~12-bit part): value * DL_SCALE */
     int len, w;
     float acc, est, stp;
     int pbit;
@@ -99,10 +99,10 @@ typedef struct {
 } lira_t;
 
 int lira_size(void);
-/* dl1, dl2: PT2399 memories of `len` >= LIRA_DL_LEN floats each (caller-owned, zeroed). */
-void lira_init(lira_t *l, float sample_rate, float *dl1, float *dl2, int len, uint32_t seed);
+/* dl1, dl2: PT2399 memories of `len` >= LIRA_DL_LEN 16-bit entries each (caller-owned, zeroed). */
+void lira_init(lira_t *l, float sample_rate, int16_t *dl1, int16_t *dl2, int len, uint32_t seed);
 /* lira_init without clearing the delay buffers (the caller clears them, e.g. a slice per audio block) */
-void lira_reset(lira_t *l, float sample_rate, float *dl1, float *dl2, int len, uint32_t seed);
+void lira_reset(lira_t *l, float sample_rate, int16_t *dl1, int16_t *dl2, int len, uint32_t seed);
 /* every parameter ramp to its target at once */
 void lira_settle(lira_t *l);
 void lira_param(lira_t *l, int id, float value);

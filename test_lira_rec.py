@@ -28,9 +28,12 @@ def check(name, ok, info=""):
 
 
 regs = []
+e.uc.mem_write(0xC0000000, b"\x7f" * 0x200000)                          # the allocator hands out garbage, not zeros
 e.stub(0x0808C0D8, lambda: regs.append((e.arg(1), e.arg(3), e.r32(e.uc.reg_read(UC_ARM_REG_SP)))))
 e.stub(0x0808C12C)
 e.stub(0x0804436C, value=0xC0000000)
+e.w32(0x24000088, 0xC4000000)                                   # the allocator's top and floor: 64 MB free
+e.w32(0x2400008C, 0xC0000000)
 e.call("interp_register", 0x24060000, 0xF1, 0, 0, 2, 0)
 regs.clear()
 e.call("rec_input_register", 0x24060000, 0x9A, 0, 0, 4, 0)
@@ -84,6 +87,14 @@ def getbus():
     return struct.unpack(f"<{N}f", bytes(e.uc.mem_read(BL, 4 * N))), struct.unpack(f"<{N}f", bytes(e.uc.mem_read(BR, 4 * N)))
 
 
+# right after boot, with nothing playing: DRONE and LOOPER hand the recorder silence, not the allocator's garbage
+for v in (4, 5):
+    e.uc.reg_write(UC_ARM_REG_R4, NODE)
+    e.call("lira_rec_store_thunk", 0, 0, 0, v)
+    setbus(0.7, 0.8)
+    e.call("lira_rec_copy_thunk", BUS, 0)
+    l, r = getbus()
+    check("choice %d right after boot (nothing played yet): silence, no garbage" % v, max(abs(x) for x in l + r) == 0.0, "peak %g" % max(abs(x) for x in l + r))
 # fill the sources: the page's synth makes sound with a plate on; the looper's part is bus after - bus before
 L, R = 0x24074000, 0x24075000
 for a in (L, R):

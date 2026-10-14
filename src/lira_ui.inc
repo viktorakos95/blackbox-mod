@@ -306,7 +306,15 @@ static void draw_lira(void)
                 *q = 0;
             }
     }
-    text(54, 4, *b ? b : "TOUCH DRONE SYNTH", *b ? C_WHITE : C_GREY, 1);
+    if (!*b) {                                                    /* (a diagnostic for now: the free SDRAM) */
+        q = b;
+        for (const char *t = "FREE "; *t;)
+            *q++ = *t++;
+        q = put_uint(q, lira_free_kb());
+        *q++ = 'K';
+        *q = 0;
+    }
+    text(54, 4, b, *b ? C_WHITE : C_GREY, 1);
     int mom = lira_ui_momentary(0), sine = lira_ui_chord_get(154);
     frame(P->w - 50, 2, 46, TOPBAR - 2, mom ? LU_ACC2 : LU_LINE, 1);
     text_c(P->w - 50, 4, 46, mom ? "HOLD" : "LATCH", LU_DIM, 1);

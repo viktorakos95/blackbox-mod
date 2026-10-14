@@ -54,6 +54,8 @@ regs, allocs = [], []
 e.stub(0x0808C0D8, lambda: regs.append(("list", e.arg(1), e.arg(3), e.r32(e.uc.reg_read(UC_ARM_REG_SP)))))
 e.stub(0x0808C12C, lambda: regs.append(("num", e.arg(1), e.arg(2), e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 4))))
 e.stub(0x0804436C, lambda: allocs.append(e.arg(0)), value=0xC0000000)
+e.w32(0x24000088, 0xC4000000)                                   # the allocator's top and floor: 64 MB free
+e.w32(0x2400008C, 0xC0000000)
 e.uc.mem_write(0x38800BF0, b"\xa5" * 8)          # whatever the last boot left
 e.call("interp_register", 0x24060000, 0xF1, 0, 0, 2, 0)
 fid = [r for r in regs if r[1] == 0xF1]

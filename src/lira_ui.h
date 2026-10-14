@@ -20,6 +20,7 @@ int lira_ui_note(int v);
 const char *lira_ui_space_name(void);
 int lira_ui_flats(void);
 void lira_leds(void);
+unsigned lira_free_kb(void);
 void lira_page_run(float *l, float *r, int n);
 
 #endif
