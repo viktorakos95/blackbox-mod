@@ -1683,7 +1683,7 @@ static void dirty_now(uint8_t *view)
 /* From the audio task (looper_ui_poke -> solo.c): redraw when something changed, and now and then regardless. */
 void looper_page_poke(uint8_t *view)
 {
-    if (P->mode == M_LIRA)
+    if (P->mode == M_LIRA && solo_looper_view() == view)      /* the mode flag outlives the page: only while it shows */
         lira_leds();                                          /* the buttons' LEDs follow the voices */
     if (P->info_on && looper_ticks() - P->info_t > INFO_TIMEOUT) {
         P->info_on = 0;
