@@ -160,6 +160,9 @@ static int lu_specs(int sel, struct lu_spec *o)
             LU_SP(n, gid[i], x, d, LU_COL, 38, 4, lu_enc_cell[i], LK_BTN, LU_ACC1, 0, gn[i]);
             n++;
         }
+        lu_cell(3, 2, &x, &d);                                    /* the engine switch, under the STATUS text */
+        LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "ENGINE");
+        n++;
     } else {
         static const char *const nm[8] = {"SPACE", "ROOT", "OCT", "SPAN", "CHORD", "TUNE", "SHUFL", "CYCLE"};
         static const uint16_t ids[8] = {140, 141, 142, 143, 150, 153, 151, 152};
@@ -300,6 +303,8 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             st = lu_gst[lira_ui_chord_get(158)], on = lira_ui_chord_get(158) != 0;
         else if (s->id == 191)
             st = lu_lay[lira_ui_chord_get(149)], on = lira_ui_chord_get(149) != 0;
+        else if (s->id == 194)
+            st = lira_ui_chord_get(194) ? "OFF" : "ON", on = !lira_ui_chord_get(194);
         else if (s->id == 193)
             st = lira_ui_chord_get(158) == 6 ? "PLAY" : "STOP", on = lira_ui_chord_get(158) == 6;
         else if (s->id >= 160 && s->id < 164) {
@@ -429,7 +434,9 @@ static void draw_lira(void)
             u = t;
             for (const char *w = "CPU "; *w;)
                 *u++ = *w++;
-            u = put_uint(u, (unsigned)lira_ui_load(1));
+            u = put_uint(u, (unsigned)lira_ui_load(3));
+            *u++ = '/';
+            u = put_uint(u, (unsigned)lira_ui_load(4));
             *u = 0;
             text(x + 8, LU_PANEL + 30, t, C_WHITE, 1);
             u = t;
@@ -438,22 +445,17 @@ static void draw_lira(void)
             u = put_uint(u, (unsigned)lira_ui_load(0));
             *u = 0;
             text(x + 8, LU_PANEL + 42, t, C_WHITE, 1);
-            if (lira_ui_prev(4)) {
-                u = t;
-                for (const char *w = "LAST C"; *w;)
-                    *u++ = *w++;
-                u = put_uint(u, (unsigned)lira_ui_prev(0));
-                *u++ = ' ';
-                *u++ = 'D';
-                u = put_uint(u, (unsigned)lira_ui_prev(1));
-                *u = 0;
-                text(x + 8, LU_PANEL + 56, t, LU_DIM, 1);
-                u = t;
-                *u++ = 'F';
-                u = put_uint(u, (unsigned)lira_ui_prev(2));
-                *u++ = 'K';
-                *u = 0;
-                text(x + 8, LU_PANEL + 68, t, LU_DIM, 1);
+            if (lira_ui_prev(4)) {                                   /* the run before's peaks, right of the ENGINE button */
+                static const char lk[3] = {'C', 'D', 'F'};
+                for (int k = 0; k < 3; k++) {
+                    u = t;
+                    *u++ = lk[k];
+                    u = put_uint(u, (unsigned)lira_ui_prev(k));
+                    if (k == 2)
+                        *u++ = 'K';
+                    *u = 0;
+                    text(x + LU_COL + 2, LU_PANEL + 58 + 10 * k, t, LU_DIM, 1);
+                }
             }
         }
     }
@@ -569,6 +571,8 @@ static void lu_press(const struct lu_spec *s, int dir)
         lira_ui_action(9);
     else if (id == 193)
         lira_ui_action(15);
+    else if (id == 194)
+        lira_ui_action(18);
     else if (id == 150)
         lira_ui_action(0);
     else if (id == 151)

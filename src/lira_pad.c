@@ -181,6 +181,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t sync[4];             /* tempo sync of LFO A, LFO B, delay 1, delay 2: 0 off, else an index into div_beats */
     uint8_t gmode, rp;           /* gesture recorder: 0 idle, 1 armed for the next bar line, 2 recording the first take, 3 looping, 4 armed to overdub at the loop start, 5 overdubbing; rp = replaying (events are not recorded again) */
     uint8_t glen_i, glayers;     /* take length (1 2 4 8 bars), layers in the loop (up to 3) */
+    uint8_t off;                 /* the engine switch: the synth does not run at all (no modulation, no tail, no delay lines) */
     uint8_t btn_on;              /* the eight round buttons are the voice plates (else they are the stock buttons) */
     uint16_t gn, gi;             /* events recorded, the next to play */
     double gridf;                /* the free-running grid, in frames, never wrapped */
@@ -813,7 +814,7 @@ unsigned lira_ui_sig(void)
         for (int k = 0; k < 8; k++)
             h = h << 1 | g->want[k];
     unsigned prog = g->gmode >= 2 && g->gmode != 6 && g->gtot > 1.0f ? (unsigned)(g->gt * 8.0f / g->gtot) : 0;
-    return h | (unsigned)g->momentary << 8 | (unsigned)g->sel << 9 | prog << 20 | (unsigned)g->gmode << 24;
+    return h | (unsigned)g->momentary << 8 | (unsigned)g->sel << 9 | prog << 20 | (unsigned)g->gmode << 24 | (unsigned)g->off << 28;
 }
 
 /* The load governor. How much of its block the audio task has used by the time this runs (the stock voices and effects) is the
@@ -929,6 +930,11 @@ void lira_page_run(float *l, float *r, int n)
     any |= g->ex[0] > 480 || g->ex[1] > 480;     /* Hold above 12 o'clock: the voices drone with no touch */
     for (int k = 0; k < 4; k++)
         any |= g->touch[k] == 2;                 /* Touch = Ext: the input opens the voices, so the engine has to keep running */
+    if (g->off) {                                /* switched off: nothing runs */
+        g->dsp = 0;
+        rec_zero(p, 0, n);
+        return;
+    }
     if (!g->init) {
         if (!any) {
             rec_zero(p, 0, n);
@@ -1063,6 +1069,8 @@ int lira_ui_load(int which)
     struct pool *p = pool();
     if (!p)
         return 0;
+    if (which == 3 || which == 4)                        /* the audio task's average / worst block of the last second: the numbers cpu.c shows (and the SAMPLR debug line) */
+        return (*(volatile uint16_t *)(which == 3 ? 0x2405ffe2u : 0x2405ffe4u) + 5) / 10;
     return which == 0 ? (p->pg.dsp + 5) / 10 : which == 1 ? (int)(p->pg.ld + 5.0f) / 10 : p->pg.shed;
 }
 
@@ -1184,6 +1192,8 @@ int lira_ui_chord_get(int id)                              /* the index behind a
         return g->glayers;
     if (id == 165)
         return g->btn_on;
+    if (id == 194)
+        return g->off;
     if (id == 166)                                         /* the loop's position, 0..8 */
         return g->gmode >= 2 && g->gmode != 6 && g->gtot > 1.0f ? (int)(g->gt * 8.0f / g->gtot) : 0;
     if (id >= 160 && id < 164)
@@ -1338,6 +1348,13 @@ void lira_ui_action(int a)
         g->glayers = 0;
     } else if (a == 8) {
         g->btn_on ^= 1;
+    } else if (a == 18) {                                 /* ENGINE on / off: off stops the synth, its tail and its modulation, and the next start is fresh */
+        g->off ^= 1;
+        if (g->off) {
+            g->init = 0;
+            g->tail = 0;
+            g->dsp = 0;
+        }
     } else {
         int cur = a == 0 ? g->chord_on : a == 3 ? g->just : a == 4 ? g->wave : a == 5 ? g->ext_src : a == 6 ? g->free_enc : a >= 10 && a < 14 ? g->lfo[a - 10] : -1;
         if (cur < 0)
