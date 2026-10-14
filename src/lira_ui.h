@@ -26,6 +26,9 @@ void lira_ui_note_set(int v, int note);
 void lira_leds(void);
 unsigned lira_free_kb(void);
 int lira_ui_load(int which);
+int lira_ui_prev(int which);
+int lira_ui_pitch(int v);
+void lira_ui_pitch_set(int v, int h);
 void lira_page_run(float *l, float *r, int n);
 
 #endif

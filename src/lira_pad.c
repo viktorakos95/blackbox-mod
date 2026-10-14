@@ -176,6 +176,8 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t ext_src;             /* what Ext In listens to: 0 the audio input, 1 the Blackbox's mix (without this synth), 2 both */
     uint8_t chord_on, space, root, oct, range, just, wave, seed;   /* chord mode: tonal space, root 0..11, register 0..3, span 1..4 octaves, just tuning, waveform */
     int8_t notes[8];             /* the voices' MIDI notes in chord mode */
+    int8_t fine[8];              /* ... and how far each lies above its note, in cents (-50..49; 0 = exactly the note) */
+    uint8_t free_enc;            /* the encoders move a chord voice freely (0.05 semitone) instead of a semitone a click */
     uint8_t lfo[4];              /* LFO shape (tri / square), combine (product / sum), link, delay modulation source (self / off / LFO) */
     int16_t kacc[4];             /* encoder counts not yet worth a step */
     uint16_t tap_id;             /* the last knob tapped, and when (the double tap resets a knob) */
@@ -214,6 +216,8 @@ static struct pool *pool(void)
         return 0;
     return p;
 }
+
+static void fr_boot(void);
 
 /* A store's value for id, or def when the store has no entry (pads made before 3.1.o: fw_setting would say 0, and
    all-zero settings put every oscillator far below hearing, which 3.1.o users heard as clicks). */
@@ -294,6 +298,7 @@ void lira_register(void *table)
     /* the firmware's SDRAM allocator: free bytes = top - floor (0x24000088 - 0x2400008c). It aborts when they meet, and sample loading
        and recording take their buffers from what is left, so the synth takes its memory only if 1.5 MB would remain. */
     bkp_enable();
+    fr_boot();
     struct pool *p = lira_free_kb() * 1024u > sizeof(struct pool) + 1536u * 1024u ? (struct pool *)fw_alloc(sizeof(struct pool)) : 0;
     if (!p) {
         POOL = 0;
@@ -324,6 +329,7 @@ void lira_register(void *table)
     g->rec_src = 0;
     g->seed = 1;
     lira_voicing(0, 0, 48, 36, 1, g->notes);
+    g->free_enc = 0;
     g->tail = 0;
     g->level = 700;
     for (int i = 0; i < NCTL; i++)
@@ -627,7 +633,7 @@ int lira_ui_get(int c)
         return 0;
     struct pg *g = &p->pg;
     if (c >= 0 && c < 8 && g->chord_on)                  /* chord mode: the knob shows where the note lies in the voice's range */
-        return (int)(lira_tune_for_midi(c, (float)g->notes[c]) * (1000.0f / 127.0f) + 0.5f);
+        return (int)(lira_tune_for_midi(c, (float)g->notes[c] + (float)g->fine[c] * 0.01f) * (1000.0f / 127.0f) + 0.5f);
     if (c >= 0 && c < NCTL)
         return g->row[c];
     if (c >= 100 && c < 104)
@@ -768,6 +774,46 @@ unsigned lira_ui_sig(void)
    instantaneous version of the CPU meter (cpu.c keeps the wake-up's cycle count at 0x2405ffd4). The Blackbox switches itself off at
    about 89 %, and the file and GUI tasks starve before that, so when the smoothed value passes 80 %, or blocks near 95 % keep coming,
    this synth steps down: one delay line, no delay, then silence; a step back after ~2 s with room again. Returns the cycle count now. */
+/* A flight recorder in the backup SRAM (it survives a reset, maybe a power cut): this run's peaks, and the run before's, shown in the top bar
+   so that a shut-down tells what it ran into. */
+struct fr {
+    uint32_t magic;
+    uint16_t c_pk, d_pk, free_min;       /* peak audio-task load and this synth's share (permille), least free SDRAM (KB) */
+    uint8_t shed, pad;
+    uint32_t blocks;
+};
+#define FR_CUR  ((volatile struct fr *)0x38800bc0u)
+#define FR_PREV ((volatile struct fr *)0x38800bd0u)
+#define FR_MAGIC 0x46524331u
+
+static void fr_boot(void)
+{
+    volatile struct fr *c = FR_CUR, *o = FR_PREV;
+    if (c->magic == FR_MAGIC) {
+        o->magic = FR_MAGIC;
+        o->c_pk = c->c_pk;
+        o->d_pk = c->d_pk;
+        o->free_min = c->free_min;
+        o->shed = c->shed;
+        o->blocks = c->blocks;
+    } else {
+        o->magic = 0;
+    }
+    c->magic = FR_MAGIC;
+    c->c_pk = c->d_pk = 0;
+    c->free_min = 0xffff;
+    c->shed = 0;
+    c->blocks = 0;
+}
+
+int lira_ui_prev(int which)                              /* the run before: 0 load peak %, 1 synth share %, 2 least free KB, 3 deepest shed, 4 valid */
+{
+    volatile struct fr *o = FR_PREV;
+    if (o->magic != FR_MAGIC)
+        return which == 4 ? 0 : -1;
+    return which == 0 ? (o->c_pk + 5) / 10 : which == 1 ? (o->d_pk + 5) / 10 : which == 2 ? o->free_min : which == 3 ? o->shed : 1;
+}
+
 static uint32_t govern(struct pg *g)
 {
     if (!(DWT_CTRL & 1u)) {
@@ -778,6 +824,19 @@ static uint32_t govern(struct pg *g)
     uint32_t c0 = DWT_CYCCNT, period = c0 - g->t_last;
     g->t_last = c0;
     g->blk++;
+    {
+        volatile struct fr *fr = FR_CUR;
+        if (fr->magic == FR_MAGIC) {
+            unsigned fk = lira_free_kb();
+            fr->blocks++;
+            if (fk < fr->free_min)
+                fr->free_min = (uint16_t)(fk > 65535u ? 65535u : fk);
+            if (g->shed > fr->shed)
+                fr->shed = g->shed;
+            if (g->dsp > fr->d_pk)
+                fr->d_pk = g->dsp;
+        }
+    }
     if (period > 100000u && period < 100000000u)
         g->per = period;
     uint32_t used = c0 - *(volatile uint32_t *)0x2405ffd4u;
@@ -786,10 +845,13 @@ static uint32_t govern(struct pg *g)
         g->ld += (inst - g->ld) * 0.1f;
         g->pk = g->pk * 0.98f + (inst > 950.0f ? 1.0f : 0.0f);
         uint32_t since = g->blk - g->shed_blk;
-        if ((g->ld > 800.0f || g->pk > 2.0f) && g->shed < 3 && since > 16) {
+        volatile struct fr *fr = FR_CUR;
+        if (fr->magic == FR_MAGIC && inst < 4000.0f && (uint16_t)inst > fr->c_pk)
+            fr->c_pk = (uint16_t)inst;
+        if ((g->ld > 750.0f || g->pk > 1.5f || inst > 900.0f) && g->shed < 3 && since > (inst > 900.0f ? 3u : 16u)) {
             g->shed++;
             g->shed_blk = g->blk;
-        } else if (g->ld < 700.0f && g->pk < 0.5f && g->shed > 0 && since > 400) {
+        } else if (g->ld < 650.0f && g->pk < 0.5f && g->shed > 0 && since > 400) {
             g->shed--;
             g->shed_blk = g->blk;
         }
@@ -877,7 +939,7 @@ void lira_page_run(float *l, float *r, int n)
         lira_param(&s->l, LIRA_WAVE, (float)g->wave);
         if (g->chord_on) {                                    /* the voices sound the chord's notes, at concert pitch (the Pitch knobs are bypassed) */
             for (int o = 0; o < 8; o++) {
-                float m = (float)g->notes[o] + (g->just ? lira_just_cents(g->notes[o], g->root) * 0.01f : 0.0f);
+                float m = (float)g->notes[o] + (float)g->fine[o] * 0.01f + (g->just ? lira_just_cents(g->notes[o], g->root) * 0.01f : 0.0f);
                 lira_param(&s->l, LIRA_TUNE1 + o, lira_tune_for_midi(o, m));
             }
             lira_param(&s->l, LIRA_PITCH1234, LIRA_PITCH_UNITY);
@@ -1014,6 +1076,8 @@ int lira_ui_last(int id)
 static void revoice(struct pg *g)
 {
     lira_voicing(g->space, g->root, 36 + 12 * g->oct, 12 * g->range, g->seed, g->notes);
+    for (int i = 0; i < 8; i++)
+        g->fine[i] = 0;
 }
 
 static int stepped_max(int id)                            /* the highest index of a stepped knob */
@@ -1036,6 +1100,8 @@ int lira_ui_chord_get(int id)                              /* the index behind a
         return stepped_get(g, id);
     if (id >= 160 && id < 164)
         return g->lfo[id - 160];
+    if (id == 157)
+        return g->free_enc;
     return id == 150 ? g->chord_on : id == 153 ? g->just : id == 154 ? g->wave : id == 155 ? g->seed : id == 156 ? g->ext_src : 0;
 }
 
@@ -1076,14 +1142,19 @@ void lira_ui_action(int a)
         g->seed = (uint8_t)(g->seed + 1u);
         revoice(g);
     } else if (a == 2) {
-        int8_t last = g->notes[7];
-        for (int i = 7; i > 0; i--)
+        int8_t last = g->notes[7], lf = g->fine[7];
+        for (int i = 7; i > 0; i--) {
             g->notes[i] = g->notes[i - 1];
+            g->fine[i] = g->fine[i - 1];
+        }
         g->notes[0] = last;
+        g->fine[0] = lf;
     } else if (a == 3) {
         g->just ^= 1;
     } else if (a == 4) {
         g->wave ^= 1;
+    } else if (a == 6) {
+        g->free_enc ^= 1;
     } else if (a >= 10 && a < 14) {
         g->lfo[a - 10] = (uint8_t)(a == 13 ? (g->lfo[3] + 1) % 3 : g->lfo[a - 10] ^ 1);
     } else if (a == 5) {
@@ -1101,8 +1172,28 @@ int lira_ui_note(int v)
 void lira_ui_note_set(int v, int note)
 {
     struct pool *p = pool();
-    if (p && v >= 0 && v < 8)
+    if (p && v >= 0 && v < 8) {
         p->pg.notes[v] = (int8_t)(note < 33 ? 33 : note > 93 ? 93 : note);
+        p->pg.fine[v] = 0;
+    }
+}
+
+/* a voice's pitch in hundredths of a semitone (note * 100 + cents) */
+int lira_ui_pitch(int v)
+{
+    struct pool *p = pool();
+    return p && v >= 0 && v < 8 ? p->pg.notes[v] * 100 + p->pg.fine[v] : 0;
+}
+
+void lira_ui_pitch_set(int v, int h)
+{
+    struct pool *p = pool();
+    if (!p || v < 0 || v > 7)
+        return;
+    h = h < 3300 ? 3300 : h > 9300 ? 9300 : h;
+    int n = (h + 50) / 100;
+    p->pg.notes[v] = (int8_t)n;
+    p->pg.fine[v] = (int8_t)(h - n * 100);
 }
 
 const char *lira_ui_space_name(void)
@@ -1218,7 +1309,8 @@ struct blob {
     int16_t row[NCTL];                                   /* the page's controls */
     int16_t mod[4], level, ex[18];
     uint8_t touch[4], src[4];
-    uint8_t misc[14];                                    /* chord on, space, root, register, span, just, wave, ext source, seed, rec source, LFO shape / combine / link / delay source */
+    int8_t notes[8], fine[8];                            /* the chord voices' notes and cents */
+    uint8_t misc[15];                                    /* chord on, space, root, register, span, just, wave, ext source, seed, rec source, LFO shape / combine / link / delay source */
     uint8_t pad_[2];
     uint32_t crc;
 };
@@ -1241,7 +1333,7 @@ void lira_save(void)
     struct pg *g = &p->pg;
     struct blob *b = (struct blob *)p->blob;
     b->magic = BLOB_MAGIC;
-    b->ver = 2;
+    b->ver = 3;
     b->nctl = NCTL;
     for (int k = 0; k < NPADS; k++)
         for (int i = 0; i < NCTL; i++)
@@ -1268,6 +1360,11 @@ void lira_save(void)
     b->misc[9] = g->rec_src;
     for (int i = 0; i < 4; i++)
         b->misc[10 + i] = g->lfo[i];
+    b->misc[14] = g->free_enc;
+    for (int i = 0; i < 8; i++) {
+        b->fine[i] = g->fine[i];
+        b->notes[i] = g->notes[i];
+    }
     b->pad_[0] = b->pad_[1] = 0;
     b->crc = blob_crc(b);
     for (unsigned i = 0; i < sizeof p->fil / 4; i++)
@@ -1292,7 +1389,7 @@ void lira_load(void)
         return;
     int rc = FF_READ(p->fil, b, sizeof *b, &br);
     FF_CLOSE(p->fil);
-    if (rc != 0 || br != sizeof *b || b->magic != BLOB_MAGIC || b->ver != 2 || b->nctl != NCTL || b->crc != blob_crc(b))
+    if (rc != 0 || br != sizeof *b || b->magic != BLOB_MAGIC || b->ver != 3 || b->nctl != NCTL || b->crc != blob_crc(b))
         return;
     struct pg *g = &p->pg;
     for (int k = 0; k < NPADS; k++)
@@ -1322,7 +1419,15 @@ void lira_load(void)
     g->lfo[1] = b->misc[11] & 1;
     g->lfo[2] = b->misc[12] & 1;
     g->lfo[3] = (uint8_t)(b->misc[13] % 3);
+    g->free_enc = b->misc[14] & 1;
     revoice(g);
+    int ok = 1;
+    for (int i = 0; i < 8; i++)
+        ok &= b->notes[i] >= 33 && b->notes[i] <= 93 && b->fine[i] >= -50 && b->fine[i] <= 49;
+    for (int i = 0; ok && i < 8; i++) {                      /* the voices as they were left (notes moved by hand included) */
+        g->notes[i] = b->notes[i];
+        g->fine[i] = b->fine[i];
+    }
     for (int i = 0; i < NCTL; i++)
         g->s.vals[i] = -1;                                   /* the engine takes them all again */
 }
