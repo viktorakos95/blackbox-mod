@@ -190,7 +190,7 @@ takes three overdub layers.
 - Attack (0.3 1.3 5 20 80 300 ms) and release (1 4 20 80 300 1000 ms): one step shorter than before; a one-shot still ends exactly at the slice end only with the two shortest releases.
 - GRAIN: SIZE (finger size / 1/4 / 1/16, grains down to 2 ms) and DRY (the sample itself looping at normal speed under the cloud: off / 25 / 50 / 100 %, fades with the cloud);
   the pitch pattern starts over with every press.
-- Takes: the arpeggio's step counter restarts with every pass (the same notes each time round); switching LATCH off during a take is recorded (the layer's latched things stop
+- Takes: the arpeggio's step counter keeps counting across passes (it used to restart with every pass, which cut a 5 or 6 spot arp short); switching LATCH off during a take is recorded (the layer's latched things stop
   there too); a sweep each block lets go of any spot / cloud / latched loop that nobody holds (finger down, mode latch on, captured by a take, or a running layer) - no stuck arp.
 
 ## Build 16 (the firmware's interpolator, continuous attack / release)

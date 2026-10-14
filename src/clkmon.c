@@ -43,6 +43,8 @@ typedef void (*push_fn)(void *mgr, uint32_t byte, uint32_t port);
 typedef void (*usb_fn)(void *mgr, const uint8_t *buf, uint32_t len, uint32_t z);
 #define stock_push ((push_fn)0x080446c5u)
 #define stock_usb  ((usb_fn)0x080446dbu)
+typedef uint32_t (*adc_fn)(void *ring);
+#define stock_adc  ((adc_fn)0x08040945u)
 
 #define GAP_CYCLES (1u << 27)           /* longer than this between two ticks = a stop / start, not an interval */
 
@@ -111,6 +113,19 @@ void clkmon_usb_rx(void *mgr, const uint8_t *buf, uint32_t len, uint32_t z)
         if (dt > ISR->cost[1])
             ISR->cost[1] = dt;
     }
+}
+
+/* Analog sync-in jack (docs/analog-sync-notes.md): an ADC channel sampled into a ring; the stock render polls it once per audio block
+ * with a software Schmitt trigger (0x08040944), which returns non-zero when a pulse's rising edge was found, then hands the tick to
+ * the sequencer. Replaces both calls of that trigger: the pulse is stamped (as source 1, where the unused USB path was) after the
+ * stock trigger says there was one. The stamp is the block's time, not the pulse's: that is exactly what the stock sequencer gets. */
+uint32_t clkmon_adc(void *ring)
+{
+    uint32_t t0 = DWT_CYCCNT;
+    uint32_t r = stock_adc(ring);
+    if (r && bkp_on())
+        stamp(&ISR->s[1], t0);
+    return r;
 }
 
 void clkmon_boot(struct clkmon *c)
@@ -454,7 +469,9 @@ uint32_t clkmon_sig(const struct clkmon *c)
     return (h ^ (uint32_t)(c->mhz * 10.f)) * 16777619u;
 }
 
-void clkmon_loop(struct clkmon *c, uint32_t ticks_into_bar)
+void clkmon_loop(struct clkmon *c, uint32_t ticks_into_bar, uint32_t info)
 {
+    c->linfo = info;
+    c->lseq1 = c->now_lo % 3840u + 1u;
     c->lstart1 = ticks_into_bar + 1;
 }

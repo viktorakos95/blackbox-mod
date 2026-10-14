@@ -13,5 +13,6 @@ def hook(at, stock, name):
 
 PATCHES = [
     hook(0x08044E48, 0x080446C4, "clkmon_rx"),        # USART6 RxCplt callback: the call that pushes the received byte into the stock ring
-    hook(0x08044F2C, 0x080446DA, "clkmon_usb_rx"),    # USB MIDI OUT callback: the call that copies the packet buffer into the stock ring
+    hook(0x0804CC86, 0x08040944, "clkmon_adc"),       # analog sync-in: the software Schmitt trigger called once per audio block (two places)
+    hook(0x0804D17E, 0x08040944, "clkmon_adc"),
 ]

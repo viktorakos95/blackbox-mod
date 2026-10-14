@@ -180,15 +180,7 @@ block(60_100_000)
 s = stats(0)
 check("12 ticks in one block: 4 lost, counted", s["over"] == 4, s["over"])
 
-# ---- USB: clock events inside event packets, other packets ignored, the stock copy still done
-slot_before = e.r32(MGR + 0x5C74)
-usb([[0x09, 0x90, 0x3C, 0x7F], [0x0F, 0xF8, 0, 0], [0x1F, 0xF8, 0, 0], [0x0B, 0xB0, 0x01, 0x40], [0x0F, 0xFA, 0, 0]], 70_000_000)
-block(70_100_000)
-s = stats(1)
-check("USB: 2 ticks and a start in one packet buffer", (s["f8"], s["fa"], s["fb"], s["fc"]) == (2, 1, 0, 0), s)
-check("USB: the stock ring write slot advanced (the stock copy ran)", e.r32(MGR + 0x5C74) == slot_before + 1,
-      (slot_before, e.r32(MGR + 0x5C74)))
-check("the jack's counters are untouched by USB", stats(0)["f8"] == N + 2 + 12 and stats(0)["fa"] == 1, stats(0))
+# (USB is not hooked any more: the unit gets MIDI on the TRS jack only; source 1 is the analog sync-in jack, tested at the end. clkmon_usb_rx stays in the file, unhooked.)
 
 # ---- the tempo follows a change within a beat (a cumulative mean would take minutes)
 def run_ticks(n, interval, t0):
@@ -359,6 +351,25 @@ e.stub(0x0805D1D8)                                                              
 e.uc.mem_write(0x30010000, struct.pack("<q", 7_000_000))                                  # the clock: a sample position
 e.call("seq_play", 0x30011000, 0x30010000, 128, 0, 0, count=2_000_000)
 check("seq_play passes the sequence and its musical time to the monitor, not the sample position", got == [(0x30011000, 123456, 0)], got)
+
+# ---- analog sync-in: the stock trigger (0x08040944) is called through clkmon_adc; a pulse is stamped (source 1) only when it says there was one
+from unicorn.arm_const import UC_ARM_REG_R0
+adc_ret = [0]
+adc_calls = []
+e.stub(0x08040944, fn=lambda: (adc_calls.append(e.arg(0)), e.uc.reg_write(UC_ARM_REG_R0, adc_ret[0])))
+before = stats(1)["f8"]
+for k, r in enumerate([1, 0, 1, 1]):
+    adc_ret[0] = r
+    cyc(90_000_000 + k * 1_000_000)
+    e.call("clkmon_adc", 0x24000170, count=2_000_000)
+check("analog: the stock trigger is called with the ADC ring each time and its result passed on", adc_calls == [0x24000170] * 4, adc_calls)
+block(95_000_000)
+check("analog: 3 pulses (the 0 result is no pulse) stamped as source 1", stats(1)["f8"] - before == 3, (before, stats(1)["f8"]))
+bkp_on(False)
+adc_ret[0] = 1
+e.call("clkmon_adc", 0x24000170, count=2_000_000)
+bkp_on(True)
+check("analog: nothing is stamped while the backup SRAM is off, the result still passes", stats(1)["f8"] - before == 3, stats(1)["f8"])
 
 print(f"{fails} failure(s)")
 raise SystemExit(1 if fails else 0)
