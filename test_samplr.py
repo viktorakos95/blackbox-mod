@@ -887,7 +887,7 @@ play(2)
 check("sweep: an arp spot whose finger is not down is let go", e.r8(spb + 5) == 0, e.r8(spb + 5))
 e.call("samplr_set_mode", 0)
 
-# a take of an arpeggio: the same notes on every pass (the arp step starts over with the loop)
+# a take of an arpeggio: the same notes on every pass (the arp step counter keeps counting across passes; the timing is the same)
 e.call("samplr_gest", 3)
 setb(OFF["g_bars"], 1)
 e.call("samplr_set_mode", 2)

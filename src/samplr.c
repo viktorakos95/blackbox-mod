@@ -1641,7 +1641,6 @@ static void gest_run(struct sm *s, int n)
             s->g_res = Lf - (float)s->g_len;
             s->g_pos = -off;
             s->g_run = 1;
-            s->a_step = 0;                                        /* the arpeggio starts over with every pass: the same notes each time round */
             for (int L = 0; L < SM_LAYERS; L++) {
                 s->g_rp[L] = 0;
                 s->g_ldown[L] = 0;
@@ -1688,8 +1687,7 @@ static void gest_run(struct sm *s, int n)
         s->g_pos = pos + n - s->g_len;
         float Lf = looper_beat_frames() * 4.f * (float)s->g_bars + s->g_res;   /* the next pass: the fraction of a frame carries on, so the loop stays on the grid cycle after cycle */
         s->g_len = (int32_t)Lf;
-        s->g_res = Lf - (float)s->g_len;
-        s->a_step = 0;
+        s->g_res = Lf - (float)s->g_len;                          /* (the arp step counter is not reset: it keeps counting, 5 or 6 spots go round across the passes) */
     } else {
         s->g_pos = pos + n;
     }
