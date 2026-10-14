@@ -398,5 +398,11 @@ struct mcl_entry {
     uint32_t (*boot)(void);
     char *(*status)(char *, uint32_t);
     void (*gui)(void);
+    uint32_t compact;                                 /* 1 in the hardware test images: the version label shows ONLY the status text (the stock text after it runs off the screen) */
 };
-extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 2, mcl_boot, mcl_status_text, mcl_gui};
+#if defined(M3_TEST) || defined(M4_TEST) || defined(M5_TEST)
+#define COMPACT 1u
+#else
+#define COMPACT 0u
+#endif
+extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 2, mcl_boot, mcl_status_text, mcl_gui, COMPACT};

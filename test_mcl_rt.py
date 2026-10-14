@@ -131,6 +131,12 @@ check("region too small reads 'M4'", status_text(e) == "M4", status_text(e))
 e.uc.mem_write(BKP, bytes(16))
 check("no status yet reads 'M-'", status_text(e) == "M-", status_text(e))
 
+# --- compact label (hardware test images): the label is the status text only
+e = make()
+e.w32(bsym["mcl_entry_table"] + 20, 1)                           # the entry table's `compact` word (flash is writable in the emulator)
+lab = boot(e)
+check("compact flag: the version label is just 'Mok'", lab == "Mok", lab)
+
 # --- the rest of the mod is unchanged: no blob (flag 0) means no boot, no label text, nothing written
 e = make()
 e.uc.mem_write(e.sym["mcl_entry"], bytes(4))

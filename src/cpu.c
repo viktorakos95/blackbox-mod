@@ -72,6 +72,7 @@ struct mcl_entry {
     uint32_t (*boot)(void);              /* once per power-up: .data, .bss, heap, constructors, self test */
     char *(*status)(char *, uint32_t);   /* "Mok" or "M<code>" (and test results) for the label, at most `room` characters */
     void (*gui)(void);                   /* slow work that must run in the GUI task (the M3 hardware test); a no-op otherwise */
+    uint32_t compact;                    /* 1 (hardware test images): the label is just the status text */
 };
 const volatile uint32_t mcl_entry = 0;
 static const struct mcl_entry *mcl_blob(void)
@@ -165,6 +166,11 @@ static char *pad_text(char *p)
 /* "3.1.x 34/71% 41M Lok", "3.1.x --% 41M Lok", or "3.1.x 41M Lok" before the first second. At most 30 bytes. */
 static void compose(char *buf)
 {
+    const struct mcl_entry *blob = mcl_blob();
+    if (blob && blob->compact) {         /* hardware test image: nothing but the test result, so it fits the screen */
+        *blob->status(buf, 28) = 0;
+        return;
+    }
     char *p = buf;
     for (const char *v = VERSION; *v && p < buf + 8; v++)
         *p++ = *v;

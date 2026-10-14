@@ -242,3 +242,7 @@ Not provable here: real masters' jitter, real interrupt latencies, the Machinedr
 Needs a MIDI clock master **already running when the Blackbox powers up**, on MIDI IN (the Machinedrum with a pattern playing and clock out on, through the known-good cable, or the KeyStep). Nothing needed on MIDI OUT.
 Boot waits up to 5 s for the lock, then measures 2 s; label ` Mok S3 1200 e9`: `S` the sync state (3 = locked, 1 = never saw a clock), the tempo in 1/10 BPM, `e` the largest phase error of the last second in microseconds,
 i.e. how far the master's clocks strayed from our smooth tempo (about the master's own jitter: expect a few tens of us for a KeyStep, 100-200 for the Machinedrum; our output is smoother than that).
+
+### Compact label for the hardware test images
+On the unit the version label is followed by stock text ("4GB") and the whole line ran off the screen, so the M3 / M4 / M5 test images now set `compact` in the blob's entry table (`src/cpu.c` `compose`): the label is the status text only
+(`Mok S3 1200 e9`, `Mok L+ t96 r12`, `Mok L+ D12 K+`). Normal blob images keep the full label (`3.1.n 2M Lok40 Mok`).
