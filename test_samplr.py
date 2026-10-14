@@ -1299,9 +1299,9 @@ for _ in range(60):
 check("governor: sheds when the task has used 97 % of its block", e.r8(SHED) >= 1, e.r8(SHED))
 top = e.r8(SHED)
 for _ in range(30):
-    busy(0.82)
+    busy(0.67)
     play(10)
-check("governor: and holds in the band between (82 %)", e.r8(SHED) == top, (e.r8(SHED), top))
+check("governor: and holds in the band between (67 %)", e.r8(SHED) == top, (e.r8(SHED), top))
 for _ in range(30):
     busy(0.20)
     play(100)

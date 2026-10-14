@@ -2351,8 +2351,8 @@ static void arp_step(struct sm *s, int off)
 
 static void grain_spawn(struct sm *s, struct smvoice *v, int off)
 {
-    static const uint8_t cap[5] = {40, 40, 40, 24, 12};             /* grains in all across the tracks, by how far SAMPLR has to hold back */
-    if (s->sc->gnow >= cap[s->sc->shed > 4 ? 4 : s->sc->shed])
+    static const uint8_t cap[6] = {40, 40, 40, 24, 12, 6};             /* grains in all across the tracks, by how far SAMPLR has to hold back */
+    if (s->sc->gnow >= cap[s->sc->shed > 5 ? 5 : s->sc->shed])
         return;
     s->sc->gnow++;
     for (int i = 0; i < SM_GRAINS; i++) {
@@ -2768,10 +2768,10 @@ int samplr_run(float *bl, float *br, int n, float **snd)
             sc->ld += (inst - sc->ld) * .1f;
             sc->pk = sc->pk * .98f + (inst > 950.f ? 1.f : 0.f);   /* near misses lately: about one per spike, fading over ~50 blocks */
             uint32_t since = s->tick - sc->shed_t;
-            if ((sc->ld > 850.f || sc->pk > 2.f) && sc->shed < 4 && since > 16) {
+            if ((sc->ld > 700.f || sc->pk > 1.5f) && sc->shed < 5 && since > 16) {
                 sc->shed++;
                 sc->shed_t = s->tick;
-            } else if (sc->ld < 780.f && sc->pk < .5f && sc->shed > 0 && since > 400) {
+            } else if (sc->ld < 640.f && sc->pk < .5f && sc->shed > 0 && since > 400) {
                 sc->shed--;
                 sc->shed_t = s->tick;
             }

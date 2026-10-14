@@ -1293,6 +1293,8 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
     }
 }
 
+uint8_t *looper_scratch(int i);
+
 static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, const float *sr, const struct pb *p)
 {
     vtrack *k = &S->t[t];
@@ -1328,6 +1330,12 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
         wlen >>= 1;
     if (wlen < 64)
         wlen = len < 64 ? len : 64;
+    int lsh = 0;                                      /* the audio task is near its limit (SAMPLR's governor measures it): 2 one filter stage, 3 no drive either */
+    {
+        uint8_t *sb = looper_scratch(9);
+        if (sb)
+            lsh = ((struct smscr *)sb)->shed;
+    }
     int fon = p->fm0 != 0.f || p->dfm != 0.f;         /* the filter off and faded out is left out (a third of a track's cost); its state starts from rest when it comes back */
     if (!fon) {
         float *z = &d->sv[t][0][0][0];
@@ -1374,12 +1382,12 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
                 if (p->fdrive > 0.f)
                     x = soft(x * (1.f + 3.f * p->fdrive), 1.f, 1.f);
                 x = svf(x, &d->sv[t][0][c][0], &d->sv[t][0][c][1], p->g, R_BUTTERWORTH, p->h1, p->rg1, hp, 0.f, 0.f);
-                x2[c] = svf(x, &d->sv[t][1][c][0], &d->sv[t][1][c][1], p->g, p->r2, p->h2, p->rg2, hp, p->limit, p->ilimit);
+                x2[c] = lsh >= 2 ? x : svf(x, &d->sv[t][1][c][0], &d->sv[t][1][c][1], p->g, p->r2, p->h2, p->rg2, hp, p->limit, p->ilimit);
             }
             xl += (x2[0] - xl) * m;
             xr += (x2[1] - xr) * m;
         }
-        if (p->drive) {
+        if (p->drive && lsh < 3) {
             float x2[2] = {xl, xr};
             for (int c = 0; c < 2; c++) {
                 float *st = d->od[t][c];
