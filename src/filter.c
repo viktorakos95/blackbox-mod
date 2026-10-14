@@ -82,11 +82,16 @@ static const struct machine machines[] = {
 #define FIRST_MACHINE STOCK_INTERP                      /* his order (3.1.n): machines before the plain crunches */
 #define FIRST_CRUNCH  (STOCK_INTERP + MACHINES)
 
-const char *const interp_names[STOCK_INTERP + CRUNCHES + MACHINES] = {
+#define INTERPS (STOCK_INTERP + CRUNCHES + MACHINES + 1)
+const char *const interp_names[INTERPS] = {
     (const char *)0x080cd770u, (const char *)0x080cd778u,       /* Normal, HighQ */
     "SP1200", "SP-12", "S950", "MPC60", "SP Raw",
     "16k", "12k", "10k", "8k", "6k", "4k", "2k",
+    "DRONE-8",                                                  /* the pad plays the touch drone synth (lira_pad.c) */
 };
+const unsigned interp_lira = INTERPS - 1;
+void lira_register(void *table);
+
 
 /* Replaces the Interp list registration call: 2 -> 9 entries, and the label "Interp:" -> "Fidelity:" (his pick of
    names; the xml name "interpqual" stays, so presets are unaffected). */
@@ -95,7 +100,8 @@ void interp_register(void *table, int param, const char *label, const char *cons
     (void)label;
     (void)names;
     (void)count;
-    fw_register_list(table, param, "Fidelity:", interp_names, STOCK_INTERP + CRUNCHES + MACHINES, xml);
+    fw_register_list(table, param, "Fidelity:", interp_names, INTERPS, xml);
+    lira_register(table);                                       /* LIRA's controls + its memory, once at boot */
 }
 
 struct fstate {                  /* at filter object +4..+0x48; the stock coefficient sets and states used to live here */
@@ -250,6 +256,24 @@ static unsigned pad_interp(const uint8_t *pad)
     return pad_setting(pad, 0xf1);
 }
 
+/* For lira_pad.c */
+unsigned pad_param(const uint8_t *pad, unsigned param)
+{
+    return pad_setting(pad, param);
+}
+
+/* For lira_pad.c: the app's settings store of an engine pad (0 if the id is out of range) */
+const uint8_t *pad_store(const uint8_t *pad)
+{
+    if (!pad)
+        return 0;
+    uint32_t id = *(const uint32_t *)(pad + 0x18);
+    unsigned row = (id >> 8) & 0xff, col = id & 0xff;
+    if (row >= 4 || col >= 5)
+        return 0;
+    return (const uint8_t *)(APP_PADS + row * 0xf0u + col * 0x30u);
+}
+
 /* For od.c: this pad is in a machine mode, so its Saturation knob is the machine's input drive (applied here). */
 int pad_machine_mode(const uint8_t *pad)
 {
@@ -377,6 +401,12 @@ struct read_park {
     float rate;
 };
 #define PARK ((volatile struct read_park *)0x2405fff4u)     /* the last 12 bytes of patch RAM */
+
+/* For lira_pad.c: the signed rate of the voice this pad just read (1 if the last read was another pad's) */
+float park_rate(const uint8_t *pad)
+{
+    return PARK->pad == pad ? PARK->rate : 1.0f;
+}
 
 typedef void (*kernel_fn)(float rate, const float *src, int n_src, int pos, int *newpos, float *frac, float *dst,
                           int n);

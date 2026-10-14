@@ -43,6 +43,7 @@
 #include "looper.h"
 #include "samplr.h"
 #include "t2m_bb.h"
+#include "lira_ui.h"
 
 #define FN(addr) ((addr) | 1u)
 
@@ -63,6 +64,10 @@ unsigned looper_screen_id(void);
 float looper_rate(void);
 unsigned looper_clk_pos(void);
 void looper_guard_drawing(int on);
+struct lay;
+static void lira_footer(const struct lay *L);
+static int lira_footer_hit(int x);
+static void lira_back(void);
 static void rehide(uint8_t *view);
 static void paint(uint8_t *view);
 static void widen(uint8_t *view);
@@ -127,7 +132,7 @@ static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> til
 
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
 enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
-enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, M_TRIG, MODES };   /* M_TRIG: Trigger2MIDI (src/t2m_page.c), tab 6 */
+enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, M_TRIG, M_LIRA, MODES };   /* M_TRIG: Trigger2MIDI (src/t2m_page.c), tab 6; M_LIRA: the LIRA-8 page (lira_ui.inc), tab 7 */
 #define SM_SHEETS 4
 #define SMS_REC 1
 #define SMS_FX 2
@@ -364,6 +369,8 @@ int looper_page_hit(int x, int d, int *track, float *val)
             *track = 94;
             return Z_OPTC;
         }
+        if (P->mode == M_LIRA)
+            return Z_NONE;
         if (P->mode == M_SMPLR || P->mode == M_TRIG) {            /* the sheets (track >= 10 tells Z_TAB apart) */
             int sh = (x - 3) / 60;
             if (x >= 3 && sh < (P->mode == M_TRIG ? 4 : SM_SHEETS) && (x - 3) % 60 < 58) {
@@ -930,7 +937,7 @@ static void tab_select(int i)
         samplr_leave();
     if (i == 5 && P->mode != M_SMPLR)
         samplr_enter();
-    P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : i == 4 ? M_MORE : i == 6 ? M_TRIG : M_SMPLR);
+    P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : i == 4 ? M_MORE : i == 6 ? M_TRIG : i == 7 ? M_LIRA : M_SMPLR);
     if (i == 1 && FX_GROUP >= 2)
         set_fx_sel(0);
     else if (i == 2 && FX_GROUP < 2)
@@ -1090,6 +1097,10 @@ static void draw_footer(const struct lay *L)
         text_c(3 + i * (TAB_W + 2), L->foot_y + 4, TAB_W, tab[i], on ? C_CYAN : C_GREY, 1);
     }
     int x0 = 3 + NTABS * (TAB_W + 2) + 4;
+    if (P->mode == M_LIRA) {
+        lira_footer(L);
+        x0 = P->w;
+    }
     if (P->mode == M_TRIG) {                                      /* Trigger2MIDI: a page of its own (third page of SONG); sheets in the footer */
         static const char *const sh_name[4] = {"HITS", "DETECT", "OUT", "CLK"};
         for (int i = 0; i < 4; i++) {
@@ -1602,7 +1613,7 @@ static uint32_t signature(void)
               (uint32_t)(P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) << 29 | (uint32_t)(P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW) << 28)) * 16777619u;
     for (int o = 0; o < LOOPER_OPTS; o++)
         h = (h ^ (uint32_t)(looper_get_opt(o) * 1000.f + .5f)) * 16777619u;
-    return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : P->mode == M_TRIG ? t2m_page_sig() : 0u);
+    return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : P->mode == M_TRIG ? t2m_page_sig() : 0u) ^ (P->mode == M_LIRA ? lira_ui_sig() : 0u);
 }
 
 /* Called for every mixer cell while the page shows: the first cell draws the whole page, the others nothing.
@@ -1619,9 +1630,14 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
     return 1;
 }
 
+#include "lira_ui.inc"
+
 /* The whole page, into the frame buffer the last stock draw pass handed over. */
 static void paint(uint8_t *view)
 {
+    uint32_t pal_save[16];
+    if (P->mode == M_LIRA)
+        lu_theme_set(pal_save);
     geometry(view);
     rehide(view);
     widen(view);
@@ -1656,9 +1672,13 @@ static void paint(uint8_t *view)
         draw_samplr();
     else if (P->mode == M_TRIG)
         t2m_page_draw(P->w, L.foot_y);
+    else if (P->mode == M_LIRA)
+        draw_lira();
     draw_footer(&L);
     P->sig = signature();
     looper_guard_drawing(0);
+    if (P->mode == M_LIRA)
+        lu_theme_restore(pal_save);
 }
 
 static void dirty(uint8_t *view)
@@ -1680,6 +1700,8 @@ static void dirty_now(uint8_t *view)
 /* From the audio task (looper_ui_poke -> solo.c): redraw when something changed, and now and then regardless. */
 void looper_page_poke(uint8_t *view)
 {
+    if (P->mode == M_LIRA && solo_looper_view() == view)      /* the mode flag outlives the page: only while it shows */
+        lira_leds();                                          /* the buttons' LEDs follow the voices */
     if (P->info_on && looper_ticks() - P->info_t > INFO_TIMEOUT) {
         P->info_on = 0;
         P->sig = 0;
@@ -1789,7 +1811,7 @@ void looper_page_want(int tab)
 
 int looper_page_tab(void)
 {
-    return P->mode == M_SMPLR ? 5 : P->mode == M_TRIG ? 6 : P->mode;
+    return P->mode == M_LIRA ? 7 : P->mode == M_TRIG ? 6 : P->mode == M_SMPLR ? 5 : P->mode;
 }
 
 /* Switch the tab of the page that is up. */
@@ -1902,11 +1924,20 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
     probe(id, 0);
     P->pressed = P_NONE;
     to_page(pt, &x, &d);
-    if (P->mode == M_SMPLR) {
+    if (P->mode == M_SMPLR || P->mode == M_LIRA) {
         struct lay L;
         layout(0, &L);
         if (d < L.foot_y) {
-            sm_touch(0, id, x, d);
+            if (P->mode == M_LIRA) {
+                lira_touch(0, id, x, d);
+                lira_leds();
+            }
+            else
+                sm_touch(0, id, x, d);
+            dirty_now(view);
+            return;
+        }
+        if (P->mode == M_LIRA && x < P->w - 60 && lira_footer_hit(x)) {      /* the page tabs */
             dirty_now(view);
             return;
         }
@@ -2033,6 +2064,13 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
 void looper_page_move(uint8_t *view, const int *pt, int id)
 {
     probe(id, 1);
+    if (P->mode == M_LIRA) {
+        int x, d;
+        to_page(pt, &x, &d);
+        lira_touch(1, id, x, d);
+        dirty_now(view);
+        return;
+    }
     if (P->mode == M_SMPLR) {
         int x, d;
         to_page(pt, &x, &d);
@@ -2062,6 +2100,12 @@ void looper_page_up(uint8_t *view, const int *pt, int id)
 {
     (void)pt;
     probe(id, 2);
+    if (P->mode == M_LIRA) {
+        lira_touch(2, id, 0, 0);
+        P->pressed = P_NONE;
+        dirty_now(view);
+        return;
+    }
     if (P->mode != M_SMPLR || !sm_up(id))
         samplr_touch(2, id & 3, 0, 0);
     if (P->pressed == P_REC)
@@ -2084,6 +2128,11 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             struct looper_info k;
             looper_track(knob, &k);
             float step = (float)counts * KNOB_SCALE;
+            if (P->mode == M_LIRA) {
+                lira_knob(knob, counts);
+                dirty_now(view);
+                return;
+            }
             if (P->mode == M_SMPLR) {
                 struct sm *sm = samplr();
                 if (sm && SM_SHEET == SMS_FX && P->info_on)
@@ -2196,6 +2245,15 @@ void looper_app_msg(void *app, const uint16_t *msg)
             P->btn_id = (uint16_t)id;
             P->btn_index = (uint16_t)idx;
         }
+        if (P->mode == M_LIRA && id == MSG_BUTTON && idx <= 7 && !P->info_on) {   /* LIRA page: the eight buttons are the eight plates */
+            if (lira_ui_button((int)idx, looper_ticks(), 20)) {
+                P->sig = 0;
+                lira_leds();
+            }
+            return;
+        }
+        if (P->mode == M_LIRA && id == MSG_RELEASE && idx <= 7 && !P->info_on)
+            return;
         int is_mix = id == MSG_BUTTON && idx == BTN_MIX;
         int is_info = id == P->info_id && (id != MSG_BUTTON || idx == P->info_idx);
         if (special && !is_mix && !is_info) {
@@ -2221,6 +2279,15 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     return;
                 }
                 P->btn_t = looper_ticks();
+                if (P->mode == M_LIRA) {                           /* the LIRA page takes none of the looper's buttons */
+                    if (slot == B_FX)
+                        break;
+                    if (slot == B_BACK) {                          /* BACK: the other four voices */
+                        lira_back();
+                        P->sig = 0;
+                    }
+                    return;
+                }
                 if (P->mode == M_TRIG)
                     break;                                         /* the TRIG page has no use for them: the stock firmware gets them */
                 if (P->mode == M_SMPLR) {                          /* on the SAMPLR page the buttons are SAMPLR's, never the looper's */

@@ -1838,6 +1838,10 @@ void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, in
 
 /* Out 1 bus, once per audio block, before the master compressor and the output levels (looper_thunk.S).
  * obj is the compressor stage object; its output index names the Out 1 bus, as in comp_process (comp.c). */
+void lira_page_run(float *l, float *r, int n);
+void lira_rec_begin(const float *l, const float *r, int n);
+void lira_rec_end(const float *l, const float *r, int n);
+
 void looper_stage(uint8_t *obj, void *bufs)
 {
     if (S->magic != MAGIC || !S->ok)
@@ -1850,8 +1854,11 @@ void looper_stage(uint8_t *obj, void *bufs)
     fw_stereo(buf, &l, &r);
     if (l && r && n > 0) {
         read_bpm(bufs);
+        lira_page_run(l, r, n);                    /* the LIRA page's voices, before the looper so SOURCE MIX records them */
+        lira_rec_begin(l, r, n);
         if (!run(l, r, n))
             samplr_run(l, r, n, 0);
+        lira_rec_end(l, r, n);                     /* what the looper added, for the pad recorder's LOOPER input */
     }
 }
 

@@ -27,6 +27,19 @@ out (new FX, fixes). That's all the list is for.
 - **Reverb Type**: Plate (stock) or Room.
 - **Delay Type**: Delay (stock) or Munchi (a port of the CHOMPI TEMPO granular delay).
 - **Sequencer fix**: a note added just ahead of the playhead plays on that pass.
+- **DRONE-8 on a pad (the LIRA-8 port)** (test build 3.1.x): a port of Mike Moreno DSP's LIRA-8 (an emulation of
+  the SOMA Lyra-8 drone synth). On a pad in **Sample** mode (not Clip / Slicer / Granular), set Fidelity to **LIRA**: the pad plays LIRA instead of its sample.
+  Load any sample on the pad and set Loop Mode on, so the voice lasts while the pad is held (Launch Mode Toggle = a
+  drone you switch on and off). A pad tap holds all eight sensors; on the Keys screen, the notes 1 to 8 semitones above
+  the root hold sensors 1 to 8 one by one. While Fidelity is LIRA the pad's first three pages become LIRA's (the screen shows eight entries per page): page 1 Level,
+  Time 1/2, Feedback, Dly Mix, Drive, Dist Mix, **Ext In** (the Blackbox's audio input, mixed in ahead of the delay and drive like the Lyra-8's EXT IN: feed drums or anything into it; the pad must be playing). Two more uses of the input: **FM Source** now also has Pair1-Pair4 (that pair's output modulates this one, itself included: feedback FM) and FM Depth is now the knob squared (the plugin has the 4th power), so it is audible from mid-knob. **FM Source = Ext** (per voice pair) makes the input frequency-modulate that pair, and **Touch = Follow** (per pair) makes the pair's envelopes follow the input's level, so drums pulse the voices; page 2 Loop Mode (turn it on), Tune 1-7; page 3 Touch, Sharp, Pitch,
+  Hold, FM Depth/Source, LFO A/B. Tune 8, Vibrato (on), Dly Mod and Mod Src stay at their defaults. Page 4 (with Fidelity) is unchanged. These
+  settings are not saved with the project yet: a power cycle returns them to LIRA-8's defaults. The pad's Level, envelope (Release fades it), filter,
+  FX sends and sequencer work as on any pad. Two LIRA pads can play at once.
+
+- **LIRA page** (3.1.L): press the first button (PAD) a second time on the pad screen and the Looper page opens on a LIRA tab; everything is a knob (touch it and drag up or down, 80 px = the whole range) or a button, on one 8-column grid. The eight voices are always on screen in two groups of four: a TUNE knob each, coloured by voice pair, and a big plate below it (tap = on, tap = off; the top-right switch makes the plates HOLD instead). The eight hardware buttons are the same plates. Above them three tabs in the footer, each a row of four panels of four controls: **VOICES** (a panel per voice pair: MOD, SHARP, FM source, TOUCH), **SOUND** (DELAY: time 1/2, feedback, mix; MOD: mod 1/2, LFO A/B; HOLD/PITCH: hold and pitch of voices 1-4 / 5-8; OUTPUT: drive, dist mix, volume, ext in) and **CHORD**. The four encoders turn the four controls of the active group (white frame): the strip's voices 1-4 or 5-8, or a panel; touching a control makes its group the active one, BACK flips between voices 1-4 and 5-8. Inside a panel the encoders sit like the controls (top-left, top-right, bottom-left, bottom-right). **TRI / SINE** in the top bar chooses the oscillator waveform: the oscillator's own triangle (the plugin's) or a sine made from it (3rd harmonic -51 dB, 5th -85 dB; SHARP still blends in the square).
+  **CHORD tab**: TONAL SPACE = space (31 chords and scales: ninths, elevenths, thirteenths, sus and quartal stacks, whole tone, the modes, pentatonics, Hirajoshi, In Sen, octatonic, Messiaen 3 ...), root, octave (the lowest note, C2 .. C5) and span (1-4 octaves); VOICING = CHORD on / off, TUNE equal or just (5-limit just intonation around the root: beatless thirds and fifths), SHUFL (a new voicing of the same space: every pitch class sounds, the root is the lowest note, the rest scattered over the octaves and dealt to the voices at random) and CYCLE (every voice takes its neighbour's note). The notes of the eight voices are shown, and under the tune knobs. With the chord on the voices sound those notes at concert pitch (the Pitch knobs and Tune knobs are bypassed); tap the plates to play them one by one or together. LIRA needs no pad or sample: it runs in the looper's output stage, so the looper can record it (SOURCE = MIX). INFO then PAD / SONG / MIX leaves the page.   **More on the page (3.1.L):** the title and subtitle are DRONE-8 / TOUCH DRONE SYNTH (the Fidelity and pad-mode entries are called DRONE-8 too). The top bar has three switches: **X:IN / X:MIX / X:BOTH** (what the Ext In knob and Touch = Follow / FM Source = Ext listen to: the audio input, the Blackbox's mix as it is just before this synth is added, or both: drums pulse the drone with no cable), **TRI / SINE** and **LATCH / HOLD**. The eight round buttons' LEDs show which voices are on (they are single on / off LEDs; the pads have no LEDs). **Recording onto a pad:** a pad's Rec Input list (L+R, Left, Right, Resam) gains **DRONE** (the synth alone) and **LOOPER** (what the looper and SAMPLR add, alone), recorded with the normal REC flow into a new sample; they are the Resam path with another bus, one 256-frame block late. **Saving:** the page's settings and every pad's DRONE-8 controls are written to `bbmod.bin` (1112 bytes, with a CRC) next to the project's `settings.tml` when the project is saved, and read back when it is loaded (both in the firmware's file task); a missing or damaged file is ignored.
+  Colours: the page draws with its own midnight palette (violet and seafoam for the voice pairs, orange for the encoders' group, full white for values; the stock palette is put back after every draw). Note names follow the key: flats in the keys of F, Bb, Eb, Ab, Db and their relative minors, sharps elsewhere. The settings are not saved.
 
 ### Known issues
 
@@ -34,6 +47,15 @@ out (new FX, fixes). That's all the list is for.
 - A note placed very close ahead of the playhead is still sometimes silent.
 - Chords need the pad out of Mono Poly Mode.
 - Presets saved with a Fidelity value on an older mod build may read a different value.
+- LIRA (3.1.r): the engine is now modelled on the Lyra-8 hardware instead of the plugin's clean DSP (Schmitt-trigger oscillators, RC
+  envelopes (about 23 s to fade out), additive FM, bleed between voices, a PT2399-style delay), see docs/LIRA-analog-notes.md.
+  3.1.o only clicked on pads made before it (their LIRA settings read as all zero) and skipped the
+  pad's Level and envelope; both fixed in 3.1.p. Each playing LIRA pad is about 1,400 instructions per sample (roughly 20 % of
+  the CPU, watch the meter on the version label); it reserves about 0.7 MB of sample memory at boot. 3.1.p and 3.1.r never showed the
+  LIRA pages (their page and default hooks looked for the wrong store type: a Sample pad is type 3 with 59 of 64 entries, not
+  type 0x4c); 3.1.s keeps the 25 values per pad position in the LIRA pool and answers the firmware's store getter and
+  setter for them.
+
 
 ## Install
 
@@ -59,7 +81,7 @@ Needs `arm-none-eabi-gcc` and Python 3. Put your stock image at `firmware/BLACKB
 
 ```
 ./build.sh
-python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi cave
+python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi lira cave
 ```
 
 That writes `out/<patchsets>/BLACKBOX.bin`, byte-identical to the release. `python3 make_patch.py <image> <version>`
@@ -88,3 +110,5 @@ only to say what this mod is for.
 
 If you are from 1010music and have a concern about anything here, open an issue or email justin.joe.dev@gmail.com and
 it will be dealt with promptly.
+
+  **3.1.P changes:** a double tap on a knob puts it back to its default (all eight Tune knobs now start equal); in chord mode the voice knobs (drag, or the encoders, a semitone per click) and the note boxes of the CHORD tab (tap one, then the encoders) move the notes by hand; stepped encoders (lists, buttons) need about 300 counts per step; a new **MIX tab** has a level fader per voice plus drive, dist, volume and ext in; the SOUND tab's fourth panel is the **LFO** (shape triangle / square, combine product / sum, link A to B, and what the delay's MOD knobs listen to: self / off / LFO); **Touch = Ext** (was Follow) keeps the engine running so the input opens the voices with no plate held; **Load governor:** the top bar shows `free-KB D<share of the audio task> C<load>`; when the audio task passes ~80 % (the Blackbox shuts itself off near 89 %) the synth drops to one delay line, then none, then waits, and steps back after ~2 s with room.
