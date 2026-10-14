@@ -160,5 +160,28 @@ check("just intonation moves the note by its just offset (within 20 cents of equ
 e.call("lira_ui_action", 0)                                         # chord mode off again
 for k in range(8):
     e.call("lira_ui_key", k, 0)
+# ---- Ext In listening to the Blackbox's mix: Touch = Follow opens the voices when the mix plays ----
+for g in range(4):
+    e.call("lira_ui_set", 100 + g, 2)                                # Touch = Follow
+e.call("lira_ui_set", 21, 1000)                                      # Ext In full
+e.call("lira_ui_key", 0, 1)
+e.call("lira_ui_key", 3, 1)
+for src, name in ((0, "the audio input (none here)"), (1, "the Blackbox's mix")):
+    while rv("lira_ui_chord_get", 156) != src:
+        e.call("lira_ui_action", 5)
+    base = run(40, 0.0)
+    pre = 0.0 if src == 0 else 0.3
+    quiet = rms(run(80, 0.0)[-20 * N:])
+    out = run(80, pre)[-20 * N:]
+    loud = rms([v - pre for v in out])
+    if src == 1:
+        check("Ext source MIX: the voices follow the Blackbox's mix (%.4f quiet, %.4f with it)" % (quiet, loud), loud > 4 * max(quiet, 1e-4))
+    else:
+        check("Ext source IN with no input stays quiet", loud < 0.01, "%.4f" % loud)
+for g in range(4):
+    e.call("lira_ui_set", 100 + g, 1)
+e.call("lira_ui_set", 21, 0)
+for k in range(8):
+    e.call("lira_ui_key", k, 0)
 print("failures:", fails)
 raise SystemExit(1 if fails else 0)

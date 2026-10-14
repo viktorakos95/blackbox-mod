@@ -367,7 +367,7 @@ e.w32(STACK, 2)
 e.w32(STACK + 4, 0x080CC794)
 e.call("interp_register", 0x24001000, 0xF1, 0, 0x080EB7E0)
 names = [e.cstr(e.r32(seen["names"] + 4 * i)) for i in range(seen["count"])]
-check("Fidelity list: Normal, HighQ, SP1200, SP-12, S950, MPC60, SP Raw, 16k .. 2k, LIRA", names == ["Normal", "HighQ", "SP1200", "SP-12", "S950", "MPC60", "SP Raw", "16k", "12k", "10k", "8k", "6k", "4k", "2k", "LIRA"] and seen["param"] == 0xF1, names)
+check("Fidelity list: Normal, HighQ, SP1200, SP-12, S950, MPC60, SP Raw, 16k .. 2k, DRONE-8", names == ["Normal", "HighQ", "SP1200", "SP-12", "S950", "MPC60", "SP Raw", "16k", "12k", "10k", "8k", "6k", "4k", "2k", "DRONE-8"] and seen["param"] == 0xF1, names)
 
 check("label reads 'Fidelity:', xml name stays 'interpqual'", seen["label"] == "Fidelity:" and seen["xml"] == "interpqual", (seen["label"], seen["xml"]))
 

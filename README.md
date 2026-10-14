@@ -27,7 +27,7 @@ out (new FX, fixes). That's all the list is for.
 - **Reverb Type**: Plate (stock) or Room.
 - **Delay Type**: Delay (stock) or Munchi (a port of the CHOMPI TEMPO granular delay).
 - **Sequencer fix**: a note added just ahead of the playhead plays on that pass.
-- **LIRA-8 on a pad** (test build 3.1.x): a port of Mike Moreno DSP's LIRA-8 (an emulation of
+- **DRONE-8 on a pad (the LIRA-8 port)** (test build 3.1.x): a port of Mike Moreno DSP's LIRA-8 (an emulation of
   the SOMA Lyra-8 drone synth). On a pad in **Sample** mode (not Clip / Slicer / Granular), set Fidelity to **LIRA**: the pad plays LIRA instead of its sample.
   Load any sample on the pad and set Loop Mode on, so the voice lasts while the pad is held (Launch Mode Toggle = a
   drone you switch on and off). A pad tap holds all eight sensors; on the Keys screen, the notes 1 to 8 semitones above

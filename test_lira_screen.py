@@ -155,11 +155,32 @@ for m_ in re.finditer(r"\{(0x[0-9a-f]{2}), (0x[0-9a-f]{8})\}", open("src/lira_ui
     PAL[int(m_.group(1), 16)] = int(m_.group(2), 16)               # the page's own colours (src/lira_ui.inc, lu_theme)
 
 
+GRABS = {}
+
+
+def render(fills_, pixels_, pal):
+    from PIL import Image
+    im = Image.new("RGB", (320, 240), (0, 0, 0))
+    px = im.load()
+    for x, y, w, h, c, _ in fills_:
+        col = pal[c] & 0xFFFFFF
+        rgb = ((col >> 16) & 255, (col >> 8) & 255, col & 255)
+        for yy in range(max(0, 240 - y - h), min(240, 240 - y)):
+            for xx in range(max(0, x), min(320, x + w)):
+                px[xx, yy] = rgb
+    for x, y, c in pixels_:
+        col = pal[c] & 0xFFFFFF
+        if 0 <= x < 320 and 0 <= 239 - y < 240:
+            px[x, 239 - y] = ((col >> 16) & 255, (col >> 8) & 255, col & 255)
+    return im
+
+
 def snap(name):
     """LIRA_PNG=<dir>: write what the last draw() recorded as a picture (320 x 240, origin bottom left, palette at 0x080f1d80)."""
     out = os.environ.get("LIRA_PNG")
     if not out:
         return
+    GRABS[name] = (list(drawn_fills), list(drawn_pixels))
     from PIL import Image
     im = Image.new("RGB", (320, 240), (0, 0, 0))
     px = im.load()
@@ -414,5 +435,25 @@ check("the page's colours are put back after it is drawn (the stock palette is u
 screens.clear()
 e.call("solo_pad_pressed", APP, 0, 0, 0)
 check("PAD on the LIRA page goes back to the stock pad screen", screens == [2], screens)
+if os.environ.get("LIRA_THEMES") and "voices14" in GRABS and "chord" in GRABS:
+    from PIL import Image, ImageDraw
+    THEMES = {
+        "A slate / copper / ice": dict(bg=0x0e1116, card=0x171c24, line=0x2d3542, track=0x5b6676, label=0x93a0b3, hi=0xf2f5fa, a=0xc8794a, ad=0x5e3a22, b=0x7bb8d4, bd=0x28495a, sel=0xc3a6f0),
+        "B graphite / sage / rose": dict(bg=0x121110, card=0x1b1917, line=0x332f2b, track=0x6a645d, label=0xa39b90, hi=0xf6f1ea, a=0x9bb58a, ad=0x3f4f36, b=0xd98a96, bd=0x5c3239, sel=0xf0c85a),
+        "C midnight / violet / seafoam": dict(bg=0x0c0c14, card=0x15151f, line=0x2c2c3d, track=0x5d5d78, label=0x9a9ab8, hi=0xf4f4fb, a=0x9a82e8, ad=0x3b3263, b=0x6fd1b6, bd=0x21493e, sel=0xf09a4a),
+        "E amber on black": dict(bg=0x0b0907, card=0x16110c, line=0x33281b, track=0x6b5636, label=0xa88a55, hi=0xfff1d6, a=0xf2b04a, ad=0x62400f, b=0xb8742a, bd=0x432a0d, sel=0x7fe0d0),
+        "D mono + one accent": dict(bg=0x0d0d0e, card=0x171718, line=0x2e2e31, track=0x5f5f66, label=0x9a9aa2, hi=0xf5f5f7, a=0xd2d5da, ad=0x4b4e55, b=0x868b94, bd=0x303338, sel=0xf0a030),
+    }
+    sheet = Image.new("RGB", (1280, 240 * len(THEMES) + 0), (30, 30, 30))
+    for row, (name, t) in enumerate(THEMES.items()):
+        pal = list(PAL)
+        for idx, key in ((0x02, "bg"), (0x19, "card"), (0x10, "line"), (0x09, "track"), (0x16, "label"), (0x0F, "hi"),
+                         (0x1A, "a"), (0x1C, "b"), (0x1D, "ad"), (0x1F, "bd"), (0x20, "sel")):
+            pal[idx] = 0xFF000000 | t[key]
+        for col, view in enumerate(("voices14", "chord")):
+            f_, p_ = GRABS[view]
+            sheet.paste(render(f_, p_, pal), (col * 320, row * 240))
+        ImageDraw.Draw(sheet).text((660, row * 240 + 4), name, fill=(255, 255, 255))
+    sheet.save(os.path.join(os.environ["LIRA_PNG"], "themes.png"))
 print("failures:", fails)
 sys.exit(1 if fails else 0)

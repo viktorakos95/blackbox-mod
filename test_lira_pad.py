@@ -58,7 +58,7 @@ e.uc.mem_write(0x38800BF0, b"\xa5" * 8)          # whatever the last boot left
 e.call("interp_register", 0x24060000, 0xF1, 0, 0, 2, 0)
 fid = [r for r in regs if r[1] == 0xF1]
 check("Fidelity list: 15 entries, the last one LIRA",
-      len(fid) == 1 and fid[0][3] == 15 and e.cstr(e.r32(fid[0][2] + 4 * INTERP_LIRA) & 0xFFFFFFFF) == "LIRA",
+      len(fid) == 1 and fid[0][3] == 15 and e.cstr(e.r32(fid[0][2] + 4 * INTERP_LIRA) & 0xFFFFFFFF) == "DRONE-8",
       str(fid))
 ids = sorted(r[1] for r in regs if r[1] != 0xF1)
 check("25 LIRA controls at 0x1db..0x1f3", ids == list(range(P0, P0 + NCTL)), str([hex(i) for i in ids]))

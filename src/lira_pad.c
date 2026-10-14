@@ -123,7 +123,7 @@ static const struct ctl ctls[] = {
     {P0 + 5, K_PCT, 1, {LIRA_TUNE6}, PCT(57), "Tune 6:", "liratune6", 0, 0},
     {P0 + 6, K_PCT, 1, {LIRA_TUNE7}, PCT(60), "Tune 7:", "liratune7", 0, 0},
     {P0 + 7, K_PCT, 1, {LIRA_TUNE8}, PCT(51), "Tune 8:", "liratune8", 0, 0},
-    {P0 + 8, K_PCT, 2, {LIRA_PITCH1234, LIRA_PITCH5678}, PCT(66), "LIRA Pitch:", "lirapitch", 0, 0},
+    {P0 + 8, K_PCT, 2, {LIRA_PITCH1234, LIRA_PITCH5678}, PCT(66), "Drone Pitch:", "lirapitch", 0, 0},
     {P0 + 9, K_PCT, 4, {LIRA_SHARP12, LIRA_SHARP34, LIRA_SHARP56, LIRA_SHARP78}, PCT(58), "Sharp:", "lirasharp", 0, 0},
     {P0 + 10, K_PCT, 2, {LIRA_HOLD1234, LIRA_HOLD5678}, PCT(0), "Hold:", "lirahold", 0, 0},
     {P0 + 11, K_PCT, 4, {LIRA_MOD12, LIRA_MOD34, LIRA_MOD56, LIRA_MOD78}, PCT(0), "FM Depth:", "liramod", 0, 0},
@@ -172,6 +172,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t touch[4], src[4];    /* Touch and FM Source per pair (list indexes) */
     uint8_t want[8], keyed[8];   /* sensors held on the page; sensors the engine has been told */
     uint8_t init, momentary, sel, ticks;
+    uint8_t ext_src;             /* what Ext In listens to: 0 the audio input, 1 the Blackbox's mix (without this synth), 2 both */
     uint8_t chord_on, space, root, oct, range, just, wave, seed;   /* chord mode: tonal space, root 0..11, register 0..3, span 1..4 octaves, just tuning, waveform */
     int8_t notes[8];             /* the voices' MIDI notes in chord mode */
     uint16_t last;               /* the control last touched or turned (ui id), 0xffff = none: its value is shown in the top bar */
@@ -292,6 +293,7 @@ void lira_register(void *table)
     g->range = 3;
     g->just = 0;
     g->wave = 0;
+    g->ext_src = 0;
     g->seed = 1;
     lira_voicing(0, 0, 48, 36, 1, g->notes);
     g->tail = 0;
@@ -546,7 +548,7 @@ static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
 
 /* "LIRA" as a sixth pad-mode choice (the stock list has Sample, Clip, Slicer, Granular, New Rec). Behind it the pad is
    a Sample pad with Fidelity LIRA and Loop Mode on, which is what the rest of this file keys on. */
-static const char *const mode_names[6] = {"Sample", "Clip", "Slicer", "Granular", "New Rec", "LIRA"};
+static const char *const mode_names[6] = {"Sample", "Clip", "Slicer", "Granular", "New Rec", "DRONE-8"};
 
 void mode_register(void *table, int param, const char *label, const char *const *names, int count, const char *xml)
 {
@@ -757,12 +759,27 @@ void lira_page_run(float *l, float *r, int n)
         }
     }
     float gain = (float)g->level * (1.0f / 700.0f);
-    float tmp[128];
+    float tmp[128], exl[128], exr[128];
     for (int i0 = 0; i0 < n; i0 += 128) {
         int m = n - i0 < 128 ? n - i0 : 128;
-        s->l.ext_n = xn > i0 ? (xn - i0 < m ? xn - i0 : m) : 0;
-        s->l.ext_l = xl + i0;
-        s->l.ext_r = xr + i0;
+        int have = 0;
+        if (g->ext_src != 1 && xn > i0) {                       /* the audio input */
+            for (int i = 0; i < m; i++) {
+                exl[i] = i0 + i < xn ? xl[i0 + i] : 0.0f;
+                exr[i] = i0 + i < xn ? xr[i0 + i] : 0.0f;
+            }
+            have = 1;
+        }
+        if (g->ext_src != 0) {                                  /* the Blackbox's mix as it is now, this synth not in it yet */
+            for (int i = 0; i < m; i++) {
+                exl[i] = (have ? exl[i] : 0.0f) + l[i0 + i];
+                exr[i] = (have ? exr[i] : 0.0f) + r[i0 + i];
+            }
+            have = 1;
+        }
+        s->l.ext_n = have ? m : 0;
+        s->l.ext_l = exl;
+        s->l.ext_r = exr;
         lira_process(&s->l, tmp, m);
         for (int i = 0; i < m; i++) {
             l[i0 + i] += tmp[i] * gain;
@@ -823,6 +840,7 @@ int lira_ui_last(int id)
     return p->pg.last;
 }
 
+
 /* ---- chord mode: the page's tonal space controls. ids 140..143 are knobs (space, root, register, span) on a 0..1000 scale,
    150.. are actions, see lira_ui_action ---- */
 static void revoice(struct pg *g)
@@ -848,7 +866,7 @@ int lira_ui_chord_get(int id)                              /* the index behind a
     struct pg *g = &p->pg;
     if (id >= 140 && id <= 143)
         return stepped_get(g, id);
-    return id == 150 ? g->chord_on : id == 153 ? g->just : id == 154 ? g->wave : id == 155 ? g->seed : 0;
+    return id == 150 ? g->chord_on : id == 153 ? g->just : id == 154 ? g->wave : id == 155 ? g->seed : id == 156 ? g->ext_src : 0;
 }
 
 void lira_ui_chord_set(int id, int idx)                    /* idx is clamped to the knob's steps */
@@ -896,6 +914,8 @@ void lira_ui_action(int a)
         g->just ^= 1;
     } else if (a == 4) {
         g->wave ^= 1;
+    } else if (a == 5) {
+        g->ext_src = (uint8_t)((g->ext_src + 1) % 3);
     }
 }
 

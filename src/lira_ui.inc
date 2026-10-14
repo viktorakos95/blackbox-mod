@@ -278,7 +278,7 @@ static void draw_lira(void)
                                              {"DELAY", "MOD", "HOLD/PITCH", "OUTPUT"},
                                              {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"}};
     box(1, 1, P->w - 2, TOPBAR, C_BG);
-    text(6, 4, "LIRA-8", C_WHITE, 1);
+    text(6, 4, "DRONE-8", C_WHITE, 1);
     int last = lira_ui_last(-1);
     q = b;
     *q = 0;
@@ -306,10 +306,13 @@ static void draw_lira(void)
                 *q = 0;
             }
     }
-    text(48, 4, *b ? b : "ORGANISMIC SYNTHESIZER", *b ? C_WHITE : C_GREY, 1);
+    text(54, 4, *b ? b : "TOUCH DRONE SYNTH", *b ? C_WHITE : C_GREY, 1);
     int mom = lira_ui_momentary(0), sine = lira_ui_chord_get(154);
     frame(P->w - 50, 2, 46, TOPBAR - 2, mom ? LU_ACC2 : LU_LINE, 1);
     text_c(P->w - 50, 4, 46, mom ? "HOLD" : "LATCH", LU_DIM, 1);
+    int xs = lira_ui_chord_get(156);
+    frame(P->w - 150, 2, 46, TOPBAR - 2, xs ? LU_ACC2 : LU_LINE, 1);
+    text_c(P->w - 150, 4, 46, xs == 0 ? "X:IN" : xs == 1 ? "X:MIX" : "X:BOTH", xs ? C_WHITE : LU_DIM, 1);
     frame(P->w - 100, 2, 46, TOPBAR - 2, sine ? LU_ACC1 : LU_LINE, 1);
     text_c(P->w - 100, 4, 46, sine ? "SINE" : "TRI", sine ? C_WHITE : LU_DIM, 1);
     box(1, TOPBAR + 2, P->w - 2, L.foot_y - TOPBAR - 3, C_BG);
@@ -439,6 +442,8 @@ static void lira_touch(int kind, int id, int x, int d)
             lira_ui_momentary(1);
         else if (x >= P->w - 100)
             lira_ui_action(4);
+        else if (x >= P->w - 150)
+            lira_ui_action(5);
         return;
     }
     for (int v = 0; v < 8; v++) {                                 /* plates */

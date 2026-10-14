@@ -87,7 +87,7 @@ const char *const interp_names[INTERPS] = {
     (const char *)0x080cd770u, (const char *)0x080cd778u,       /* Normal, HighQ */
     "SP1200", "SP-12", "S950", "MPC60", "SP Raw",
     "16k", "12k", "10k", "8k", "6k", "4k", "2k",
-    "LIRA",                                                     /* the pad plays LIRA-8 (lira_pad.c) */
+    "DRONE-8",                                                  /* the pad plays the touch drone synth (lira_pad.c) */
 };
 const unsigned interp_lira = INTERPS - 1;
 void lira_register(void *table);
