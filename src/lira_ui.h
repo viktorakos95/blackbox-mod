@@ -9,6 +9,7 @@ int lira_ui_key_get(int k);
 void lira_ui_key(int k, int on);
 int lira_ui_momentary(int toggle);
 int lira_ui_sel(int set);
+int lira_ui_last(int id);
 unsigned lira_ui_sig(void);
 int lira_ui_drag(int id, int op, int kind, int idx, int y0, int v0);
 int lira_ui_button(int idx, uint32_t now, uint32_t gap);

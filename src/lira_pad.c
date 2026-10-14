@@ -171,6 +171,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t touch[4], src[4];    /* Touch and FM Source per pair (list indexes) */
     uint8_t want[8], keyed[8];   /* sensors held on the page; sensors the engine has been told */
     uint8_t init, momentary, sel, ticks;
+    uint16_t last;               /* the control last touched or turned (ui id), 0xffff = none: its value is shown in the top bar */
     uint8_t dkind[4], didx[4];   /* per finger: what it is dragging (0 none, 1 plate, 2 FM slider, 3 dial) and which */
     int16_t dy0[4], dv0[4];      /* ... and where the drag began */
     uint32_t btn_t[8];           /* when each hardware button last toggled its voice (a press and its release can both arrive) */
@@ -280,6 +281,7 @@ void lira_register(void *table)
     g->init = 0;
     g->momentary = 0;
     g->sel = 0;
+    g->last = 0xffff;
     g->tail = 0;
     g->level = 700;
     for (int i = 0; i < NCTL; i++)
@@ -779,4 +781,14 @@ int lira_ui_button(int idx, uint32_t now, uint32_t gap)
     g->btn_t[idx] = now ? now : 1;
     g->want[idx] ^= 1;
     return 1;
+}
+
+int lira_ui_last(int id)
+{
+    struct pool *p = pool();
+    if (!p)
+        return 0xffff;
+    if (id >= 0)
+        p->pg.last = (uint16_t)id;
+    return p->pg.last;
 }
