@@ -1451,7 +1451,6 @@ static void draw_samplr(void)
         text_c(41, r1 + (SM_BH - 8) / 2, 108, nm[0] ? nm : "-", C_LIGHT, 1);
         sm_button(151, r1, 36, ">", 0);
         sm_button(189, r1, 56, iq_name[s->iq % 3], 0);
-        sm_button(247, r1, 64, s->sc->syncb ? "BLOCK" : "EXACT", 0);   /* where the grid lines of the sequencer's clock start things: the block the stock notes start in, or the exact frame */
     }
 }
 
@@ -1574,8 +1573,6 @@ static int sm_touch(int kind, int id, int x, int d)
                 samplr_select(1);
             else if (x >= 189 && x < 245)
                 samplr_cycle(10);
-            else if (x >= 247)
-                samplr_cycle(14);
         }
         P->sig = 0;
         return 1;

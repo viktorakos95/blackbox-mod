@@ -1951,25 +1951,6 @@ int looper_grid_offset(float beats, float sph, int n)
     return off < (float)n ? (int)off : -1;
 }
 
-/* The grid the way the stock sequencer's note player sees it: it plays every note whose time has passed the clock position it was given for the block, at the START of that block.
- * So a grid line belongs to the block in which the clock position (this block's snapshot, cur) has passed it since the previous block (prev): 0, else -1. Without a clock
- * (no sequence playing) the free-running grid of looper_grid_offset. */
-int looper_grid_cross(float beats, double prev, int n, float sph)
-{
-    if (S->magic != MAGIC)
-        return -1;
-    if (!S->cur_ok)
-        return looper_grid_offset(beats, sph, n);
-    double g = SEQ_TPB * (double)beats, cur = seqfix_now(), adv = cur - prev;   /* (exact: a beat is SEQ_TPB ticks, whatever the tempo) */
-    if (!(adv > 0.0 && adv < 4.0 * g))                           /* no usable previous block (the first one, a restart, a jump): the measured speed */
-        adv = (double)n * SEQ_TPB / (double)beat_frames();
-    if (!(adv > 0.0))
-        return -1;
-    double ph = dmod(cur, g);
-    /* the player plays what lies in [prev, cur): the last line at or before cur counts if it is at least prev, and a line exactly at cur waits for the next block */
-    return (ph > 0.0 ? ph <= adv : g <= adv) ? 0 : -1;
-}
-
 /* The same grid at its exact frame (what a sample-accurate click would give): frames from the start of this block to the next line of the sequencer time, SEQ_TPB ticks a beat
  * and beat_frames() frames a beat, or -1. Without a clock the free-running grid. */
 int looper_grid_exact(float beats, float sph, int n)

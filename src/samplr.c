@@ -655,8 +655,6 @@ void samplr_cycle(int what)
     } else if (what == 11) {
         s->rev ^= 1;
         rec_param(s, 8);
-    } else if (what == 14) {
-        s->sc->syncb ^= 1;
     } else if (what == 13) {
         s->lp_a = 0;
         s->lp_b = s->len;
@@ -1701,7 +1699,7 @@ static void gest_run(struct sm *s, int n)
 
 static inline int grid(struct sm *s, float beats, int n)
 {
-    return s->sc->syncb ? looper_grid_cross(beats, s->sc->prev, n, s->sph) : looper_grid_exact(beats, s->sph, n);
+    return looper_grid_exact(beats, s->sph, n);
 }
 
 static uint32_t rnd(struct sm *s)
