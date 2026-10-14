@@ -1322,12 +1322,12 @@ void lira_ui_action(int a)
                 g->gn = 0;
             }
         }
-    } else if (a == 15) {                                 /* STOP / PLAY of the loop: a paused loop costs nothing */
-        if (g->gmode == 6) {
+    } else if (a == 15 || a == 16 || a == 17) {           /* STOP / PLAY of the loop (15 toggles, 16 stops, 17 plays): a paused loop costs nothing */
+        if (g->gmode == 6 && a != 16) {
             g->gmode = 3;
             g->gt = 0.0f;
             g->gi = 0;
-        } else if (g->gmode >= 3) {
+        } else if (g->gmode >= 3 && g->gmode != 6 && a != 17) {
             if (g->gmode == 5)
                 gdrop(p, g, g->glayers);
             g->gmode = 6;

@@ -2279,9 +2279,14 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     return;
                 }
                 P->btn_t = looper_ticks();
-                if (P->mode == M_LIRA) {                           /* the LIRA page takes none of the looper's buttons (REC is its gesture recorder; the transport stays the stock one) */
-                    if (slot == B_FX || slot == B_STOP || slot == B_PLAY)
+                if (P->mode == M_LIRA) {                           /* the LIRA page takes none of the looper's buttons (REC, STOP and PLAY are its gesture recorder's) */
+                    if (slot == B_FX)
                         break;
+                    if (slot == B_STOP || slot == B_PLAY) {        /* STOP / PLAY: only the gesture loop's (if there is one) */
+                        lira_ui_action(slot == B_PLAY ? 17 : 16);
+                        P->sig = 0;
+                        return;
+                    }
                     if (slot == B_BACK) {                          /* BACK: the other four voices */
                         lira_back();
                         P->sig = 0;
