@@ -246,3 +246,8 @@ i.e. how far the master's clocks strayed from our smooth tempo (about the master
 ### Compact label for the hardware test images
 On the unit the version label is followed by stock text ("4GB") and the whole line ran off the screen, so the M3 / M4 / M5 test images now set `compact` in the blob's entry table (`src/cpu.c` `compose`): the label is the status text only
 (`Mok S3 1200 e9`, `Mok L+ t96 r12`, `Mok L+ D12 K+`). Normal blob images keep the full label (`3.1.n 2M Lok40 Mok`).
+
+### M5a result on the unit
+KeyStep as master on MIDI IN, started before power-up: the label read **`e47`** (worst phase error 47 us over the last second), i.e. the loop locked and the KeyStep's clocks strayed at most 47 us from our smooth tempo. That matches the KeyStep's measured jitter
+(`clock-findings.md`: sd ~33-38 us on arrival), so the detector sees the master's real jitter and the loop is not adding any of its own; the emulator showed our output interval sd at about a fifth of the input's.
+Still open for M5: internal tempo / transport (the Blackbox's own sequencer) and analog sync, which need a live display to be measured, hence after M6.
