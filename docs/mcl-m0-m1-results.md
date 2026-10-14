@@ -107,3 +107,38 @@ a new build id restarts, flag 0 never reads the pad. Not provable in the emulato
 **POK** (user report): the 1,310,720-byte image was written and the whole pad `0x08140000..0x08180000` read back correctly. Flash window is now proven to `0x08180000`
 (`src/cave.ld` `LENGTH 0x8E188`, 581,000 B total, ~470 KB free beside the ~110 KB in use). Not yet shown: code actually *executing* from the new sectors (the first build whose
 cave passes `0x08140000` will do it; same flash, so no surprise expected). M2 can now size MCL against ~470 KB, so the SD-loaded module is not needed for size.
+
+## M2: blob layout, runtime, reserved SDRAM (this commit)
+
+**Why a blob.** `build.sh` (not mine to edit) links one fixed list of C files into the main cave. MCL is C++, ~300 KB, and built by its own steps, so it is a separate
+**blob** linked on its own and appended by a patch module (`patches/mclblob.py`), like `mclpad`. The main cave (`src/cave.ld`, now `LENGTH 0x2E188`, ends at `0x08120000`; it is ~110 KB
+here, ~128 KB on the LIRA-8 branch) and the blob never share a link, so neither session's changes break the other's build.
+
+| Region | Address | Size | Content |
+|---|---|---|---|
+| Main cave | `0x080F1E78..0x08120000` | 188 KB | everything `build.sh` builds (mod, looper, T2M, clkmon; LIRA-8 adds ~26 KB code) |
+| MCL blob | `0x08120000..0x08180000` | 384 KB | entry table, code, rodata, `.init_array`, `.data` image (proven flash window: pad test `POK`) |
+| MCL RAM | `0xC3F80000..0xC4000000` | 512 KB | `.data`, `.bss`, heap at link-time addresses (`src/mcl_bb/mcl_blob.ld`) |
+
+**Reserved SDRAM.** The stock allocator hands out SDRAM top-down from `0xC4000000` (and permanent bump allocations upward from `0xC0000000`). The initial top is in the stock `.data` image
+(source `0x080f1d80` copied to `0x24000000` at reset; the word at `0x080f1e08` becomes `0x24000088`). `mclblob.py` changes it to `0xC3F80000`, so nothing the firmware allocates can reach
+the top 512 KB and the blob can use fixed addresses (no PIC, no relocation). Cost: the free SDRAM gap after boot shrinks by 512 KB (about 3 MB now). The sample pool (615 fixed entries) is not affected.
+**LIRA-8** allocates its pool from the same permanent allocator only if `free > sizeof(pool) + 1.5 MB`; that pool is well under 1 MB, so with ~2.5 MB free it still gets it. To re-check on the
+unit with both: the `3M` figure on the version label should read `2M` and the Lira status must still say `Lok`.
+
+**Runtime** (`src/mcl_bb/mcl_rt.cpp`, `tools/mcl/build_blob.sh`): `mcl_boot()` is called once per power-up from `cpu.c start()` (new 9 lines in `src/cpu.c`; the pointer `mcl_entry` is 0 in normal
+builds, so they do nothing). It refuses to touch anything unless the allocator patch is in the image and the live top is still above the region; then copies `.data`, zeroes `.bss`,
+sets up the heap (first fit, coalescing; `malloc`/`free`/`new`/`delete` for MCL's two `malloc` users), runs the static constructors, and runs a small self test (constructor, virtual call, data, bss, heap).
+Version label shows ` Mok` (or ` M2` region not reserved, ` M3xx` self test bits, ` M4` region too small, ` M-` no status). Status words in backup SRAM `0x38800920..0x3880092F`.
+
+**Full-MCL link trial** (`tools/mcl/mcl_link_report.sh`; real MCL core + this runtime + the real linker script, platform layer missing): **fits**, 305,188 B code+rodata in the 384 KB window
+(79 %), `.data` 2.7 KB + `.bss` 248 KB in the 512 KB region (leaves ~260 KB heap), 39 constructors (`.init_array` 160 B).
+**125 undefined symbols = the platform surface still to write** (M3 to M7): `FsFile::*` and `SdFat::*` (SD, M7); `Oled::*` (display, M6); `GUI_hardware`/`Buttons`/`Encoders`/`GUIHardware::init`/
+`LEDHardware::*` (input, M6); `MidiUart`/`MidiUart2`/`MidiUartUSB`/`Midi*`/`MidiUartClass::*`/`handleIncomingMidi` (MIDI, M3); `g_clock_ms/ticks/fast/minutes`, `delay`, `setup_irqs`,
+`platform_poll`, `mcl_platform_headless_boot` (clock and glue, M4/M5); `seq_tx1..4`, `MD`/`MNM`/`Analog4` driver objects; libc (`str*`, `mem*`, `isspace`, `rand`, `powf`, `sinf`, `__aeabi_ldivmod/uldivmod`).
+The full list is produced by the script (`undefined.txt`).
+
+**Not done / not provable here:** that the reserved region is really unused by the stock firmware. Static check: the only 32-bit word in the whole image that points into `0xC3F00000..0xC4000000`
+is the allocator's initial top itself (`0x080f1e08`); the other eight words in that numeric range are negative float constants (`0xc3f0....`) in data tables, not addresses, and everything
+else reaches SDRAM through the two allocators. Only the unit can confirm: the ` Mok` label plus a normal session (samples, looper, LIRA-8) is the test. Also not covered: interrupts and timing (M4);
+SDRAM data timing for ISR-hot variables (they will move to internal RAM or backup SRAM when the clock ISR exists).

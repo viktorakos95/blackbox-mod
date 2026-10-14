@@ -66,6 +66,19 @@ const volatile uint32_t mclpad_on = 0;
 #define PAD_ST    ((volatile uint32_t *)0x38800910u)
 #define PAD_NONE  0xffffffffu
 
+/* MCL blob (milestone M2): patches/mclblob.py sets mcl_entry to the blob's entry table at 0x08120000 (0 = no blob in this image). */
+struct mcl_entry {
+    uint32_t magic, abi;                 /* "MCLB", 1 */
+    uint32_t (*boot)(void);              /* once per power-up: .data, .bss, heap, constructors, self test */
+    char *(*status)(char *);             /* "Mok" or "M<code>" for the label */
+};
+const volatile uint32_t mcl_entry = 0;
+static const struct mcl_entry *mcl_blob(void)
+{
+    const struct mcl_entry *e = (const struct mcl_entry *)mcl_entry;
+    return e && e->magic == 0x424c434du && e->abi == 1 ? e : 0;
+}
+
 static void start(void)
 {
     DEMCR |= 1u << 24;           /* TRCENA */
@@ -79,6 +92,11 @@ static void start(void)
     if (mclpad_on) {
         bkp_enable();
         PAD_ST[0] = 0;               /* power-up: read the flash test pad again */
+    }
+    const struct mcl_entry *e = mcl_blob();
+    if (e) {
+        bkp_enable();
+        e->boot();
     }
 }
 
@@ -167,7 +185,12 @@ static void compose(char *buf)
     bkp_enable();
     p = pad_text(p);
     *p++ = ' ';
-    p = looper_status(p);        /* the live looper: Lok, or why it is off */
+    p = looper_status(p);
+    const struct mcl_entry *e = mcl_blob();
+    if (e && p < buf + 25) {
+        *p++ = ' ';
+        p = e->status(p);
+    }        /* the live looper: Lok, or why it is off */
     *p = 0;
 }
 

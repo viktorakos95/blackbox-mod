@@ -4,7 +4,7 @@ Scope: full MCL (viktorakos95/MCL, fork of jmamma/MCL) minus everything that nee
 Sources: `docs/handoff.md`, `docs/midi-in-notes.md`, `docs/clock-findings.md` (all on `claude/intelligent-knuth-7z36c9`), `docs/looper-notes.md`,
 `docs/samplr-research.md`, and the MCL tree (`src/platform/*`, `src/mcl/*`, read at depth 1).
 Tags: [Certain] read from code or measured, [Likely] inferred, [Unknown] not mapped. Nothing here has run on hardware yet.
-**M0 and M1 are done, and the flash window test passed (`POK`, cave may use `0x080F1E78..0x08180000`, ~470 KB free): see `docs/mcl-m0-m1-results.md`** (FatFs found and mapped, TIM6/TIM7 free, FreeRTOS masks priority 5+; MCL is ~271-303 KB before the platform layer, so the current cave does not fit).
+**M0, M1 and M2 (runtime + layout, emulator-tested) are done, and the flash window test passed (`POK`, cave may use `0x080F1E78..0x08180000`, ~470 KB free): see `docs/mcl-m0-m1-results.md`** (FatFs found and mapped, TIM6/TIM7 free, FreeRTOS masks priority 5+; MCL is ~271-303 KB before the platform layer, so the current cave does not fit).
 
 ## 0. Findings that shape the plan
 
