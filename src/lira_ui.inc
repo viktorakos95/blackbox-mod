@@ -25,27 +25,27 @@
 #define LU_CARD   0x19                                            /* the card behind a control */
 #define LU_LINE   0x10                                            /* hairlines, frames */
 #define LU_DIM    0x16                                            /* labels */
-#define LU_ACC1   0x1a                                            /* the first voice pair's colour (amber), and the third's */
-#define LU_ACC2   0x1c                                            /* the second pair's colour (blue), and the fourth's */
+#define LU_ACC1   0x1a                                            /* the first voice pair's colour (violet), and the third's */
+#define LU_ACC2   0x1c                                            /* the second pair's colour (seafoam), and the fourth's */
 #define LU_ACC1D  0x1d                                            /* their dark versions: a plate that is on */
 #define LU_ACC2D  0x1f
-#define LU_SEL    0x20                                            /* the encoders' group (mint): its frame and labels */
+#define LU_SEL    0x20                                            /* the encoders' group (orange): its frame and labels */
 
 /* The page's colours. The firmware's palette is a RAM table (0x24000000, one ARGB word per index) and a fill turns the index into a
  * colour when it runs, so while the page is drawn these entries are replaced and then put back: the pixels keep the page's colours,
  * everything else the Blackbox draws keeps its own. */
 static const struct { uint8_t idx; uint32_t argb; } lu_theme[] = {
-    {0x02, 0xff0b0d10},                                           /* background */
-    {0x19, 0xff15181d},                                           /* cards */
-    {0x10, 0xff2b313a},                                           /* lines */
-    {0x09, 0xff5a626e},                                           /* knob tracks */
-    {0x16, 0xff8e98a6},                                           /* labels */
-    {0x0f, 0xfff4f6f9},                                           /* highlights, values, pointers */
-    {0x1a, 0xffe3a24a},                                           /* amber */
-    {0x1c, 0xff5b9be0},                                           /* blue */
-    {0x1d, 0xff6c4a1c},                                           /* dark amber */
-    {0x1f, 0xff21456f},                                           /* dark blue */
-    {0x20, 0xff5ad6a4},                                           /* mint */
+    {0x02, 0xff0c0c14},                                           /* background: midnight */
+    {0x19, 0xff15151f},                                           /* cards */
+    {0x10, 0xff34344a},                                           /* lines */
+    {0x09, 0xff767694},                                          /* knob tracks, off plates' numbers */
+    {0x16, 0xffb9b9d6},                                           /* labels */
+    {0x0f, 0xffffffff},                                           /* highlights, values, pointers: full white */
+    {0x1a, 0xff9a82e8},                                           /* violet */
+    {0x1c, 0xff6fd1b6},                                           /* seafoam */
+    {0x1d, 0xff3b3263},                                           /* dark violet */
+    {0x1f, 0xff21493e},                                           /* dark seafoam */
+    {0x20, 0xfff09a4a},                                           /* orange: the encoders' group */
 };
 #define LU_NTHEME ((int)(sizeof lu_theme / sizeof lu_theme[0]))
 
