@@ -289,7 +289,7 @@ void looper_boot(void *engine)
     S->dw = 0;
     S->gphase = 0.f;
     S->bpm = 0.f;
-    static const float defaults[LOOPER_OPTS] = {0.f, 0.f, 2.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN) */
+    static const float defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
     for (int i = 0; i < LOOPER_OPTS; i++)
         S->opt[i] = defaults[i];
     for (int t = 0; t < LOOPER_TRACKS; t++) {
@@ -424,7 +424,7 @@ static inline float beat_frames(void)
 
 static inline float grid_frames(void)
 {
-    static const float f[4] = {1.f, .5f, .25f, 4.f};                    /* 1/4, 1/8, 1/16 of a beat, 1 bar */
+    static const float f[4] = {4.f, 1.f, .5f, .25f};                    /* 1 bar, 1/4, 1/8, 1/16 of a beat */
     int q = opt_i(LOOPER_O_QUANT);
     return beat_frames() * f[q < 0 ? 0 : q > 3 ? 3 : q];
 }

@@ -307,7 +307,7 @@ struct optrow {
 static const struct optrow rows_setup[] = {
     {"LENGTH", LOOPER_O_LEN, 3, {"FOLLOW", "MULT", "FREE", 0}},
     {"SYNC", LOOPER_O_SYNC, 2, {"OFF", "ON", 0, 0}},
-    {"QUANT", LOOPER_O_QUANT, 4, {"1/4", "1/8", "1/16", "1 BAR"}},
+    {"QUANT", LOOPER_O_QUANT, 4, {"1 BAR", "1/4", "1/8", "1/16"}},
     {"SOURCE", LOOPER_O_SRC, 2, {"INPUT", "MIX", 0, 0}},
     {"FULL SCREEN", LOOPER_O_FULL, 2, {"OFF", "ON", 0, 0}},
     {"LOOP GAIN K1", LOOPER_O_GAIN, 0, {0, 0, 0, 0}},
