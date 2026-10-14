@@ -1,76 +1,92 @@
 /* The LIRA page (mode M_LIRA of the Looper page), included by looper_page.c where its drawing helpers are in scope.
  * Opened by the PAD button (second press on the pad screen). The engine is lira_pad.c's page instance, which the looper's
- * output stage runs: no pad or sample needed. Four pages, picked by the footer tabs; BACK flips between VOICE 1-4 and VOICE 5-8:
- *   VOICE 1-4 / 5-8   two columns, one per voice pair: FM source and TOUCH buttons, MOD and SHARP sliders, the two voices' TUNE
- *                     sliders, and four big plates for the four voices
- *   DELAY             TIME 1, TIME 2, FEEDBACK, MIX big; MOD 1, MOD 2, EXT IN, VIBRATO small
- *   TONE              HOLD 1-4 / 5-8 and PITCH 1-4 / 5-8 big; DRIVE, DIST MIX, VOLUME, LFO A, LFO B small
- * The four big sliders of a page sit where the four encoders are (two left, two right: the top-left one is the top-left
- * encoder, and so on) and have the pink frames; everything is also touched and dragged. The eight hardware buttons toggle
- * the eight voices on every page.
+ * output stage runs: no pad or sample needed.
+ *   bottom (always)  the eight voices: a vertical TUNE fader each (hairline, ticks, round handle, in the pair's colour) and a big plate
+ *                    below it (tap: on / off; the top-right switch makes the plates HOLD instead). The eight hardware buttons are
+ *                    the same eight plates.
+ *   top (footer tabs)  FM: per voice pair FM source, TOUCH, MOD, SHARP;  DELAY: Time 1/2, Mod 1/2, Feedback, Mix, Ext In, Vibrato;
+ *                    TONE: Hold 1-4 / 5-8, Pitch 1-4 / 5-8, Drive, Dist Mix, Volume, LFO A / B.
+ * The four encoders (the sliders with pink frames; two left, two right as the encoders sit): on FM the tune of voices 1-4 (BACK:
+ * 5-8), on DELAY Time 1, Time 2, Feedback, Mix, on TONE Hold 1-4, Hold 5-8, Pitch 1-4, Pitch 5-8.
  */
 #define LU_LEVEL 120
-#define LU_MAXS  9
+#define LU_MAXS  17
+#define LU_STRIP 116                                              /* the voice faders start here (d) */
+#define LU_PLATE 169
+#define LU_ST_H  0                                                /* styles: a stacked horizontal slider, a vertical fader */
+#define LU_ST_V  1
 
 struct lu_spec {
     uint16_t id;
     int16_t x, d, w, h;
     int8_t knob;                                                  /* post-swap knob 0 bottom-left, 1 top-left, 2 top-right, 3 bottom-right; -1 none */
+    uint8_t style, col;
     const char *name;
 };
-static const char *const lu_vname[8] = {"VOICE 1", "VOICE 2", "VOICE 3", "VOICE 4", "VOICE 5", "VOICE 6", "VOICE 7", "VOICE 8"};
-static const char *const lu_tabname[4] = {"VOICE 1-4", "VOICE 5-8", "DELAY", "TONE"};
+static const char *const lu_tabname[3] = {"VOICES FM", "DELAY", "TONE"};
 static const char *const lu_touch[3] = {"SLOW", "FAST", "FOLLOW"};
 static const char *const lu_src[8] = {"FM SELF", "FM OFF", "FM LFO", "FM EXT", "FM P1-2", "FM P3-4", "FM P5-6", "FM P7-8"};
+static const uint8_t lu_pair_col[4] = {0x1b, 0x14, 0x17, 0x18};  /* the looper's four track colours: cyan, yellow, aqua, purple */
 
-#define LU_SP(i, I, X, D, W, H, K, N) o[i] = (struct lu_spec){I, X, D, W, H, K, N}
+#define LU_SP(i, I, X, D, W, H, K, S, C, N) o[i] = (struct lu_spec){I, X, D, W, H, K, S, C, N}
 
-static int lu_specs(int page, struct lu_spec *o)
+static int lu_specs(int sel, struct lu_spec *o)
 {
-    int cw = (P->w - 9) / 2, rx = 3 + cw + 3;
-    if (page < 2) {
-        for (int g = 0; g < 2; g++) {
-            int x0 = g ? rx : 3, p = page * 2 + g, v = page * 4 + g * 2;
-            LU_SP(g * 4 + 0, 108 + p, x0, 37, cw, 14, -1, "MOD");
-            LU_SP(g * 4 + 1, 130 + p, x0, 53, cw, 14, -1, "SHARP");
-            LU_SP(g * 4 + 2, v, x0, 70, cw, 36, g ? 2 : 1, lu_vname[v]);
-            LU_SP(g * 4 + 3, v + 1, x0, 109, cw, 36, g ? 3 : 0, lu_vname[v + 1]);
+    int page = sel & 15, bank = (sel >> 4) & 1, cw = (P->w - 9) / 2, rx = 3 + cw + 3, n = 0;
+    static const char *const vn[8] = {"1", "2", "3", "4", "5", "6", "7", "8"};
+    for (int v = 0; v < 8; v++) {                                 /* the voice faders, on every page */
+        int kn = page == 0 && (v >> 2) == bank ? ((const int8_t[4]){1, 0, 2, 3})[v & 3] : -1;   /* v1 top-left, v2 bottom-left, v3 top-right, v4 bottom-right */
+        LU_SP(n, v, 3 + v * 38, LU_STRIP, 36, 50, kn, LU_ST_V, lu_pair_col[v >> 1], vn[v]);
+        n++;
+    }
+    if (page == 0) {
+        static const char *const mn[4] = {"MOD", "MOD", "MOD", "MOD"};
+        for (int p = 0; p < 4; p++) {
+            LU_SP(n, 108 + p, 3 + p * 78, 52, 76, 19, -1, LU_ST_H, lu_pair_col[p], mn[p]);
+            n++;
+            LU_SP(n, 130 + p, 3 + p * 78, 73, 76, 19, -1, LU_ST_H, lu_pair_col[p], "SHARP");
+            n++;
         }
-        return 8;
+    } else if (page == 1) {
+        static const uint16_t ids[8] = {16, 17, 125, 126, 18, 19, 21, 13};
+        static const char *const nm[8] = {"TIME 1", "TIME 2", "MOD 1", "MOD 2", "FEEDBACK", "MIX", "EXT IN", "VIBRATO"};
+        static const int8_t kn[8] = {1, 0, -1, -1, 2, 3, -1, -1};
+        for (int i = 0; i < 8; i++) {
+            LU_SP(n, ids[i], i < 4 ? 3 : rx, 17 + (i & 3) * 24, cw, 20, kn[i], LU_ST_H, 0x1b, nm[i]);
+            n++;
+        }
+    } else {
+        static const uint16_t ids[9] = {121, 122, 22, 23, 14, 123, 124, LU_LEVEL, 15};
+        static const char *const nm[9] = {"HOLD 1-4", "HOLD 5-8", "DRIVE", "DIST MIX", "LFO A", "PITCH 1-4", "PITCH 5-8", "VOLUME", "LFO B"};
+        static const int8_t kn[9] = {1, 0, -1, -1, -1, 2, 3, -1, -1};
+        static const uint8_t row[9] = {0, 1, 2, 3, 4, 0, 1, 2, 3};
+        for (int i = 0; i < 9; i++) {
+            LU_SP(n, ids[i], i < 5 ? 3 : rx, 17 + row[i] * 19, cw, 18, kn[i], LU_ST_H, 0x1b, nm[i]);
+            n++;
+        }
     }
-    LU_SP(0, page == 2 ? 16 : 121, 3, 18, cw, 46, 1, page == 2 ? "TIME 1" : "HOLD 1-4");
-    LU_SP(1, page == 2 ? 17 : 122, 3, 67, cw, 46, 0, page == 2 ? "TIME 2" : "HOLD 5-8");
-    LU_SP(2, page == 2 ? 18 : 123, rx, 18, cw, 46, 2, page == 2 ? "FEEDBACK" : "PITCH 1-4");
-    LU_SP(3, page == 2 ? 19 : 124, rx, 67, cw, 46, 3, page == 2 ? "MIX" : "PITCH 5-8");
-    if (page == 2) {
-        LU_SP(4, 125, 3, 118, cw, 18, -1, "MOD 1");
-        LU_SP(5, 126, 3, 139, cw, 18, -1, "MOD 2");
-        LU_SP(6, 21, rx, 118, cw, 18, -1, "EXT IN");
-        LU_SP(7, 13, rx, 139, cw, 18, -1, "VIBRATO");
-        return 8;
-    }
-    LU_SP(4, 22, 3, 118, cw, 18, -1, "DRIVE");
-    LU_SP(5, 23, 3, 139, cw, 18, -1, "DIST MIX");
-    LU_SP(6, 14, 3, 160, cw, 18, -1, "LFO A");
-    LU_SP(7, LU_LEVEL, rx, 118, cw, 18, -1, "VOLUME");
-    LU_SP(8, 15, rx, 139, cw, 18, -1, "LFO B");
-    return 9;
+    return n;
 }
 
-static void lu_plate_rect(int page, int i, int *x, int *d, int *w, int *h)      /* page 0 / 1: four big plates i = 0..3; else eight small */
+static void lu_plate_rect(int v, int *x, int *d, int *w, int *h)
 {
     struct lay L;
     layout(0, &L);
-    if (page < 2) {
-        *x = 3 + i * 78;
-        *d = 150;
-        *w = 76;
-        *h = L.foot_y - 4 - 150;
+    *x = 3 + v * 38;
+    *d = LU_PLATE;
+    *w = 36;
+    *h = L.foot_y - 4 - LU_PLATE;
+}
+
+/* the track of a slider: where 0 and 1000 are (x for horizontal ones, d for vertical ones) */
+static void lu_track(const struct lu_spec *s, int *lo, int *hi)
+{
+    if (s->style == LU_ST_V) {
+        *lo = s->d + s->h - 5;
+        *hi = s->d + 12;
     } else {
-        *x = 3 + i * 38;
-        *d = L.foot_y - 20;
-        *w = 36;
-        *h = 18;
+        *lo = s->x + 4;
+        *hi = s->x + s->w - 5;
     }
 }
 
@@ -79,113 +95,126 @@ static void lu_pct(char **q, int v)
     *q = put_uint(*q, (unsigned)((v + 5) / 10));
 }
 
-static void lu_plate_draw(int page, int i)
+static void lu_draw_slider(const struct lu_spec *s)
 {
-    int x, d, w, h, k = page < 2 ? page * 4 + i : i, on = lira_ui_key_get(k);
-    char b[4], *q;
-    lu_plate_rect(page, i, &x, &d, &w, &h);
-    box(x + 1, d + 1, w - 2, h - 2, on ? C_TEAL : C_BG);
-    frame(x, d, w, h, on ? C_CYAN : C_RAIL, 1);
-    q = put_uint(b, (unsigned)(k + 1));
+    int v = lira_ui_get(s->id), lo, hi, col = s->col, pos;
+    char b[8], *q = b;
+    lu_track(s, &lo, &hi);
+    lu_pct(&q, v);
     *q = 0;
-    if (page < 2)
-        text_c(x, d + h / 2 - 8, w, b, on ? C_WHITE : C_LIGHT, 2);
-    else
-        text_c(x, d + 5, w, b, on ? C_WHITE : C_LIGHT, 1);
+    box(s->x, s->d, s->w, s->h, C_BG);
+    if (s->style == LU_ST_V) {
+        int cx = s->x + s->w / 2;
+        pos = lo + (hi - lo) * v / 1000;
+        for (int t = 0; t <= 4; t++)
+            box(cx - 3, lo + (hi - lo) * t / 4, 7, 1, C_RAIL);
+        vline(cx, hi, lo - hi + 1, C_RAIL);
+        box(cx, pos, 2, lo - pos + 1, col);                       /* the track colour up to the handle */
+        dot(cx, pos, C_WHITE);
+        text_c(s->x, s->d + 1, s->w, b, C_LIGHT, 1);
+    } else {
+        int cy = s->d + s->h - 4;
+        pos = lo + (hi - lo) * v / 1000;
+        for (int t = 0; t <= 4; t++)
+            box(lo + (hi - lo) * t / 4, cy - 2, 1, 5, C_RAIL);
+        hline(lo, cy, hi - lo + 1, C_RAIL);
+        box(lo, cy, pos - lo + 1, 2, col);
+        dot(pos, cy, C_WHITE);
+        text(s->x + 2, s->d + 1, s->name, C_LIGHT, 1);
+        text(s->x + s->w - 2 - text_w(b, 1), s->d + 1, b, C_WHITE, 1);
+    }
+    if (s->knob >= 0)
+        frame(s->x, s->d, s->w, s->h, C_PINK, 1);
 }
 
 static void draw_lira(void)
 {
     struct lay L;
     layout(0, &L);
-    int page = lira_ui_sel(-1) & 3, cw = (P->w - 9) / 2, rx = 3 + cw + 3;
+    int sel = lira_ui_sel(-1), page = sel & 15, bank = (sel >> 4) & 1, cw = (P->w - 9) / 2, rx = 3 + cw + 3;
     struct lu_spec sp[LU_MAXS];
-    int n = lu_specs(page, sp);
-    char b[24], *q;
+    int n = lu_specs(sel, sp);
+    char b[24];
     box(1, 1, P->w - 2, TOPBAR, C_BG);
     text(6, 4, "LIRA-8", C_CYAN, 1);
-    text(52, 4, page < 2 ? "BACK = VOICES 1-4 / 5-8" : "BACK = VOICES", C_GREY, 1);
+    text(52, 4, page == 0 ? (bank ? "ENCODERS: TUNE 5-8 (BACK: 1-4)" : "ENCODERS: TUNE 1-4 (BACK: 5-8)") :
+                            page == 1 ? "ENCODERS: TIME 1/2 FEEDBACK MIX" : "ENCODERS: HOLD PITCH", C_GREY, 1);
     int mom = lira_ui_momentary(0);
     frame(P->w - 50, 2, 46, TOPBAR - 2, C_RAIL, 1);
     text_c(P->w - 50, 4, 46, mom ? "HOLD" : "LATCH", C_YELLOW, 1);
     box(1, TOPBAR + 2, P->w - 2, L.foot_y - TOPBAR - 3, C_BG);
 
-    for (int i = 0; i < n; i++) {
-        const struct lu_spec *s = &sp[i];
-        int v = lira_ui_get(s->id), fw = (s->w - 2) * v / 1000, big = s->knob >= 0;
-        box(s->x + 1, s->d + 1, fw, s->h - 2, C_TEAL);
-        box(s->x + 1 + fw, s->d + 1, 2, s->h - 2, C_WHITE);
-        frame(s->x, s->d, s->w, s->h, big ? C_PINK : C_RAIL, 1);
-        text(s->x + 4, s->d + (big ? 4 : (s->h - 8) / 2), s->name, C_WHITE, 1);
-        q = b;
-        lu_pct(&q, v);
-        *q = 0;
-        if (big)
-            text(s->x + 4, s->d + s->h - 19, b, C_WHITE, 2);
-        else
-            text(s->x + s->w - 4 - text_w(b, 1), s->d + (s->h - 8) / 2, b, C_LIGHT, 1);
-    }
-    if (page < 2) {
-        for (int g = 0; g < 2; g++) {
-            int x0 = g ? rx : 3, p = page * 2 + g, t = lira_ui_get(100 + p), s = lira_ui_get(104 + p), hw = (cw - 4) / 2;
-            frame(x0, 18, hw, 16, s == 1 ? C_RAIL : C_CYAN, 1);
-            text_c(x0, 22, hw, lu_src[s], s == 1 ? C_GREY : C_WHITE, 1);
-            frame(x0 + hw + 4, 18, hw, 16, t == 2 ? C_GREEN : t == 1 ? C_YELLOW : C_RAIL, 1);
-            text_c(x0 + hw + 4, 22, hw, lu_touch[t], t == 0 ? C_LIGHT : C_WHITE, 1);
+    for (int i = 0; i < n; i++)
+        lu_draw_slider(&sp[i]);
+    if (page == 0) {
+        for (int p = 0; p < 4; p++) {
+            int x = 3 + p * 78, t = lira_ui_get(100 + p), s = lira_ui_get(104 + p), col = lu_pair_col[p];
+            frame(x, 17, 76, 15, s == 1 ? C_RAIL : col, 1);
+            text_c(x, 21, 76, lu_src[s], s == 1 ? C_GREY : C_WHITE, 1);
+            frame(x, 34, 76, 15, t == 0 ? C_RAIL : col, 1);
+            text_c(x, 38, 76, lu_touch[t], t == 0 ? C_LIGHT : t == 1 ? C_YELLOW : C_GREEN, 1);
         }
-        for (int i = 0; i < 4; i++)
-            lu_plate_draw(page, i);
-    } else {
-        for (int i = 0; i < 8; i++)
-            lu_plate_draw(page, i);
+    }
+    (void)rx;
+    for (int v = 0; v < 8; v++) {                                 /* the plates */
+        int x, d, w, h, on = lira_ui_key_get(v), col = lu_pair_col[v >> 1];
+        char *q = b;
+        lu_plate_rect(v, &x, &d, &w, &h);
+        box(x, d, w, h, on ? col : C_BG);
+        frame(x, d, w, h, col, 1);
+        q = put_uint(q, (unsigned)(v + 1));
+        *q = 0;
+        text_c(x, d + h / 2 - 8, w, b, on ? C_BLACK : col, 2);
     }
 }
 
-/* the footer: the four page tabs (the stock FX button sits at the right, drawn by the caller) */
+/* the footer: the page tabs (the stock FX button sits at the right, drawn by the caller) */
 static void lira_footer(const struct lay *L)
 {
-    int page = lira_ui_sel(-1) & 3;
-    for (int i = 0; i < 4; i++) {
-        frame(3 + 62 * i, L->foot_y + 2, 60, FOOT - 3, page == i ? C_CYAN : C_RAIL, 1);
-        text_c(3 + 62 * i, L->foot_y + 4, 60, lu_tabname[i], page == i ? C_CYAN : C_GREY, 1);
+    int page = lira_ui_sel(-1) & 15;
+    for (int i = 0; i < 3; i++) {
+        frame(3 + 82 * i, L->foot_y + 2, 80, FOOT - 3, page == i ? C_CYAN : C_RAIL, 1);
+        text_c(3 + 82 * i, L->foot_y + 4, 80, lu_tabname[i], page == i ? C_CYAN : C_GREY, 1);
     }
 }
 
-static void lira_page_set(int p)
+static void lira_page_set(int p, int bank)
 {
-    lira_ui_sel(p & 3);
+    lira_ui_sel((p & 15) | (bank & 1) << 4);
     P->entered = 0;
     P->sig = 0;
 }
 
 static int lira_footer_hit(int x)
 {
-    int i = (x - 3) / 62;
-    if (x < 3 || i > 3 || (x - 3) % 62 >= 60)
+    int i = (x - 3) / 82;
+    if (x < 3 || i > 2 || (x - 3) % 82 >= 80)
         return 0;
-    lira_page_set(i);
+    lira_page_set(i, (lira_ui_sel(-1) >> 4) & 1);
     return 1;
 }
 
-/* BACK: between the two voice pages (from the other pages back to VOICE 1-4) */
+/* BACK: the other four voices for the encoders (from the other pages: back to FM) */
 static void lira_back(void)
 {
-    int p = lira_ui_sel(-1) & 3;
-    lira_page_set(p == 0 ? 1 : 0);
+    int sel = lira_ui_sel(-1), page = sel & 15, bank = (sel >> 4) & 1;
+    lira_page_set(0, page == 0 ? !bank : bank);
 }
 
-static int lu_value(const struct lu_spec *s, int x)
+static int lu_value(const struct lu_spec *s, int x, int d)
 {
-    int v = (x - s->x - 1) * 1000 / (s->w > 2 ? s->w - 2 : 1);
+    int lo, hi;
+    lu_track(s, &lo, &hi);
+    int p = s->style == LU_ST_V ? d : x, v = (p - lo) * 1000 / (hi - lo);
     return v < 0 ? 0 : v > 1000 ? 1000 : v;
 }
 
 /* kind 0 down, 1 move, 2 up; x / d in page pixels. */
 static void lira_touch(int kind, int id, int x, int d)
 {
-    int page = lira_ui_sel(-1) & 3, cw = (P->w - 9) / 2, rx = 3 + cw + 3;
+    int sel = lira_ui_sel(-1), page = sel & 15;
     struct lu_spec sp[LU_MAXS];
-    int n = lu_specs(page, sp);
+    int n = lu_specs(sel, sp);
     if (kind == 2) {
         if (lira_ui_drag(id, 1, 0, 0, 0, 0) == 1)
             lira_ui_key(lira_ui_drag(id, 2, 0, 0, 0, 0), 0);
@@ -196,7 +225,7 @@ static void lira_touch(int kind, int id, int x, int d)
         if (lira_ui_drag(id, 1, 0, 0, 0, 0) == 3) {
             int i = lira_ui_drag(id, 2, 0, 0, 0, 0);
             if (i < n)
-                lira_ui_set(sp[i].id, lu_value(&sp[i], x));
+                lira_ui_set(sp[i].id, lu_value(&sp[i], x, d));
         }
         return;
     }
@@ -206,23 +235,23 @@ static void lira_touch(int kind, int id, int x, int d)
             lira_ui_momentary(1);
         return;
     }
-    for (int i = 0; i < (page < 2 ? 4 : 8); i++) {                /* plates */
-        int px, pd, pw, ph, k = page < 2 ? page * 4 + i : i;
-        lu_plate_rect(page, i, &px, &pd, &pw, &ph);
-        if (x >= px && x < px + pw && d >= pd && d < pd + ph) {
+    for (int v = 0; v < 8; v++) {                                 /* plates */
+        int px, pd, pw, ph;
+        lu_plate_rect(v, &px, &pd, &pw, &ph);
+        if (x >= px - 1 && x < px + pw + 1 && d >= pd && d < pd + ph + 4) {
             if (lira_ui_momentary(0)) {
-                lira_ui_key(k, 1);
-                lira_ui_drag(id, 0, 1, k, 0, 0);
+                lira_ui_key(v, 1);
+                lira_ui_drag(id, 0, 1, v, 0, 0);
             } else {
-                lira_ui_key(k, !lira_ui_key_get(k));
+                lira_ui_key(v, !lira_ui_key_get(v));
             }
             return;
         }
     }
-    if (page < 2 && d >= 18 && d < 34) {                          /* FM source / touch buttons */
-        int g = x >= rx ? 1 : 0, p = page * 2 + g, x0 = g ? rx : 3, hw = (cw - 4) / 2;
-        if (x >= x0 && x < x0 + cw) {
-            if (x < x0 + hw + 2)
+    if (page == 0 && d >= 17 && d < 49) {                         /* FM source / touch buttons of the four pairs */
+        int p = (x - 3) / 78;
+        if (x >= 3 && p < 4) {
+            if (d < 33)
                 lira_ui_set(104 + p, (lira_ui_get(104 + p) + 1) & 7);
             else
                 lira_ui_set(100 + p, (lira_ui_get(100 + p) + 1) % 3);
@@ -231,17 +260,17 @@ static void lira_touch(int kind, int id, int x, int d)
     }
     for (int i = 0; i < n; i++)
         if (x >= sp[i].x - 2 && x < sp[i].x + sp[i].w + 2 && d >= sp[i].d - 1 && d < sp[i].d + sp[i].h + 1) {
-            lira_ui_set(sp[i].id, lu_value(&sp[i], x));
+            lira_ui_set(sp[i].id, lu_value(&sp[i], x, d));
             lira_ui_drag(id, 0, 3, i, 0, 0);
             return;
         }
 }
 
-/* The four encoders turn the page's four big sliders (two left, two right, as they sit). */
+/* The four encoders turn the sliders with pink frames. */
 static void lira_knob(int knob, int counts)
 {
     struct lu_spec sp[LU_MAXS];
-    int n = lu_specs(lira_ui_sel(-1) & 3, sp);
+    int n = lu_specs(lira_ui_sel(-1), sp);
     for (int i = 0; i < n; i++)
         if (sp[i].knob == knob) {
             int d = counts / 8;
