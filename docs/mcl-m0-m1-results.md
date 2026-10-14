@@ -173,3 +173,10 @@ The result is on the version label after ` Mok`: `L+` / `L-` / `L?`, `D<kit>` / 
 Emulator-proven: hooks chain correctly with the real stock receive code, ring wrap over 40 KB, real-time insertion, ring-full refusal, claim rules, interrupt pass-through, CR1 bits kept, the self test against a
 loop cable and a modelled Machinedrum (including a dump that differs or never ends), the blocking driver's timing. Not provable without hardware: real USART6 timing and FIFO behaviour, the HAL's CR1 writes,
 that the real Machinedrum answers as modelled.
+
+### M3 result on the unit (first report)
+- **Loop cable (out -> in): `L+`.** The 103-byte frame went out of USART6 through MCL's TX ring and interrupt wrapper and came back through the RX tap byte-exact, on hardware.
+  So the claim, the TX engine and the RX tap work on the real unit.
+- **Machinedrum: `L- D-`** (no answer to the status request). Not yet a software verdict: the user is unsure both TRS-to-DIN cables are the right type (the one on MIDI in is a 1010 Music one, known good).
+  The stock firmware has no TRS Type A/B setting (strings: only `midioutchan`, `midithrumodetype`, `MIDI In Thru`), so the cable on MIDI out must match what the Blackbox drives.
+  Checks without new code: (1) MD playing with MIDI clock out on: the CLK sheet (F8 counter) rises -> MD OUT cable and direction are fine; (2) put the known-good 1010 cable on the Blackbox OUT -> MD IN and repeat the test.
