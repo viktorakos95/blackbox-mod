@@ -150,6 +150,9 @@ struct smscr {
     uint32_t shed_t;
     double prev;                            /* the clock position of the previous block (for the grid lines) */
     uint8_t syncb, _sx[3];                  /* unused (was BLOCK / EXACT: grid lines are always at their exact frame) */
+    uint32_t pr, pg, pb, pm;                /* cycles this report: voices (render), grains, reading + interpolating (inside both), the mix and the track strips */
+    uint16_t shr, shg, shb, shm;            /* the last report of those, per mille of the audio block period */
+    uint8_t prof, _pf[3];                   /* the top bar shows them instead of V / G (tap it) */
     uint16_t gnow, gacc;                    /* grains sounding across all the tracks (last block / this block so far) */
 };
 

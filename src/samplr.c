@@ -1855,7 +1855,16 @@ static inline float hermite(float y0, float y1, float y2, float y3, float x)
  * the pool lives in external memory). Interpolation: a plain copy at normal pitch; cubic (Catmull-Rom) up to the original speed; cubic averaged
  * over two taps a quarter step either side of the position (a cheap low-pass against aliasing) up to 3x; linear beyond that (cost).
  * 0 when a block is not in the pool yet (it is asked for, at most every 128 ms). Outside the sample it is silence; mono: right = left. */
+static int sample_block_(struct sm *s, int32_t ip, float fr, float r, int m);
 static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
+{
+    uint32_t c0 = DWT_CYCCNT;
+    int ok = sample_block_(s, ip, fr, r, m);
+    s->sc->pb += DWT_CYCCNT - c0;
+    return ok;
+}
+
+static int sample_block_(struct sm *s, int32_t ip, float fr, float r, int m)
 {
     int mono = s->mono || s->sc->fmono;                          /* (the grains read one channel when SAMPLR has to hold back) */
     int32_t len = s->len;
@@ -2581,8 +2590,12 @@ static int run_voices(struct sm *s, float *bl, float *br, int n)
     seq_run(s, n);
     int nv = 0, ng = 0;
     for (int f = 0; f < SM_NV; f++) {
+        uint32_t c0 = DWT_CYCCNT;
         render(s, &s->v[f], bl, br, n);
+        uint32_t c1 = DWT_CYCCNT;
         grains(s, &s->v[f], bl, br, n);
+        s->sc->pr += c1 - c0;
+        s->sc->pg += DWT_CYCCNT - c1;
         nv += s->v[f].on;
         for (int i = 0; i < SM_GRAINS; i++)
             ng += s->v[f].g[i].on;
@@ -2648,6 +2661,7 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         gest_run(q, n);
         sweep(q);
         int busy = run_voices(q, tl, tr, n);
+        uint32_t cm = DWT_CYCCNT;
         if (!busy && q->flt.mix > 0.f) {                          /* (the filter's tail after the last note) */
             for (int i = 0; i < n; i++)
                 tl[i] = tr[i] = 0.f;
@@ -2693,6 +2707,7 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         q->peak = pk;
         fed |= send;
         q->tick++;
+        s->sc->pm += DWT_CYCCNT - cm;
     }
     s->sc->prev = looper_clock_now();                             /* (for the next block's grid lines) */
     s->sph += (float)n;                                           /* the free-running grid (used while the sequencer is stopped) */
@@ -2711,6 +2726,15 @@ int samplr_run(float *bl, float *br, int n, float **snd)
             s->t_per = per;
             s->t_avg_shown = (uint16_t)(s->t_sum / (s->t_psum / 1000u + 1u));
             s->t_peak_shown = (uint16_t)(s->t_pmax / (per / 1000u + 1u) > 9990u ? 9990u : s->t_pmax / (per / 1000u + 1u));
+            {
+                struct smscr *sc = s->sc;
+                uint32_t d = s->t_psum / 1000u + 1u;
+                sc->shr = (uint16_t)(sc->pr / d);
+                sc->shg = (uint16_t)(sc->pg / d);
+                sc->shb = (uint16_t)(sc->pb / d);
+                sc->shm = (uint16_t)(sc->pm / d);
+                sc->pr = sc->pg = sc->pb = sc->pm = 0;
+            }
             s->t_sum = s->t_psum = s->t_pmax = 0;
             s->t_n = 0;
         }
@@ -2769,6 +2793,7 @@ uint32_t samplr_sig(void)
         if (v->g_on)
             h = h * 31u + (uint32_t)(v->g_centre / (s->len / 150 + 1)) + (uint32_t)v->g_size;
     }
+    h = h * 31u + (uint32_t)s->sc->prof + ((uint32_t)s->sc->shr + s->sc->shg + s->sc->shb + s->sc->shm) / 8u;
     for (int q = 0; q < SM_TRACKS; q++)                           /* the track dots */
         h = h * 31u + (uint32_t)samplr_track_info(q) + (uint32_t)(s->tno == q) * 64u;
     return h;

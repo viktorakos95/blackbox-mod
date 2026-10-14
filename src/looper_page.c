@@ -1165,12 +1165,22 @@ static void draw_sm_top(struct sm *s, const char *info)
     *q++ = ' ';
     *q++ = 'S';
     q = put_uint(q, (s->t_avg_shown + 5u) / 10u);
-    *q++ = ' ';
-    *q++ = 'V';
-    q = put_uint(q, s->n_voices);
-    *q++ = ' ';
-    *q++ = 'G';
-    q = put_uint(q, s->n_grains);
+    if (s->sc->prof) {                                            /* tap the top bar: where SAMPLR's time goes (percent of the audio block): voices, grains, reading + interpolating (inside both), mix + strips */
+        static const char lab[4] = {'R', 'G', 'B', 'M'};
+        const uint16_t v4[4] = {s->sc->shr, s->sc->shg, s->sc->shb, s->sc->shm};
+        for (int i = 0; i < 4; i++) {
+            *q++ = ' ';
+            *q++ = lab[i];
+            q = put_uint(q, (v4[i] + 5u) / 10u);
+        }
+    } else {
+        *q++ = ' ';
+        *q++ = 'V';
+        q = put_uint(q, s->n_voices);
+        *q++ = ' ';
+        *q++ = 'G';
+        q = put_uint(q, s->n_grains);
+    }
     if (s->sc->shed) {                                            /* SAMPLR is holding back (the audio task is near its limit) */
         *q++ = ' ';
         *q++ = '!';
@@ -1489,6 +1499,12 @@ static int sm_touch(int kind, int id, int x, int d)
                 s->dmoved[k] = 3;
             }
         }
+        P->sig = 0;
+        return 1;
+    }
+    if (d < ty - 2) {                                             /* the top bar: tap = V G / where the time goes */
+        if (kind == 0 && s)
+            s->sc->prof ^= 1;
         P->sig = 0;
         return 1;
     }

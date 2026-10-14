@@ -368,3 +368,9 @@ takes three overdub layers.
   removed by them (EXACT only). Everything of this branch's sync from build 31 on follows their version.
 - Looper defaults: SYNC on, QUANT 1 BAR, and the QUANT choices are listed 1 BAR, 1/4, 1/8, 1/16 (option values 0..3 in that order; they were 1/4 1/8 1/16 1 BAR). The test fixtures set
   SYNC off / QUANT 1/16 after boot for the old checks; one test checks the fresh defaults.
+
+## Build 35 (where the time goes)
+- Report: arp + slicer + grain + gesture records reach !3 (C 85/100, S ~42), and the DRONE-8 alone takes C 90/100: the two machines cannot run together as they are.
+- Tap the top bar of the SAMPLR page: V / G are replaced by R, G, B, M = percent of the audio block spent in the voices (render), the grains, reading + interpolating the sample (inside both),
+  and the mix + track strips (`pr pg pb pm` in the scratch, DWT cycles around the calls, updated once a second). Tap again to go back. The numbers say what to optimize on the unit itself
+  (the emulator counts instructions, not memory waits).
