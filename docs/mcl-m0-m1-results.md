@@ -102,3 +102,8 @@ How to read the outcome:
 
 Emulator checks (`test_mclpad.py`): image size and layout, no repeated pattern words, stock bytes untouched, progress -> `POK`, a flipped word and an erased tail give the right `Fxxxx`,
 a new build id restarts, flag 0 never reads the pad. Not provable in the emulator: that the updater writes the image and flash returns the data.
+
+### Result on the unit
+**POK** (user report): the 1,310,720-byte image was written and the whole pad `0x08140000..0x08180000` read back correctly. Flash window is now proven to `0x08180000`
+(`src/cave.ld` `LENGTH 0x8E188`, 581,000 B total, ~470 KB free beside the ~110 KB in use). Not yet shown: code actually *executing* from the new sectors (the first build whose
+cave passes `0x08140000` will do it; same flash, so no surprise expected). M2 can now size MCL against ~470 KB, so the SD-loaded module is not needed for size.
