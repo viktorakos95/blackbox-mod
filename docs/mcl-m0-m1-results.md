@@ -215,3 +215,7 @@ bytes not leaving the UART / not reaching the monitor). The next image runs the 
 Exactly the expected counts: the TIM6 interrupt fired 96 times in 250 ms (the ideal count at 120.0 BPM, 192 PPQN), all 96 ticks were counted and 12 clock bytes were written to USART6. **The timer clock source and the real-time TX path work on the unit.**
 The CLK sheet still showed no F8 (BPM 0, ARR 0) with the loop cable and Receive = Off. Suspect: Receive = Off may stop the stock UART receive altogether (the M3 loop test `L+` was run with the default setting), so neither the monitor nor MCL's tap sees the loop-back.
 Next image replaces `i` by `r` (bytes the receive tap saw on the jack in the same 250 ms: 12 expected with a loop cable), and the loop test is to be repeated with Receive = MIDI In or All (harmless: the stock sequencer then just follows our 120 BPM).
+
+### M4 third report: `r0`
+With Receive = MIDI In and the loop cable: `r0` (the receive tap saw none of the 12 clock bytes), and the CLK sheet still empty. TX is proven (`x12`), so either the loop is not closed in this setup or single real-time bytes do not arrive while the
+frame test (M3, `L+`) did. The next M4 image runs the proven 103-byte loop frame first and shows `L+` / `L-` before the clock numbers (` Mok L+ t96 r12` expected), which separates "cable / setting" from "clock bytes only".

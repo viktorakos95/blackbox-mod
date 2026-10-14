@@ -218,7 +218,7 @@ static uint8_t m3_ran;
 
 #ifdef M4_TEST
 static uint8_t m4_ran;
-static uint32_t m4_t, m4_x, m4_r;                   /* after 250 ms of the clock: ticks, bytes written to the UART, bytes received from the jack */
+static uint32_t m4_t, m4_r, m4_l;                   /* loop-back frame result (1 = back, 2 = not, 3 = no claim); after 250 ms of the clock: ticks, bytes received from the jack */
 #endif
 
 /* Runs the blocking M3 hardware test once, from a label constructor (GUI task, never the audio task). No-op in normal images. */
@@ -241,14 +241,25 @@ extern "C" void mcl_gui(void)
     if (!m4_ran && s4[0] == BKP_MAGIC && (s4[1] & 0xff) == ST_OK) {
         m4_ran = 1;
         bb_midi_claim(1);
-        if (bb_midi_owner() && bb_clock_init()) {
-            bb_midi_filter_clock(1);
-            bb_clock_start(1200, 0);
+        if (bb_midi_owner()) {
+            /* 1. the cable check, with the code that already worked on the unit: one 103-byte frame out and back (150 ms time-out) */
             uint32_t c0 = DWT_CYCCNT;
-            while (DWT_CYCCNT - c0 < 100000000u) {}       /* 250 ms at 400 MHz: ~96 ticks, 12 clock bytes expected */
-            m4_t = bb_clock_ticks();
-            m4_x = bb_midi_stat(2);
-            m4_r = bb_midi_stat(0);
+            bb_m3_reset();
+            bb_m3_loop_only(1);
+            while (!bb_m3_step((DWT_CYCCNT - c0) / 400u))
+                if ((DWT_CYCCNT - c0) / 400u > 1000000u)
+                    break;
+            m4_l = bb_m3_result()->loop;
+            /* 2. the clock for 250 ms: ~96 ticks and 12 clock bytes expected, and with a closed loop the same 12 coming back */
+            uint32_t r0 = bb_midi_stat(0);
+            if (bb_clock_init()) {
+                bb_midi_filter_clock(1);
+                bb_clock_start(1200, 0);
+                c0 = DWT_CYCCNT;
+                while (DWT_CYCCNT - c0 < 100000000u) {}       /* 250 ms at 400 MHz */
+                m4_t = bb_clock_ticks();
+                m4_r = bb_midi_stat(0) - r0;
+            }
         }
     }
 #endif
@@ -303,11 +314,14 @@ extern "C" char *mcl_status_text(char *p, uint32_t room)
     if (s[0] != BKP_MAGIC || (s[1] & 0xff) != ST_OK) {        /* no booted runtime: the clock variables in SDRAM are garbage */
     } else if (bb_clock_running()) {                      /* the timer clock is running (M4 image: 120.0 BPM, fixed) */
 #ifdef M4_TEST
-        /* ' t96 x12 r12': ticks, bytes the UART interrupt wrote, bytes the receive tap saw on the jack, all after 250 ms of the clock. 96 / 12 / 12 with a loop cable. */
+        /* ' L+ t96 r12': the loop-back frame came back (L+; L- no, L? port not claimed), then after 250 ms of the clock: ticks and the clock bytes the receive tap saw on the jack. */
         char *w = q;
-        const uint32_t v[3] = {m4_t, m4_x, m4_r};
-        const char tag[3] = {'t', 'x', 'r'};
-        for (int k = 0; k < 3; k++) {
+        *w++ = ' ';
+        *w++ = 'L';
+        *w++ = m4_l == 1 ? '+' : m4_l == 3 ? '?' : '-';
+        const uint32_t v[2] = {m4_t, m4_r};
+        const char tag[2] = {'t', 'r'};
+        for (int k = 0; k < 2; k++) {
             *w++ = ' ';
             *w++ = tag[k];
             uint32_t n = v[k] > 999 ? 999 : v[k];

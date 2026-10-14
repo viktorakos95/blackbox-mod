@@ -160,19 +160,20 @@ for _ in range(8):
 r.isr()
 check("an F8 queued in the middle of a 1,000-byte message leaves at the next byte boundary (before the rest)", r.sent[before] == 0xF8 and r.sent[:before] == [0x55] * before, r.sent[before - 1:before + 2])
 
-# --- M4 test image: the clock starts by itself at the first label, runs 250 ms and reports i / t / x on the label
+# --- M4 test image: loop-back frame first (cable check), then the clock for 250 ms; the label reports L, t and r
 r = rig(m4=True)
 r.e.uc.mem_write(0x24061000, bytes(40))
-r.e.call(r.b["mcl_gui"], count=60_000_000)
+r.e.call(r.b["mcl_gui"], count=80_000_000)
 r.e.call(r.b["mcl_status_text"], 0x24061000, 30)
-check("M4 image: mcl_gui claims the port, calibrates, starts 120.0 BPM and filters the stock clock; with no timer interrupt modelled the label reads ' Mok t0 x0 r0'",
-      r.e.cstr(0x24061000) == "Mok t0 x0 r0" and r.call("bb_clock_running") == 1 and r.call("bb_midi_owner") == 1, r.e.cstr(0x24061000))
-check("... the label (up to 15 characters) fits the room left on the version label", len(r.e.cstr(0x24061000)) <= 15)
-for name, v in (("_ZL4m4_t", 96), ("_ZL4m4_x", 12), ("_ZL4m4_r", 12)):
+check("M4 image, nothing looped back and no timer interrupt modelled: label ' Mok L- t0 r0', clock running, port claimed",
+      r.e.cstr(0x24061000) == "Mok L- t0 r0" and r.call("bb_clock_running") == 1 and r.call("bb_midi_owner") == 1, r.e.cstr(0x24061000))
+r.pump()
+check("... the 103-byte loop frame was sent first (F0 7D 'M' 'C' 'L' ... F7), nothing else queued", len(r.sent) == 103 and r.sent[:5] == [0xF0, 0x7D, 0x4D, 0x43, 0x4C] and r.sent[102] == 0xF7, (len(r.sent), r.sent[:6]))
+for name, v in (("_ZL4m4_l", 1), ("_ZL4m4_t", 96), ("_ZL4m4_r", 12)):
     r.e.w32(r.b[name], v)
 r.e.uc.mem_write(0x24061000, bytes(40))
 r.e.call(r.b["mcl_status_text"], 0x24061000, 30)
-check("with the expected counts (96 ticks, 12 bytes written, 12 received) the label reads 'Mok t96 x12 r12', 15 characters", r.e.cstr(0x24061000) == "Mok t96 x12 r12" and len(r.e.cstr(0x24061000)) == 15, r.e.cstr(0x24061000))
+check("with a closed loop and the expected counts the label reads 'Mok L+ t96 r12' (14 characters)", r.e.cstr(0x24061000) == "Mok L+ t96 r12", r.e.cstr(0x24061000))
 
 build(False)
 print(f"\n{fails} failure(s)")

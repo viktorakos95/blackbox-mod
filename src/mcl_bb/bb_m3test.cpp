@@ -13,6 +13,7 @@
 
 enum { S_START, S_LOOP_WAIT, S_MD_SEND, S_MD_WAIT, S_DUMP_SEND, S_DUMP_WAIT, S_BURST, S_DONE };
 static uint8_t state;
+static uint8_t loop_only;                       /* 1: stop after the loop-back frame (the M4 image uses it to check the cable first) */
 static uint8_t dump_n;
 static uint32_t t0;
 static m3_result res;
@@ -81,6 +82,8 @@ static int md_frame(uint8_t id)
 
 extern "C" {
 
+void bb_m3_loop_only(int on) { loop_only = on ? 1u : 0u; }
+
 void bb_m3_reset(void)
 {
     state = S_START;
@@ -129,12 +132,12 @@ int bb_m3_step(uint32_t now)
                 same = frame[i] == loop_frame[i];
             if (same) {
                 res.loop = 1;
-                state = S_MD_SEND;
+                state = loop_only ? S_DONE : S_MD_SEND;
             }
         }
         if (state == S_LOOP_WAIT && now - t0 > 150000u) {
             res.loop = 2;
-            state = S_MD_SEND;
+            state = loop_only ? S_DONE : S_MD_SEND;
         }
         return 0;
     }

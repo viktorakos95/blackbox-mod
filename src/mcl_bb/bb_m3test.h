@@ -14,6 +14,7 @@ struct m3_result {
 };
 extern "C" {
 void bb_m3_reset(void);
+void bb_m3_loop_only(int on);                    /* 1: the test ends after the loop-back frame */
 int bb_m3_step(uint32_t now_us);                 /* drive the test; returns 1 when finished. now_us: any monotonic microsecond clock */
 const struct m3_result *bb_m3_result(void);
 }
