@@ -12,6 +12,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "bb_m3test.h"
+#include "bb_midi.h"
+
 extern "C" {
 extern uint32_t __data_lma[], __data_start[], __data_end[], __bss_start[], __bss_end[], __heap_start[], __heap_limit[];
 typedef void (*ctor_t)(void);
@@ -177,6 +180,7 @@ static uint32_t selftest(void)
 extern "C" uint32_t mcl_boot(void)
 {
     volatile uint32_t *s = BKP;
+    bb_midi_down();                                      /* hooks off before .bss is touched */
     s[0] = BKP_MAGIC;
     s[2] = s[3] = 0;
     if (ALLOC_TOP_INIT != RAM_ORG || ALLOC_TOP > RAM_ORG) {
@@ -196,6 +200,8 @@ extern "C" uint32_t mcl_boot(void)
     for (ctor_t *c = __init_array_start; c < __init_array_end; c++, n++)
         (*c)();
     uint32_t bad = selftest();
+    if (!bad)
+        bb_midi_init();                                  /* the MIDI hooks go live last */
     s[2] = n;
     s[3] = (uint32_t)((uintptr_t)__bss_end - (uintptr_t)__bss_start);
     uint32_t st = bad ? ST_SELFTEST : ST_OK;
@@ -203,33 +209,79 @@ extern "C" uint32_t mcl_boot(void)
     return st;
 }
 
-/* "Mok" or "M<code>" (+ failed test bits as hex) for the version label; at most 6 characters. Returns the end of the text. */
-extern "C" char *mcl_status_text(char *p)
+#ifdef M3_TEST
+#define DWT_CYCCNT (*(volatile uint32_t *)0xe0001004u)
+static uint8_t m3_ran;
+#endif
+
+/* Runs the blocking M3 hardware test once, from a label constructor (GUI task, never the audio task). No-op in normal images. */
+extern "C" void mcl_gui(void)
 {
+#ifdef M3_TEST
     volatile uint32_t *s = BKP;
-    *p++ = 'M';
+    if (m3_ran || s[0] != BKP_MAGIC || (s[1] & 0xff) != ST_OK)
+        return;
+    m3_ran = 1;
+    uint32_t c0 = DWT_CYCCNT;
+    bb_m3_reset();
+    while (!bb_m3_step((DWT_CYCCNT - c0) / 400u))      /* ~400 MHz core: cycles / 400 = microseconds */
+        if ((DWT_CYCCNT - c0) / 400u > 4000000u)
+            break;
+#endif
+}
+
+/* "Mok" or "M<code>" (+ failed test bits as hex), then the M3 test result if this image ran it. Writes at most `room` characters;
+ * returns the end of the text. */
+extern "C" char *mcl_status_text(char *p, uint32_t room)
+{
+    char t[24];
+    char *q = t;
+    volatile uint32_t *s = BKP;
+    *q++ = 'M';
     if (s[0] != BKP_MAGIC) {
-        *p++ = '-';
-        return p;
+        *q++ = '-';
+    } else {
+        uint32_t st = s[1] & 0xff, bad = s[1] >> 8;
+        if (st == ST_OK) {
+            *q++ = 'o';
+            *q++ = 'k';
+        } else {
+            *q++ = (char)('0' + st);
+            if (bad) {
+                *q++ = "0123456789abcdef"[(bad >> 4) & 15];
+                *q++ = "0123456789abcdef"[bad & 15];
+            }
+        }
     }
-    uint32_t st = s[1] & 0xff, bad = s[1] >> 8;
-    if (st == ST_OK) {
-        *p++ = 'o';
-        *p++ = 'k';
-        return p;
+#ifdef M3_TEST
+    const m3_result *r = bb_m3_result();
+    if (r->loop || r->md) {
+        *q++ = ' ';
+        *q++ = 'L';
+        *q++ = r->loop == 1 ? '+' : r->loop == 3 ? '?' : '-';
+        *q++ = ' ';
+        *q++ = 'D';
+        if (r->md == 1) {
+            *q++ = (char)('0' + r->kit / 10);
+            *q++ = (char)('0' + r->kit % 10);
+            *q++ = ' ';
+            *q++ = 'K';
+            *q++ = r->dump == 1 ? '+' : '-';
+        } else {
+            *q++ = r->md == 3 ? '?' : '-';
+        }
     }
-    *p++ = (char)('0' + st);
-    if (bad) {
-        *p++ = "0123456789abcdef"[(bad >> 4) & 15];
-        *p++ = "0123456789abcdef"[bad & 15];
-    }
+#endif
+    for (char *c = t; c < q && room; c++, room--)
+        *p++ = *c;
     return p;
 }
 
 struct mcl_entry {
     uint32_t magic;                                   /* "MCLB" */
-    uint32_t abi;
+    uint32_t abi;                                     /* 2: status(p, room), gui() */
     uint32_t (*boot)(void);
-    char *(*status)(char *);
+    char *(*status)(char *, uint32_t);
+    void (*gui)(void);
 };
-extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 1, mcl_boot, mcl_status_text};
+extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 2, mcl_boot, mcl_status_text, mcl_gui};

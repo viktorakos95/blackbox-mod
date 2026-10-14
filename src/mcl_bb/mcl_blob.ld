@@ -9,6 +9,7 @@ MEMORY {
 ENTRY(mcl_entry_table)
 SECTIONS {
   .entry : { KEEP(*(.entry)) } > BLOB
+  .hook : { KEEP(*(.hook)) } > BLOB
   .text : { *(.text .text.* .rodata .rodata.* .glue_7 .glue_7t .vfp11_veneer) } > BLOB
   .ARM.extab : { *(.ARM.extab* .gnu.linkonce.armextab.*) } > BLOB
   .init_array : { . = ALIGN(4); __init_array_start = .; KEEP(*(SORT(.init_array.*))) KEEP(*(.init_array)) __init_array_end = .; } > BLOB

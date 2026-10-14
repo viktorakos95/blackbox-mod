@@ -4,8 +4,14 @@ set -e
 cd "$(dirname "$0")/../.."
 mkdir -p out
 CPU="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"
-arm-none-eabi-g++ $CPU -Os -ffreestanding -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-builtin -fno-math-errno -std=gnu++17 \
-  -ffunction-sections -fdata-sections -Wall -Wextra -Werror -c -o out/mcl_rt.o src/mcl_bb/mcl_rt.cpp
-arm-none-eabi-g++ $CPU -nostartfiles -nostdlib -Wl,--gc-sections -Wl,-T,src/mcl_bb/mcl_blob.ld -Wl,-Map=out/mcl.map -o out/mcl.elf out/mcl_rt.o -lgcc
-arm-none-eabi-objcopy -O binary -j .entry -j .text -j .ARM.extab -j .init_array -j .data out/mcl.elf out/mcl.bin
+# M3TEST=1 builds the hardware self test into the blob (it sends sysex on the MIDI jack at boot)
+DEF=; [ -n "$M3TEST" ] && DEF=-DM3_TEST
+OBJS=
+for f in mcl_rt bb_midi bb_m3test; do
+  arm-none-eabi-g++ $CPU -Os -ffreestanding -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-builtin -fno-math-errno -std=gnu++17 \
+    -ffunction-sections -fdata-sections -Wall -Wextra -Werror $DEF -c -o out/$f.o src/mcl_bb/$f.cpp
+  OBJS="$OBJS out/$f.o"
+done
+arm-none-eabi-g++ $CPU -nostartfiles -nostdlib -Wl,--gc-sections -Wl,-T,src/mcl_bb/mcl_blob.ld -Wl,-Map=out/mcl.map -o out/mcl.elf $OBJS -lgcc
+arm-none-eabi-objcopy -O binary -j .entry -j .hook -j .text -j .ARM.extab -j .init_array -j .data out/mcl.elf out/mcl.bin
 arm-none-eabi-size -A out/mcl.elf | grep -E '^\.(entry|text|init_array|data|bss)'

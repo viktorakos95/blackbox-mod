@@ -146,3 +146,30 @@ SDRAM data timing for ISR-hot variables (they will move to internal RAM or backu
 ### M2 result on the unit
 **`Mok`** (user report): the image booted, the blob ran from flash at `0x08120000`, `.data`/`.bss`/heap/constructors worked in the reserved SDRAM region, and the self test passed.
 Still to see with normal use: samples / looper / LIRA-8 not disturbed by the 512 KB reservation (no problem reported).
+
+## M3: the MIDI jack (USART6)
+
+Code: `src/mcl_bb/bb_midi.cpp` (+ `bb_midi.h`), self test `src/mcl_bb/bb_m3test.cpp`, hooks in `patches/mclblob.py`, tests `test_mcl_midi.py` (46 checks, Unicorn).
+Three hooks, all no-ops until the blob has booted (a ready magic is set last and cleared first, so a power-up with garbage SDRAM never runs MCL code):
+
+| Hook | Site | What it does |
+|---|---|---|
+| RX tap | the one call to the stock ring push at `0x080446d4` (`bl 0x080444f4`), inside `0x080446c4` which the RxCplt callback calls for each byte | `mcl_rx_tap`: copies the byte of port 0 (the jack, block `0x24002e88`) into MCL's 4 KB ring, then calls the stock push unchanged. Different site from `clkmon`'s hook (`0x08044e48`), so both coexist. |
+| TX redirect | entry of the stock send function `0x08044dfc` (port, buf, len; `cmp r0,#1 ; bls` replaced by `b.w`) | `mcl_tx_hook`: until MCL claims the port, jumps to the stock code (`0x08044e05`). After the claim, copies the message into MCL's 8 KB TX ring and returns 1 (ring full: returns 0 and queues nothing, so the stock side retries). The stock firmware's own output (notes, clock, program change) then goes through the same single writer, whole messages, never interleaved. |
+| IRQ wrapper | vector 71 (`0x0804015c`, was `0x080462e5`) | `mcl_usart6_isr`: after the claim, one byte per TXE interrupt (real-time bytes first, they sit between the bytes of a message); everything with an RX / error flag goes on to the stock handler; a TXE-only interrupt is not passed on (the HAL would see TXE+TXEIE and switch TXEIE off). `CR1.TXEIE` is only set under PRIMASK so a task can't overwrite a CR1 change the HAL makes in the same interrupt. |
+
+Claim rule: MCL takes the port only while the HAL handle (`0x24009914`, `gState` at `+0x80`) is READY (`0x20`), checked atomically; `bb_midi_claim(1)` at once (boot), `bb_midi_claim(0)` at the next stock send.
+API for the later `MidiUart` shim: `bb_midi_rx_get`, `bb_midi_tx` (atomic, all or none), `bb_midi_tx_rt`, `bb_midi_tx_free`, `bb_midi_stat`.
+
+### M3 hardware test image (`M3TEST=1 tools/mcl/build_blob.sh`, then `patch.py ... cave mclblob`)
+**This image sends data on the MIDI jack at boot** (and blocks the GUI task up to ~1.3 s while it does): a system-exclusive frame with the non-commercial id `0x7d`, 103 bytes, and, if
+something answers, the Machinedrum's status and kit-dump requests (`F0 00 20 3C 02 00 70 02 F7`, `... 53 <kit> F7`), which are harmless. Connect only a Machinedrum or a loop cable.
+The result is on the version label after ` Mok`: `L+` / `L-` / `L?`, `D<kit>` / `D-` / `D?`, `K+` / `K-`.
+- **Loop**: cable from MIDI out to MIDI in, nothing else. Expect `L+` (the 103 bytes came back byte-exact: TX engine and RX tap are right). `D-`.
+- **Machinedrum**: MD powered before the Blackbox, Blackbox out -> MD in, MD out -> Blackbox in. Expect `D<n>` (the current kit number the MD reports, 0-based) and `K+` (two kit dump requests,
+  ~1.2 KB each, returned identical: receive integrity at full rate). `L-` unless the MD's out is set to thru.
+- `L?` / `D?`: the port could not be claimed at boot (stock was sending at that moment): power-cycle and try again. `K-`: the dumps differed or did not finish.
+- Nothing connected: `L- D-`.
+Emulator-proven: hooks chain correctly with the real stock receive code, ring wrap over 40 KB, real-time insertion, ring-full refusal, claim rules, interrupt pass-through, CR1 bits kept, the self test against a
+loop cable and a modelled Machinedrum (including a dump that differs or never ends), the blocking driver's timing. Not provable without hardware: real USART6 timing and FIFO behaviour, the HAL's CR1 writes,
+that the real Machinedrum answers as modelled.
