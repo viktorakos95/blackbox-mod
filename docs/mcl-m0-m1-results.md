@@ -142,3 +142,7 @@ The full list is produced by the script (`undefined.txt`).
 is the allocator's initial top itself (`0x080f1e08`); the other eight words in that numeric range are negative float constants (`0xc3f0....`) in data tables, not addresses, and everything
 else reaches SDRAM through the two allocators. Only the unit can confirm: the ` Mok` label plus a normal session (samples, looper, LIRA-8) is the test. Also not covered: interrupts and timing (M4);
 SDRAM data timing for ISR-hot variables (they will move to internal RAM or backup SRAM when the clock ISR exists).
+
+### M2 result on the unit
+**`Mok`** (user report): the image booted, the blob ran from flash at `0x08120000`, `.data`/`.bss`/heap/constructors worked in the reserved SDRAM region, and the self test passed.
+Still to see with normal use: samples / looper / LIRA-8 not disturbed by the 512 KB reservation (no problem reported).
