@@ -103,6 +103,8 @@ e.call("lira_ui_set", 131, 800)
 check("the split controls (Hold A, Dly Mod 2, Sharp pair 2) are stored apart", rv("lira_ui_get", 121) == 900 and rv("lira_ui_get", 122) == 0 and rv("lira_ui_get", 126) == 300 and rv("lira_ui_get", 131) == 800)
 e.call("lira_ui_set", 121, 0)
 check("sensor flags read back", rv("lira_ui_key_get", 0) == 0)
+for _i in range(4):
+    e.call("lira_ui_set", 100 + _i, 1)                        # (an earlier check left pairs on Ext, which keeps the engine running)
 tail = rms(run(60)[-N:])
 check("after release the tail still rings (release is seconds)", tail > 0.0005, "%.5f" % tail)
 silent = rms(run(14 * 48000 // N + 40)[-N:])

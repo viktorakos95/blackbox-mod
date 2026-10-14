@@ -326,7 +326,7 @@ check("voice 1's tune knob: +250", 740 < get(0) < 760, get(0))
 tap(5 + 19, 140)
 check("a plain tap on a knob changes nothing", 740 < get(0) < 760, get(0))
 # the four encoders sit two left, two right: the left two turn voices 1 and 2, the right two voices 3 and 4
-for raw, voice in ((0, 0), (1, 1), (2, 2), (3, 3)):
+for raw, voice in ((1, 0), (0, 1), (2, 2), (3, 3)):
     before = [get(v) for v in range(8)]
     knob(raw, 80)
     after = [get(v) for v in range(8)]
@@ -355,8 +355,8 @@ check("the encoder group is voices 1-4 (bank 0)", sel() == 0, sel())
 button(11, 7)
 check("BACK: voices 5-8 (bank 1)", sel() == 16, sel())
 before = [get(v) for v in range(8)]
-knob(0, 80)
-check("... the top-left encoder now turns voice 5", get(4) == before[4] + 10 and get(0) == before[0], (before, [get(v) for v in range(8)]))
+knob(1, 80)
+check("... the bottom-left encoder now turns voice 5", get(4) == before[4] + 10 and get(0) == before[0], (before, [get(v) for v in range(8)]))
 f = draw(0)
 snap("voices58")
 check("VOICES tab, bank 1, drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
@@ -422,9 +422,9 @@ n0 = [note(v) for v in range(8)]
 check("eight notes in 33..93, all pitch classes of MAJ 7#11 on D-flat... (in the space)", all(33 <= x <= 93 for x in n0) and len(set(n0)) == 8, n0)
 drag(5 + 19, 140, 120)
 check("in chord mode a drag on a voice knob moves its note (15 semitones for 20 px)", note(0) == min(93, n0[0] + 15) and [note(v) for v in range(1, 8)] == n0[1:], (n0, [note(v) for v in range(8)]))
-knob(0, 100)
+knob(1, 100)
 check("... and an encoder turn moves it a semitone", note(0) == min(93, min(93, n0[0] + 15) + 1), note(0))
-knob(0, -100)
+knob(1, -100)
 n0 = [note(v) for v in range(8)]
 f = draw(0)
 snap("chord")

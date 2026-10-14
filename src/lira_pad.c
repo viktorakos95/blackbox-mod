@@ -307,6 +307,8 @@ void lira_register(void *table)
     for (int i = 0; i < 1024; i++)                       /* the allocator's memory is not zeroed: the recorder reads these buffers before the first block fills them */
         p->rec[0][0][i] = p->rec[0][1][i] = p->rec[1][0][i] = p->rec[1][1][i] = p->scr[0][i] = p->scr[1][i] = 0.0f;
     struct pg *g = &p->pg;
+    for (unsigned i = 0; i < sizeof *g; i++)             /* the allocator's memory is not zeroed: every field starts from 0 */
+        ((volatile uint8_t *)g)[i] = 0;
     g->init = 0;
     g->momentary = 0;
     g->sel = 0;
@@ -687,10 +689,7 @@ int lira_ui_default(int c)
     if (c == 125 || c == 126)
         return ctls[C_DLYMOD].def;
     if (c >= 130 && c < 134)
-    {
-        struct pool *p = pool();
-        return p && p->pg.wave ? 0 : ctls[C_SHARP].def;     /* a sine starts pure: Sharp mixes a square into it */
-    }
+        return ctls[C_SHARP].def;
     if (c >= 170 && c < 178)
         return 1000;
     return 0;
@@ -1085,8 +1084,6 @@ void lira_ui_action(int a)
         g->just ^= 1;
     } else if (a == 4) {
         g->wave ^= 1;
-        for (int k = 0; k < 4; k++)                       /* Sharp mixes a square into the wave: a sine starts at 0, a triangle at its default */
-            g->ex[6 + k] = g->wave ? 0 : ctls[C_SHARP].def;
     } else if (a >= 10 && a < 14) {
         g->lfo[a - 10] = (uint8_t)(a == 13 ? (g->lfo[3] + 1) % 3 : g->lfo[a - 10] ^ 1);
     } else if (a == 5) {
@@ -1129,7 +1126,7 @@ void lira_leds(void)
     if (!p)
         return;
     for (int i = 0; i < 8; i++) {
-        int led = i < 2 ? 1 - i : i;                      /* the first two LEDs sit the other way round */
+        int led = i;
         ((void (*)(void *, int, int))FN(0x080436b0))((void *)0x240021bcu, led, p->pg.want[i]);
         *(volatile uint8_t *)(0x24009a2cu + 12u * (unsigned)led + 8u) = 2;
     }

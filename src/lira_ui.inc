@@ -90,7 +90,7 @@ static const char *const lu_touch[3] = {"SLOW", "FAST", "EXT"};
 static const char *const lu_src[8] = {"SELF", "OFF", "LFO", "EXT", "P1-2", "P3-4", "P5-6", "P7-8"};
 static const uint8_t lu_pair_col[4] = {LU_ACC1, LU_ACC2, LU_ACC1, LU_ACC2};
 static const int8_t lu_enc_cell[4] = {1, 2, 0, 3};                /* a panel's cells (top-left, top-right, bottom-left, bottom-right) -> encoder */
-static const int8_t lu_enc_row[4] = {1, 0, 2, 3};                 /* a row of four voices -> encoder: the left two on the left encoders */
+static const int8_t lu_enc_row[4] = {0, 1, 2, 3};                 /* a row of four voices -> encoder: the left two on the left encoders */
 
 #define LU_SP(i, I, X, D, W, H, B, E, K, C, R, N) o[i] = (struct lu_spec){I, X, D, W, H, B, E, K, C, R, N}
 
