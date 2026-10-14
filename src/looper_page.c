@@ -1620,6 +1620,9 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
 /* The whole page, into the frame buffer the last stock draw pass handed over. */
 static void paint(uint8_t *view)
 {
+    uint32_t pal_save[16];
+    if (P->mode == M_LIRA)
+        lu_theme_set(pal_save);
     geometry(view);
     rehide(view);
     widen(view);
@@ -1657,6 +1660,8 @@ static void paint(uint8_t *view)
     draw_footer(&L);
     P->sig = signature();
     looper_guard_drawing(0);
+    if (P->mode == M_LIRA)
+        lu_theme_restore(pal_save);
 }
 
 static void dirty(uint8_t *view)

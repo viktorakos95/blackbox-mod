@@ -22,11 +22,53 @@
 #define LU_PANH   91
 #define LU_STRIP  110                                             /* the voice groups' top */
 #define LU_PLATE  157
-#define LU_CARD   0x19                                            /* 2b2b2b: the card behind a control */
-#define LU_LINE   0x10                                            /* 444444: hairlines, frames */
-#define LU_DIM    0x16                                            /* aaaaaa: labels */
-#define LU_ACC1   0x1a                                            /* 046b7a: dark teal (the firmware's palette is fixed and mostly neon: only its quiet entries are used) */
-#define LU_ACC2   0x1c                                            /* 777100: olive */
+#define LU_CARD   0x19                                            /* the card behind a control */
+#define LU_LINE   0x10                                            /* hairlines, frames */
+#define LU_DIM    0x16                                            /* labels */
+#define LU_ACC1   0x1a                                            /* the first voice pair's colour (amber), and the third's */
+#define LU_ACC2   0x1c                                            /* the second pair's colour (blue), and the fourth's */
+#define LU_ACC1D  0x1d                                            /* their dark versions: a plate that is on */
+#define LU_ACC2D  0x1f
+#define LU_SEL    0x20                                            /* the encoders' group (mint): its frame and labels */
+
+/* The page's colours. The firmware's palette is a RAM table (0x24000000, one ARGB word per index) and a fill turns the index into a
+ * colour when it runs, so while the page is drawn these entries are replaced and then put back: the pixels keep the page's colours,
+ * everything else the Blackbox draws keeps its own. */
+static const struct { uint8_t idx; uint32_t argb; } lu_theme[] = {
+    {0x02, 0xff0b0d10},                                           /* background */
+    {0x19, 0xff15181d},                                           /* cards */
+    {0x10, 0xff2b313a},                                           /* lines */
+    {0x09, 0xff5a626e},                                           /* knob tracks */
+    {0x16, 0xff8e98a6},                                           /* labels */
+    {0x0f, 0xfff4f6f9},                                           /* highlights, values, pointers */
+    {0x1a, 0xffe3a24a},                                           /* amber */
+    {0x1c, 0xff5b9be0},                                           /* blue */
+    {0x1d, 0xff6c4a1c},                                           /* dark amber */
+    {0x1f, 0xff21456f},                                           /* dark blue */
+    {0x20, 0xff5ad6a4},                                           /* mint */
+};
+#define LU_NTHEME ((int)(sizeof lu_theme / sizeof lu_theme[0]))
+
+static void lu_theme_set(uint32_t *save)
+{
+    volatile uint32_t *pal = (volatile uint32_t *)0x24000000u;
+    for (int i = 0; i < LU_NTHEME; i++) {
+        save[i] = pal[lu_theme[i].idx];
+        pal[lu_theme[i].idx] = lu_theme[i].argb;
+    }
+}
+
+static void lu_theme_restore(const uint32_t *save)
+{
+    volatile uint32_t *pal = (volatile uint32_t *)0x24000000u;
+    for (int i = 0; i < LU_NTHEME; i++)
+        pal[lu_theme[i].idx] = save[i];
+}
+
+static int lu_dark(int col)
+{
+    return col == LU_ACC1 ? LU_ACC1D : LU_ACC2D;
+}
 enum { LK_KNOB, LK_STEP, LK_BTN, LK_NOTE };
 
 struct lu_spec {
@@ -163,20 +205,19 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
         int v = lu_value(s), cy = s->d + s->r + 2;
         lu_knob(cx, cy, s->r, v, chord && s->id < 8 ? C_GREY : s->col);
         if (s->id < 8 && chord) {                                 /* chord mode: the voice's note */
-            lira_note_name(lira_ui_note(s->id), b);
+            lira_note_name(lira_ui_note(s->id), lira_ui_flats(), b);
             text_c(s->x, cy + s->r + 3, s->w, b, C_WHITE, 1);
         } else if (s->id < 8) {
             q = put_uint(b, (unsigned)(s->id + 1));
             *q = 0;
-            text_c(s->x, cy + s->r + 3, s->w, b, hot ? C_WHITE : LU_DIM, 1);
+            text_c(s->x, cy + s->r + 3, s->w, b, hot ? LU_SEL : LU_DIM, 1);
         } else if (s->kind == LK_STEP && s->id != 140) {          /* a stepped knob shows its setting */
-            static const char *const rn[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
             int k = lira_ui_chord_get(s->id);
             const char *t = b;
             if (s->id == 141) {
-                t = rn[k];
+                t = lira_root_name(k);
             } else if (s->id == 142) {
-                lira_note_name(36 + 12 * k, b);
+                lira_note_name(36 + 12 * k, 0, b);
             } else {
                 b[0] = (char)('1' + k);
                 b[1] = ' ';
@@ -185,9 +226,9 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
                 b[4] = 'T';
                 b[5] = 0;
             }
-            text_c(s->x, cy + s->r + 3, s->w, t, hot ? C_WHITE : LU_DIM, 1);
+            text_c(s->x, cy + s->r + 3, s->w, t, hot ? LU_SEL : LU_DIM, 1);
         } else {
-            text_c(s->x, cy + s->r + 3, s->w, s->name, hot ? C_WHITE : LU_DIM, 1);
+            text_c(s->x, cy + s->r + 3, s->w, s->name, hot ? LU_SEL : LU_DIM, 1);
         }
     } else if (s->kind == LK_BTN) {                               /* two lines: what it is, what it is set to */
         const char *st = "";
@@ -202,12 +243,14 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             st = lira_ui_chord_get(153) ? "JUST" : "EQUAL", on = lira_ui_chord_get(153);
         else
             on = 0;
+        if (on)
+            box(s->x + 3, s->d + 3, s->w - 6, s->h - 6, lu_dark(s->col));
         frame(s->x + 2, s->d + 2, s->w - 4, s->h - 4, on ? s->col : LU_LINE, 1);
-        text_c(s->x, s->d + 8, s->w, s->name, hot ? C_WHITE : LU_DIM, 1);
+        text_c(s->x, s->d + 8, s->w, s->name, hot ? LU_SEL : LU_DIM, 1);
         if (*st)
             text_c(s->x, s->d + 21, s->w, st, on ? C_WHITE : C_GREY, 1);
     } else {                                                      /* a note of a voice */
-        lira_note_name(lira_ui_note(s->id - 200), b);
+        lira_note_name(lira_ui_note(s->id - 200), lira_ui_flats(), b);
         {                                                         /* the letter big, the sharp and octave small */
             int rest = 0;
             while (b[1 + rest])
@@ -240,11 +283,10 @@ static void draw_lira(void)
     q = b;
     *q = 0;
     if (page == 2) {                                              /* the tonal space and its root */
-        static const char *const rn[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
         for (const char *t = lira_ui_space_name(); *t;)
             *q++ = *t++;
         *q++ = ' ';
-        for (const char *t = rn[lira_ui_chord_get(141)]; *t;)
+        for (const char *t = lira_root_name(lira_ui_chord_get(141)); *t;)
             *q++ = *t++;
         *q = 0;
     } else {
@@ -274,18 +316,14 @@ static void draw_lira(void)
 
     for (int p = 0; p < 4; p++) {                                 /* the four panels */
         int x = LU_X0 + p * 2 * LU_COL, hot = bank == 2 + p;
-        frame(x + 1, LU_PANEL, 2 * LU_COL - 2, LU_PANH, hot ? LU_ACC1 : LU_LINE, 1);
-        if (hot)
-            frame(x + 2, LU_PANEL + 1, 2 * LU_COL - 4, LU_PANH - 2, LU_ACC1, 1);
-        text_c(x, LU_PANEL + 4, 2 * LU_COL, ptitle[page][p], hot ? C_WHITE : LU_DIM, 1);
+        frame(x + 1, LU_PANEL, 2 * LU_COL - 2, LU_PANH, hot ? LU_SEL : LU_LINE, 1);
+        text_c(x, LU_PANEL + 4, 2 * LU_COL, ptitle[page][p], hot ? LU_SEL : LU_DIM, 1);
         if (page == 0)
             box(x + 6, LU_PANEL + 13, 2 * LU_COL - 12, 1, lu_pair_col[p]);
     }
     for (int g = 0; g < 2; g++) {                                 /* the voice groups */
         int x = LU_X0 + g * 4 * LU_COL, hot = bank == g;
-        frame(x + 1, LU_STRIP, 4 * LU_COL - 2, 46, hot ? LU_ACC1 : LU_LINE, 1);
-        if (hot)
-            frame(x + 2, LU_STRIP + 1, 4 * LU_COL - 4, 44, LU_ACC1, 1);
+        frame(x + 1, LU_STRIP, 4 * LU_COL - 2, 46, hot ? LU_SEL : LU_LINE, 1);
         for (int k = 0; k < 2; k++)
             box(x + k * 2 * LU_COL + 6, LU_STRIP, 2 * LU_COL - 12, 2, lu_pair_col[g * 2 + k]);
     }
@@ -295,7 +333,7 @@ static void draw_lira(void)
         int x, d, w, h, on = lira_ui_key_get(v), col = lu_pair_col[v >> 1];
         lu_plate_rect(v, &x, &d, &w, &h);
         lu_round(x, d, w, h, on ? col : LU_LINE);
-        lu_round(x + 2, d + 2, w - 4, h - 4, on ? col : LU_CARD);
+        lu_round(x + 2, d + 2, w - 4, h - 4, on ? lu_dark(col) : LU_CARD);
         q = put_uint(b, (unsigned)(v + 1));
         *q = 0;
         text_c(x, d + h / 2 - 8, w, b, on ? C_WHITE : C_GREY, 2);
@@ -307,7 +345,7 @@ static void lira_footer(const struct lay *L)
 {
     int page = lira_ui_sel(-1) & 15;
     for (int i = 0; i < 3; i++) {
-        frame(LU_X0 + 82 * i, L->foot_y + 2, 80, FOOT - 3, page == i ? LU_ACC1 : LU_LINE, 1);
+        frame(LU_X0 + 82 * i, L->foot_y + 2, 80, FOOT - 3, page == i ? C_WHITE : LU_LINE, 1);
         text_c(LU_X0 + 82 * i, L->foot_y + 4, 80, lu_tabname[i], page == i ? C_WHITE : C_GREY, 1);
     }
 }

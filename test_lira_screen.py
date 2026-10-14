@@ -150,6 +150,11 @@ import os
 PAL = [struct.unpack("<I", open("firmware/BLACKBOX-3.1.9.bin", "rb").read()[0x080F1D80 - 0x08040000 + 4 * i:][:4])[0] for i in range(0x24)]
 
 
+import re
+for m_ in re.finditer(r"\{(0x[0-9a-f]{2}), (0x[0-9a-f]{8})\}", open("src/lira_ui.inc").read()):
+    PAL[int(m_.group(1), 16)] = int(m_.group(2), 16)               # the page's own colours (src/lira_ui.inc, lu_theme)
+
+
 def snap(name):
     """LIRA_PNG=<dir>: write what the last draw() recorded as a picture (320 x 240, origin bottom left, palette at 0x080f1d80)."""
     out = os.environ.get("LIRA_PNG")
@@ -400,6 +405,11 @@ button(2)
 check("another button toggles its own voice", key(2) == 1 and key(4) == 1)
 e.call("lira_ui_key", 4, 0)
 e.call("lira_ui_key", 2, 0)
+PALRAM = 0x24000000
+e.uc.mem_write(PALRAM, b"".join(struct.pack("<I", 0xFF000000 + 0x010101 * i) for i in range(36)))
+orig = bytes(e.uc.mem_read(PALRAM, 144))
+f = draw(0)
+check("the page's colours are put back after it is drawn (the stock palette is untouched)", bytes(e.uc.mem_read(PALRAM, 144)) == orig)
 # the pad button on the page goes back to the stock pad screen; MIX goes to the looper's first page
 screens.clear()
 e.call("solo_pad_pressed", APP, 0, 0, 0)

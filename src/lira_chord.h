@@ -15,7 +15,12 @@ int lira_space_notes(int space);                       /* how many pitch classes
 void lira_voicing(int space, int root, int low, int span, uint32_t seed, int8_t out[8]);
 /* Offset in cents from equal temperament that the note gets in just intonation around `root` (5-limit). */
 float lira_just_cents(int note, int root);
-/* The note's name, "C2", "F#4" (out: 4 bytes) */
-void lira_note_name(int note, char out[5]);
+/* The note's name, "C2", "F#4" or with flats "Gb4" (out: 5 bytes) */
+void lira_note_name(int note, int flats, char out[5]);
+/* Whether the notes around this root read better with flats: by the key signature of the tonic (a space with a minor third and no
+   major third counts as the minor key: its tonic is the relative major) the keys of F, Bb, Eb, Ab and Db use flats. */
+int lira_flats_for(int space, int root);
+/* The root's name as a player writes it: C Db D Eb E F F# G Ab A Bb B */
+const char *lira_root_name(int root);
 
 #endif

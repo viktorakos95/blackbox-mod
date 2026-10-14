@@ -13,6 +13,7 @@ subprocess.check_call(["gcc", "-O2", "-shared", "-fPIC", "-Wall", "-Wextra", "-W
 lib = ctypes.CDLL(so)
 lib.lira_space_name.restype = ctypes.c_char_p
 lib.lira_just_cents.restype = ctypes.c_float
+lib.lira_root_name.restype = ctypes.c_char_p
 lib.lira_voicing.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint32, ctypes.c_void_p]
 fails = 0
 
@@ -66,8 +67,19 @@ check("just offsets are relative to the root", abs(lib.lira_just_cents(9 + 12, 2
 buf = ctypes.create_string_buffer(5)
 names = []
 for n in (36, 61, 93, 33):
-    lib.lira_note_name(n, buf)
+    lib.lira_note_name(n, 0, buf)
     names.append(buf.value.decode())
-check("note names", names == ["C2", "C#4", "A6", "A1"], str(names))
+check("note names with sharps", names == ["C2", "C#4", "A6", "A1"], str(names))
+names = []
+for n in (36, 61, 66, 70):
+    lib.lira_note_name(n, 1, buf)
+    names.append(buf.value.decode())
+check("note names with flats", names == ["C2", "Db4", "Gb4", "Bb4"], str(names))
+sp = {lib.lira_space_name(i).decode(): i for i in range(N)}
+fl = lambda name, root: lib.lira_flats_for(sp[name], root)
+check("flat keys: F major, Bb major, Eb major use flats; G, D, A, E major sharps", [fl("MAJOR", r) for r in (5, 10, 3, 7, 2, 9, 4)] == [1, 1, 1, 0, 0, 0, 0])
+check("minor spaces take the relative major's signature: D minor flats, G minor flats, A minor / E minor sharps",
+      [fl("MINOR", r) for r in (2, 7, 9, 4, 0)] == [1, 1, 0, 0, 1])
+check("root names: Db Eb F# Ab Bb", [lib.lira_root_name(r).decode() for r in (1, 3, 6, 8, 10)] == ["Db", "Eb", "F#", "Ab", "Bb"])
 print("failures:", fails)
 sys.exit(1 if fails else 0)

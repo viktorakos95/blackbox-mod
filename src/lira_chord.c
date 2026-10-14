@@ -153,12 +153,28 @@ float lira_just_cents(int note, int root)
     return just_off[(((note - root) % 12) + 12) % 12];
 }
 
-void lira_note_name(int note, char out[5])
+void lira_note_name(int note, int flats, char out[5])
 {
-    static const char *const nm[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    static const char *const sh[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    static const char *const fl[12] = {"C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"};
     int pc = ((note % 12) + 12) % 12, oct = note / 12 - 1, i = 0;
-    for (const char *c = nm[pc]; *c;)
+    for (const char *c = (flats ? fl : sh)[pc]; *c;)
         out[i++] = *c++;
     out[i++] = (char)('0' + (oct < 0 ? 0 : oct > 9 ? 9 : oct));
     out[i] = 0;
+}
+
+int lira_flats_for(int space, int root)
+{
+    unsigned m = spaces[space < 0 ? 0 : space >= NSPACES ? NSPACES - 1 : space].pcs;
+    int tonic = ((root % 12) + 12) % 12;
+    if ((m & (1u << 3)) && !(m & (1u << 4)))
+        tonic = (tonic + 3) % 12;
+    return tonic == 5 || tonic == 10 || tonic == 3 || tonic == 8 || tonic == 1;
+}
+
+const char *lira_root_name(int root)
+{
+    static const char *const nm[12] = {"C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
+    return nm[((root % 12) + 12) % 12];
 }

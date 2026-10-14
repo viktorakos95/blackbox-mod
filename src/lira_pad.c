@@ -910,3 +910,9 @@ const char *lira_ui_space_name(void)
     struct pool *p = pool();
     return lira_space_name(p ? p->pg.space : 0);
 }
+
+int lira_ui_flats(void)                                    /* the page's notes are written with flats in flat keys */
+{
+    struct pool *p = pool();
+    return p ? lira_flats_for(p->pg.space, p->pg.root) : 0;
+}
