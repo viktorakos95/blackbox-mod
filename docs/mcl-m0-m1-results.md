@@ -180,3 +180,9 @@ that the real Machinedrum answers as modelled.
 - **Machinedrum: `L- D-`** (no answer to the status request). Not yet a software verdict: the user is unsure both TRS-to-DIN cables are the right type (the one on MIDI in is a 1010 Music one, known good).
   The stock firmware has no TRS Type A/B setting (strings: only `midioutchan`, `midithrumodetype`, `MIDI In Thru`), so the cable on MIDI out must match what the Blackbox drives.
   Checks without new code: (1) MD playing with MIDI clock out on: the CLK sheet (F8 counter) rises -> MD OUT cable and direction are fine; (2) put the known-good 1010 cable on the Blackbox OUT -> MD IN and repeat the test.
+
+### M3 second report and the note burst
+Machinedrum with the 1010 cable on the Blackbox IN: `L- D-`, but with a pattern running the CLK sheet showed F8 at the right BPM, so **MD out -> Blackbox in works** (RX tap + stock path, on hardware).
+Blackbox out -> MD in is unproven: `D-` cannot tell "the MD never got the request" from "it got it and did not answer". The test image therefore, when the status request gets no answer,
+plays 16 short notes (channels 1-4, notes 36 / 40 / 44 / 48, one every 100 ms; label gets ` N`). Hearing drum hits = the Blackbox's MIDI out reaches the Machinedrum (then the status
+request is ignored for another reason: MD settings / sysex receive); silence = the cable on OUT (or the OUT-side wiring / type). The blocking test now takes ~1.9 s at boot when nothing answers.

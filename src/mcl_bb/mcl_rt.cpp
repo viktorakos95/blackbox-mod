@@ -269,6 +269,10 @@ extern "C" char *mcl_status_text(char *p, uint32_t room)
             *q++ = r->dump == 1 ? '+' : '-';
         } else {
             *q++ = r->md == 3 ? '?' : '-';
+            if (r->burst) {                           /* the note burst was played: listen to the Machinedrum */
+                *q++ = ' ';
+                *q++ = 'N';
+            }
         }
     }
 #endif

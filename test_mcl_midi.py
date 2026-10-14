@@ -272,7 +272,7 @@ def drive(rg, max_ms=4000):
         if done:
             break
     res = bytes(rg.e.uc.mem_read(rg.call("bb_m3_result"), 20))
-    return dict(zip(("loop", "md", "kit", "dump"), res[:4])), struct.unpack_from("<HxxI", res, 4), ms
+    return dict(zip(("loop", "md", "kit", "burst", "dump"), res[:5])), struct.unpack_from("<HI", res, 6), ms
 
 
 def loop_cable(rg):
@@ -307,17 +307,21 @@ def machinedrum(kit=12, dumps=None, bad_second=False, truncate=False):
 
 rg = fresh(lambda rg: None)
 res, (dl, dc), ms = drive(rg)
-check("M3 test, nothing connected: loop and MD both report no answer", res["loop"] == 2 and res["md"] == 2 and res["dump"] == 0, res)
-check("... after the 150 ms + 150 ms time-outs, not before", 290 <= ms <= 330, ms)
+check("M3 test, nothing connected: loop and MD both report no answer, the note burst ran", res["loop"] == 2 and res["md"] == 2 and res["dump"] == 0 and res["burst"] == 1, res)
+check("... after 150 + 150 ms time-outs and the 1.7 s burst, not before", 1800 <= ms <= 1950, ms)
+on = [(rg.sent[i], rg.sent[i + 1], rg.sent[i + 2]) for i in range(len(rg.sent) - 2) if rg.sent[i] in range(0x90, 0x94) and rg.sent[i + 2] == 110]
+off = [(rg.sent[i], rg.sent[i + 1]) for i in range(len(rg.sent) - 2) if rg.sent[i] in range(0x80, 0x84) and rg.sent[i + 2] == 0]
+check("... 16 note-ons on channels 1-4, notes 36/40/44/48, each followed by its note-off", len(on) == 16 and len(off) == 16 and on[0] == (0x90, 36, 110) and on[15] == (0x93, 48, 110) and [(a + 0xF0 & 0x0F | 0x80, b) for a, b, _ in on] == off, (len(on), len(off)))
 
 rg = fresh(loop_cable)
 res, _, ms = drive(rg)
 check("M3 test with a cable from out to in: the 103-byte frame comes back byte-exact", res["loop"] == 1, res)
+check("... and the burst (no Machinedrum answer) is heard on the wire too", rg.sent.count(0x90) >= 4, rg.sent.count(0x90))
 check("... the loop-back also answers nothing for the Machinedrum", res["md"] == 2)
 
 rg = fresh(machinedrum(kit=12))
 res, (dl, dc), ms = drive(rg)
-check("M3 test with a Machinedrum: status answer, kit 12, two identical dumps", res["md"] == 1 and res["kit"] == 12 and res["dump"] == 1 and res["loop"] == 2, res)
+check("M3 test with a Machinedrum: status answer, kit 12, two identical dumps, no note burst", res["md"] == 1 and res["kit"] == 12 and res["dump"] == 1 and res["loop"] == 2 and res["burst"] == 0, res)
 check("... dump frame length 1229 bytes and the same CRC both times", dl == 1229, dl)
 
 rg = fresh(machinedrum(kit=63, bad_second=True))
@@ -361,10 +365,10 @@ rg.call("mcl_boot")
 rg.e.call(rg.b["mcl_gui"], count=20_000_000)
 res = bytes(rg.e.uc.mem_read(rg.call("bb_m3_result"), 4))
 check("mcl_gui: blocking test ends by itself, loop and MD report no answer", res[0] == 2 and res[1] == 2, res.hex())
-check("... after about 300 ms (~120 M cycles)", 100_000_000 < dwt["c"] < 140_000_000, dwt["c"])
+check("... after about 1.9 s (300 ms time-outs + the note burst, ~750 M cycles)", 700_000_000 < dwt["c"] < 800_000_000, dwt["c"])
 rg.e.uc.mem_write(0x24061000, bytes(40))
 rg.e.call(rg.b["mcl_status_text"], 0x24061000, 26)
-check("label text after a test with nothing connected: 'Mok L- D-'", rg.e.cstr(0x24061000) == "Mok L- D-", rg.e.cstr(0x24061000))
+check("label text after a test with nothing connected: 'Mok L- D- N'", rg.e.cstr(0x24061000) == "Mok L- D- N", rg.e.cstr(0x24061000))
 before = dwt["c"]
 rg.e.call(rg.b["mcl_gui"], count=20_000_000)
 check("mcl_gui runs only once per power-up", dwt["c"] == before)

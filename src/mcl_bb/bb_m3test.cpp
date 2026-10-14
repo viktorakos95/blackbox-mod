@@ -5,12 +5,13 @@
  *   2. MD    : Machinedrum status request for the current kit (F0 00 20 3C 02 00 70 02 F7), answer F0 00 20 3C 02 00 72 02 <kit> F7 within 150 ms.
  *   3. DUMP  : if the Machinedrum answered, asks for that kit twice (F0 00 20 3C 02 00 53 <kit> F7), takes the F0 .. F7 frames that start with
  *              F0 00 20 3C 02 00 52 within 800 ms each, and compares length and CRC-32 of the two. Both must be byte-identical.
+ *   4. BURST : only if the Machinedrum did not answer: 16 short drum-range notes on channels 1..4 (see S_BURST). Audible proof that MIDI out reaches it.
  * Only the id 0x7d frame is anything but Elektron-specific data, so other gear on the jack ignores it.
  */
 #include "bb_m3test.h"
 #include "bb_midi.h"
 
-enum { S_START, S_LOOP_WAIT, S_MD_SEND, S_MD_WAIT, S_DUMP_SEND, S_DUMP_WAIT, S_DONE };
+enum { S_START, S_LOOP_WAIT, S_MD_SEND, S_MD_WAIT, S_DUMP_SEND, S_DUMP_WAIT, S_BURST, S_DONE };
 static uint8_t state;
 static uint8_t dump_n;
 static uint32_t t0;
@@ -20,6 +21,8 @@ static uint8_t frame[2048];
 static uint32_t flen;
 static uint8_t in_frame;
 static uint32_t first_crc, first_len;
+static uint32_t burst_i, burst_off_at;
+static uint8_t burst_pending;
 
 static uint32_t crc32(const uint8_t *p, uint32_t n)
 {
@@ -152,8 +155,31 @@ int bb_m3_step(uint32_t now)
             state = S_DUMP_SEND;
         } else if (now - t0 > 150000u) {
             res.md = 2;
-            state = S_DONE;
+            res.burst = 1;                               /* no answer: play something the ear can judge (see below) */
+            burst_i = 0;
+            t0 = now;
+            state = S_BURST;
         }
+        return 0;
+    }
+    case S_BURST: {
+        /* 16 short notes, one every 100 ms (note-on, note-off 70 ms later): channels 1..4, notes 36 / 40 / 44 / 48. A Machinedrum on its default
+         * base channel plays drum hits for these. Hearing them proves the Blackbox's MIDI out reaches the Machinedrum, whatever it does with sysex. */
+        uint32_t due = t0 + burst_i * 100000u;
+        if (burst_i < 16 && now >= due) {
+            uint8_t on[3] = {(uint8_t)(0x90 | (burst_i / 4)), (uint8_t)(36 + 4 * (burst_i % 4)), 110};
+            send(on, 3);
+            burst_off_at = now + 70000u;
+            burst_i++;
+            burst_pending = 1;
+        }
+        if (burst_pending && now >= burst_off_at) {
+            uint8_t off[3] = {(uint8_t)(0x80 | ((burst_i - 1) / 4)), (uint8_t)(36 + 4 * ((burst_i - 1) % 4)), 0};
+            send(off, 3);
+            burst_pending = 0;
+        }
+        if (burst_i >= 16 && !burst_pending)
+            state = S_DONE;
         return 0;
     }
     case S_DUMP_SEND: {
