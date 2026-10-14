@@ -181,6 +181,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t sync[4];             /* tempo sync of LFO A, LFO B, delay 1, delay 2: 0 off, else an index into div_beats */
     uint8_t gmode, rp;           /* gesture recorder: 0 idle, 1 armed for the next bar line, 2 recording the first take, 3 looping, 4 armed to overdub at the loop start, 5 overdubbing; rp = replaying (events are not recorded again) */
     uint8_t glen_i, glayers;     /* take length (1 2 4 8 bars), layers in the loop (up to 3) */
+    uint8_t pend;                /* a STOP (16) or PLAY (17) of the loop waiting for the next bar line */
     uint8_t off;                 /* the engine switch: the synth does not run at all (no modulation, no tail, no delay lines) */
     uint8_t btn_on;              /* the eight round buttons are the voice plates (else they are the stock buttons) */
     uint16_t gn, gi;             /* events recorded, the next to play */
@@ -814,7 +815,7 @@ unsigned lira_ui_sig(void)
         for (int k = 0; k < 8; k++)
             h = h << 1 | g->want[k];
     unsigned prog = g->gmode >= 2 && g->gmode != 6 && g->gtot > 1.0f ? (unsigned)(g->gt * 8.0f / g->gtot) : 0;
-    return h | (unsigned)g->momentary << 8 | (unsigned)g->sel << 9 | prog << 20 | (unsigned)g->gmode << 24 | (unsigned)g->off << 28;
+    return h | (unsigned)g->momentary << 8 | (unsigned)g->sel << 9 | prog << 20 | (unsigned)g->gmode << 24 | (unsigned)g->off << 28 | (unsigned)g->pend << 29;
 }
 
 /* The load governor. How much of its block the audio task has used by the time this runs (the stock voices and effects) is the
@@ -1194,6 +1195,8 @@ int lira_ui_chord_get(int id)                              /* the index behind a
         return g->btn_on;
     if (id == 194)
         return g->off;
+    if (id == 167)
+        return g->pend;
     if (id == 166)                                         /* the loop's position, 0..8 */
         return g->gmode >= 2 && g->gmode != 6 && g->gtot > 1.0f ? (int)(g->gt * 8.0f / g->gtot) : 0;
     if (id >= 160 && id < 164)
@@ -1332,15 +1335,17 @@ void lira_ui_action(int a)
                 g->gn = 0;
             }
         }
-    } else if (a == 15 || a == 16 || a == 17) {           /* STOP / PLAY of the loop (15 toggles, 16 stops, 17 plays): a paused loop costs nothing */
-        if (g->gmode == 6 && a != 16) {
-            g->gmode = 3;
-            g->gt = 0.0f;
-            g->gi = 0;
-        } else if (g->gmode >= 3 && g->gmode != 6 && a != 17) {
-            if (g->gmode == 5)
-                gdrop(p, g, g->glayers);
-            g->gmode = 6;
+    } else if (a == 15 || a == 16 || a == 17) {           /* STOP / PLAY of the loop (15 toggles, 16 stops, 17 plays): like SAMPLR's SYNC, they wait for the next bar line */
+        if (g->gmode >= 3) {
+            int eff = g->pend ? (g->pend == 16 ? 6 : 3) : (g->gmode == 6 ? 6 : 3);     /* where the loop will be: 6 stopped, 3 playing */
+            int want = a == 15 ? (eff == 6 ? 17 : 16) : a;
+            if (want == (eff == 6 ? 16 : 17)) {
+                ;                                             /* (already so) */
+            } else if (g->pend) {
+                g->pend = 0;                                  /* the opposite press takes the waiting one back */
+            } else {
+                g->pend = (uint8_t)want;
+            }
         }
     } else if (a == 14) {                                 /* CLEAR */
         g->gmode = 0;
@@ -1405,6 +1410,22 @@ static void gstep(struct pool *p, struct pg *g, int n)
 {
     float bf = looper_beat_frames();
     const int n0 = n;
+    if (g->pend) {                                        /* a STOP / PLAY waits for the bar line (at once without a clock) */
+        if (g->gmode < 3) {
+            g->pend = 0;
+        } else if ((looper_bpm() > 0.0f ? looper_grid_exact(4.0f, g->sph, n) : 0) >= 0) {
+            if (g->pend == 17 && g->gmode == 6) {
+                g->gmode = 3;
+                g->gt = 0.0f;
+                g->gi = 0;
+            } else if (g->pend == 16 && g->gmode != 6) {
+                if (g->gmode == 5)
+                    gdrop(p, g, g->glayers);
+                g->gmode = 6;
+            }
+            g->pend = 0;
+        }
+    }
     if (g->gmode == 1) {
         int off = looper_bpm() > 0.0f ? looper_grid_exact(4.0f, g->sph, n) : 0;
         if (off >= 0) {
@@ -1438,6 +1459,9 @@ static void gstep(struct pool *p, struct pg *g, int n)
             g->gi = 0;
             if (g->gmode == 4) {
                 g->gmode = 5;
+                for (int k = 0; k < 8; k++)               /* plates held when the layer starts are part of it */
+                    if (g->want[k])
+                        grec(g, 300 + k, 1);
             } else if (g->gmode == 5) {
                 g->glayers++;
                 g->gmode = 3;

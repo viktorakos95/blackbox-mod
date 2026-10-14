@@ -306,7 +306,7 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
         else if (s->id == 194)
             st = lira_ui_chord_get(194) ? "OFF" : "ON", on = !lira_ui_chord_get(194);
         else if (s->id == 193)
-            st = lira_ui_chord_get(158) == 6 ? "PLAY" : "STOP", on = lira_ui_chord_get(158) == 6;
+            st = lira_ui_chord_get(167) ? "NEXT" : lira_ui_chord_get(158) == 6 ? "PLAY" : "STOP", on = lira_ui_chord_get(158) == 6;
         else if (s->id >= 160 && s->id < 164) {
             int k = lira_ui_chord_get(s->id);
             st = lu_lfo_val[s->id - 160][k];
@@ -409,7 +409,7 @@ static void draw_lira(void)
         frame(LU_SW(4), 2, 32, TOPBAR - 2, gm == 3 ? LU_ACC2 : gm == 2 || gm == 5 || gm == 1 || gm == 4 ? LU_SEL : LU_LINE, 1);
         if (gm == 3)
             box(LU_SW(4) + 2 + 26 * pr / 8, 4, 3, TOPBAR - 6, C_WHITE);
-        text_c(LU_SW(4), 4, 32, gm == 3 ? "LOOP" : gm == 1 || gm == 4 ? "ARM" : gm == 5 ? "OVR" : gm == 6 ? "STOP" : "REC", gm ? C_WHITE : LU_DIM, 1);
+        text_c(LU_SW(4), 4, 32, gm == 3 ? "LOOP" : gm == 1 || gm == 4 ? "ARM" : gm == 5 ? "OVR" : lira_ui_chord_get(167) ? "NEXT" : gm == 6 ? "STOP" : "REC", gm ? C_WHITE : LU_DIM, 1);
     }
     int bt = lira_ui_chord_get(165);                              /* the eight round buttons: the voice plates, or the stock buttons */
     frame(LU_SW(5), 2, 32, TOPBAR - 2, bt ? LU_ACC2 : LU_LINE, 1);
