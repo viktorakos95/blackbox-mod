@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "bb_clock.h"
 #include "bb_m3test.h"
 #include "bb_midi.h"
 
@@ -181,6 +182,7 @@ extern "C" uint32_t mcl_boot(void)
 {
     volatile uint32_t *s = BKP;
     bb_midi_down();                                      /* hooks off before .bss is touched */
+    bb_clock_down();
     s[0] = BKP_MAGIC;
     s[2] = s[3] = 0;
     if (ALLOC_TOP_INIT != RAM_ORG || ALLOC_TOP > RAM_ORG) {
@@ -214,6 +216,10 @@ extern "C" uint32_t mcl_boot(void)
 static uint8_t m3_ran;
 #endif
 
+#ifdef M4_TEST
+static uint8_t m4_ran;
+#endif
+
 /* Runs the blocking M3 hardware test once, from a label constructor (GUI task, never the audio task). No-op in normal images. */
 extern "C" void mcl_gui(void)
 {
@@ -227,6 +233,18 @@ extern "C" void mcl_gui(void)
     while (!bb_m3_step((DWT_CYCCNT - c0) / 400u))      /* ~400 MHz core: cycles / 400 = microseconds */
         if ((DWT_CYCCNT - c0) / 400u > 4000000u)
             break;
+#endif
+#ifdef M4_TEST
+    /* M4 hardware test image: from the first label on, MIDI clock at 120.0 BPM from the timer interrupt, on the jack, until power-off. No start / stop bytes. */
+    volatile uint32_t *s4 = BKP;
+    if (!m4_ran && s4[0] == BKP_MAGIC && (s4[1] & 0xff) == ST_OK) {
+        m4_ran = 1;
+        bb_midi_claim(1);
+        if (bb_midi_owner() && bb_clock_init()) {
+            bb_midi_filter_clock(1);
+            bb_clock_start(1200, 0);
+        }
+    }
 #endif
 }
 
@@ -276,6 +294,18 @@ extern "C" char *mcl_status_text(char *p, uint32_t room)
         }
     }
 #endif
+    if (s[0] != BKP_MAGIC || (s[1] & 0xff) != ST_OK) {        /* no booted runtime: the clock variables in SDRAM are garbage */
+    } else if (bb_clock_running()) {                      /* ' C120': the timer clock is running, tempo is fixed in this image */
+        *q++ = ' ';
+        *q++ = 'C';
+        *q++ = '1';
+        *q++ = '2';
+        *q++ = '0';
+    } else if (bb_clock_timer_hz()) {
+        *q++ = ' ';
+        *q++ = 'C';
+        *q++ = '-';
+    }
     for (char *c = t; c < q && room; c++, room--)
         *p++ = *c;
     return p;

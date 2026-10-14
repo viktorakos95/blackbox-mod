@@ -33,12 +33,12 @@
 #define READY_MAGIC 0x4d494431u                /* "MID1" */
 
 static volatile uint32_t ready;
-static volatile uint32_t owner, want;
+static volatile uint32_t owner, want, filter_clock;
 static uint8_t rx_ring[RX_SIZE], tx_ring[TX_SIZE];
 static volatile uint32_t rx_wr, rx_rd, tx_wr, tx_rd;
-static volatile uint8_t rt[4];
+static volatile uint8_t rt[16];
 static volatile uint32_t rt_wr, rt_rd;
-static volatile uint32_t st_rx, st_rx_drop, st_tx, st_tx_rej, st_redirect;
+static volatile uint32_t st_rx, st_rx_drop, st_tx, st_tx_rej, st_redirect, st_rt_rej;
 
 /* entered from patched stock code, or the API MCL calls: the linker must keep them */
 #define HOOK __attribute__((section(".hook"), used))
@@ -58,8 +58,8 @@ HOOK void bb_midi_down(void) { ready = 0; }
 HOOK void bb_midi_init(void)
 {
     rx_wr = rx_rd = tx_wr = tx_rd = rt_wr = rt_rd = 0;
-    owner = want = 0;
-    st_rx = st_rx_drop = st_tx = st_tx_rej = st_redirect = 0;
+    owner = want = filter_clock = 0;
+    st_rx = st_rx_drop = st_tx = st_tx_rej = st_redirect = st_rt_rej = 0;
     ready = READY_MAGIC;
 }
 
@@ -115,12 +115,14 @@ HOOK int bb_midi_tx_rt(uint8_t b)
     if (ready != READY_MAGIC)
         return 0;
     uint32_t i = irq_off();
-    int ok = rt_wr - rt_rd < 4;
+    int ok = rt_wr - rt_rd < 16;
     if (ok) {
-        rt[rt_wr & 3] = b;
+        rt[rt_wr & 15] = b;
         rt_wr++;
         if (owner)
             U_CR1 |= CR1_TXEIE;
+    } else {
+        st_rt_rej++;
     }
     irq_restore(i);
     return ok;
@@ -140,6 +142,8 @@ HOOK void bb_midi_claim(int immediate)
 
 HOOK int bb_midi_owner(void) { return (int)owner; }
 
+HOOK void bb_midi_filter_clock(int on) { filter_clock = on ? 1u : 0u; }
+
 HOOK uint32_t bb_midi_stat(int which)
 {
     switch (which) {
@@ -147,6 +151,7 @@ HOOK uint32_t bb_midi_stat(int which)
     case 1: return st_rx_drop;
     case 2: return st_tx;
     case 3: return st_tx_rej;
+    case 5: return st_rt_rej;
     default: return st_redirect;
     }
 }
@@ -163,6 +168,10 @@ HOOK uint32_t mcl_tx_hook(uint32_t port, const uint8_t *buf, uint32_t len)
             irq_restore(i);
         }
         if (owner) {
+            if (filter_clock && len == 1 && buf[0] >= 0xf8 && buf[0] <= 0xfc) {
+                st_redirect++;                  /* the stock clock / transport byte: dropped, MCL's own timer is the source */
+                return 1;
+            }
             if (!bb_midi_tx(buf, len))
                 return 0;                      /* ring full: the stock side sees a busy port and tries again */
             st_redirect++;
@@ -178,7 +187,7 @@ HOOK void mcl_usart6_isr(void)
         uint32_t isr = U_ISR;
         if ((U_CR1 & CR1_TXEIE) && (isr & ISR_TXE)) {
             if (rt_rd != rt_wr) {
-                U_TDR = rt[rt_rd & 3];
+                U_TDR = rt[rt_rd & 15];
                 rt_rd++;
                 st_tx++;
             } else if (tx_rd != tx_wr) {

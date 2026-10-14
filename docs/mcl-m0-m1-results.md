@@ -186,3 +186,22 @@ Machinedrum with the 1010 cable on the Blackbox IN: `L- D-`, but with a pattern 
 Blackbox out -> MD in is unproven: `D-` cannot tell "the MD never got the request" from "it got it and did not answer". The test image therefore, when the status request gets no answer,
 plays 16 short notes (channels 1-4, notes 36 / 40 / 44 / 48, one every 100 ms; label gets ` N`). Hearing drum hits = the Blackbox's MIDI out reaches the Machinedrum (then the status
 request is ignored for another reason: MD settings / sysex receive); silence = the cable on OUT (or the OUT-side wiring / type). The blocking test now takes ~1.9 s at boot when nothing answers.
+
+## M4: the clock source (timer interrupt, clock out)
+
+Code: `src/mcl_bb/bb_clock.cpp` (+ `.h`), the filter in `bb_midi.cpp`, vector hook in `patches/mclblob.py`, tests `test_mcl_clock.py` (26 checks), shared rig `mcl_rig.py`.
+- **TIM6** (IRQ 54, vector entry `0x08040118`, previously a `b .` stub; no stock handler or reference to its base) interrupts on every update event; priority 1 (above audio DMA 5..9 and above FreeRTOS' masked levels, below USART6 at 0).
+  No FreeRTOS call in it, no stock queue: it writes real-time bytes straight into MCL's TX ring, so an F8 leaves at the next byte boundary even in the middle of a sysex.
+- **Timer clock is measured, not assumed**: `bb_clock_init()` (GUI task, ~2 ms) counts TIM6 at PSC=0 against the DWT cycle counter (core clock from the SysTick reload x 1000, CLKSOURCE respected), picks a prescaler for ~1 MHz and keeps the exact rate.
+- **Tempo arithmetic**: 192 PPQN, interval = 60 x rate / (192 x BPM) counts as 32.32 fixed point; the fraction is carried from tick to tick, so the sum of intervals follows the ideal within one count (1 us) for any run; tempo changes take effect at the next tick without a phase jump; 20.0-300.0 BPM.
+  An interrupt served late does not move the next one (the counter reloads by itself) and ARR is written first thing.
+- Every 8th tick = MIDI clock 0xF8; optional FA at start (aligned to a tick), FC at stop. `bb_clock_set_hook(tick)` is the call-out for MCL's sequencer (M5). Stock single-byte F8/FA/FB/FC are dropped once the filter is on, so the Machinedrum never sees two clocks.
+- Real-time FIFO is 16 deep (was 4); `bb_clock_stop` waits for a slot for the FC.
+- Emulator-proven: calibration at 100 / 199.5 / 200 MHz timer clocks, one minute at 120 BPM with the exact interval sum and 2,880 F8, FA first, tempo change and limits, stop, stray interrupt, stock-clock filter, F8 inside a 1 KB message.
+  Not provable here: the real TIM6 clock tree, interrupt latency, the Machinedrum following it.
+
+### M4 hardware test image (`M4TEST=1 tools/mcl/build_blob.sh`)
+At the first label (boot) it claims the MIDI jack, calibrates and starts **120.0 BPM MIDI clock**, no start byte, until power-off; label ` Mok C120` (` C-` = timer calibration failed).
+Measure with one cable (no second correct DIN cable needed): a TRS-to-TRS loop cable from Blackbox MIDI OUT to MIDI IN, **Receive = Off** in the Blackbox settings (so the stock sequencer does not follow its own clock), then the CLK sheet:
+`F8 n` rising, `BPM 120`, and `ARR min-max sdN` = the spread of our own clock as received (the Arduino MCL's ~1 ms timer steps would show ~ms here; the stock-queue clock showed sd ~ 1 ms).
+Or Blackbox OUT (1010 cable) -> Machinedrum IN with the Machinedrum on external sync: it shows 120.

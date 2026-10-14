@@ -11,5 +11,6 @@ int bb_midi_tx_rt(uint8_t b);                 /* real-time byte (F8..FF) goes ou
 uint32_t bb_midi_tx_free(void);               /* free bytes in the TX ring */
 void bb_midi_claim(int immediate);            /* MCL becomes the only writer of USART6. immediate: caller knows no stock send is in flight (boot) */
 int bb_midi_owner(void);
-uint32_t bb_midi_stat(int which);             /* 0 rx bytes, 1 rx dropped, 2 tx bytes written to TDR, 3 tx rejected, 4 stock messages redirected */
+void bb_midi_filter_clock(int on);            /* drop the stock firmware's own single-byte F8 / FA / FB / FC (MCL's timer is the clock source) */
+uint32_t bb_midi_stat(int which);             /* 0 rx bytes, 1 rx dropped, 2 tx bytes written to TDR, 3 tx rejected (ring full), 4 stock messages redirected, 5 real-time bytes rejected (FIFO full) */
 }

@@ -9,6 +9,7 @@ image; src/mcl_bb/mcl_blob.ld). Two more bytes of the stock image change:
   - M3, the MIDI jack (src/mcl_bb/bb_midi.cpp), three hooks, all no-ops until the blob has booted:
       0x080446d4  the one call to the stock ring push (0x080444f4) inside the receive path -> mcl_rx_tap (copies the byte, then calls stock);
       0x08044dfc  entry of the stock send function (port, buf, len) -> mcl_tx_hook (stock code unless MCL has claimed the port);
+      0x08040118  vector for IRQ 54 (TIM6, unused by the stock firmware) -> mcl_tim6_isr (M4, the clock);
       0x0804015c  vector 71 (USART6): 0x080462e5 -> mcl_usart6_isr (sends MCL's TX bytes, passes everything else to the stock handler).
 Not combined with `mclpad` (the pad test covers the same flash range).
 """
@@ -35,5 +36,6 @@ PATCHES = [
     (0x080446D4, bl(0x080446D4, 0x080444F4), bl(0x080446D4, bsym["mcl_rx_tap"])),
     (0x08044DFC, bytes.fromhex("012801d9"), b_w(0x08044DFC, bsym["mcl_tx_hook"])),            # cmp r0,#1 ; bls (port check, redone in the hook)
     (0x0804015C, struct.pack("<I", 0x080462E5), struct.pack("<I", bsym["mcl_usart6_isr"] | 1)),
+    (0x08040118, struct.pack("<I", 0x08040315), struct.pack("<I", bsym["mcl_tim6_isr"] | 1)),      # vector 70 = IRQ 54 (TIM6): was a `b .` stub
     (end, b"", b"\xff" * (BLOB_ORG - end) + blob),
 ]
