@@ -53,6 +53,7 @@ typedef struct {
     float trim, leak;                     /* level trim, bleed gain at 1 kHz */
     float leak_f;                         /* bleed at the current pitch (refreshed every 8th block) */
     float vib_ph, vib_rate, vib_depth;
+    float bph;                            /* phase of the cheap stand-in that carries a closed oscillator's bleed */
     lira_ramp tune;                       /* Hz */
     lira_ramp lvl;                        /* this oscillator's level (a mixer fader) */
 } lira_gen;

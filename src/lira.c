@@ -595,8 +595,23 @@ void lira_process(lira_t *l, float *out, int n)
             l->fol += (fabs_(ext) - l->fol) * (fabs_(ext) > l->fol ? ka : kr);
             for (int v = 0; v < 4; v++) {
                 lira_voice *vo = &l->v[v];
-                if (!(vact[2 * v] | vact[2 * v + 1])) {          /* both oscillators closed: nothing to compute, the output filter just settles */
-                    busn[v] = hip(&vo->hp, 0.f, hp3c);
+                if (!(vact[2 * v] | vact[2 * v + 1])) {          /* both oscillators closed: only their bleed is left */
+                    float yb = 0.f, y = 0.f;
+                    for (int k = 0; k < 2; k++) {
+                        int o = 2 * v + k;
+                        lira_gen *gn = &vo->g[k];
+                        gn->bph += vf[o] * isr;
+                        if (gn->bph >= 1.f)
+                            gn->bph -= 1.f;
+                        float tri = fabs_(gn->bph - 0.5f) * 4.f - 1.f;     /* (a triangle at the oscillator's pitch is enough for a signal at -66 dB) */
+                        if (sine)
+                            tri = sinsh(tri);
+                        float tr = TRI_AMP * (1.f - vsh[v]) * tri * vleak[o] * vtrim[o];
+                        y += tr * vlvl[o];
+                        yb += tr;
+                    }
+                    mix += y;
+                    busn[v] = hip(&vo->hp, yb, hp3c);
                     continue;
                 }
                 float msrc = g0[v] * (l->bus[busa[v]] * gsa + l->bus[busb[v]] * gsb) +
@@ -606,8 +621,18 @@ void lira_process(lira_t *l, float *out, int n)
                 for (int k = 0; k < 2; k++) {
                     int o = 2 * v + k;
                     lira_gen *gn = &vo->g[k];
-                    if (!vact[o])
+                    if (!vact[o]) {                       /* a closed oscillator beside an open one: the same stand-in */
+                        gn->bph += vf[o] * isr;
+                        if (gn->bph >= 1.f)
+                            gn->bph -= 1.f;
+                        float tb = fabs_(gn->bph - 0.5f) * 4.f - 1.f;
+                        if (sine)
+                            tb = sinsh(tb);
+                        float tr = TRI_AMP * (1.f - sh) * tb * vleak[o] * vtrim[o];
+                        y += tr * vlvl[o];
+                        yb += tr;
                         continue;
+                    }
                     float tri, sq;
                     float cpl = COUPLE * 0.5f * (l->sq[(o + 1) & 7] + l->sq[(o + 7) & 7]);
                     gen_tick(gn, fmax_(vf[o] * (1.f + mv), 0.f), cpl, isr, sine, &tri, &sq);
