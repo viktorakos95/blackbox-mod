@@ -192,6 +192,31 @@ tap(3 + 60 + 10, 216)
 check("footer: DETECT", e.r8(MEM + O["ui"] + 2) == 1)
 f = picture("detect")
 check("DETECT sheet: inside the screen", inside(f))
+# every value's explanation fits the screen (two lines under the cells), on its own sheet
+ui_last = lambda: e.r8(MEM + O["ui"] + 3)
+bad = []
+for sheet_i, vals in ((1, range(0, 8)), (1, (14, 15, 16)), (2, range(8, 14))):
+    e.uc.mem_write(MEM + O["ui"] + 2, bytes([sheet_i]))
+    for v in vals:
+        e.uc.mem_write(MEM + O["ui"] + 3, bytes([v]))
+        if not inside(draw(0)):
+            bad.append((sheet_i, v))
+check("all 17 values: name and explanation fit on the screen", not bad, bad)
+e.uc.mem_write(MEM + O["ui"] + 2, bytes([1]))
+e.uc.mem_write(MEM + O["ui"] + 3, bytes([14]))                  # BLEED GUARD
+f = picture("detect_bleed")
+e.uc.mem_write(MEM + O["ui"] + 3, bytes([0]))
+tap(40, 134 + 10)                                              # row 2, column 0: BLEED GUARD
+check("a tap on a cell makes it the one explained", ui_last() == 14, ui_last())
+tap(116, 134 + 10)
+check("... the next cell: GUARD REACH", ui_last() == 15, ui_last())
+tap(192, 134 + 10)
+check("... and the third: NOISE FLOOR", ui_last() == 16, ui_last())
+tap(40, 54 + 10)
+check("... another row, first column: SENSITIVITY", ui_last() == 0, ui_last())
+knob(1, 40)
+check("turning a knob makes its value the one explained (knob 2 = THRESHOLD)", ui_last() == 1, ui_last())
+knob(1, -40)
 fl = lambda off: struct.unpack("<f", e.uc.mem_read(MEM + O["p"] + off, 4))[0]
 tap(150, 54 + 10)                                          # DETECT row 0: SENS THRESH RETRIG MASK
 knob(3, -40 * 30)

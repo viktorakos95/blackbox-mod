@@ -67,6 +67,13 @@ Same as the patch (not a bug): a hit into a still-ringing note re-sends note-on 
 - VEL fixed sets SCAN to 0 (the old value is kept and comes back when VEL goes to DYN, unless SCAN was changed by hand meanwhile).
   Note the decision window is `max(Scan, 3 x Speed)`: with SCAN 0 it is 3 x Speed (9 ms at Speed 3.0), so SPEED sets the delay then.
 
+## Names on the page (what the knobs are called now)
+SENS -> SENSITIVITY, THRESH -> THRESHOLD, RETRIG -> RING GUARD, MASK -> DEAD TIME, SCAN -> PEAK WINDOW, STRICT -> SHARPNESS,
+SPEED -> REACTION, CURVE -> TOUCH CURVE, NOTE, VEL -> VELOCITY, LEN -> NOTE LENGTH, CHAN -> CHANNEL, CC -> CC NUMBER, CC VAL -> CC VALUE,
+BLEED -> BLEED GUARD, RANGE -> GUARD REACH, FLOOR -> NOISE FLOOR. Under the cells of DETECT and OUT, two lines explain the value last touched
+(a tap on its cell or a turn of its knob); on HITS a line names what the four knobs do. Each explanation is checked to fit the screen
+(`test_t2m_page.py`).
+
 ## Latency (corrected; measured in the emulator with `tools/t2m_latency.py`)
 Real firmware code (`looper_in` -> `t2m_audio` -> detector), hits with a 0.5 ms attack whose first sample lands at 16 phases of the
 256-sample block. "decide" = threshold crossing to the sample where the detector decides = `max(Scan, 3 x Speed)`; "queued" = to the end

@@ -75,6 +75,7 @@ void t2m_boot(void)
         m->scan_saved[k] = defaults.scan_ms;
         t2m_reset(&m->st[k]);
     }
+    m->ui.last = 0xff;
     clkmon_boot(&m->clk);                       /* the cycle counter and the clock monitor's interrupt block */
     m->on[0] = 1;                               /* input L on, R off */
     R->mem = m;
@@ -89,11 +90,11 @@ void t2m_seq(const void *seq, uint32_t lo, int32_t hi)
         clkmon_seq(&m->clk, seq, lo, hi);
 }
 
-void t2m_loop(uint32_t ticks_into_bar)
+void t2m_loop(uint32_t ticks_into_bar, uint32_t info)
 {
     struct t2m_mem *m = t2m_mem();
     if (m)
-        clkmon_loop(&m->clk, ticks_into_bar);
+        clkmon_loop(&m->clk, ticks_into_bar, info);
 }
 
 struct t2m_mem *t2m_mem(void)

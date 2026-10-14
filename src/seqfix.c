@@ -93,7 +93,7 @@ void seq_play(uint8_t *seq, const void *clock, int32_t a, int32_t b, uint32_t e)
     CLK->now_lo = (uint32_t)now;
     CLK->now_hi = (uint32_t)(now >> 32);
     t2m_seq(seq, (uint32_t)now, (int32_t)(now >> 32));    /* the clock monitor's transport readout (src/clkmon.c): this sequence's musical time */
-    looper_clock((uint32_t)t, (int32_t)(t >> 32));   /* the looper follows the transport: restarts, grid lines, where the loops are */
+    looper_clock((uint32_t)now, (int32_t)(now >> 32));   /* the looper follows the transport (restarts, grid lines, where the loops are) on the same musical time as SAMPLR and the readout; the raw clock t has another scale and origin, so its bar line was elsewhere */
     fw_player(seq, clock, a, b, e);
 }
 

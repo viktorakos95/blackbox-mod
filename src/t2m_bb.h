@@ -33,7 +33,7 @@ struct t2m_mem {
     uint8_t _r0[2];
     struct t2m_hit hist[T2M_INPUTS][T2M_HIST];
     struct {                         /* the TRIG page (src/t2m_page.c) */
-        uint8_t in, row, sheet, _r;  /* the input shown, the row the knobs turn, the footer's sheet */
+        uint8_t in, row, sheet, last;/* the input shown, the row the knobs turn, the footer's sheet, the value last touched (0xff none) */
         int16_t kacc[4];             /* knob counts not yet a step */
     } ui;
     t2m_params p[T2M_INPUTS];
@@ -44,7 +44,7 @@ struct t2m_mem {
 void t2m_boot(void);
 struct t2m_mem *t2m_mem(void);       /* 0 if there was no memory for it this boot */
 void t2m_audio(const float *l, const float *r, int frames);
-void t2m_loop(uint32_t ticks_into_bar);                /* the looper began recording this far into the bar (src/looper.c) */
+void t2m_loop(uint32_t ticks_into_bar, uint32_t info);                /* the looper began recording this far into the bar (src/looper.c) */
 void t2m_seq(const void *seq, uint32_t lo, int32_t hi);   /* the stock sequencer's musical time, from seq_play (src/seqfix.c) */
 
 /* the TRIG page (src/t2m_page.c), drawn and touched by src/looper_page.c */
