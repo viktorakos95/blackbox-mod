@@ -1683,6 +1683,8 @@ static void dirty_now(uint8_t *view)
 /* From the audio task (looper_ui_poke -> solo.c): redraw when something changed, and now and then regardless. */
 void looper_page_poke(uint8_t *view)
 {
+    if (P->mode == M_LIRA)
+        lira_leds();                                          /* the buttons' LEDs follow the voices */
     if (P->info_on && looper_ticks() - P->info_t > INFO_TIMEOUT) {
         P->info_on = 0;
         P->sig = 0;
@@ -1909,8 +1911,10 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         struct lay L;
         layout(0, &L);
         if (d < L.foot_y) {
-            if (P->mode == M_LIRA)
+            if (P->mode == M_LIRA) {
                 lira_touch(0, id, x, d);
+                lira_leds();
+            }
             else
                 sm_touch(0, id, x, d);
             dirty_now(view);
@@ -2210,8 +2214,10 @@ void looper_app_msg(void *app, const uint16_t *msg)
             P->btn_index = (uint16_t)idx;
         }
         if (P->mode == M_LIRA && id == MSG_BUTTON && idx <= 7 && !P->info_on) {   /* LIRA page: the eight buttons are the eight plates */
-            if (lira_ui_button((int)idx, looper_ticks(), 20))
+            if (lira_ui_button((int)idx, looper_ticks(), 20)) {
                 P->sig = 0;
+                lira_leds();
+            }
             return;
         }
         if (P->mode == M_LIRA && id == MSG_RELEASE && idx <= 7 && !P->info_on)

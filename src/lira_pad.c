@@ -172,6 +172,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t touch[4], src[4];    /* Touch and FM Source per pair (list indexes) */
     uint8_t want[8], keyed[8];   /* sensors held on the page; sensors the engine has been told */
     uint8_t init, momentary, sel, ticks;
+    uint8_t rec_src;             /* the pad recorder's Rec Input: 0 the stock choices, 1 DRONE (this synth alone), 2 LOOPER (looper + SAMPLR alone) */
     uint8_t ext_src;             /* what Ext In listens to: 0 the audio input, 1 the Blackbox's mix (without this synth), 2 both */
     uint8_t chord_on, space, root, oct, range, just, wave, seed;   /* chord mode: tonal space, root 0..11, register 0..3, span 1..4 octaves, just tuning, waveform */
     int8_t notes[8];             /* the voices' MIDI notes in chord mode */
@@ -188,6 +189,10 @@ struct pool {
     struct pg pg;
     float dl[LIRA_MAX][2][DLEN];
     float pdl[2][DLEN];          /* the page instance's delay lines */
+    float rec[2][2][1024];       /* what the recorder can take instead of the input: [DRONE, LOOPER][left, right], the last block */
+    float scr[2][1024];          /* the bus as it was before the looper added its audio */
+    uint32_t fil[0xc0];          /* a FatFs FIL for bbmod.bin (0x300 bytes: FIL is about 0x250) */
+    uint8_t blob[1280];          /* the settings file as written / read */
 };
 #define POOL       (*(struct pool *volatile *)0x38800bf0u)
 #define POOL_CHECK (*(volatile uint32_t *)0x38800bf4u)
@@ -294,6 +299,7 @@ void lira_register(void *table)
     g->just = 0;
     g->wave = 0;
     g->ext_src = 0;
+    g->rec_src = 0;
     g->seed = 1;
     lira_voicing(0, 0, 48, 36, 1, g->notes);
     g->tail = 0;
@@ -666,6 +672,12 @@ unsigned lira_ui_sig(void)
     return h | (unsigned)p->pg.momentary << 8 | (unsigned)p->pg.sel << 9;
 }
 
+static void rec_zero(struct pool *p, int which, int n)
+{
+    for (int i = 0; i < n; i++)
+        p->rec[which][0][i] = p->rec[which][1][i] = 0.0f;
+}
+
 /* Called from looper_stage every audio block, before the looper: adds the page's LIRA to the output bus. */
 void lira_page_run(float *l, float *r, int n)
 {
@@ -674,13 +686,17 @@ void lira_page_run(float *l, float *r, int n)
         return;
     struct pg *g = &p->pg;
     struct slot *s = &g->s;
+    if (n > 1024)
+        n = 1024;
     int any = 0;
     for (int k = 0; k < 8; k++)
         any |= g->want[k];
     any |= g->ex[0] > 480 || g->ex[1] > 480;     /* Hold above 12 o'clock: the voices drone with no touch */
     if (!g->init) {
-        if (!any)
+        if (!any) {
+            rec_zero(p, 0, n);
             return;
+        }
         lira_reset(&s->l, FS, p->pdl[0], p->pdl[1], DLEN, 0x6c697261u);
         s->clearing = 1;
         s->pad = (const uint8_t *)1;
@@ -703,6 +719,7 @@ void lira_page_run(float *l, float *r, int n)
         g->tail -= (uint32_t)n;
     else {
         g->tail = 0;
+        rec_zero(p, 0, n);
         return;
     }
     if (s->clearing) {
@@ -784,6 +801,7 @@ void lira_page_run(float *l, float *r, int n)
         for (int i = 0; i < m; i++) {
             l[i0 + i] += tmp[i] * gain;
             r[i0 + i] += tmp[i] * gain;
+            p->rec[0][0][i0 + i] = p->rec[0][1][i0 + i] = tmp[i] * gain;
         }
     }
 }
@@ -935,4 +953,204 @@ int lira_ui_flats(void)                                    /* the page's notes a
 {
     struct pool *p = pool();
     return p ? lira_flats_for(p->pg.space, p->pg.root) : 0;
+}
+
+/* The eight round buttons' LEDs show which voices are on, while the page is up. Each is one GPIO pin (the firmware has no colour or
+   brightness for them): LedPin (0x080436b0) drives it, and a non-zero state byte in the LED table (12 bytes per LED, the byte at +8)
+   keeps the stock software dimming away from it. The stock GUI resets all eight when the screen changes. */
+void lira_leds(void)
+{
+    struct pool *p = pool();
+    if (!p)
+        return;
+    for (int i = 0; i < 8; i++) {
+        ((void (*)(void *, int, int))FN(0x080436b0))((void *)0x240021bcu, i, p->pg.want[i]);
+        *(volatile uint8_t *)(0x24009a2cu + 12u * (unsigned)i + 8u) = 2;
+    }
+}
+
+/* ---- recording onto a pad: the pad recorder's Rec Input list (parameter 0x9a, L+R / Left / Right / Resam) gains DRONE and LOOPER.
+   The recorder node only knows 0..3, so a new choice is stored as 3 (Resam) with the choice remembered here, and where the recorder's
+   Resam path copies the master bus over its input bus (0x08062784) the chosen source's last block is written over it instead. The
+   recorder runs ahead of the Out 1 stage in a block, so it gets the block before: a constant 256-frame delay. ---- */
+static const char *const rec_names[6] = {"L+R", "Left", "Right", "Resam", "DRONE", "LOOPER"};
+
+void rec_input_register(void *table, int param, const char *label, const char *const *names, int count, const char *xml)
+{
+    (void)names;
+    (void)count;
+    fw_register_list(table, param, label, rec_names, 6, xml);
+}
+
+int lira_rec_store(int v)                                  /* the stock node's value for a choice; remembers the new ones */
+{
+    struct pool *p = pool();
+    if (p)
+        p->pg.rec_src = (uint8_t)(v >= 4 ? v - 3 : 0);
+    return v >= 4 ? 3 : v;
+}
+
+void lira_rec_fill(void *bus)                              /* the recorder's input bus, just filled with the master copy */
+{
+    struct pool *p = pool();
+    if (!p || !p->pg.rec_src || p->pg.rec_src > 2)
+        return;
+    float *l = 0, *r = 0;
+    int n = fw_buf_frames(bus);
+    ((int (*)(void *, float **, float **))FN(0x0804d9c0))(bus, &l, &r);
+    if (!l || n <= 0)
+        return;
+    if (n > 1024)
+        n = 1024;
+    const float (*src)[1024] = p->rec[p->pg.rec_src - 1];
+    for (int i = 0; i < n; i++) {
+        l[i] = src[0][i];
+        if (r)
+            r[i] = src[1][i];
+    }
+}
+
+void lira_rec_begin(const float *l, const float *r, int n)  /* before the looper adds its audio to the bus */
+{
+    struct pool *p = pool();
+    if (!p)
+        return;
+    if (n > 1024)
+        n = 1024;
+    for (int i = 0; i < n; i++) {
+        p->scr[0][i] = l[i];
+        p->scr[1][i] = r[i];
+    }
+}
+
+void lira_rec_end(const float *l, const float *r, int n)    /* after it: what the looper and SAMPLR added */
+{
+    struct pool *p = pool();
+    if (!p)
+        return;
+    if (n > 1024)
+        n = 1024;
+    for (int i = 0; i < n; i++) {
+        p->rec[1][0][i] = l[i] - p->scr[0][i];
+        p->rec[1][1][i] = r[i] - p->scr[1][i];
+    }
+}
+
+/* ---- saving: the synth's settings go into bbmod.bin next to the project's settings.tml, written when the project is saved and read
+   when it is loaded. Both run in the file task (the firmware's preset queue handlers at 0x080930ce / 0x080930e0 are hooked), which
+   is the only task that may use the SD card. FatFs is plain: f_open 0x08086534, f_write 0x08086a06, f_read 0x08086866, f_close 0x08086d76. ---- */
+#define FF_OPEN  ((int (*)(void *, const char *, unsigned))FN(0x08086534))
+#define FF_WRITE ((int (*)(void *, const void *, unsigned, unsigned *))FN(0x08086a06))
+#define FF_READ  ((int (*)(void *, void *, unsigned, unsigned *))FN(0x08086866))
+#define FF_CLOSE ((int (*)(void *))FN(0x08086d76))
+#define BLOB_MAGIC 0x444e5238u                           /* "8RND" */
+
+struct blob {
+    uint32_t magic;
+    uint16_t ver, nctl;
+    int16_t side[NPADS][NCTL];                           /* every pad position's controls */
+    int16_t row[NCTL];                                   /* the page's controls */
+    int16_t mod[4], level, ex[10];
+    uint8_t touch[4], src[4];
+    uint8_t misc[10];                                    /* chord on, space, root, register, span, just, wave, ext source, seed, rec source */
+    uint8_t pad_[2];
+    uint32_t crc;
+};
+_Static_assert(sizeof(struct blob) <= 1280, "the settings file must fit the pool's buffer");
+
+static uint32_t blob_crc(const struct blob *b)
+{
+    uint32_t h = 2166136261u;
+    const uint8_t *q = (const uint8_t *)b;
+    for (unsigned i = 0; i < sizeof *b - 4; i++)
+        h = (h ^ q[i]) * 16777619u;
+    return h;
+}
+
+void lira_save(void)
+{
+    struct pool *p = pool();
+    if (!p)
+        return;
+    struct pg *g = &p->pg;
+    struct blob *b = (struct blob *)p->blob;
+    b->magic = BLOB_MAGIC;
+    b->ver = 1;
+    b->nctl = NCTL;
+    for (int k = 0; k < NPADS; k++)
+        for (int i = 0; i < NCTL; i++)
+            b->side[k][i] = p->side[k][i];
+    for (int i = 0; i < NCTL; i++)
+        b->row[i] = g->row[i];
+    for (int i = 0; i < 4; i++) {
+        b->mod[i] = g->mod[i];
+        b->touch[i] = g->touch[i];
+        b->src[i] = g->src[i];
+    }
+    b->level = g->level;
+    for (int i = 0; i < 10; i++)
+        b->ex[i] = g->ex[i];
+    b->misc[0] = g->chord_on;
+    b->misc[1] = g->space;
+    b->misc[2] = g->root;
+    b->misc[3] = g->oct;
+    b->misc[4] = g->range;
+    b->misc[5] = g->just;
+    b->misc[6] = g->wave;
+    b->misc[7] = g->ext_src;
+    b->misc[8] = g->seed;
+    b->misc[9] = g->rec_src;
+    b->pad_[0] = b->pad_[1] = 0;
+    b->crc = blob_crc(b);
+    for (unsigned i = 0; i < sizeof p->fil / 4; i++)
+        p->fil[i] = 0;
+    unsigned bw = 0;
+    if (FF_OPEN(p->fil, "bbmod.bin", 0x0au) == 0) {
+        FF_WRITE(p->fil, b, sizeof *b, &bw);
+        FF_CLOSE(p->fil);
+    }
+}
+
+void lira_load(void)
+{
+    struct pool *p = pool();
+    if (!p)
+        return;
+    struct blob *b = (struct blob *)p->blob;
+    for (unsigned i = 0; i < sizeof p->fil / 4; i++)
+        p->fil[i] = 0;
+    unsigned br = 0;
+    if (FF_OPEN(p->fil, "bbmod.bin", 1u) != 0)
+        return;
+    int rc = FF_READ(p->fil, b, sizeof *b, &br);
+    FF_CLOSE(p->fil);
+    if (rc != 0 || br != sizeof *b || b->magic != BLOB_MAGIC || b->ver != 1 || b->nctl != NCTL || b->crc != blob_crc(b))
+        return;
+    struct pg *g = &p->pg;
+    for (int k = 0; k < NPADS; k++)
+        for (int i = 0; i < NCTL; i++)
+            p->side[k][i] = b->side[k][i];
+    for (int i = 0; i < NCTL; i++)
+        g->row[i] = b->row[i];
+    for (int i = 0; i < 4; i++) {
+        g->mod[i] = b->mod[i];
+        g->touch[i] = (uint8_t)(b->touch[i] > 2 ? 1 : b->touch[i]);
+        g->src[i] = (uint8_t)(b->src[i] & 7);
+    }
+    g->level = b->level;
+    for (int i = 0; i < 10; i++)
+        g->ex[i] = b->ex[i];
+    g->chord_on = b->misc[0] & 1;
+    g->space = (uint8_t)(b->misc[1] < lira_space_count() ? b->misc[1] : 0);
+    g->root = (uint8_t)(b->misc[2] % 12);
+    g->oct = (uint8_t)(b->misc[3] & 3);
+    g->range = (uint8_t)(b->misc[4] < 1 || b->misc[4] > 4 ? 3 : b->misc[4]);
+    g->just = b->misc[5] & 1;
+    g->wave = b->misc[6] & 1;
+    g->ext_src = (uint8_t)(b->misc[7] % 3);
+    g->seed = b->misc[8];
+    g->rec_src = b->misc[9] > 2 ? 0 : b->misc[9];
+    revoice(g);
+    for (int i = 0; i < NCTL; i++)
+        g->s.vals[i] = -1;                                   /* the engine takes them all again */
 }

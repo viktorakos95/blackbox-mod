@@ -292,9 +292,13 @@ def tap(x, d):
     e.call("solo_touch_up", VIEW, PTA, 0)
 
 
+leds = []
+e.stub(0x080436B0, lambda: leds.append((e.arg(0), e.arg(1), e.arg(2))))
 PLD = 180                                                      # the plates: d 157 .. 205; the grid: voice v is at x = 5 + 38 v
 tap(5 + 38 * 2 + 19, PLD)
 check("a tap on plate 3 switches the voice on (latch)", key(2) == 1 and key(1) == 0)
+check("the button LEDs follow: LED 3 on, the others off, held out of the stock dimming",
+      (0x240021BC, 2, 1) in leds[-8:] and (0x240021BC, 1, 0) in leds[-8:] and e.r8(0x24009A2C + 12 * 2 + 8) == 2, leds[-8:])
 tap(5 + 38 * 2 + 19, PLD)
 check("... and the next tap off", key(2) == 0)
 tap(314 - 20, 7)

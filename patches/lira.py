@@ -33,6 +33,13 @@ PATCHES = [
     # pad-mode list: "LIRA" as a sixth choice, and what choosing it sets
     hook(0x0808CF2E, 0x0808C0D8, "mode_register"),
     hook(0x080A0046, 0x08093ECC, "lira_mode_set"),
+    # the pad recorder's Rec Input: DRONE and LOOPER as choices 4 and 5 (stored as Resam, the source remembered; see lira_pad.c)
+    hook(0x0808D198, 0x0808C0D8, "rec_input_register"),
+    (0x08062C42, bytes.fromhex("84f85830"), bl(0x08062C42, sym["lira_rec_store_thunk"])),
+    hook(0x08062784, 0x0804D880, "lira_rec_copy_thunk"),
+    # saving: the settings go into bbmod.bin when the project is saved, and come back when it is loaded (file task)
+    hook(0x080930CE, 0x08091A5C, "lira_save_thunk"),
+    hook(0x080930E0, 0x08091A74, "lira_load_thunk"),
     # the audio task's input conversion: LIRA's Ext In reads the converted block
     hook(0x08041502, 0x0804CAA4, "lira_in_capture"),
     hook(0x0804151E, 0x0804CAA4, "lira_in_capture"),
