@@ -157,6 +157,9 @@ static void gen_setup(lira_t *l, lira_gen *g)
         g->vp = g->vn + 0.08f;
     /* half periods of the RC loop: charge Vn -> Vp towards the rail, discharge Vp -> Vn towards ground */
     g->kt = 0.69314718f * (flog2((1.f - g->vn) / (1.f - g->vp)) + flog2(g->vp / g->vn));
+    g->lr = 1.f / flog2((1.f - g->vn) / (1.f - g->vp));
+    g->lf = 1.f / flog2(g->vp / g->vn);
+    g->linp = 0.f;
     g->mid = 0.5f * (g->vp + g->vn);
     g->inv_half = 2.f / (g->vp - g->vn);
     g->v = urand(l, g->vn, g->vp);
@@ -177,14 +180,14 @@ static const float VIB_HZ[8] = {6.47f, 5.89f, 5.40f, 4.98f, 4.62f, 4.52f, 3.81f,
 
 /* One sample of the oscillator. f = frequency, cpl = supply coupling from the neighbours (rail units). Returns the
    square and triangle one sample late (PolyBLEP corrects the sample before and after each edge). */
-static inline void gen_tick(lira_gen *g, float f, float cpl, float isr, float *tri, float *sq)
+static inline void gen_tick(lira_gen *g, float f, float cpl, float isr, int lin, float *tri, float *sq)
 {
     float x = f * g->kt * isr;
     if (x > 0.5f)
         x = 0.5f;
     float a = x * (1.f - x * 0.5f * (1.f - x * (1.f / 3.f)));     /* 1 - exp(-x) */
     float v0 = g->v, v = v0 + ((g->s ? 1.f : 0.f) + cpl - v0) * a;
-    float emit_sq = g->sqp, emit_tri = g->trip, d = 0.f, h = 0.f, thr = 0.f;
+    float emit_sq = g->sqp, emit_tri = lin ? g->linp : g->trip, d = 0.f, h = 0.f, thr = 0.f;
     if (g->s) {
         if (v >= g->vp) {
             d = v > v0 ? clip_(1.f - (g->vp - v0) / (v - v0), 0.f, 1.f) : 1.f;   /* already past it: switch now */
@@ -210,15 +213,37 @@ static inline void gen_tick(lira_gen *g, float f, float cpl, float isr, float *t
     }
     g->sqp = cur;
     g->trip = (v - g->mid) * g->inv_half;
+    if (lin) {                  /* the triangle linear in time: undo the capacitor's exponential (charging: 1 - (1 - vn) e^-t, discharging: vp e^-t) */
+        float u = g->s ? flog2((1.f - g->vn) / fmax_(1.f - v, 1e-4f)) * g->lr : flog2(g->vp / fmax_(v, 1e-4f)) * g->lf;
+        u = clip_(u, 0.f, 1.f);
+        g->linp = g->s ? 2.f * u - 1.f : 1.f - 2.f * u;
+    }
     *sq = emit_sq;
     *tri = emit_tri;
 }
 
+/* sin(pi/2 x) for -1 <= x <= 1 from the oscillator's triangle: an odd polynomial, error 1.6e-4 (-76 dB), so the sine's own
+   harmonics stay below the delay's noise floor */
+static inline float sinsh(float x)
+{
+    x = x < -1.f ? -1.f : x > 1.f ? 1.f : x;
+    float x2 = x * x;
+    return x * (1.57043715f + x2 * (-0.64270926f + x2 * 0.0724327f));
+}
+
 /* ---- helpers ---- */
+static const float TUNE_LO[8] = {-16.f, -16.f, 7.f, 9.f, 20.f, 20.f, 33.f, 33.f};
+static const float TUNE_HI[8] = {93.f, 93.f, 109.f, 107.f, 116.54f, 116.54f, 126.24f, 131.22f};
+
+float lira_tune_for_midi(int o, float midi)
+{
+    float p = (midi - TUNE_LO[o & 7]) / (TUNE_HI[o & 7] - TUNE_LO[o & 7]);
+    return (p < 0.f ? 0.f : p > 1.f ? 1.f : p) * 127.f;
+}
+
 static void retune(lira_t *l, int o)
 {
-    static const float lo[8] = {-16.f, -16.f, 7.f, 9.f, 20.f, 20.f, 33.f, 33.f};
-    static const float hi[8] = {93.f, 93.f, 109.f, 107.f, 116.54f, 116.54f, 126.24f, 131.22f};
+    const float *lo = TUNE_LO, *hi = TUNE_HI;
     float p = l->params[LIRA_TUNE1 + o] * (1.f / 127.f);
     float pitch = l->params[o < 4 ? LIRA_PITCH1234 : LIRA_PITCH5678] * (1.f / 127.f) * 1.99f + 0.01f;
     float f = mtof(lo[o] + p * (hi[o] - lo[o])) * pitch;
@@ -435,6 +460,7 @@ void lira_process(lira_t *l, float *out, int n)
         sidx[v] = src >= 4 && src <= 7 ? src - 4 : -1;
     }
 
+    const int sine = l->params[LIRA_WAVE] > 0.5f;
     int ei = 0;
     const int have_ext = l->ext_l && l->ext_r && l->ext_n > 0;
     float ext = 0.f;
@@ -532,8 +558,10 @@ void lira_process(lira_t *l, float *out, int n)
                     lira_gen *gn = &vo->g[k];
                     float tri, sq;
                     float cpl = COUPLE * 0.5f * (l->sq[(o + 1) & 7] + l->sq[(o + 7) & 7]);
-                    gen_tick(gn, fmax_(vf[o] * (1.f + mv), 0.f), cpl, isr, &tri, &sq);
+                    gen_tick(gn, fmax_(vf[o] * (1.f + mv), 0.f), cpl, isr, sine, &tri, &sq);
                     l->sq[o] = gn->s ? 1.f : -1.f;
+                    if (sine)
+                        tri = sinsh(tri);
                     float wave = TRI_AMP * (1.f - sh) * tri + SQ_AMP * sh * sq;
                     float ga = vgain[o];
                     /* the envelope's transistor: gain, plus a bend that grows as it closes (waveshaper) */

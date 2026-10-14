@@ -28,14 +28,16 @@ lib.lira_param.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_float]
 lib.lira_key.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
 lib.lira_touch.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_float]
 lib.lira_process.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+lib.lira_tune_for_midi.argtypes = [ctypes.c_int, ctypes.c_float]
+lib.lira_tune_for_midi.restype = ctypes.c_float
 
 # parameter ids, same order as the enum in lira.h
 NAMES = ("TUNE1 TUNE2 TUNE3 TUNE4 TUNE5 TUNE6 TUNE7 TUNE8 FAST12 FAST34 FAST56 FAST78 SHARP12 SHARP34 SHARP56 SHARP78 "
          "MOD12 MOD34 MOD56 MOD78 SOURCE12 SOURCE34 SOURCE56 SOURCE78 PITCH1234 PITCH5678 HOLD1234 HOLD5678 SWITCH "
          "TOTAL_FB VIBRATO DRV DST_MIX VOL F_A F_B ANDOR LINK TIME1 TIME2 FEEDBACK DEL_MIX MOD1 MOD2 DEL_MOD LFO_WAV "
-         "QUANTIZE").split()
+         "QUANTIZE EXT WAVE").split()
 P = {n: i for i, n in enumerate(NAMES)}
-assert len(NAMES) == 47
+assert len(NAMES) == 49
 
 SR = 44100
 DL = 44032
@@ -339,6 +341,39 @@ for trial in range(int(os.environ.get('LIRA_TRIALS','16'))):
     y = np.concatenate(ys)
     ok = bool(np.all(np.isfinite(y))) and np.max(np.abs(y)) <= 1.0001
     check("random settings %d" % trial, ok, "peak %.3f" % np.max(np.abs(y)))
+
+# ---- sine waveform and exact tuning ----
+def level_at(x, f, n=1 << 16):
+    sp, fr = spectrum(x, n)
+    k = np.argmin(abs(fr - f))
+    return sp[max(0, k - 3):k + 4].max()
+
+
+def one_voice(wave, note, sharp=0):
+    l = Lira(**{**CLEAN, "SHARP12": sharp, "WAVE": wave, "PITCH1234": 63.1809})
+    l.set("TUNE1", lib.lira_tune_for_midi(0, note))
+    l.key(0, 1)
+    l.run(SR)
+    return l.run(1 << 16)
+
+
+tri = one_voice(0, 57)
+sin = one_voice(1, 57)
+f0 = mtof(57)
+h3_tri = db(level_at(tri, 3 * f0) / level_at(tri, f0))
+h3_sin = db(level_at(sin, 3 * f0) / level_at(sin, f0))
+check("sine mode: 3rd harmonic %.0f dB (the triangle's: %.0f dB, theory -19)" % (h3_sin, h3_tri), h3_tri > -24 and h3_sin < -50)
+h5_sin = db(level_at(sin, 5 * f0) / level_at(sin, f0))
+check("sine mode: 5th harmonic %.0f dB" % h5_sin, h5_sin < -55)
+for note in (36, 48, 57, 60, 72, 84, 93):
+    y = one_voice(1, note)
+    got = peak_hz(y, 20, 8000)
+    cents = 1200 * math.log2(got / mtof(note))
+    check("tune_for_midi: note %d sounds %.1f Hz, %.1f cents off" % (note, got, cents), abs(cents) < 4)
+for o in range(8):                                                  # every oscillator reaches the shared range
+    check("oscillator %d takes notes 33 and 93 (tune within 0..127)" % (o + 1),
+          0.0 < lib.lira_tune_for_midi(o, 33) + 1e-3 and lib.lira_tune_for_midi(o, 93) < 127.001)
+
 
 # CPU
 l = Lira()

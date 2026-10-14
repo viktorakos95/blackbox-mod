@@ -33,6 +33,7 @@
 #include <stdint.h>
 #include "lira.h"
 #include "lira_ui.h"
+#include "lira_chord.h"
 
 #pragma GCC optimize("O2", "no-tree-loop-distribute-patterns")
 
@@ -171,6 +172,8 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t touch[4], src[4];    /* Touch and FM Source per pair (list indexes) */
     uint8_t want[8], keyed[8];   /* sensors held on the page; sensors the engine has been told */
     uint8_t init, momentary, sel, ticks;
+    uint8_t chord_on, space, root, oct, range, just, wave, seed;   /* chord mode: tonal space, root 0..11, register 0..3, span 1..4 octaves, just tuning, waveform */
+    int8_t notes[8];             /* the voices' MIDI notes in chord mode */
     uint16_t last;               /* the control last touched or turned (ui id), 0xffff = none: its value is shown in the top bar */
     uint8_t dkind[4], didx[4];   /* per finger: what it is dragging (0 none, 1 plate, 2 FM slider, 3 dial) and which */
     int16_t dy0[4], dv0[4];      /* ... and where the drag began */
@@ -282,6 +285,15 @@ void lira_register(void *table)
     g->momentary = 0;
     g->sel = 0;
     g->last = 0xffff;
+    g->chord_on = 0;
+    g->space = 0;
+    g->root = 0;
+    g->oct = 1;
+    g->range = 3;
+    g->just = 0;
+    g->wave = 0;
+    g->seed = 1;
+    lira_voicing(0, 0, 48, 36, 1, g->notes);
     g->tail = 0;
     g->level = 700;
     for (int i = 0; i < NCTL; i++)
@@ -337,8 +349,12 @@ int lira_pages(uint8_t *app, uint8_t *cell, void *list, int page)
 /* ---- audio task ---- */
 static void apply_row(const int16_t *row, struct slot *s, int force, int page)
 {
+    int chord = page == 2;                                 /* page 2: the page's instance in chord mode (the voices' tune comes from the chord) */
+    page = page != 0;
     for (int i = 0; i < NCTL; i++) {
         const struct ctl *c = &ctls[i];
+        if (chord && i < 8)
+            continue;
         if (s->clearing && (i == C_FEEDBACK || i == C_DELMIX))
             continue;
         if (page && (i == C_MODDEP || i == C_SOURCE || i == C_TOUCH || i == C_PITCH || i == C_SHARP || i == C_HOLD || i == C_DLYMOD))
@@ -562,6 +578,8 @@ int lira_ui_get(int c)
     if (!p)
         return 0;
     struct pg *g = &p->pg;
+    if (c >= 0 && c < 8 && g->chord_on)                  /* chord mode: the knob shows where the note lies in the voice's range */
+        return (int)(lira_tune_for_midi(c, (float)g->notes[c]) * (1000.0f / 127.0f) + 0.5f);
     if (c >= 0 && c < NCTL)
         return g->row[c];
     if (c >= 100 && c < 104)
@@ -583,6 +601,8 @@ void lira_ui_set(int c, int v)
     if (!p)
         return;
     struct pg *g = &p->pg;
+    if (c >= 0 && c < 8 && g->chord_on)
+        return;
     if (c >= 0 && c < NCTL)
         g->row[c] = (int16_t)(v < 0 ? 0 : v > (ctls[c].kind == K_LIST ? ctls[c].names_n - 1 : 1000) ? (ctls[c].kind == K_LIST ? ctls[c].names_n - 1 : 1000) : v);
     else if (c >= 100 && c < 104)
@@ -668,7 +688,7 @@ void lira_page_run(float *l, float *r, int n)
         }
         for (int i = 0; i < NCTL; i++)
             s->vals[i] = -1;
-        apply_row(g->row, s, 1, 1);
+        apply_row(g->row, s, 1, g->chord_on ? 2 : 1);
         lira_param(&s->l, LIRA_FEEDBACK, 0.0f);
         lira_param(&s->l, LIRA_DEL_MIX, 0.0f);
         lira_settle(&s->l);
@@ -692,7 +712,7 @@ void lira_page_run(float *l, float *r, int n)
         if (++s->clearing > CLEAR_STEPS) {
             s->clearing = 0;
             s->vals[C_FEEDBACK] = s->vals[C_DELMIX] = -1;
-            apply_row(g->row, s, 0, 1);
+            apply_row(g->row, s, 0, g->chord_on ? 2 : 1);
         }
     }
     for (int k = 0; k < 8; k++)
@@ -701,7 +721,16 @@ void lira_page_run(float *l, float *r, int n)
             lira_key(&s->l, k, g->want[k]);
         }
     if ((s->ticks++ & 1) == 0) {
-        apply_row(g->row, s, 0, 1);
+        apply_row(g->row, s, 0, g->chord_on ? 2 : 1);
+        lira_param(&s->l, LIRA_WAVE, (float)g->wave);
+        if (g->chord_on) {                                    /* the voices sound the chord's notes, at concert pitch (the Pitch knobs are bypassed) */
+            for (int o = 0; o < 8; o++) {
+                float m = (float)g->notes[o] + (g->just ? lira_just_cents(g->notes[o], g->root) * 0.01f : 0.0f);
+                lira_param(&s->l, LIRA_TUNE1 + o, lira_tune_for_midi(o, m));
+            }
+            lira_param(&s->l, LIRA_PITCH1234, LIRA_PITCH_UNITY);
+            lira_param(&s->l, LIRA_PITCH5678, LIRA_PITCH_UNITY);
+        }
         for (int k = 0; k < 4; k++) {
             lira_param(&s->l, LIRA_FAST12 + k, (float)g->touch[k]);
             lira_param(&s->l, LIRA_SOURCE12 + k, (float)g->src[k]);
@@ -710,7 +739,8 @@ void lira_page_run(float *l, float *r, int n)
         }
         for (int k = 0; k < 2; k++) {
             lira_param(&s->l, LIRA_HOLD1234 + k, (float)g->ex[k] * (127.0f / 1000.0f));
-            lira_param(&s->l, LIRA_PITCH1234 + k, (float)g->ex[2 + k] * (127.0f / 1000.0f));
+            if (!g->chord_on)                                 /* (chord mode holds the Pitch knobs at concert pitch) */
+                lira_param(&s->l, LIRA_PITCH1234 + k, (float)g->ex[2 + k] * (127.0f / 1000.0f));
             lira_param(&s->l, LIRA_MOD1 + k, (float)g->ex[4 + k] * (127.0f / 1000.0f));
         }
     }
@@ -791,4 +821,92 @@ int lira_ui_last(int id)
     if (id >= 0)
         p->pg.last = (uint16_t)id;
     return p->pg.last;
+}
+
+/* ---- chord mode: the page's tonal space controls. ids 140..143 are knobs (space, root, register, span) on a 0..1000 scale,
+   150.. are actions, see lira_ui_action ---- */
+static void revoice(struct pg *g)
+{
+    lira_voicing(g->space, g->root, 36 + 12 * g->oct, 12 * g->range, g->seed, g->notes);
+}
+
+static int stepped_max(int id)                            /* the highest index of a stepped knob */
+{
+    return id == 140 ? lira_space_count() - 1 : id == 141 ? 11 : id == 142 ? 3 : 3;
+}
+
+static int stepped_get(const struct pg *g, int id)
+{
+    return id == 140 ? g->space : id == 141 ? g->root : id == 142 ? g->oct : g->range - 1;
+}
+
+int lira_ui_chord_get(int id)                              /* the index behind a stepped knob, or 0/1 for the switches */
+{
+    struct pool *p = pool();
+    if (!p)
+        return 0;
+    struct pg *g = &p->pg;
+    if (id >= 140 && id <= 143)
+        return stepped_get(g, id);
+    return id == 150 ? g->chord_on : id == 153 ? g->just : id == 154 ? g->wave : id == 155 ? g->seed : 0;
+}
+
+void lira_ui_chord_set(int id, int idx)                    /* idx is clamped to the knob's steps */
+{
+    struct pool *p = pool();
+    if (!p || id < 140 || id > 143)
+        return;
+    struct pg *g = &p->pg;
+    int mx = stepped_max(id);
+    idx = idx < 0 ? 0 : idx > mx ? mx : idx;
+    if (idx == stepped_get(g, id))
+        return;
+    if (id == 140)
+        g->space = (uint8_t)idx;
+    else if (id == 141)
+        g->root = (uint8_t)idx;
+    else if (id == 142)
+        g->oct = (uint8_t)idx;
+    else
+        g->range = (uint8_t)(idx + 1);
+    revoice(g);
+}
+
+/* 0 chord mode on / off, 1 shuffle (a new voicing of the same space), 2 rotate (every voice takes its neighbour's note),
+   3 just / equal tuning, 4 sine / triangle waveform */
+void lira_ui_action(int a)
+{
+    struct pool *p = pool();
+    if (!p)
+        return;
+    struct pg *g = &p->pg;
+    if (a == 0) {
+        g->chord_on ^= 1;
+        for (int i = 0; i < 8; i++)
+            g->s.vals[i] = -1;                            /* back from chord mode: the tune knobs apply again */
+    } else if (a == 1) {
+        g->seed = (uint8_t)(g->seed + 1u);
+        revoice(g);
+    } else if (a == 2) {
+        int8_t last = g->notes[7];
+        for (int i = 7; i > 0; i--)
+            g->notes[i] = g->notes[i - 1];
+        g->notes[0] = last;
+    } else if (a == 3) {
+        g->just ^= 1;
+    } else if (a == 4) {
+        g->wave ^= 1;
+    }
+}
+
+int lira_ui_note(int v)
+{
+    struct pool *p = pool();
+    return p && v >= 0 && v < 8 ? p->pg.notes[v] : 0;
+}
+
+const char *lira_ui_space_name(void)
+{
+    struct pool *p = pool();
+    return lira_space_name(p ? p->pg.space : 0);
 }

@@ -34,6 +34,7 @@ enum {
     LIRA_LFO_WAV,     /* 0 triangle, 1 square */
     LIRA_QUANTIZE,    /* 0/1 */
     LIRA_EXT,         /* 0..127: external audio in level (the Blackbox's line inputs), mixed in ahead of the delay */
+    LIRA_WAVE,        /* 0 the oscillator's triangle (the plugin's), 1 a sine shaped from it */
     LIRA_NPARAMS
 };
 
@@ -45,6 +46,7 @@ typedef struct {
     float v, kt, vp, vn, mid, inv_half;   /* capacitor voltage (rail = 1), ln-sum of the half periods, thresholds */
     int s;                                /* gate output high */
     float sqp, trip;                      /* previous-sample square (PolyBLEP, one sample late) and triangle */
+    float linp, lr, lf;                   /* the triangle linear in time (for the sine), and 1 / log2 of each half's voltage ratio */
     float ve, drive;                      /* envelope voltage, touch drive (0 = not touched) */
     float t_slow, t_fast;                 /* release time constants of this voice, s */
     float trim, leak;                     /* level trim, bleed gain at 1 kHz */
@@ -104,6 +106,10 @@ void lira_reset(lira_t *l, float sample_rate, float *dl1, float *dl2, int len, u
 /* every parameter ramp to its target at once */
 void lira_settle(lira_t *l);
 void lira_param(lira_t *l, int id, float value);
+/* The value of LIRA_TUNE1 + o (0..127) that makes oscillator o sound the MIDI note `midi` (fractions allowed) when its pitch
+   knobs are at LIRA_PITCH_UNITY; the note should lie in 33 .. 93, which every oscillator reaches. */
+#define LIRA_PITCH_UNITY 63.1809f
+float lira_tune_for_midi(int o, float midi);
 void lira_key(lira_t *l, int sensor /* 0..7 */, int on);
 /* touch with a pressure/velocity: drive 0 = released, 0..1 = how far the envelope opens and how fast */
 void lira_touch(lira_t *l, int sensor, float drive);

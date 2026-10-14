@@ -7,6 +7,7 @@ blocks add into the buffers (the looper's bus) instead of replacing them.
 NOT checked: the drawing (looper_page.c / lira_ui.inc), the sound against the pad version, CPU on the device.
 """
 import math
+import os
 import struct
 
 from unicorn.arm_const import UC_ARM_REG_R0
@@ -108,5 +109,56 @@ e.call("lira_ui_set", 121, 900)
 droning = rms(run(120)[-40 * N:])
 check("Hold raised: the voices drone with no plate pressed", droning > 0.003, "%.5f" % droning)
 e.call("lira_ui_set", 121, 0)
+# ---- chord mode: the voices sound the chord's notes ----
+for g in range(4):                                                  # (the tests above left pair 1 on Touch = Follow, pair 2 on FM Source Pair4)
+    e.call("lira_ui_set", 100 + g, 1)
+    e.call("lira_ui_set", 104 + g, 0)
+    e.call("lira_ui_set", 108 + g, 0)
+import numpy as np
+rv("lira_ui_chord_get", 150)
+e.call("lira_ui_set", 19, 0)                                       # no delay mix, no feedback: the measurement hears the voice only
+e.call("lira_ui_set", 18, 0)
+e.call("lira_ui_action", 0)                                         # chord mode on
+check("chord mode is on", rv("lira_ui_chord_get", 150) == 1)
+e.call("lira_ui_chord_set", 140, 2)                                 # MAJ 13
+e.call("lira_ui_chord_set", 141, 9)                                 # root A
+notes = [rv("lira_ui_note", v) for v in range(8)]
+check("the voicing of MAJ 13 on A: eight notes in 33..93, pitch classes in the space",
+      all(33 <= n <= 93 for n in notes) and all((n - 9) % 12 in (0, 2, 4, 7, 9, 11) for n in notes), str(notes))
+
+
+def played_hz(v, just=False, wave=0):
+    for k in range(8):
+        e.call("lira_ui_key", k, 0)
+    run(3 * 48000 // N)                                             # let the others die away
+    e.call("lira_ui_key", v, 1)
+    sig = run(120)
+    sig = np.array(run(256 * 1), dtype=np.float64)
+    sig = np.array(run(256), dtype=np.float64)
+    out = []
+    for _ in range(190):
+        out += run(1)
+    x = np.array(out[-48000:]) * np.hanning(48000)
+    sp = np.abs(np.fft.rfft(x, 1 << 17))
+    fr = np.fft.rfftfreq(1 << 17, 1 / 48000)
+    m = (fr > 40) & (fr < 4000)
+    if os.environ.get('LIRA_DBG'):
+        idx = np.argsort(sp[m])[-6:]
+        print('DBG', [(round(float(fr[m][i]), 1), round(float(sp[m][i]), 1)) for i in idx])
+    return fr[m][np.argmax(sp[m])]
+
+
+for v in (0, 3, 6):
+    hz = played_hz(v)
+    want = 440.0 * 2 ** ((notes[v] - 69) / 12)
+    cents = 1200 * math.log2(hz / want)
+    check("voice %d plays its note %d (%.1f Hz, %.0f cents off)" % (v + 1, notes[v], hz, cents), abs(cents) < 14)
+e.call("lira_ui_action", 3)                                         # just intonation
+hz = played_hz(3)
+want = 440.0 * 2 ** ((notes[3] - 69) / 12) * 2 ** (rv("lira_ui_get", 999) * 0)       # (equal-tempered frequency)
+check("just intonation moves the note by its just offset (within 20 cents of equal)", abs(1200 * math.log2(hz / want)) < 20)
+e.call("lira_ui_action", 0)                                         # chord mode off again
+for k in range(8):
+    e.call("lira_ui_key", k, 0)
 print("failures:", fails)
 raise SystemExit(1 if fails else 0)

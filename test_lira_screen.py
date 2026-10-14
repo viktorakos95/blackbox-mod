@@ -238,54 +238,61 @@ def sel():
     return e.uc.reg_read(A.UC_ARM_REG_R0)
 
 
+def chord(id):
+    e.call("lira_ui_chord_get", id)
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+
+
+def note(v):
+    e.call("lira_ui_note", v)
+    r = e.uc.reg_read(A.UC_ARM_REG_R0)
+    return r - (1 << 32) if r & 0x80000000 else r
+
+
 MSG = 0x24038100
 def knob(n, counts):                                              # n = the raw knob number of the message
     e.uc.mem_write(MSG, struct.pack("<H", 0x32) + bytes(10) + struct.pack("<h", n) + bytes(2) + struct.pack("<h", counts))
     e.call("looper_view_msg", VIEW, MSG)
 
 
-PLD = 185                                                      # the plates: d 169 .. 205
-touch("down", 3 + 38 * 2 + 18, PLD, up=False)
-e.call("solo_touch_up", VIEW, PTA, 0)
+def drag(x, d0, d1):
+    touch("down", x, d0, up=False)
+    touch("move", x, d1)
+    e.call("solo_touch_up", VIEW, PTA, 0)
+
+
+def tap(x, d):
+    touch("down", x, d)
+    e.call("solo_touch_up", VIEW, PTA, 0)
+
+
+PLD = 180                                                      # the plates: d 157 .. 205; the grid: voice v is at x = 5 + 38 v
+tap(5 + 38 * 2 + 19, PLD)
 check("a tap on plate 3 switches the voice on (latch)", key(2) == 1 and key(1) == 0)
-touch("down", 3 + 38 * 2 + 18, PLD)
-e.call("solo_touch_up", VIEW, PTA, 0)
+tap(5 + 38 * 2 + 19, PLD)
 check("... and the next tap off", key(2) == 0)
-touch("down", 314 - 20, 7)
-e.call("solo_touch_up", VIEW, PTA, 0)
-touch("down", 3 + 38 * 3 + 18, PLD)
+tap(314 - 20, 7)
+touch("down", 5 + 38 * 3 + 19, PLD)
 check("HOLD: plate 4 is on only while the finger is down", key(3) == 1)
 e.call("solo_touch_up", VIEW, PTA, 0)
 check("... released: off", key(3) == 0)
-touch("down", 314 - 20, 7)
-e.call("solo_touch_up", VIEW, PTA, 0)
-# pair 2 (p = 1): FM source (upper button) and touch (lower button)
-touch("down", 3 + 78 + 10, 25)
-e.call("solo_touch_up", VIEW, PTA, 0)
-check("pair 2's FM Source steps (Self -> Off)", get(105) == 1, get(105))
-touch("down", 3 + 78 + 10, 41)
-e.call("solo_touch_up", VIEW, PTA, 0)
-check("pair 2's Touch steps (Fast -> Follow)", get(101) == 2, get(101))
-touch("down", 3 + 78 + 19, 70, up=False)
-touch("move", 3 + 78 + 19, 30)
-e.call("solo_touch_up", VIEW, PTA, 0)
+tap(314 - 20, 7)
+# VOICES tab, pair 2 = panel 1 (x 81..157): MOD top-left, SHARP top-right, FM source bottom-left, TOUCH bottom-right
+tap(5 + 76 + 19, 85)
+check("pair 2's FM Source button steps (Self -> Off)", get(105) == 1, get(105))
+tap(5 + 76 + 38 + 19, 85)
+check("pair 2's Touch button steps (Fast -> Follow)", get(101) == 2, get(101))
+drag(5 + 76 + 19, 60, 20)
 check("pair 2's MOD knob: dragging up 40 px raises it by 500", 480 < get(109) < 520, get(109))
-touch("down", 60, 70, up=False)
-touch("move", 60, 30)
-e.call("solo_touch_up", VIEW, PTA, 0)
-check("pair 1's SHARP knob (the other knob of the column) raised, MOD of pair 1 untouched", get(130) > 900 and get(108) == 0, (get(130), get(108)))
-touch("down", 3 + 19, 130, up=False)
-touch("move", 3 + 19, 90)
-e.call("solo_touch_up", VIEW, PTA, 0)
-check("voice 1's tune knob (always visible): drag up 40 px = +500", 480 < get(0) < 520, get(0))
-touch("down", 3 + 38 * 7 + 19, 130, up=False)
-touch("move", 3 + 38 * 7 + 19, 90)
-e.call("solo_touch_up", VIEW, PTA, 0)
-check("voice 8's tune knob too (default 401 + 500)", 880 < get(7) < 920, get(7))
-touch("down", 3 + 19, 130)
-e.call("solo_touch_up", VIEW, PTA, 0)
+drag(5 + 38 + 19, 60, 20)
+check("pair 1's SHARP knob raised by 500, its MOD untouched", abs(get(130) - 957) < 8 and get(108) == 0, (get(130), get(108)))
+drag(5 + 38 * 7 + 19, 140, 100)
+check("voice 8's tune knob (the strip): drag up 40 px = +500 (default 401)", 880 < get(7) < 920, get(7))
+drag(5 + 19, 140, 100)
+check("voice 1's tune knob: +500", 480 < get(0) < 520, get(0))
+tap(5 + 19, 140)
 check("a plain tap on a knob changes nothing", 480 < get(0) < 520, get(0))
-# the four encoders sit two left, two right: top-left = voice 1, bottom-left = voice 2, top-right = voice 3, bottom-right = voice 4
+# the four encoders sit two left, two right: the left two turn voices 1 and 2, the right two voices 3 and 4
 for raw, voice in ((0, 0), (1, 1), (2, 2), (3, 3)):
     before = [get(v) for v in range(8)]
     knob(raw, 80)
@@ -311,48 +318,76 @@ def set_ticks(n):                                                   # find loope
 
 
 set_ticks(5000)
-check("the page starts on FM, encoders on voices 1-4", sel() == 0, sel())
+check("the encoder group is voices 1-4 (bank 0)", sel() == 0, sel())
 button(11, 7)
-check("BACK: encoders on voices 5-8", sel() == 16, sel())
+check("BACK: voices 5-8 (bank 1)", sel() == 16, sel())
 before = [get(v) for v in range(8)]
 knob(0, 80)
 check("... the top-left encoder now turns voice 5", get(4) == before[4] + 10 and get(0) == before[0], (before, [get(v) for v in range(8)]))
 f = draw(0)
 snap("voices58")
-check("FM page, bank 2, drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
-# the footer tabs: DELAY, then TONE
-touch("down", 3 + 82 + 10, 215)
-e.call("solo_touch_up", VIEW, PTA, 0)
-check("the DELAY tab", sel() & 15 == 1, sel())
+check("VOICES tab, bank 1, drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
+# a panel is the encoder group after a touch on it: pair 3 (panel 2): the encoders turn its MOD, SHARP, FM source, TOUCH
+tap(5 + 152 + 19, 60)
+check("a touch on a pair panel makes it the encoder group", sel() == 4 << 4, sel())
+m0, s0 = get(110), get(132)
+knob(0, 80)                                                       # raw 0 = top-left = MOD
+knob(2, 80)                                                       # raw 2 = top-right = SHARP
+check("top-left / top-right encoders turn MOD / SHARP of the panel", get(110) == m0 + 10 and get(132) == s0 + 10, (m0, get(110), s0, get(132)))
+src0 = get(106)
+knob(1, 80)                                                       # raw 1 = bottom-left = FM source
+check("the bottom-left encoder steps the FM source", get(106) == (src0 + 1) & 7, (src0, get(106)))
+# the SOUND tab
+tap(5 + 82 + 10, 215)
+check("the SOUND tab (first panel is the encoder group)", sel() == 1 | 2 << 4, sel())
 t0 = get(16)
-touch("down", 42, 30, up=False)
-touch("move", 42, 70)
-e.call("solo_touch_up", VIEW, PTA, 0)
-check("TIME 1 (top-left knob): dragging down 40 px lowers it by 500", abs(get(16) - (t0 - 500)) <= 3, (t0, get(16)))
+drag(5 + 19, 35, 75)
+check("TIME 1 (top-left of DELAY): dragging down 40 px lowers it by 500", abs(get(16) - (t0 - 500)) <= 3, (t0, get(16)))
 knob(0, 80)
 check("the top-left encoder turns TIME 1", 8 <= get(16) - (t0 - 500) <= 12, (t0, get(16)))
 knob(3, 80)
 check("the bottom-right encoder turns MIX", get(19) != 0, get(19))
 f = draw(0)
-snap("delay")
-check("DELAY drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f), [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:5])
-touch("down", 3 + 82 * 2 + 10, 215)
-e.call("solo_touch_up", VIEW, PTA, 0)
-check("the TONE tab", sel() & 15 == 2, sel())
-touch("down", 42, 45, up=False)
-touch("move", 42, 5)
-e.call("solo_touch_up", VIEW, PTA, 0)
-touch("down", 42, 75, up=False)
-touch("move", 42, 35)
-e.call("solo_touch_up", VIEW, PTA, 0)
-check("HOLD 1-4 and HOLD 5-8 are separate sliders", 450 < get(121) < 550 and 450 < get(122) < 550, (get(121), get(122)))
-touch("down", 3 + 38 * 4 + 18, PLD)
-e.call("solo_touch_up", VIEW, PTA, 0)
+snap("sound")
+check("SOUND drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
+drag(5 + 152 + 19, 60, 20)
+drag(5 + 152 + 38 + 19, 60, 20)
+check("HOLD A and HOLD B (PITCH panel) are separate knobs", 480 < get(121) < 520 and 480 < get(122) < 520, (get(121), get(122)))
+# the CHORD tab
+tap(5 + 164 + 10, 215)
+check("the CHORD tab", sel() == 2 | 2 << 4, sel())
+check("chord mode starts off, MAJ 9, root C", chord(150) == 0 and chord(140) == 0 and chord(141) == 0, (chord(150), chord(140), chord(141)))
+knob(0, 80)
+check("the top-left encoder steps the tonal space", chord(140) == 1, chord(140))
+knob(2, 80)
+check("the top-right encoder steps the root", chord(141) == 1, chord(141))
+knob(3, 80)
+check("the bottom-right encoder steps the span", chord(143) == 3, chord(143))
+tap(5 + 76 + 19, 47)
+check("the CHORD button switches chord mode on", chord(150) == 1)
+n0 = [note(v) for v in range(8)]
+check("eight notes in 33..93, all pitch classes of MAJ 7#11 on D-flat... (in the space)", all(33 <= x <= 93 for x in n0) and len(set(n0)) == 8, n0)
+before = [get(v) for v in range(8)]
+drag(5 + 19, 140, 100)
+check("in chord mode a drag on a voice knob does nothing", [get(v) for v in range(8)] == before)
+f = draw(0)
+snap("chord")
+check("CHORD drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
+tap(5 + 76 + 19, 85)                                              # SHUFFLE (bottom-left of VOICING)
+n1 = [note(v) for v in range(8)]
+check("SHUFFLE gives another voicing", n1 != n0 and sorted(n1) != sorted(n0), (n0, n1))
+tap(5 + 76 + 38 + 19, 85)                                         # ROTATE (bottom-right)
+n2 = [note(v) for v in range(8)]
+check("ROTATE hands every note to the next voice", n2 == [n1[7]] + n1[:7], (n1, n2))
+tap(5 + 76 + 38 + 19, 47)                                         # TUNING (top-right)
+check("TUNING switches to just intonation", chord(153) == 1)
+tap(314 - 80, 7)
+check("the WAVE switch in the top bar selects the sine", chord(154) == 1)
+tap(5 + 76 + 19, 47)
+check("the CHORD button switches chord mode off again", chord(150) == 0)
+tap(5 + 38 * 4 + 19, PLD)
 check("the plates are there on every page (voice 5)", key(4) == 1, key(4))
 e.call("lira_ui_key", 4, 0)
-f = draw(0)
-snap("tone")
-check("TONE drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
 # the eight hardware buttons are the plates: message 0xf9, index at +0xc
 button(4)
 check("hardware button 5 toggles voice 5 on", key(4) == 1)
