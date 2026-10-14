@@ -1339,48 +1339,30 @@ e.uc.mem_write(SMP + OFF["dens"], struct.pack("<f", 20.0))
 setb(OFF["gfree"], 0)
 e.call("samplr_set_mode", 0)
 
-# SYNC: SAMPLR's grid lines are the stock sequencer's, block-quantized like its notes (a line belongs to the block where the sequencer time has passed it)
+# SYNC: SAMPLR's grid lines are the stock sequencer's, at their exact frame
 CLKN = 0x38800700 + 520
 def seq_block(k):
-    now = int(k * 40.96)                                        # 120 bpm: 3840 ticks a beat, 256 frames a block
+    now = int(k * 10.24)                                        # 120 bpm: 960 ticks a beat, 256 frames a block
     e.uc.mem_write(CLKN, struct.pack("<II", now, 0))
     e.call("looper_clock", now, 0)
     return now
-SB = SC + scr_off("syncb")
-e.uc.mem_write(SB, b"\x01")                                    # BLOCK for this test
 e.call("samplr_set_mode", 2)
-setb(OFF["div"], 2)                                            # 1/16 = 960 ticks
+setb(OFF["div"], 2)                                            # 1/16 = 240 ticks
 setb(OFF["pat"], 0)
 e.call("samplr_cycle", 2)
 touch(0, 0, 300, 0)
 touch(2, 0, 0, 0)
-prev_now, levels, nows = 0, [], []
-for k in range(1, 8):
-    nows.append(seq_block(k))
-    play()
-for k in range(8, 140):
-    nows.append(seq_block(k))
-    levels.append(max(abs(x) for x in play()[0]))
-onset = [k for k in range(1, len(levels)) if levels[k] > 1e-4 and levels[k - 1] <= 1e-4]
-exp_b = []
-for k in range(1, len(levels)):
-    p_, c_ = nows[6 + k], nows[7 + k]                           # (levels[k] is block 8+k: its clock is nows[7+k], the one before it nows[6+k])
-    first = -(-p_ // 960) * 960
-    if first < c_:
-        exp_b.append(k)
-check("sync: the arp steps start in exactly the blocks where the sequencer time passes a 1/16 line", onset[:8] == exp_b[:8] and len(onset) >= 4, (onset[:8], exp_b[:8]))
 # EXACT (the default): the same lines at their exact frame
-e.uc.mem_write(SB, b"\x00")
 allo = []
 for k in range(8, 80):
     nowk = seq_block(k)
     allo += play()[0]
-ticks_ = [int(k * 40.96) for k in range(8, 80)]
+ticks_ = [int(k * 10.24) for k in range(8, 80)]
 exp_fr = []
 for i, nk in enumerate(ticks_):
-    L = -(-nk // 960) * 960
-    if L < nk + 40.96:
-        exp_fr.append(i * 256 + int((L - nk) / 0.16))
+    L = -(-nk // 240) * 240
+    if L < nk + 10.24:
+        exp_fr.append(i * 256 + int((L - nk) / 0.04))
 got = []
 prev_on = False
 for i, x in enumerate(allo):

@@ -98,6 +98,8 @@ def boot():
     e.call("looper_boot", ENGINE, count=200_000_000)
     e.uc.mem_write(STATE + 164 + 9 * 4, struct.pack("<f", 0.0))
     e.uc.mem_write(STATE + 164 + 11 * 4, struct.pack("<f", 0.0))
+    e.uc.mem_write(STATE + 164 + 1 * 4, struct.pack("<f", 0.0))               # SYNC off and QUANT 1/16: what the checks assume (the defaults are SYNC on, 1 BAR)
+    e.uc.mem_write(STATE + 164 + 2 * 4, struct.pack("<f", 3.0))
 
 
 def block(l, r=None, base=0.0):
@@ -347,7 +349,7 @@ check("clear all: every track empty, no master loop", all(mode(t) == EMPTY for t
 # ---------------------------------------------------------------- sync: quantized start / stop, bars, transport restart
 boot()
 opt(O_SYNC, 1)
-opt(O_QUANT, 2)                                 # 1/16: 6000 frames at the default 120 bpm
+opt(O_QUANT, 3)                                 # 1/16: 6000 frames at the default 120 bpm
 ev(0, REC_DOWN)
 started = None
 for i in range(40):
@@ -388,7 +390,7 @@ blocks(70)
 # rounding up: released short of the bar line, recording runs on to it; and the grid itself
 boot()
 opt(O_SYNC, 1)
-opt(O_QUANT, 1)                                 # 1/8: 12000 frames
+opt(O_QUANT, 2)                                 # 1/8: 12000 frames
 ev(0, REC_DOWN)
 for _ in range(400):
     block([0.2] * N)
@@ -406,7 +408,7 @@ opt(O_SYNC, 0)
 # ---------------------------------------------------------------- the first loop recorded with sync, then sync off
 boot()
 opt(O_SYNC, 1)
-opt(O_QUANT, 2)
+opt(O_QUANT, 3)
 ev(0, REC_DOWN)
 blocks(400, 0.2)
 ev(0, REC_UP)
@@ -538,7 +540,7 @@ boot()
 opt(O_LEN, 0)
 hold(0, 200, tone)
 opt(O_SYNC, 1)
-opt(O_QUANT, 2)                                  # 1/16: 6000 frames = 23.4 blocks
+opt(O_QUANT, 3)                                  # 1/16: 6000 frames = 23.4 blocks
 opt(O_LEN, 2)
 blocks(7)
 ev(1, REC_DOWN); blocks(2)
@@ -599,6 +601,12 @@ check("STOP (nothing recording): paused and rewound to the start", st(POS) == 0 
 tcmd(0)
 blocks(3)
 check("PLAY after STOP: plays from the start", 0 < st(POS) <= 4 * N, st(POS))
+
+# defaults of a fresh boot: SYNC on, QUANT 1 BAR, SPEED PITCH GRAIN
+lay_pool()
+e.uc.mem_write(0xC0000000, b"\x11" * 0x100)
+e.call("looper_boot", ENGINE, count=200_000_000)
+check("defaults: SYNC on, QUANT 1 BAR (0), SPEED PITCH GRAIN (1)", opt_get(O_SYNC) == 1.0 and opt_get(O_QUANT) == 0.0 and opt_get(O_PITCH) == 1.0, (opt_get(O_SYNC), opt_get(O_QUANT), opt_get(O_PITCH)))
 
 # stock route: sends are handed to the FX nodes' buses instead of the looper's own effects
 boot()
@@ -664,7 +672,7 @@ def cblock(n, l=0.0):
 
 boot()
 opt(O_SYNC, 1)
-opt(O_QUANT, 2)                                  # 1/16 of 120 bpm = 6000 frames = 937.5 clock units at 40 units / 256 frames
+opt(O_QUANT, 3)                                  # the grid is exact sequencer ticks: 1/16 = 240 (this fixture's clock runs 40 units a block)
 CLKPOS[0] = 50000 + 7
 cblock(4)
 ev(0, REC_DOWN)
@@ -674,7 +682,7 @@ for i in range(30):
     block([0.2] * N)
     if mode(0) == RECM and began is None:
         began = (i, CLKPOS[0])
-check("sequencer clock: the take begins on a grid line of the sequencer's own clock (the line lies within that block)", began is not None and ((began[1] % 937.5) >= 937.5 - 41 or (began[1] % 937.5) < 1), began)
+check("sequencer clock: the take begins on a grid line of the sequencer's own clock (the line lies within that block)", began is not None and ((began[1] % 240) >= 240 - 41 or (began[1] % 240) < 1), began)
 for _ in range(400):
     clock(); block([0.2] * N)
 ev(0, REC_UP)

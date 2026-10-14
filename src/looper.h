@@ -19,7 +19,7 @@ enum { LOOPER_P_FILT, LOOPER_P_RES, LOOPER_P_CRUNCH, LOOPER_P_DRIVE, LOOPER_P_SE
        LOOPER_P_STAB, LOOPER_P_RPT, LOOPER_P_SPEED, LOOPER_P_DROP, LOOPER_P_TRIM, LOOPER_P_STUT, LOOPER_P_SCRM, LOOPER_P_PTCH, LOOPER_PARAMS };
 
 /* Global options (looper_set_opt): the first five and LOOPER_O_ROUTE are choices (whole numbers), the rest amounts 0..1.
- * QUANT: 0 = 1/4, 1 = 1/8, 2 = 1/16, 3 = 1 bar. ROUTE, DTIME, DFB, DRET, RSIZE, RRET: the looper's own delay and reverb are gone (the sends always go to the Blackbox's own); the slots stay, unused.
+ * QUANT: 0 = 1 bar, 1 = 1/4, 2 = 1/8, 3 = 1/16. ROUTE, DTIME, DFB, DRET, RSIZE, RRET: the looper's own delay and reverb are gone (the sends always go to the Blackbox's own); the slots stay, unused.
  * GAIN: the loop's make-up gain, 1 + 3 x amount (0 .. +12 dB). */
 enum { LOOPER_O_LEN, LOOPER_O_SYNC, LOOPER_O_QUANT, LOOPER_O_SRC, LOOPER_O_DTIME,
        LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET, LOOPER_O_GAIN, LOOPER_O_ROUTE, LOOPER_O_FULL, LOOPER_O_HWBTN, LOOPER_O_MON, LOOPER_O_PITCH, LOOPER_OPTS };      /* HWBTN: STOP / PLAY: 0 = the looper only, 1 = the sequencer too (REC is always the looper's); MON: the input is monitored through the looper (0 = off); PITCH: 0 = tape (speed changes pitch), 1 = keep the pitch (granular) for SPEED and HALF */

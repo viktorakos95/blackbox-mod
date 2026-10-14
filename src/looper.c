@@ -54,6 +54,7 @@
 #include <stdint.h>
 
 #include "looper.h"
+#include "t2m_bb.h"
 
 #define FN(addr) ((addr) | 1u)
 
@@ -67,6 +68,8 @@ void bkp_enable(void);
 void looper_ui_poke(void);
 #include "samplr.h"
 double seqfix_now(void);
+void t2m_loop(uint32_t ticks_into_bar);
+#define SEQ_TPB 960.0     /* sequencer ticks a beat: measured on the unit (1924 ticks a second at 120 bpm, 2880 at 180), exact whatever the tempo */
 void solo_boot_reset(void);
 void looper_page_boot(void);
 
@@ -266,6 +269,7 @@ void looper_boot(void *engine)
 {
     fw_pool_init(engine);
     bkp_enable();
+    t2m_boot();                                   /* Trigger2MIDI (src/t2m_bb.c): its memory, while nothing else allocates */
     S->magic = 0;
     S->engine = (uint8_t *)engine;
     S->ok = 0;
@@ -285,7 +289,7 @@ void looper_boot(void *engine)
     S->dw = 0;
     S->gphase = 0.f;
     S->bpm = 0.f;
-    static const float defaults[LOOPER_OPTS] = {0.f, 0.f, 2.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN) */
+    static const float defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
     for (int i = 0; i < LOOPER_OPTS; i++)
         S->opt[i] = defaults[i];
     for (int t = 0; t < LOOPER_TRACKS; t++) {
@@ -420,7 +424,7 @@ static inline float beat_frames(void)
 
 static inline float grid_frames(void)
 {
-    static const float f[4] = {1.f, .5f, .25f, 4.f};                    /* 1/4, 1/8, 1/16 of a beat, 1 bar */
+    static const float f[4] = {4.f, 1.f, .5f, .25f};                    /* 1 bar, 1/4, 1/8, 1/16 of a beat */
     int q = opt_i(LOOPER_O_QUANT);
     return beat_frames() * f[q < 0 ? 0 : q > 3 ? 3 : q];
 }
@@ -740,6 +744,8 @@ void looper_in(void *obj, float **bufs, int frames)
         if (S->ticks % 10 == 0)
             looper_ui_poke();                     /* about 19 redraws a second while the page shows */
     }
+    if (frames > 0)
+        t2m_audio(bufs[0], bufs[1], frames);      /* Trigger2MIDI on both inputs (src/t2m_bb.c) */
     fw_in_tail(obj, bufs, frames);
 }
 
@@ -1508,6 +1514,8 @@ static void apply(int t, int b)
             k->mode = LOOPER_REC;
             k->rec = 0;
             k->own = OWN_NO;
+            if (S->cur_ok)
+                t2m_loop((uint32_t)dmod(seqfix_now() + (double)b * (double)S->rate, 4.0 * SEQ_TPB));   /* (clock monitor: where in the bar the take began) */
         } else if (k->mode == LOOPER_EMPTY) {
             if (opt_i(LOOPER_O_LEN) == LOOPER_LEN_FOLLOW) {
                 k->was_empty = 1;
@@ -1696,7 +1704,7 @@ static int run(float *bl, float *br, int n)
     }
     int gb = -1, wb = -1;
     if (S->cur_ok) {                                  /* the grid lines of the sequencer's own clock */
-        double g = (double)gf * (double)S->rate;
+        double g = SEQ_TPB * (double)(int)(gf / beat_frames() * 4.f + .5f) * .25;   /* exact ticks, not bpm-derived frames */
         double ph = dmod(cpos, g);
         double fr = ph < g * 1e-6 ? 0.0 : (g - ph) / (double)S->rate;
         if (fr < (double)n)
@@ -1875,26 +1883,7 @@ int looper_grid_offset(float beats, float sph, int n)
     return off < (float)n ? (int)off : -1;
 }
 
-/* The grid the way the stock sequencer's note player sees it: it plays every note whose time has passed the clock position it was given for the block, at the START of that block.
- * So a grid line belongs to the block in which the clock position (this block's snapshot, cur) has passed it since the previous block (prev): 0, else -1. Without a clock
- * (no sequence playing) the free-running grid of looper_grid_offset. */
-int looper_grid_cross(float beats, double prev, int n, float sph)
-{
-    if (S->magic != MAGIC)
-        return -1;
-    if (!S->cur_ok)
-        return looper_grid_offset(beats, sph, n);
-    double g = 3840.0 * (double)beats, cur = seqfix_now(), adv = cur - prev;   /* (exact: a beat is 3840 ticks, whatever the tempo) */
-    if (!(adv > 0.0 && adv < 4.0 * g))                           /* no usable previous block (the first one, a restart, a jump): the measured speed */
-        adv = (double)n * 3840.0 / (double)beat_frames();
-    if (!(adv > 0.0))
-        return -1;
-    double ph = dmod(cur, g);
-    /* the player plays what lies in [prev, cur): the last line at or before cur counts if it is at least prev, and a line exactly at cur waits for the next block */
-    return (ph > 0.0 ? ph <= adv : g <= adv) ? 0 : -1;
-}
-
-/* The same grid at its exact frame (what a sample-accurate click would give): frames from the start of this block to the next line of the sequencer time, 3840 ticks a beat
+/* The same grid at its exact frame (what a sample-accurate click would give): frames from the start of this block to the next line of the sequencer time, SEQ_TPB ticks a beat
  * and beat_frames() frames a beat, or -1. Without a clock the free-running grid. */
 int looper_grid_exact(float beats, float sph, int n)
 {
@@ -1902,10 +1891,10 @@ int looper_grid_exact(float beats, float sph, int n)
         return -1;
     if (!S->cur_ok)
         return looper_grid_offset(beats, sph, n);
-    double g = 3840.0 * (double)beats, ph = dmod(seqfix_now(), g);
+    double g = SEQ_TPB * (double)beats, ph = dmod(seqfix_now(), g);
     if (ph < 1e-6)
         return 0;
-    double fr = (g - ph) * (double)beat_frames() * (1.0 / 3840.0);
+    double fr = (g - ph) * (double)beat_frames() * (1.0 / SEQ_TPB);
     return fr < (double)n ? (int)fr : -1;
 }
 

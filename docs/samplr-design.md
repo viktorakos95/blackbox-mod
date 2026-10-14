@@ -358,3 +358,13 @@ takes three overdub layers.
 - The hardware REC button on the Looper page: a tap that ENDS a take (the selected track is recording or overdubbing) selects the next track (1-2-3-4-1...), so REC, REC, REC...
   records in the four tracks in turn.
 - SAMPLR tests that used the own route now check that the stock delay / reverb nodes are handed the send (`looper_fx_inject`).
+
+## Build 33 (merged with the other agents' branches; looper defaults)
+- Merged into this branch: `happy-mccarthy` (which contains `intelligent-knuth`: Trigger2MIDI = looper-page tab 6 TRIG, the MIDI clock monitor `clkmon`, the CLK sheet, the sequencer-time findings, the MCL
+  port plan) and `lucid-faraday` (DRONE-8 / LIRA page and pad engine). Conflicts were only in the page tab plumbing: modes are MAIN FX SETUP MORE SMPLR(5) TRIG(6) LIRA(7); the LIRA
+  page is reached by the first button's second press (`solo_pad_pressed`, tab 7), TRIG by the third SONG page (tab 6). Combined build:
+  `python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper clkmon lira lirarec lirasave cave`. All suites pass (test_mclpad needs its own padded image).
+- Their finding that matters here (already merged in the code): the sequencer clock is 960 ticks a beat, measured on the unit - my 3840 was wrong - and the SAMPLR BLOCK sync mode was
+  removed by them (EXACT only). Everything of this branch's sync from build 31 on follows their version.
+- Looper defaults: SYNC on, QUANT 1 BAR, and the QUANT choices are listed 1 BAR, 1/4, 1/8, 1/16 (option values 0..3 in that order; they were 1/4 1/8 1/16 1 BAR). The test fixtures set
+  SYNC off / QUANT 1/16 after boot for the old checks; one test checks the fresh defaults.

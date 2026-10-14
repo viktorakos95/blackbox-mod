@@ -1,7 +1,8 @@
 /* Code cave: appended directly after the stock image (which ends at 0x080F1E78). Bank 1 ends at 0x08100000; the size test
- * (step 40) showed the updater writes and the unit reads past it, so the cave may run on into bank 2 up to 0x08140000
- * (0x081E0000 and up stay untouched: something may live there). */
-MEMORY { CAVE (rx) : ORIGIN = 0x080F1E78, LENGTH = 0x4E188 }      /* to 0x08140000: the updater writes flash bank 2 (tested: B2 OK) */
+ * (step 40) showed the updater writes and the unit reads past it, so the cave may run on into bank 2. The MCL pad test
+ * (patches/mclpad.py) read back a pattern up to 0x08180000 (POK on the unit), so the limit is 0x08180000 (0x081E0000 and up stay
+ * untouched: something may live there). */
+MEMORY { CAVE (rx) : ORIGIN = 0x080F1E78, LENGTH = 0x8E188 }      /* to 0x08180000: tested with the pad image (POK); only data was read back there so far, no code ran from it yet */
 SECTIONS {
   .cave : { *(.text .text.* .rodata .rodata.*) } > CAVE
   /DISCARD/ : { *(.data .data.* .bss .bss.* COMMON .ARM.exidx* .comment) }
