@@ -219,3 +219,7 @@ Next image replaces `i` by `r` (bytes the receive tap saw on the jack in the sam
 ### M4 third report: `r0`
 With Receive = MIDI In and the loop cable: `r0` (the receive tap saw none of the 12 clock bytes), and the CLK sheet still empty. TX is proven (`x12`), so either the loop is not closed in this setup or single real-time bytes do not arrive while the
 frame test (M3, `L+`) did. The next M4 image runs the proven 103-byte loop frame first and shows `L+` / `L-` before the clock numbers (` Mok L+ t96 r12` expected), which separates "cable / setting" from "clock bytes only".
+
+### M4 result on the unit
+With the right loop cable: the CLK sheet reads **120 BPM** from our own timer-driven clock (user report). Earlier `i96 t96 x12` had already shown 96 ticks / 12 bytes in 250 ms. The tick-spread numbers (`ARR min-max sd`) are the accuracy figure still to be recorded
+(reference: KeyStep sd ~33-38 us, Machinedrum sd ~67 us, stock sequencer as it sees them ~1.0-1.3 ms).
