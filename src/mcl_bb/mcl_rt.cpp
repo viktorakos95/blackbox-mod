@@ -218,7 +218,7 @@ static uint8_t m3_ran;
 
 #ifdef M4_TEST
 static uint8_t m4_ran;
-static uint32_t m4_i, m4_t, m4_x;                   /* after 250 ms of the clock: interrupt entries, ticks, bytes written to the UART */
+static uint32_t m4_t, m4_x, m4_r;                   /* after 250 ms of the clock: ticks, bytes written to the UART, bytes received from the jack */
 #endif
 
 /* Runs the blocking M3 hardware test once, from a label constructor (GUI task, never the audio task). No-op in normal images. */
@@ -246,9 +246,9 @@ extern "C" void mcl_gui(void)
             bb_clock_start(1200, 0);
             uint32_t c0 = DWT_CYCCNT;
             while (DWT_CYCCNT - c0 < 100000000u) {}       /* 250 ms at 400 MHz: ~96 ticks, 12 clock bytes expected */
-            m4_i = bb_clock_isr_calls();
             m4_t = bb_clock_ticks();
             m4_x = bb_midi_stat(2);
+            m4_r = bb_midi_stat(0);
         }
     }
 #endif
@@ -303,10 +303,10 @@ extern "C" char *mcl_status_text(char *p, uint32_t room)
     if (s[0] != BKP_MAGIC || (s[1] & 0xff) != ST_OK) {        /* no booted runtime: the clock variables in SDRAM are garbage */
     } else if (bb_clock_running()) {                      /* the timer clock is running (M4 image: 120.0 BPM, fixed) */
 #ifdef M4_TEST
-        /* ' i96 t96 x12': timer interrupt entries, ticks, bytes the UART interrupt wrote, all after 250 ms of the clock. 96 / 96 / 12 = all fine. */
+        /* ' t96 x12 r12': ticks, bytes the UART interrupt wrote, bytes the receive tap saw on the jack, all after 250 ms of the clock. 96 / 12 / 12 with a loop cable. */
         char *w = q;
-        const uint32_t v[3] = {m4_i, m4_t, m4_x};
-        const char tag[3] = {'i', 't', 'x'};
+        const uint32_t v[3] = {m4_t, m4_x, m4_r};
+        const char tag[3] = {'t', 'x', 'r'};
         for (int k = 0; k < 3; k++) {
             *w++ = ' ';
             *w++ = tag[k];

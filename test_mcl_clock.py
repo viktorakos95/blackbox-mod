@@ -165,14 +165,14 @@ r = rig(m4=True)
 r.e.uc.mem_write(0x24061000, bytes(40))
 r.e.call(r.b["mcl_gui"], count=60_000_000)
 r.e.call(r.b["mcl_status_text"], 0x24061000, 30)
-check("M4 image: mcl_gui claims the port, calibrates, starts 120.0 BPM and filters the stock clock; with no timer interrupt modelled the label reads ' Mok i0 t0 x0'",
-      r.e.cstr(0x24061000) == "Mok i0 t0 x0" and r.call("bb_clock_running") == 1 and r.call("bb_midi_owner") == 1, r.e.cstr(0x24061000))
+check("M4 image: mcl_gui claims the port, calibrates, starts 120.0 BPM and filters the stock clock; with no timer interrupt modelled the label reads ' Mok t0 x0 r0'",
+      r.e.cstr(0x24061000) == "Mok t0 x0 r0" and r.call("bb_clock_running") == 1 and r.call("bb_midi_owner") == 1, r.e.cstr(0x24061000))
 check("... the label (up to 15 characters) fits the room left on the version label", len(r.e.cstr(0x24061000)) <= 15)
-for name, v in (("_ZL4m4_i", 96), ("_ZL4m4_t", 96), ("_ZL4m4_x", 12)):
+for name, v in (("_ZL4m4_t", 96), ("_ZL4m4_x", 12), ("_ZL4m4_r", 12)):
     r.e.w32(r.b[name], v)
 r.e.uc.mem_write(0x24061000, bytes(40))
 r.e.call(r.b["mcl_status_text"], 0x24061000, 30)
-check("with the expected counts (96 interrupts, 96 ticks, 12 bytes) the label reads 'Mok i96 t96 x12', 15 characters", r.e.cstr(0x24061000) == "Mok i96 t96 x12" and len(r.e.cstr(0x24061000)) == 15, r.e.cstr(0x24061000))
+check("with the expected counts (96 ticks, 12 bytes written, 12 received) the label reads 'Mok t96 x12 r12', 15 characters", r.e.cstr(0x24061000) == "Mok t96 x12 r12" and len(r.e.cstr(0x24061000)) == 15, r.e.cstr(0x24061000))
 
 build(False)
 print(f"\n{fails} failure(s)")

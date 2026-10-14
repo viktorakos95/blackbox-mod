@@ -210,3 +210,8 @@ Or Blackbox OUT (1010 cable) -> Machinedrum IN with the Machinedrum on external 
 Loop cable, Receive off: label ` Mok C120`, but the CLK sheet showed BPM 0 and ARR 0 (no F8 received). ` C120` only meant "the software started the clock", so the cause was open (timer interrupt not firing /
 bytes not leaving the UART / not reaching the monitor). The next image runs the clock for 250 ms at boot and prints on the label ` i<n> t<n> x<n>`: timer-interrupt entries, ticks counted, bytes the UART interrupt wrote
 (expected 96 / 96 / 12). `i0` = the interrupt never fires (vector / NVIC / TIM6 clock); `i96 t0` = fires but the ready flag is off; `t96 x0` = ticks but nothing leaves (TX path); `x12` and still no F8 on the sheet = reaches the UART, not the monitor.
+
+### M4 second report: `i96 t96 x12` (hardware)
+Exactly the expected counts: the TIM6 interrupt fired 96 times in 250 ms (the ideal count at 120.0 BPM, 192 PPQN), all 96 ticks were counted and 12 clock bytes were written to USART6. **The timer clock source and the real-time TX path work on the unit.**
+The CLK sheet still showed no F8 (BPM 0, ARR 0) with the loop cable and Receive = Off. Suspect: Receive = Off may stop the stock UART receive altogether (the M3 loop test `L+` was run with the default setting), so neither the monitor nor MCL's tap sees the loop-back.
+Next image replaces `i` by `r` (bytes the receive tap saw on the jack in the same 250 ms: 12 expected with a loop cable), and the loop test is to be repeated with Receive = MIDI In or All (harmless: the stock sequencer then just follows our 120 BPM).
