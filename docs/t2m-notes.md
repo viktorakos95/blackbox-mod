@@ -71,7 +71,7 @@ Same as the patch (not a bug): a hit into a still-ringing note re-sends note-on 
 SENS -> SENSITIVITY, THRESH -> THRESHOLD, RETRIG -> RING GUARD, MASK -> DEAD TIME, SCAN -> PEAK WINDOW, STRICT -> SHARPNESS,
 SPEED -> REACTION, CURVE -> TOUCH CURVE, NOTE, VEL -> VELOCITY, LEN -> NOTE LENGTH, CHAN -> CHANNEL, CC -> CC NUMBER, CC VAL -> CC VALUE,
 BLEED -> BLEED GUARD, RANGE -> GUARD REACH, FLOOR -> NOISE FLOOR. Under the cells of DETECT and OUT, two lines explain the value last touched
-(a tap on its cell or a turn of its knob); on HITS a line names what the four knobs do. Each explanation is checked to fit the screen
+(a tap on its cell or a turn of its knob); on HITS only knobs 1 and 2 work (SENSITIVITY, THRESHOLD) and nothing labels them. Each explanation is checked to fit the screen
 (`test_t2m_page.py`).
 
 ## Latency (corrected; measured in the emulator with `tools/t2m_latency.py`)

@@ -7,8 +7,8 @@
  *   row        [IN L] [IN R]   [ON]   [TRS] [USB] [INT]   the input shown, its switch, its outputs (every sheet): the MIDI jack, USB, and
  *              the Blackbox's own MIDI in (its pads and keys play what their MIDI settings say for that channel and note)
  *   HITS       two pads that light up on a hit (colour = velocity, note and velocity in them), the input levels with the
- *              threshold, and the last 4 s of hits per input as bars (height = velocity). The knobs turn SENS, THRESH,
- *              RETRIG, MASK of the input shown, to set the threshold while watching the meter.
+ *              threshold, and the last 4 s of hits per input as bars (height = velocity). Only knobs 1 and 2 work
+ *              here: SENSITIVITY and THRESHOLD of the input shown, to set the threshold while watching the meter.
  *   DETECT     SENS THRESH RETRIG MASK / SCAN STRICT SPEED CURVE / BLEED RANGE FLOOR, and the meter
  *   OUT        NOTE VEL LEN CHAN / CC CC VAL
  * On DETECT and OUT a tap on a row hands it to the four knobs (pink frame): knob n turns the row's n-th value (the
@@ -73,7 +73,7 @@ static const char *const hint[VALUES][2] = {
     {"How far above the threshold the bleed guard", "still checks a hit. Bigger = checks louder hits."},
     {"Quietest background a hit may start from.", "Lower lets tiny clicks in (-100 dB for clicks)."},
 };
-/* the settings sheets: three rows of four; the HITS sheet's knobs are DETECT's first row */
+/* the settings sheets: three rows of four; the HITS sheet's knobs 1 and 2 are DETECT's first two values */
 static const int8_t sheet_vals[2][12] = {
     {V_SENS, V_THRESH, V_RETRIG, V_MASK, V_SCAN, V_STRICT, V_SPEED, V_CURVE, V_BLEED, V_RANGE, V_FLOOR, V_NONE},
     {V_NOTE, V_VEL, V_LEN, V_CHAN, V_CC, V_CCVAL, V_NONE, V_NONE, V_NONE, V_NONE, V_NONE, V_NONE},
@@ -567,10 +567,7 @@ void t2m_page_draw(int w, int foot)
         p = put_f(p, m->p[k].thresh, 2);
         *p = 0;
         lp_text(w - 60, md + 13, b, C_LIGHT, 1);
-        lp_text(6, md + 24, "KNOBS", C_REC, 1);                       /* the four knobs are live on this sheet: red */
-        lp_text(6 + 6 * 6, md + 24, "ACTIVE", C_REC, 1);
-        lp_text(6, md + 34, "SENSITIVITY THRESHOLD RING GUARD DEAD TIME", C_LIGHT, 1);
-        draw_hist(m, w, md + 46, foot - 12);
+        draw_hist(m, w, md + 26, foot - 12);
         return;
     }
 
@@ -675,7 +672,8 @@ void t2m_page_knob(int knob, int counts)
     if (!steps)
         return;
     int k = UI->in & 1, sheet = UI->sheet < SHEETS ? UI->sheet : 0;
-    int v = sheet == SH_HITS ? sheet_vals[0][knob] : sheet_vals[sheet - 1][(UI->row % 3) * 4 + knob];
+    int v = sheet == SH_HITS ? (knob < 2 ? sheet_vals[0][knob] : V_NONE)       /* HITS: knobs 1 and 2 are SENSITIVITY and THRESHOLD, nothing else */
+                             : sheet_vals[sheet - 1][(UI->row % 3) * 4 + knob];
     if (v == V_NONE)
         return;
     UI->last = (uint8_t)v;

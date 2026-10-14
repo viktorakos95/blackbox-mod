@@ -179,6 +179,12 @@ check(f"HITS: knob 1 turns SENS of the input shown: 2.00 -> {sens:.2f}", abs(sen
 knob(1, 40 * 4)
 thr = struct.unpack("<f", e.uc.mem_read(MEM + O["p"] + 4, 4))[0]
 check(f"HITS: knob 2 turns THRESH: 2.00 -> {thr:.2f}", abs(thr - 3.0) < 1e-4, thr)
+before = bytes(e.uc.mem_read(MEM + O["p"] + 8, 8))                   # RETRIG, MASK
+knob(2, 40 * 5)
+knob(3, 40 * 5)
+check("HITS: knobs 3 and 4 do nothing (no RING GUARD / DEAD TIME here)", bytes(e.uc.mem_read(MEM + O["p"] + 8, 8)) == before)
+f = draw(0)
+check("HITS: no knob legend text any more", len(f) > 10)
 s_now = sig()
 e.w32(MEM + O["blocks"], 100016)
 check("HITS: the page redraws as the history scrolls while it holds a recent hit", sig() != s_now)
