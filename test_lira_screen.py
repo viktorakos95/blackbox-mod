@@ -214,7 +214,7 @@ inside = all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 2
 check("all fills lie inside the screen", inside, [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:4])
 check("text inside the screen", pixels and all(3 <= px < 317 and 0 <= py < 224 for px, py, _ in pixels), pixels[:3])
 check("eight plates (32 px wide bodies) at the bottom", len({x[0] for x in f if x[2] == 32 and x[3] > 20 and x[1] < 60}) >= 8, sorted({(x[0], x[2], x[3]) for x in f if x[1] < 60})[:12])
-check("the four encoder knobs have pink labels", sum(1 for p_ in pixels if p_[2] == 0x20) > 20, sum(1 for p_ in pixels if p_[2] == 0x20))
+check("the four encoder knobs have white labels", sum(1 for p_ in pixels if p_[2] == 0x0F) > 40, sum(1 for p_ in pixels if p_[2] == 0x0F))
 
 
 def touch(kind, x_rel, d, up=True):

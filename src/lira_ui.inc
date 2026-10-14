@@ -10,7 +10,7 @@
  * Pitch 1-4 / 5-8 (right). The top bar shows the last touched knob and its value.
  */
 #define LU_LEVEL 120
-#define LU_MAXS  17
+#define LU_MAXS  20
 #define LU_STRIP 114                                              /* the voice knobs start here (d) */
 #define LU_PLATE 169
 
@@ -24,7 +24,13 @@ struct lu_spec {
 static const char *const lu_tabname[3] = {"VOICES FM", "DELAY", "TONE"};
 static const char *const lu_touch[3] = {"SLOW", "FAST", "FOLLOW"};
 static const char *const lu_src[8] = {"FM SELF", "FM OFF", "FM LFO", "FM EXT", "FM P1-2", "FM P3-4", "FM P5-6", "FM P7-8"};
-static const uint8_t lu_pair_col[4] = {0x1b, 0x14, 0x17, 0x18};  /* the looper's four track colours: cyan, yellow, aqua, purple */
+/* colours: the firmware's palette is fixed and mostly neon, so only its quiet entries are used: greys, a dark teal and an olive */
+#define LU_CARD  0x19                                             /* 2b2b2b: the card behind a knob */
+#define LU_LINE  0x10                                             /* 444444: hairlines, frames */
+#define LU_DIM   0x16                                             /* aaaaaa: labels */
+#define LU_ACC1  0x1a                                             /* 046b7a: dark teal */
+#define LU_ACC2  0x1c                                             /* 777100: olive */
+static const uint8_t lu_pair_col[4] = {LU_ACC1, LU_ACC2, LU_ACC1, LU_ACC2};
 
 #define LU_SP(i, I, X, D, W, H, K, C, R, N) o[i] = (struct lu_spec){I, X, D, W, H, K, C, R, N}
 
@@ -45,20 +51,20 @@ static int lu_specs(int sel, struct lu_spec *o)
             n++;
         }
     } else if (page == 1) {
-        static const uint16_t ids[8] = {16, 17, 125, 126, 21, 13, 18, 19};
-        static const char *const nm[8] = {"TIME 1", "TIME 2", "MOD 1", "MOD 2", "EXT IN", "VIBRATO", "FEEDBACK", "MIX"};
-        static const int8_t kn[8] = {1, 0, -1, -1, -1, -1, 2, 3};
-        for (int i = 0; i < 8; i++) {                             /* four columns of two; the encoder knobs are in the outer columns */
-            LU_SP(n, ids[i], 3 + (i >> 1) * 77, 17 + (i & 1) * 48, 77, 46, kn[i], 0x1b, 14, nm[i]);
+        static const uint16_t ids[7] = {16, 17, 125, 126, 21, 18, 19};
+        static const char *const nm[7] = {"TIME 1", "TIME 2", "MOD 1", "MOD 2", "EXT IN", "FEEDBACK", "MIX"};
+        static const int8_t kn[7] = {1, 0, -1, -1, -1, 2, 3};
+        static const uint8_t cx[7] = {0, 0, 1, 1, 2, 3, 3}, cy[7] = {0, 1, 0, 1, 0, 0, 1};
+        for (int i = 0; i < 7; i++) {                             /* four columns of two; the encoder knobs are in the outer columns, EXT IN stands between */
+            LU_SP(n, ids[i], 3 + cx[i] * 77, i == 4 ? 41 : 17 + cy[i] * 48, 77, 46, kn[i], LU_ACC1, 14, nm[i]);
             n++;
         }
     } else {
-        static const uint16_t ids[9] = {121, 122, 22, 23, 14, 15, LU_LEVEL, 123, 124};
-        static const char *const nm[9] = {"HOLD 1-4", "HOLD 5-8", "DRIVE", "DIST MIX", "LFO A", "LFO B", "VOLUME", "PITCH 1-4", "PITCH 5-8"};
-        static const int8_t kn[9] = {1, 0, -1, -1, -1, -1, -1, 2, 3};
-        static const uint8_t cx[9] = {0, 0, 0, 1, 1, 1, 2, 3, 3}, cy[9] = {0, 1, 2, 0, 1, 2, 0, 0, 1};
-        for (int i = 0; i < 9; i++) {
-            LU_SP(n, ids[i], 3 + cx[i] * 77, 16 + cy[i] * 30, 77, 30, kn[i], 0x1b, 9, nm[i]);
+        static const uint16_t ids[10] = {121, 122, 22, 23, 14, 15, LU_LEVEL, 13, 123, 124};
+        static const char *const nm[10] = {"HOLD 1-4", "HOLD 5-8", "DRIVE", "DIST MIX", "LFO A", "LFO B", "VOLUME", "VIBRATO", "PITCH 1-4", "PITCH 5-8"};
+        static const int8_t kn[10] = {1, 0, -1, -1, -1, -1, -1, -1, 2, 3};
+        for (int i = 0; i < 10; i++) {                            /* five columns of two */
+            LU_SP(n, ids[i], 3 + (i >> 1) * 62, 17 + (i & 1) * 48, 62, 46, kn[i], LU_ACC1, 12, nm[i]);
             n++;
         }
     }
@@ -86,7 +92,7 @@ static void lu_knob(int cx, int cy, int r, int v, int col)
 {
     int n = (v * 27 + 500) / 1000;
     for (int i = 0; i < 28; i += 2)
-        box(cx + arc[i][0] * r / 11, cy + arc[i][1] * r / 11, 1, 1, C_RAIL);
+        box(cx + arc[i][0] * r / 11, cy + arc[i][1] * r / 11, 1, 1, C_GREY);
     for (int i = 0; i <= n; i++)
         box(cx + arc[i][0] * r / 11, cy + arc[i][1] * r / 11, 2, 2, col);
     for (int k = 2; k <= r - 3; k++)
@@ -97,10 +103,9 @@ static void lu_knob(int cx, int cy, int r, int v, int col)
 static void lu_draw_knob(const struct lu_spec *s)
 {
     int v = lira_ui_get(s->id), cx = s->x + s->w / 2, cy = s->d + s->r + 2;
-    box(s->x, s->d, s->w, s->h, C_BG);
+    box(s->x + 1, s->d, s->w - 2, s->h, LU_CARD);
     lu_knob(cx, cy, s->r, v, s->col);
-    if (1)
-        text_c(s->x, cy + s->r + 3, s->w, s->name, s->knob >= 0 ? C_PINK : C_LIGHT, 1);
+    text_c(s->x, cy + s->r + 3, s->w, s->name, s->knob >= 0 ? C_WHITE : LU_DIM, 1);
 }
 
 /* a rounded square, as three boxes */
@@ -120,7 +125,7 @@ static void draw_lira(void)
     int n = lu_specs(sel, sp);
     char b[24], *q;
     box(1, 1, P->w - 2, TOPBAR, C_BG);
-    text(6, 4, "LIRA-8", C_CYAN, 1);
+    text(6, 4, "LIRA-8", C_WHITE, 1);
     int last = lira_ui_last(-1);
     q = b;
     for (int i = 0; i < n; i++)
@@ -134,18 +139,20 @@ static void draw_lira(void)
     text(52, 4, *b ? b : (page == 0 ? (bank ? "ENCODERS: TUNE 5-8  (BACK: 1-4)" : "ENCODERS: TUNE 1-4  (BACK: 5-8)") : "ORGANISMIC SYNTHESIZER"),
          *b ? C_WHITE : C_GREY, 1);
     int mom = lira_ui_momentary(0);
-    frame(P->w - 50, 2, 46, TOPBAR - 2, C_RAIL, 1);
-    text_c(P->w - 50, 4, 46, mom ? "HOLD" : "LATCH", C_YELLOW, 1);
+    frame(P->w - 50, 2, 46, TOPBAR - 2, mom ? LU_ACC2 : LU_LINE, 1);
+    text_c(P->w - 50, 4, 46, mom ? "HOLD" : "LATCH", LU_DIM, 1);
     box(1, TOPBAR + 2, P->w - 2, L.foot_y - TOPBAR - 3, C_BG);
 
     if (page == 0) {                                              /* the pair columns: a coloured rule, the two buttons */
         for (int p = 0; p < 4; p++) {
             int x = 3 + p * 78, t = lira_ui_get(100 + p), s = lira_ui_get(104 + p), col = lu_pair_col[p];
             box(x + 2, 16, 72, 2, col);
-            frame(x + 2, 20, 72, 14, s == 1 ? C_RAIL : col, 1);
+            box(x + 3, 21, 70, 12, LU_CARD);
+            frame(x + 2, 20, 72, 14, s == 1 ? LU_LINE : col, 1);
             text_c(x + 2, 23, 72, lu_src[s], s == 1 ? C_GREY : C_WHITE, 1);
-            frame(x + 2, 36, 72, 14, t == 0 ? C_RAIL : col, 1);
-            text_c(x + 2, 39, 72, lu_touch[t], t == 0 ? C_LIGHT : t == 1 ? C_YELLOW : C_GREEN, 1);
+            box(x + 3, 37, 70, 12, t == 0 ? LU_CARD : col);
+            frame(x + 2, 36, 72, 14, t == 0 ? LU_LINE : col, 1);
+            text_c(x + 2, 39, 72, lu_touch[t], t == 0 ? LU_DIM : C_WHITE, 1);
         }
     }
     for (int i = 0; i < n; i++)
@@ -156,11 +163,11 @@ static void draw_lira(void)
     for (int v = 0; v < 8; v++) {                                 /* the plates */
         int x, d, w, h, on = lira_ui_key_get(v), col = lu_pair_col[v >> 1];
         lu_plate_rect(v, &x, &d, &w, &h);
-        lu_round(x, d, w, h, col);
-        lu_round(x + 2, d + 2, w - 4, h - 4, on ? col : C_BG);
+        lu_round(x, d, w, h, on ? col : LU_LINE);
+        lu_round(x + 2, d + 2, w - 4, h - 4, on ? col : LU_CARD);
         q = put_uint(b, (unsigned)(v + 1));
         *q = 0;
-        text_c(x, d + h / 2 - 8, w, b, on ? C_BLACK : col, 2);
+        text_c(x, d + h / 2 - 8, w, b, on ? C_WHITE : C_GREY, 2);
     }
 }
 
@@ -169,8 +176,8 @@ static void lira_footer(const struct lay *L)
 {
     int page = lira_ui_sel(-1) & 15;
     for (int i = 0; i < 3; i++) {
-        frame(3 + 82 * i, L->foot_y + 2, 80, FOOT - 3, page == i ? C_CYAN : C_RAIL, 1);
-        text_c(3 + 82 * i, L->foot_y + 4, 80, lu_tabname[i], page == i ? C_CYAN : C_GREY, 1);
+        frame(3 + 82 * i, L->foot_y + 2, 80, FOOT - 3, page == i ? LU_ACC1 : LU_LINE, 1);
+        text_c(3 + 82 * i, L->foot_y + 4, 80, lu_tabname[i], page == i ? C_WHITE : C_GREY, 1);
     }
 }
 
