@@ -178,6 +178,19 @@ for _ in range(400):
     if rv("lira_ui_chord_get", 158) == 3:
         break
 check("... and then it is a second layer (3 gestures)", rv("lira_ui_chord_get", 158) == 3 and rv("lira_ui_chord_get", 149) == 2 and rv("lira_ui_chord_get", 159) == 3, (rv("lira_ui_chord_get", 158), rv("lira_ui_chord_get", 149), rv("lira_ui_chord_get", 159)))
+# STOP / PLAY of the loop, and no repaint storm while it plays
+sig_loop = rv("lira_ui_sig")
+e.call("lira_ui_key", 5, 1)
+check("while a loop plays, a plate changing does not change the repaint signature", rv("lira_ui_sig") == sig_loop, (sig_loop, rv("lira_ui_sig")))
+e.call("lira_ui_key", 5, 0)
+e.call("lira_ui_set", 120, 700)
+e.call("lira_ui_action", 15)
+check("STOP pauses the loop", rv("lira_ui_chord_get", 158) == 6, rv("lira_ui_chord_get", 158))
+for _ in range(400):
+    block(0.3)
+check("... and a paused loop replays nothing", rv("lira_ui_get", 120) == 700, rv("lira_ui_get", 120))
+e.call("lira_ui_action", 15)
+check("PLAY starts it again from the top", rv("lira_ui_chord_get", 158) == 3)
 e.call("lira_ui_action", 9)
 check("UNDO drops the last layer", rv("lira_ui_chord_get", 149) == 1 and rv("lira_ui_chord_get", 159) == 2, (rv("lira_ui_chord_get", 149), rv("lira_ui_chord_get", 159)))
 e.call("lira_ui_action", 14)

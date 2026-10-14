@@ -2279,8 +2279,8 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     return;
                 }
                 P->btn_t = looper_ticks();
-                if (P->mode == M_LIRA) {                           /* the LIRA page takes none of the looper's buttons */
-                    if (slot == B_FX)
+                if (P->mode == M_LIRA) {                           /* the LIRA page takes none of the looper's buttons (REC is its gesture recorder; the transport stays the stock one) */
+                    if (slot == B_FX || slot == B_STOP || slot == B_PLAY)
                         break;
                     if (slot == B_BACK) {                          /* BACK: the other four voices */
                         lira_back();

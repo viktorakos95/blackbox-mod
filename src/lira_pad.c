@@ -183,6 +183,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t glen_i, glayers;     /* take length (1 2 4 8 bars), layers in the loop (up to 3) */
     uint8_t btn_on;              /* the eight round buttons are the voice plates (else they are the stock buttons) */
     uint16_t gn, gi;             /* events recorded, the next to play */
+    double gridf;                /* the free-running grid, in frames, never wrapped */
     float gt, gtot, sph;         /* position in the take / loop and its length (frames), the free-running bar grid's phase */
     uint8_t free_enc;            /* the encoders move a chord voice freely (0.05 semitone) instead of a semitone a click */
     uint8_t lfo[4];              /* LFO shape (tri / square), combine (product / sum), link, delay modulation source (self / off / LFO) */
@@ -233,6 +234,7 @@ static struct pool *pool(void)
 
 static void fr_boot(void);
 static void gstep(struct pool *p, struct pg *g, int n);
+static void apply_sync(struct pg *g, struct slot *s);
 static void gdrop(struct pool *p, struct pg *g, int layer);
 float looper_bpm(void);
 int looper_grid_exact(float beats, float sph, int n);
@@ -806,9 +808,12 @@ unsigned lira_ui_sig(void)
     unsigned h = 0;
     if (!p)
         return 0;
-    for (int k = 0; k < 8; k++)
-        h = h << 1 | p->pg.want[k];
-    return h | (unsigned)p->pg.momentary << 8 | (unsigned)p->pg.sel << 9;
+    const struct pg *g = &p->pg;
+    if (g->gmode < 3 || g->gmode == 6)                   /* (while a loop plays, its plates and knobs are not redrawn: the loop's own gestures would repaint the page all the time; the LEDs show the plates) */
+        for (int k = 0; k < 8; k++)
+            h = h << 1 | g->want[k];
+    unsigned prog = g->gmode >= 2 && g->gmode != 6 && g->gtot > 1.0f ? (unsigned)(g->gt * 8.0f / g->gtot) : 0;
+    return h | (unsigned)g->momentary << 8 | (unsigned)g->sel << 9 | prog << 20 | (unsigned)g->gmode << 24;
 }
 
 /* The load governor. How much of its block the audio task has used by the time this runs (the stock voices and effects) is the
@@ -1005,29 +1010,8 @@ void lira_page_run(float *l, float *r, int n)
                 lira_param(&s->l, LIRA_PITCH1234 + k, (float)g->ex[2 + k] * (127.0f / 1000.0f));
             lira_param(&s->l, LIRA_MOD1 + k, (float)g->ex[4 + k] * (127.0f / 1000.0f));
         }
-        {   /* tempo sync: the Blackbox's clock (internal or external, whatever the looper follows) sets the LFOs and the delay times, and the LFOs' phase follows it */
-            static const float div_beats[12] = {0.0f, 16.0f, 8.0f, 4.0f, 2.0f, 1.5f, 1.0f, 0.75f, 0.5f, 0.375f, 0.25f, 0.16667f};
-            float bf = looper_beat_frames();
-            double clk = looper_clock_now();
-            uint8_t on = 0;
-            for (int k = 0; k < 4; k++) {
-                if (!g->sync[k] || g->sync[k] >= 12)
-                    continue;
-                float b = div_beats[g->sync[k]];
-                on |= (uint8_t)(1u << k);
-                if (k < 2) {
-                    double cyc = clk / (960.0 * (double)b);                 /* the sequencer's musical time: 960 ticks a beat */
-                    lira_lfo_sync(&s->l, k, (float)FS / (bf * b), clk >= 0.0 ? (float)(cyc - (double)(int)cyc) : -1.0f);
-                } else {
-                    lira_delay_sync(&s->l, k - 2, bf * b / (float)FS);
-                }
-            }
-            for (int k = 0; k < 4; k++)
-                if ((g->sync_on >> k & 1) && !(on >> k & 1))
-                    s->vals[14 + k] = -1;                     /* off again: the knob's value applies (ctls[14..17] = LFO A, LFO B, Time 1, Time 2) */
-            g->sync_on = on;
-        }
     }
+    apply_sync(g, s);
     const float *xl = 0, *xr = 0;
     int xn = 0;
     uint32_t eng = *(volatile uint32_t *)0x38800bf8u;
@@ -1080,6 +1064,33 @@ int lira_ui_load(int which)
     if (!p)
         return 0;
     return which == 0 ? (p->pg.dsp + 5) / 10 : which == 1 ? (int)(p->pg.ld + 5.0f) / 10 : p->pg.shed;
+}
+
+/* Tempo sync: the Blackbox's clock (internal or external, whatever the looper follows) sets the LFOs' and delays' lengths, and the LFOs' phase
+   is locked to it every block: to the sequencer's musical time while a sequence runs (960 ticks a beat), else to the free-running bar grid
+   that the gesture recorder shares (never wrapped, so a cycle of any length stays in step). */
+static void apply_sync(struct pg *g, struct slot *s)
+{
+    static const float div_beats[12] = {0.0f, 16.0f, 8.0f, 4.0f, 2.0f, 1.5f, 1.0f, 0.75f, 0.5f, 0.375f, 0.25f, 0.16667f};
+    float bf = looper_beat_frames();
+    double clk = looper_clock_now();
+    uint8_t on = 0;
+    for (int k = 0; k < 4; k++) {
+        if (!g->sync[k] || g->sync[k] >= 12)
+            continue;
+        float b = div_beats[g->sync[k]];
+        on |= (uint8_t)(1u << k);
+        if (k < 2) {
+            double cyc = clk >= 0.0 ? clk / (960.0 * (double)b) : g->gridf / ((double)bf * (double)b);
+            lira_lfo_sync(&s->l, k, (float)FS / (bf * b), (float)(cyc - (double)(int)cyc));
+        } else {
+            lira_delay_sync(&s->l, k - 2, bf * b / (float)FS);
+        }
+    }
+    for (int k = 0; k < 4; k++)
+        if ((g->sync_on >> k & 1) && !(on >> k & 1))
+            s->vals[14 + k] = -1;                         /* off again: the knob's value applies (ctls[14..17] = LFO A, LFO B, Time 1, Time 2) */
+    g->sync_on = on;
 }
 
 /* A finger's drag on the page (state kept here: the cave has no .bss). op 0: set kind / idx / y0 / v0, 1: read kind, 2: idx,
@@ -1173,6 +1184,8 @@ int lira_ui_chord_get(int id)                              /* the index behind a
         return g->glayers;
     if (id == 165)
         return g->btn_on;
+    if (id == 166)                                         /* the loop's position, 0..8 */
+        return g->gmode >= 2 && g->gmode != 6 && g->gtot > 1.0f ? (int)(g->gt * 8.0f / g->gtot) : 0;
     if (id >= 160 && id < 164)
         return g->lfo[id - 160];
     if (id == 157)
@@ -1282,6 +1295,11 @@ void lira_ui_action(int a)
             if (g->glayers < 3)
                 g->gmode = 4;                             /* another layer, from the loop start */
             break;
+        case 6:                                           /* paused: REC plays on */
+            g->gmode = 3;
+            g->gt = 0.0f;
+            g->gi = 0;
+            break;
         case 5:                                           /* cancel this layer */
             gdrop(pp, g, g->glayers);
             g->gmode = 3;
@@ -1303,6 +1321,16 @@ void lira_ui_action(int a)
                 g->gmode = 0;
                 g->gn = 0;
             }
+        }
+    } else if (a == 15) {                                 /* STOP / PLAY of the loop: a paused loop costs nothing */
+        if (g->gmode == 6) {
+            g->gmode = 3;
+            g->gt = 0.0f;
+            g->gi = 0;
+        } else if (g->gmode >= 3) {
+            if (g->gmode == 5)
+                gdrop(p, g, g->glayers);
+            g->gmode = 6;
         }
     } else if (a == 14) {                                 /* CLEAR */
         g->gmode = 0;
@@ -1359,6 +1387,7 @@ static void gfire(struct pool *p, struct pg *g, uint32_t until)
 static void gstep(struct pool *p, struct pg *g, int n)
 {
     float bf = looper_beat_frames();
+    const int n0 = n;
     if (g->gmode == 1) {
         int off = looper_bpm() > 0.0f ? looper_grid_exact(4.0f, g->sph, n) : 0;
         if (off >= 0) {
@@ -1384,7 +1413,7 @@ static void gstep(struct pool *p, struct pg *g, int n)
             g->gi = 0;
             gfire(p, g, (uint32_t)g->gt);
         }
-    } else if (g->gmode >= 3) {
+    } else if (g->gmode >= 3 && g->gmode != 6) {
         float end = g->gt + (float)n, tot = g->gtot;
         gfire(p, g, (uint32_t)(end < tot ? end : tot));
         if (end >= tot) {
@@ -1401,7 +1430,8 @@ static void gstep(struct pool *p, struct pg *g, int n)
             g->gt = end;
         }
     }
-    g->sph += (float)n;
+    g->gridf += (double)n0;
+    g->sph += (float)n0;
     if (g->sph >= 16.0f * bf)
         g->sph -= 16.0f * bf;
 }

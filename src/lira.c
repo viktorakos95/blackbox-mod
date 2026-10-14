@@ -532,6 +532,7 @@ void lira_process(lira_t *l, float *out, int n)
                                                          hits still open the envelope (gain is ve squared, so it must reach 1) */
         const float fd = clip_(1.25f * fx / (fx + 1.f), 0.f, 1.f);
         float vmod[4], vsh[4], vf[8], vgain[8], vleak[8], vtrim[8], vlvl[8];
+        uint8_t vact[8];
         for (int v = 0; v < 4; v++) {
             lira_voice *vo = &l->v[v];
             rstep(&vo->mod, m);
@@ -559,6 +560,7 @@ void lira_process(lira_t *l, float *out, int n)
                 float f0 = gn->tune.cur;
                 vf[o] = f0 * (1.f + vib + ENV_PITCH * (1.f - gn->ve));
                 vgain[o] = fmin_(gn->ve * gn->ve + gh, 1.f);
+                vact[o] = vgain[o] > 2e-4f || gn->drive > 0.f;   /* a closed oscillator (-74 dB and no touch) is not run: its bleed is far below the delay's own noise, and a voice at rest costs nothing */
                 if (((l->cb + o) & 7) == 0) {            /* slow function of pitch: one oscillator per block, every 8th */
                     gn->leak_f = gn->leak * fexp2(0.5f * flog2(fmax_(f0, 1.f) * 0.001f));
                 }
@@ -593,6 +595,10 @@ void lira_process(lira_t *l, float *out, int n)
             l->fol += (fabs_(ext) - l->fol) * (fabs_(ext) > l->fol ? ka : kr);
             for (int v = 0; v < 4; v++) {
                 lira_voice *vo = &l->v[v];
+                if (!(vact[2 * v] | vact[2 * v + 1])) {          /* both oscillators closed: nothing to compute, the output filter just settles */
+                    busn[v] = hip(&vo->hp, 0.f, hp3c);
+                    continue;
+                }
                 float msrc = g0[v] * (l->bus[busa[v]] * gsa + l->bus[busb[v]] * gsb) +
                              g2[v] * (l->total_fb * gfb + lfo_fm) + g3[v] * ext +
                              (sidx[v] >= 0 ? l->bus[sidx[v]] : 0.f);
@@ -600,6 +606,8 @@ void lira_process(lira_t *l, float *out, int n)
                 for (int k = 0; k < 2; k++) {
                     int o = 2 * v + k;
                     lira_gen *gn = &vo->g[k];
+                    if (!vact[o])
+                        continue;
                     float tri, sq;
                     float cpl = COUPLE * 0.5f * (l->sq[(o + 1) & 7] + l->sq[(o + 7) & 7]);
                     gen_tick(gn, fmax_(vf[o] * (1.f + mv), 0.f), cpl, isr, sine, &tri, &sq);
@@ -631,8 +639,9 @@ void lira_process(lira_t *l, float *out, int n)
                 wet += line_run(ln, lin, mv, k_ratio[i], d0[i], depth[i], dc);
             }
             wet *= nlines == 2 ? 0.5f : nlines == 1 ? 0.7f : 0.f;
-            lop(&l->loop_lp, ptanh(wet), lp3k);               /* op-amp / PT2399 overload and the loop's filter */
-            float dly = nlines ? u + dm * (ptanh(wet) - u) : u;
+            const float pw = ptanh(wet);
+            lop(&l->loop_lp, pw, lp3k);                       /* op-amp / PT2399 overload and the loop's filter */
+            float dly = nlines ? u + dm * (pw - u) : u;
 
             /* master: drive -> tanh (+ positive spike) -> mix with dry -> tanh -> tilt -> volume */
             float t = ptanh(hip(&l->hp1, dly * g, hp20c)), pw31 = 0.f;
