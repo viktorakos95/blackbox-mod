@@ -223,3 +223,7 @@ frame test (M3, `L+`) did. The next M4 image runs the proven 103-byte loop frame
 ### M4 result on the unit
 With the right loop cable: the CLK sheet reads **120 BPM** from our own timer-driven clock (user report). Earlier `i96 t96 x12` had already shown 96 ticks / 12 bytes in 250 ms. The tick-spread numbers (`ARR min-max sd`) are the accuracy figure still to be recorded
 (reference: KeyStep sd ~33-38 us, Machinedrum sd ~67 us, stock sequencer as it sees them ~1.0-1.3 ms).
+
+**Accuracy (user report, CLK sheet, loop cable, 120.0 BPM): `ARR 20833-20841` us.** The ideal interval is 20,833.3 us; the whole observed range is 8 us peak to peak (about +-4 us around the ideal).
+That includes the 1 us timer-count resolution, the interrupt latency of our timer and of the USART6 receive hook, and the monitor's own cycle-count stamping. For comparison (clock-findings.md): KeyStep sd 33-38 us (range about +-0.1 ms), Machinedrum sd 67 us (+-0.7 ms), the stock sequencer's view 1.0-1.3 ms sd.
+So the M4 clock source is roughly one to two orders of magnitude tighter than the external clocks the Blackbox will follow and than the Arduino MCL's ~1 ms timer, which meets the "send accurate clock to the Machinedrum" requirement for the free-running case. Following a master (M5) cannot be better than the master itself.
