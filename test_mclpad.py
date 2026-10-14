@@ -23,8 +23,8 @@ def check(label, cond, detail=""):
     fails += not cond
 
 
-def make():
-    e = Emu(IMG, "out/cave.elf")
+def make(e=None):
+    e = e or Emu(IMG, "out/cave.elf")
     e.uc.mem_map(0xE0000000, 0x100000)
     e.uc.mem_map(0x38800000, 0x1000)
     e.uc.mem_map(0x58024000, 0x1000)
@@ -58,46 +58,48 @@ stock = open("firmware/BLACKBOX-3.1.9.bin", "rb").read()
 diff = [i for i in range(len(stock)) if stock[i] != image[i]]
 check("only the stock bytes the cave patches differ (below 0x080F1E78, not the pad)", max(diff) < 0xB1E78 and len(image) > len(stock))
 
-# --- good pad: progress then OK
+# --- good pad: the result is on the label as soon as it is built at boot
 e = make()
-check("label built at boot of the padded image shows ' P0%' (tells it from the old image)", " P0%" in label(e) and " F" not in label(e), label(e))
-seen = []
-for s in range(40):
+check("label built at boot of the padded image already reads ' POK'", " POK" in label(e), label(e))
+check("label stays within the 30 bytes the text object allows", len(label(e)) <= 30, label(e))
+check("result in backup SRAM: id set, no bad word", e.r32(0x38800910) == e.r32(e.sym["mclpad_on"]) and (e.r32(0x38800918) & 0xFFFFFFFF) == 0xFFFFFFFF)
+for _ in range(3):
     second(e)
-    seen.append(label(e))
-check("first report: ' P3%' (2048 of 65536 words); the first second only arms the meter", " P0%" in seen[0] and " P3%" in seen[1], seen[:2])
-check("progress rises one step a report", " P6%" in seen[2] and " P9%" in seen[3], seen[:4])
-check("after 32 reports: ' POK', and it stays", " P96%" in seen[31] and " POK" in seen[32] and " POK" in seen[39], (seen[31], seen[32]))
-check("label stays within the 30 bytes the text object allows", max(len(x) for x in seen) <= 30, max(seen, key=len))
-check("result persists in backup SRAM (index 65536, no bad word)", e.r32(0x38800914) == 65536 and (e.r32(0x38800918) & 0xFFFFFFFF) == 0xFFFFFFFF, (e.r32(0x38800910), e.r32(0x38800914), e.r32(0x38800918)))
+check("still ' POK' after the meter has run (no rescan, label unchanged)", " POK" in label(e), label(e))
 
 # --- a flipped word, and an unwritten (erased) tail
 for name, patch, idx in (("one flipped word", lambda u: u.mem_write(PAD_BASE + 4 * 5000, b"\x00\x00\x00\x00"), 5000),
-                         ("erased tail (0xFF from 0x08170000)", lambda u: u.mem_write(0x08170000, b"\xff" * 0x10000), 0xC000)):
-    e = make()
+                         ("erased tail (0xFF from 0x08170000)", lambda u: u.mem_write(0x08170000, b"\xff" * 0x10000), 0xC000),
+                         ("first word wrong", lambda u: u.mem_write(PAD_BASE, b"\xef\xbe\xad\xde"), 0)):
+    e = Emu(IMG, "out/cave.elf")
     patch(e.uc)
-    for _ in range(36):
-        second(e)
+    e = make(e)
     check(f"{name}: ' F{idx:04x}'", f" F{idx:04x}" in label(e), label(e))
 
-# --- another build id restarts the scan
+# --- power-up rescans; a different build id also rescans
 e = make()
-for _ in range(36):
-    second(e)
 check("scan done", " POK" in label(e), label(e))
+e.uc.mem_write(PAD_BASE + 4 * 77, b"\x00\x00\x00\x00")
+e.call("cpu_text_b", 0x24060000, 0x080CF290)
+check("same id, state kept: no rescan, still ' POK'", " POK" in label(e), label(e))
 e.uc.mem_write(e.sym["mclpad_on"], struct.pack("<I", 0x12345678))
-second(e)
-check("a different build id restarts from the beginning (' P3%')", " P3%" in label(e), label(e))
+e.call("cpu_text_b", 0x24060000, 0x080CF290)
+check("a different build id rescans and finds the damage (' F004d')", " F004d" in label(e), label(e))
+e.uc.mem_write(e.sym["mclpad_on"], struct.pack("<I", e.r32(0x38800910) & 0xFFFFFFFF))
+e.uc.mem_write(0x2405FFD0, b"\xa5" * 36)               # power-up: patch RAM garbage -> start() clears the state
+e.call("cpu_text_b", 0x24060000, 0x080CF290)
+check("power-up (start()) clears the result, the next label rescans", " F004d" in label(e), label(e))
 
 # --- flag 0 (normal build): the pad region is never read
-e = make()
+e = Emu(IMG, "out/cave.elf")
 e.uc.mem_write(e.sym["mclpad_on"], bytes(4))
 reads = []
 from unicorn import UC_HOOK_MEM_READ
 e.uc.hook_add(UC_HOOK_MEM_READ, lambda uc, t, a, sz, v, _: reads.append(a), begin=PAD_BASE, end=PAD_END - 1)
+e = make(e)
 for _ in range(3):
     second(e)
-check("flag 0: no read from 0x08140000..0x08180000 and no pad text", not reads and " P" not in label(e), (len(reads), label(e)))
+check("flag 0: no read from 0x08140000..0x08180000 and no pad text", not reads and " P" not in label(e) and " F" not in label(e), (len(reads), label(e)))
 
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

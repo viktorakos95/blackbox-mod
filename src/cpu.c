@@ -59,6 +59,13 @@ struct cpu_state {
 #define STATUS_OK      1
 #define STATUS_NO_CLOCK 2        /* a second of wake-ups and the cycle counter never moved */
 
+/* Flash window test (see pad_text below): build id set by patches/mclpad.py, 0 in normal builds. */
+const volatile uint32_t mclpad_on = 0;
+#define PAD_BASE  ((const volatile uint32_t *)0x08140000u)
+#define PAD_WORDS 65536u
+#define PAD_ST    ((volatile uint32_t *)0x38800910u)
+#define PAD_NONE  0xffffffffu
+
 static void start(void)
 {
     DEMCR |= 1u << 24;           /* TRCENA */
@@ -69,6 +76,10 @@ static void start(void)
     M->sum = 0;
     M->n = M->peak = M->wakes = 0;
     M->magic = MAGIC;
+    if (mclpad_on) {
+        bkp_enable();
+        PAD_ST[0] = 0;               /* power-up: read the flash test pad again */
+    }
 }
 
 static char *put_uint(char *p, unsigned v)
@@ -86,17 +97,12 @@ static char *put_uint(char *p, unsigned v)
 
 /*
  * Flash window test (MCL port, gate for milestone M2). patches/mclpad.py appends 256 KB of a known word pattern at
- * 0x08140000..0x08180000 (past the window tested so far) and sets mclpad_on to a build id. Only then does the meter read the
- * pad back, 2048 words a second (so 32 s, never a long stall in the audio task), and show on the label: " P37%" while running,
- * " POK" when every word matched, " Fxxxx" (hex index of the first wrong word) otherwise. Result and progress live in backup SRAM
- * (0x38800910: id, next word, first bad word) so they survive until the image changes; normal builds never touch the pad.
+ * 0x08140000..0x08180000 (past the window tested so far) and sets mclpad_on to a build id. Only then, the first time a label is
+ * composed after power-up, the whole pad is read back once (65,536 words, a few ms in the GUI task, never in the audio task) and the
+ * label shows " POK" if every word matched, else " Fxxxx" (hex index of the first wrong word). The label is built once at boot and not
+ * rewritten by the meter, so the result has to be there when it is built. Result in backup SRAM (0x38800910: id, -, first bad word),
+ * cleared by start() at power-up. Normal builds (flag 0) never touch the pad.
  */
-const volatile uint32_t mclpad_on = 0;
-#define PAD_BASE  ((const volatile uint32_t *)0x08140000u)
-#define PAD_WORDS 65536u
-#define PAD_STEP  2048u
-#define PAD_ST    ((volatile uint32_t *)0x38800910u)
-#define PAD_NONE  0xffffffffu
 
 static uint32_t pad_word(uint32_t i)
 {
@@ -106,44 +112,33 @@ static uint32_t pad_word(uint32_t i)
     return w ^ (w >> 13);      /* every step is a bijection, so no two pad words are equal */
 }
 
-static void pad_step(void)
+static char *pad_text(char *p)
 {
     uint32_t id = mclpad_on;
     if (!id)
-        return;
-    bkp_enable();
-    volatile uint32_t *s = PAD_ST;
-    if (s[0] != id) {
-        s[0] = id;
-        s[1] = 0;
-        s[2] = PAD_NONE;
-    }
-    uint32_t i = s[1];
-    for (uint32_t n = 0; n < PAD_STEP && i < PAD_WORDS; n++, i++)
-        if (PAD_BASE[i] != pad_word(i) && s[2] == PAD_NONE)
-            s[2] = i;
-    s[1] = i;
-}
-
-static char *pad_text(char *p)
-{
-    if (!mclpad_on)
         return p;
-    int fresh = PAD_ST[0] != mclpad_on;                  /* scan not started yet (or from another build): shows P0% */
-    uint32_t bad = fresh ? PAD_NONE : PAD_ST[2], at = fresh ? 0 : PAD_ST[1];
+    volatile uint32_t *s = PAD_ST;
+    bkp_enable();
+    if (s[0] != id) {
+        uint32_t bad = PAD_NONE;
+        for (uint32_t i = 0; i < PAD_WORDS; i++)
+            if (PAD_BASE[i] != pad_word(i)) {
+                bad = i;
+                break;
+            }
+        s[2] = bad;
+        s[0] = id;
+    }
+    uint32_t bad = s[2];
     *p++ = ' ';
     if (bad != PAD_NONE) {
         *p++ = 'F';
         for (int sh = 12; sh >= 0; sh -= 4)
             *p++ = "0123456789abcdef"[(bad >> sh) & 15];
-    } else if (at >= PAD_WORDS) {
+    } else {
         *p++ = 'P';
         *p++ = 'O';
         *p++ = 'K';
-    } else {
-        *p++ = 'P';
-        p = put_uint(p, at * 100u / PAD_WORDS);
-        *p++ = '%';
     }
     return p;
 }
@@ -179,7 +174,6 @@ static void compose(char *buf)
 static void report(void)
 {
     char buf[40];
-    pad_step();
     compose(buf);
     for (int i = 0; i < LABELS; i++) {
         uint8_t *t = M->text[i];

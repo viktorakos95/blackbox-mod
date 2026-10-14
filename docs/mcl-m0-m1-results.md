@@ -88,9 +88,11 @@ Build (after `sh build.sh`, stock firmware in `firmware/`):
 `mclpad` must come after `cave`. It is the normal mod (same features as the build without `mclpad`) plus: `0xFF` fill from the end of the cave (~`0x0810D...`) to `0x08140000`, then
 256 KB of a known word pattern at `0x08140000..0x08180000` (65,536 distinct words, `patches/mclpad.py`), and a build id written into `mclpad_on` (`src/cpu.c`).
 
-What it does on the unit: the meter reads the pad back 2048 words a second (32 reports, no long stall in the audio task) and adds to the **version label** (the one that shows `3.1.n 34/71% 41M Lok`):
-`P37%` while running, **`POK`** when every word matched, `Fxxxx` (hex word index of the first wrong word) otherwise. Result and progress sit in backup SRAM `0x38800910..0x3880091B`;
-a new build id restarts the scan. Normal builds (no `mclpad`) have the flag at 0, never read the pad region, and look exactly as before.
+What it does on the unit: the first time the version label is composed after power-up (at boot, when the screens are built) the meter reads the whole pad back once
+(65,536 words, a few ms, in the GUI task, never in the audio task) and adds **`POK`** (every word matched) or `Fxxxx` (hex word index of the first wrong word) to the label
+(`3.1.n 3M POK Lok40`). That label is built once and not rewritten by the meter, so the result has to be there at build time (a first version that scanned a bit per second never showed
+on it). Result in backup SRAM `0x38800910` (id, -, first bad word), cleared at power-up; normal builds (no `mclpad`) have the flag at 0, never read the pad region and look as before.
+First hardware report: the 1.3 MB image was accepted and booted (the first copy to the card gave "firmware not found", a second copy of the same file worked: not yet known whether a bad copy or the size).
 
 How to read the outcome:
 - Updater refuses the file / unit does not boot the new image: the window ends before `0x08180000`; fall back to the SD-loaded module (plan, section 2). Keep a known-good `BLACKBOX.bin` on the card.
@@ -98,5 +100,5 @@ How to read the outcome:
 - Boots, label shows `Fxxxx`: the index says where the write stopped (e.g. `Fc000` = from `0x08170000` on); raise the cave only to the last good sector boundary.
 - Unit restarts a few times by itself right after flashing is known from earlier size tests (`looper-todo.md`); a restart loop afterwards is not.
 
-Emulator checks (`test_mclpad.py`, 15 checks): image size and layout, no repeated pattern words, stock bytes untouched, progress -> `POK`, a flipped word and an erased tail give the right `Fxxxx`,
+Emulator checks (`test_mclpad.py`): image size and layout, no repeated pattern words, stock bytes untouched, progress -> `POK`, a flipped word and an erased tail give the right `Fxxxx`,
 a new build id restarts, flag 0 never reads the pad. Not provable in the emulator: that the updater writes the image and flash returns the data.
