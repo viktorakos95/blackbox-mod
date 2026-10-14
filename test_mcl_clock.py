@@ -10,7 +10,7 @@ import sys
 
 from unicorn import UC_HOOK_MEM_READ
 
-from mcl_rig import BASE, Rig, build
+from mcl_rig import BASE, Rig, build, clock_rig
 
 TIM6, DWT, SYST = 0x40001000, 0xE0001004, 0xE000E010
 fails = 0
@@ -22,28 +22,8 @@ def check(label, cond, detail=""):
     fails += not cond
 
 
-def rig(core_hz=399_000_000, tim_hz=200_000_000, m4=False):
-    d = build(False, m4)
-    r = Rig(d)
-    e = r.e
-    e.uc.mem_map(0x40001000 - 0x1000 + 0x1000, 0x1000) if False else e.uc.mem_map(0x40001000, 0x1000)
-    e.w32(0xE000E014, core_hz // 1000 - 1)                       # SysTick reload: the firmware's 1 kHz tick
-    e.w32(SYST, 7)
-    e.w32(0x580244E8, 0)
-    st = {"dwt": 0}
-
-    def dwt_read(uc, t, a, sz, v, _):
-        st["dwt"] += 900                                          # every read of the cycle counter: 900 cycles
-        uc.mem_write(DWT, struct.pack("<I", st["dwt"] & 0xFFFFFFFF))
-
-    def cnt_read(uc, t, a, sz, v, _):                              # TIM6 counter follows the cycle counter at tim_hz / core_hz (PSC = 0 while calibrating)
-        psc = struct.unpack("<I", uc.mem_read(TIM6 + 0x28, 4))[0]
-        uc.mem_write(TIM6 + 0x24, struct.pack("<I", int(st["dwt"] * tim_hz / core_hz / (psc + 1)) & 0xFFFF))
-
-    e.uc.hook_add(UC_HOOK_MEM_READ, dwt_read, begin=DWT, end=DWT + 3)
-    e.uc.hook_add(UC_HOOK_MEM_READ, cnt_read, begin=TIM6 + 0x24, end=TIM6 + 0x27)
-    r.call("mcl_boot")
-    return r
+def rig(**kw):
+    return clock_rig(**kw)
 
 
 def u32(r, a):

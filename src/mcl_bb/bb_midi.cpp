@@ -12,8 +12,10 @@
  *      CR1.TXEIE is only ever set under PRIMASK, so a task can't overwrite a CR1 change the HAL makes in the same interrupt.
  * All state is in this blob's SDRAM region; every hook is a no-op until bb_midi_init() has set the ready magic (set last, cleared first).
  */
+#include "bb_clock.h"
 #include "bb_midi.h"
 
+#define DWT_CYCCNT (*(volatile uint32_t *)0xe0001004u)
 #define USART6   0x40011400u
 #define U_CR1    (*(volatile uint32_t *)(USART6 + 0x00))
 #define U_ISR    (*(volatile uint32_t *)(USART6 + 0x1c))
@@ -65,7 +67,10 @@ HOOK void bb_midi_init(void)
 
 HOOK void mcl_rx_tap(void *block, uint32_t byte)
 {
+    uint32_t t = DWT_CYCCNT;                                     /* the arrival time of a clock byte: taken before anything else */
     if (ready == READY_MAGIC && (uint32_t)block == STOCK_MGR) {
+        if (byte >= 0xf8 && byte <= 0xfc)
+            bb_clock_in_rt((uint8_t)byte, t);
         uint32_t w = rx_wr;
         if (w - rx_rd < RX_SIZE) {
             rx_ring[w & (RX_SIZE - 1)] = (uint8_t)byte;

@@ -227,3 +227,18 @@ With the right loop cable: the CLK sheet reads **120 BPM** from our own timer-dr
 **Accuracy (user report, CLK sheet, loop cable, 120.0 BPM): `ARR 20833-20841` us.** The ideal interval is 20,833.3 us; the whole observed range is 8 us peak to peak (about +-4 us around the ideal).
 That includes the 1 us timer-count resolution, the interrupt latency of our timer and of the USART6 receive hook, and the monitor's own cycle-count stamping. For comparison (clock-findings.md): KeyStep sd 33-38 us (range about +-0.1 ms), Machinedrum sd 67 us (+-0.7 ms), the stock sequencer's view 1.0-1.3 ms sd.
 So the M4 clock source is roughly one to two orders of magnitude tighter than the external clocks the Blackbox will follow and than the Arduino MCL's ~1 ms timer, which meets the "send accurate clock to the Machinedrum" requirement for the free-running case. Following a master (M5) cannot be better than the master itself.
+
+## M5a: following a MIDI clock on the jack (phase-locked loop)
+
+Code: `src/mcl_bb/bb_clock.cpp` (+ `.h`), the stamp in `mcl_rx_tap` (`bb_midi.cpp`), tests `test_mcl_sync.py` (24 checks; a time-ordered simulation, master and timer modelled, the code real).
+The receive tap stamps every F8 with the cycle counter (first instruction, before anything else) and queues FA / FB / FC; **all loop state is touched only by the timer interrupt**, which drains these at the start of each tick (no shared writer).
+Loop: phase detector = input clock time relative to our last 24-PPQN tick (wrapped to +-half a period); filter = 1/4 of the error moves the next tick + 1/64 of the error changes the period (critically damped, natural frequency ~1 Hz at 120 BPM).
+Acquisition from two clocks (period, then the timer starts where the next input clock will fall); slip (> 1/8 period) corrected at once and the tempo restarted from the last interval; no clock for 4 periods = lost, tempo held for 2 s, then the clock stops and it listens again; FA / FB / FC are forwarded with the next clock (FA also restarts the 192-PPQN tick counter).
+Emulator results (120 BPM): perfect master: our F8 within 2.4 us of the master's, tempo exact; masters with gaussian jitter of sd 35 us / 70 us (input interval sd 48 / 96 us): our F8 interval sd 9 / 19 us; 1 ms software clock (+-500 us): 398 -> 81 us;
+tempo step 120 -> 150 followed within 6 s (phase back under 20 us); ramp 100 -> 140 BPM in 25 s tracked within 456 us (the lag of a second-order loop on a ramp, 2 BPM/s); one missing clock invisible; six missing clocks held and re-locked; 7 ms phase slip recovered; the master stopping: 2 s flywheel, then stop and listen; a stray double clock ignored.
+Not provable here: real masters' jitter, real interrupt latencies, the Machinedrum following our output.
+
+### M5a hardware test image (`M5TEST=1 tools/mcl/build_blob.sh`)
+Needs a MIDI clock master **already running when the Blackbox powers up**, on MIDI IN (the Machinedrum with a pattern playing and clock out on, through the known-good cable, or the KeyStep). Nothing needed on MIDI OUT.
+Boot waits up to 5 s for the lock, then measures 2 s; label ` Mok S3 1200 e9`: `S` the sync state (3 = locked, 1 = never saw a clock), the tempo in 1/10 BPM, `e` the largest phase error of the last second in microseconds,
+i.e. how far the master's clocks strayed from our smooth tempo (about the master's own jitter: expect a few tens of us for a KeyStep, 100-200 for the Machinedrum; our output is smoother than that).

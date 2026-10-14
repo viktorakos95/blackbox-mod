@@ -216,6 +216,11 @@ extern "C" uint32_t mcl_boot(void)
 static uint8_t m3_ran;
 #endif
 
+#ifdef M5_TEST
+static uint8_t m5_ran;
+static uint32_t m5_s, m5_b, m5_e;                   /* sync state, tempo (1/10 BPM), largest phase error of the last second (us) after the measurement */
+#endif
+
 #ifdef M4_TEST
 static uint8_t m4_ran;
 static uint32_t m4_t, m4_r, m4_l;                   /* loop-back frame result (1 = back, 2 = not, 3 = no claim); after 250 ms of the clock: ticks, bytes received from the jack */
@@ -234,6 +239,25 @@ extern "C" void mcl_gui(void)
     while (!bb_m3_step((DWT_CYCCNT - c0) / 400u))      /* ~400 MHz core: cycles / 400 = microseconds */
         if ((DWT_CYCCNT - c0) / 400u > 4000000u)
             break;
+#endif
+#ifdef M5_TEST
+    /* M5 hardware test image: the clock follows the MIDI clock arriving on the jack (a master running before power-up). Up to 5 s to lock, 2 s of measurement. */
+    volatile uint32_t *s5 = BKP;
+    if (!m5_ran && s5[0] == BKP_MAGIC && (s5[1] & 0xff) == ST_OK) {
+        m5_ran = 1;
+        bb_midi_claim(1);
+        if (bb_midi_owner() && bb_clock_init()) {
+            bb_midi_filter_clock(1);
+            bb_clock_sync_midi();
+            uint32_t c0 = DWT_CYCCNT;
+            while (bb_clock_sync_state() != 3 && DWT_CYCCNT - c0 < 2000000000u) {}     /* 5 s at 400 MHz */
+            c0 = DWT_CYCCNT;
+            while (DWT_CYCCNT - c0 < 800000000u) {}                                    /* 2 s of locked clock */
+            m5_s = (uint32_t)bb_clock_sync_state();
+            m5_b = bb_clock_bpm_x10();
+            m5_e = bb_clock_err_us(0);
+        }
+    }
 #endif
 #ifdef M4_TEST
     /* M4 hardware test image: from the first label on, MIDI clock at 120.0 BPM from the timer interrupt, on the jack, until power-off. No start / stop bytes. */
@@ -312,8 +336,27 @@ extern "C" char *mcl_status_text(char *p, uint32_t room)
     }
 #endif
     if (s[0] != BKP_MAGIC || (s[1] & 0xff) != ST_OK) {        /* no booted runtime: the clock variables in SDRAM are garbage */
-    } else if (bb_clock_running()) {                      /* the timer clock is running (M4 image: 120.0 BPM, fixed) */
-#ifdef M4_TEST
+    } else if (bb_clock_running() || bb_clock_sync_state()) {      /* the timer clock is running (M4 image: 120.0 BPM, fixed), or listening for a master (M5 image) */
+#if defined(M5_TEST)
+        /* ' S3 1200 e9': sync state (3 = locked and sending, 1 = never saw a clock), tempo in 1/10 BPM, largest phase error of the last second in microseconds */
+        char *w = q;
+        *w++ = ' ';
+        *w++ = 'S';
+        *w++ = (char)('0' + m5_s % 10);
+        *w++ = ' ';
+        for (uint32_t d = 1000; d; d /= 10)
+            if (m5_b >= d || d == 1)
+                *w++ = (char)('0' + m5_b / d % 10);
+        *w++ = ' ';
+        *w++ = 'e';
+        uint32_t n = m5_e > 999 ? 999 : m5_e;
+        if (n >= 100)
+            *w++ = (char)('0' + n / 100);
+        if (n >= 10)
+            *w++ = (char)('0' + n / 10 % 10);
+        *w++ = (char)('0' + n % 10);
+        q = w;
+#elif defined(M4_TEST)
         /* ' L+ t96 r12': the loop-back frame came back (L+; L- no, L? port not claimed), then after 250 ms of the clock: ticks and the clock bytes the receive tap saw on the jack. */
         char *w = q;
         *w++ = ' ';
