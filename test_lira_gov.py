@@ -140,38 +140,48 @@ for _ in range(60):
 check("with sync on the synth still sounds", r > 0.001, "rms %.5f" % r)
 e.call("lira_ui_chord_set", 144, 0)
 e.call("lira_ui_chord_set", 146, 0)
-# the gesture recorder
+# the gesture recorder (no looper here: it starts at once, and a bar is 4 beats of the 120 bpm fallback = 96000 frames)
 e.call("lira_ui_key", 0, 0)
 for _ in range(20):
     block(0.3)
 e.call("lira_ui_action", 7)
-check("REC: recording", rv("lira_ui_chord_get", 158) == 1)
-for _ in range(5):
+check("REC arms the recorder", rv("lira_ui_chord_get", 158) == 1)
+block(0.3)
+check("... and with no clock it records from the next block", rv("lira_ui_chord_get", 158) == 2, rv("lira_ui_chord_get", 158))
+for _ in range(10):
     block(0.3)
-e.call("lira_ui_key", 2, 1)
 e.call("lira_ui_set", 120, 400)
+for _ in range(10):
+    block(0.3)
 e.call("lira_ui_pitch_set", 3, 5000)
-for _ in range(5):
+for _ in range(360):
     block(0.3)
-e.call("lira_ui_key", 2, 0)
-for _ in range(5):
-    block(0.3)
-e.call("lira_ui_action", 7)
-check("REC again: looping the %d gestures" % rv("lira_ui_chord_get", 159), rv("lira_ui_chord_get", 158) == 2 and rv("lira_ui_chord_get", 159) == 4, (rv("lira_ui_chord_get", 158), rv("lira_ui_chord_get", 159)))
+check("after LEN bars (1) the take loops: %d gestures, 1 layer" % rv("lira_ui_chord_get", 159), rv("lira_ui_chord_get", 158) == 3 and rv("lira_ui_chord_get", 159) == 2 and rv("lira_ui_chord_get", 149) == 1, (rv("lira_ui_chord_get", 158), rv("lira_ui_chord_get", 159), rv("lira_ui_chord_get", 149)))
 e.call("lira_ui_set", 120, 700)
 e.call("lira_ui_pitch_set", 3, 7000)
-e.call("lira_ui_key", 2, 0)
-seen_on = seen_off = lvl = pit = 0
-for _ in range(60):
+lvl = pit = 0
+for _ in range(400):
     block(0.3)
-    on = rv("lira_ui_key_get", 2)
-    seen_on |= on
-    seen_off |= (not on)
     lvl |= rv("lira_ui_get", 120) == 400
     pit |= rv("lira_ui_pitch", 3) == 5000
-check("the loop plays the plate, the level and the pitch again", seen_on and seen_off and lvl and pit, (seen_on, seen_off, lvl, pit))
+check("the loop plays the level and the pitch again", lvl and pit, (lvl, pit))
 e.call("lira_ui_action", 7)
-check("a third press clears it", rv("lira_ui_chord_get", 158) == 0 and rv("lira_ui_chord_get", 159) == 0)
+check("REC in the loop arms an overdub from the loop start", rv("lira_ui_chord_get", 158) == 4)
+for _ in range(400):
+    block(0.3)
+    if rv("lira_ui_chord_get", 158) == 5:
+        break
+check("... which records for one pass", rv("lira_ui_chord_get", 158) == 5, rv("lira_ui_chord_get", 158))
+e.call("lira_ui_set", 121, 300)
+for _ in range(400):
+    block(0.3)
+    if rv("lira_ui_chord_get", 158) == 3:
+        break
+check("... and then it is a second layer (3 gestures)", rv("lira_ui_chord_get", 158) == 3 and rv("lira_ui_chord_get", 149) == 2 and rv("lira_ui_chord_get", 159) == 3, (rv("lira_ui_chord_get", 158), rv("lira_ui_chord_get", 149), rv("lira_ui_chord_get", 159)))
+e.call("lira_ui_action", 9)
+check("UNDO drops the last layer", rv("lira_ui_chord_get", 149) == 1 and rv("lira_ui_chord_get", 159) == 2, (rv("lira_ui_chord_get", 149), rv("lira_ui_chord_get", 159)))
+e.call("lira_ui_action", 14)
+check("CLEAR empties it", rv("lira_ui_chord_get", 158) == 0 and rv("lira_ui_chord_get", 159) == 0)
 check("the flight recorder in backup SRAM holds this run's peaks", e.r32(0x38800BC0) == 0x46524331 and e.r16(0x38800BC4) >= 840, str((hex(e.r32(0x38800BC0)), e.r16(0x38800BC4))))
 e.call("lira_ui_prev", 4)
 check("... no run before it yet", e.uc.reg_read(UC_ARM_REG_R0) == 0)

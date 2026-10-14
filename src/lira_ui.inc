@@ -87,6 +87,9 @@ struct lu_spec {
 #define LP_CHORD  3
 static const char *const lu_tabname[4] = {"VOICES", "SOUND", "MIX", "CHORD"};
 static const char *const lu_div[12] = {"OFF", "4 BAR", "2 BAR", "1 BAR", "1/2", "1/4D", "1/4", "1/8D", "1/8", "1/16D", "1/16", "1/16T"};
+static const char *const lu_len[4] = {"1 BAR", "2 BAR", "4 BAR", "8 BAR"};
+static const char *const lu_gst[6] = {"", "ARMED", "REC", "LOOP", "ARMED", "OVR"};
+static const char *const lu_lay[4] = {"", "1 LAYER", "2 LAYER", "3 LAYER"};
 static const char *const lu_lfo_name[4] = {"SHAPE", "COMBINE", "LINK", "DLY SRC"};
 static const char *const lu_lfo_val[4][3] = {{"TRI", "SQR", ""}, {"PROD", "SUM", ""}, {"OFF", "ON", ""}, {"SELF", "OFF", "LFO"}};
 static const char *const lu_touch[3] = {"SLOW", "FAST", "EXT"};
@@ -140,17 +143,21 @@ static int lu_specs(int sel, struct lu_spec *o)
             LU_SP(n, ids[i], x, d, LU_COL, 38, 2 + (i >> 2), lu_enc_cell[i & 3], i >= 12 ? LK_BTN : LK_KNOB, LU_ACC1, 11, nm[i]);
             n++;
         }
-    } else if (page == LP_MIX) {                                  /* the output stage in one row */
+    } else if (page == LP_MIX) {                                  /* OUTPUT (knobs), SYNC and GESTURE (buttons), STATUS (text) */
         static const uint16_t ids[4] = {22, 23, LU_LEVEL, 21};
         static const char *const nm[4] = {"DRIVE", "DIST", "VOL", "EXT"};
+        static const char *const sn[4] = {"LFO A", "LFO B", "ECHO 1", "ECHO 2"};
+        static const uint16_t gid[4] = {190, 148, 191, 192};
+        static const char *const gn[4] = {"REC", "LEN", "UNDO", "CLEAR"};
         for (int i = 0; i < 4; i++) {
-            LU_SP(n, ids[i], LU_X0 + i * LU_COL, LU_PANEL + 12, LU_COL, 38, 2, lu_enc_row[i], LK_KNOB, LU_ACC1, 11, nm[i]);
+            lu_cell(0, i, &x, &d);
+            LU_SP(n, ids[i], x, d, LU_COL, 38, 2, lu_enc_cell[i], LK_KNOB, LU_ACC1, 11, nm[i]);
             n++;
-        }
-        static const char *const sn[4] = {"LFO A", "LFO B", "DLY 1", "DLY 2"};
-        for (int i = 0; i < 4; i++) {                             /* tempo sync: how long one cycle / one echo is, in the Blackbox clock's beats */
+            lu_cell(1, i, &x, &d);                                /* tempo sync: how long one cycle / one echo is, in the Blackbox clock's beats */
+            LU_SP(n, 144 + i, x, d, LU_COL, 38, 3, lu_enc_cell[i], LK_BTN, LU_ACC2, 0, sn[i]);
+            n++;
             lu_cell(2, i, &x, &d);
-            LU_SP(n, 144 + i, x, d, LU_COL, 38, 4, lu_enc_cell[i], LK_STEP, LU_ACC2, 11, sn[i]);
+            LU_SP(n, gid[i], x, d, LU_COL, 38, 4, lu_enc_cell[i], LK_BTN, LU_ACC1, 0, gn[i]);
             n++;
         }
     } else {
@@ -285,6 +292,16 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             st = lu_touch[lira_ui_get(s->id)], on = lira_ui_get(s->id) != 0;
         else if (s->id >= 104 && s->id < 108)
             st = lu_src[lira_ui_get(s->id)], on = lira_ui_get(s->id) != 1;
+        else if (s->id >= 144 && s->id < 148)
+            st = lu_div[lira_ui_chord_get(s->id)], on = lira_ui_chord_get(s->id) != 0;
+        else if (s->id == 148)
+            st = lu_len[lira_ui_chord_get(148)], on = 0;
+        else if (s->id == 190)
+            st = lu_gst[lira_ui_chord_get(158)], on = lira_ui_chord_get(158) != 0;
+        else if (s->id == 191)
+            st = lu_lay[lira_ui_chord_get(149)], on = lira_ui_chord_get(149) != 0;
+        else if (s->id == 192)
+            st = "", on = 0;
         else if (s->id >= 160 && s->id < 164) {
             int k = lira_ui_chord_get(s->id);
             st = lu_lfo_val[s->id - 160][k];
@@ -330,7 +347,7 @@ static void draw_lira(void)
     char b[40], *q;
     static const char *const ptitle[4][4] = {{"PAIR 1-2", "PAIR 3-4", "PAIR 5-6", "PAIR 7-8"},
                                              {"DELAY", "MOD", "HOLD/PITCH", "LFO"},
-                                             {"OUTPUT", "", "SYNC", "STATUS"},
+                                             {"OUTPUT", "TEMPO SYNC", "GESTURE", "STATUS"},
                                              {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"}};
     box(1, 1, P->w - 2, TOPBAR, C_BG);
     text(6, 4, "DRONE-8", C_WHITE, 1);
@@ -367,29 +384,31 @@ static void draw_lira(void)
         q = put_uint(q, (unsigned)lira_ui_load(2));
         *q = 0;
     }
-    b[11] = 0;                                                    /* (it must stay clear of the switches) */
+    b[9] = 0;                                                     /* (it must stay clear of the switches) */
     text(54, 4, b, *b ? C_WHITE : C_GREY, 1);
     int mom = lira_ui_momentary(0), sine = lira_ui_chord_get(154), fr = lira_ui_chord_get(157), xs = lira_ui_chord_get(156), gm = lira_ui_chord_get(158);
-    /* five switches at the right, 36 px wide every 38: LATCH / HOLD, TRI / SINE, X:IN / X:MIX / X:BOTH, STEP / FREE, REC */
-    frame(P->w - 40, 2, 36, TOPBAR - 2, mom ? LU_ACC2 : LU_LINE, 1);
-    text_c(P->w - 40, 4, 36, mom ? "HOLD" : "LATCH", LU_DIM, 1);
-    frame(P->w - 78, 2, 36, TOPBAR - 2, sine ? LU_ACC1 : LU_LINE, 1);
-    text_c(P->w - 78, 4, 36, sine ? "SINE" : "TRI", sine ? C_WHITE : LU_DIM, 1);
-    frame(P->w - 116, 2, 36, TOPBAR - 2, xs ? LU_ACC2 : LU_LINE, 1);
-    text_c(P->w - 116, 4, 36, xs == 0 ? "X:IN" : xs == 1 ? "X:MIX" : "X:ALL", xs ? C_WHITE : LU_DIM, 1);
-    frame(P->w - 154, 2, 36, TOPBAR - 2, fr ? LU_ACC1 : LU_LINE, 1);                  /* what the encoders do to a chord voice: a semitone a click, or free */
-    text_c(P->w - 154, 4, 36, fr ? "FREE" : "STEP", fr ? C_WHITE : LU_DIM, 1);
-    if (gm == 1)                                                  /* the gesture recorder: recording (filled), then looping what was done */
-        box(P->w - 192, 2, 36, TOPBAR - 2, LU_SEL);
+    /* six switches at the right, 32 px wide every 33, from the right: LATCH / HOLD, TRI / SINE, X:IN / X:MIX / X:ALL, STEP / FREE, REC, BTN */
+#define LU_SW(k) (P->w - 35 - 33 * (k))
+    frame(LU_SW(0), 2, 32, TOPBAR - 2, mom ? LU_ACC2 : LU_LINE, 1);
+    text_c(LU_SW(0), 4, 32, mom ? "HOLD" : "LATCH", LU_DIM, 1);
+    frame(LU_SW(1), 2, 32, TOPBAR - 2, sine ? LU_ACC1 : LU_LINE, 1);
+    text_c(LU_SW(1), 4, 32, sine ? "SINE" : "TRI", sine ? C_WHITE : LU_DIM, 1);
+    frame(LU_SW(2), 2, 32, TOPBAR - 2, xs ? LU_ACC2 : LU_LINE, 1);
+    text_c(LU_SW(2), 4, 32, xs == 0 ? "X:IN" : xs == 1 ? "X:MIX" : "X:ALL", xs ? C_WHITE : LU_DIM, 1);
+    frame(LU_SW(3), 2, 32, TOPBAR - 2, fr ? LU_ACC1 : LU_LINE, 1);                    /* what the encoders do to a chord voice: a semitone a click, or free */
+    text_c(LU_SW(3), 4, 32, fr ? "FREE" : "STEP", fr ? C_WHITE : LU_DIM, 1);
+    if (gm == 2 || gm == 5)                                       /* the gesture recorder (like SAMPLR's): armed, recording (filled), looping */
+        box(LU_SW(4), 2, 32, TOPBAR - 2, LU_SEL);
     else
-        frame(P->w - 192, 2, 36, TOPBAR - 2, gm ? LU_ACC2 : LU_LINE, 1);
-    text_c(P->w - 192, 4, 36, gm == 2 ? "LOOP" : "REC", gm ? C_WHITE : LU_DIM, 1);
+        frame(LU_SW(4), 2, 32, TOPBAR - 2, gm == 3 ? LU_ACC2 : gm ? LU_SEL : LU_LINE, 1);
+    text_c(LU_SW(4), 4, 32, gm == 3 ? "LOOP" : gm == 1 || gm == 4 ? "ARM" : gm == 5 ? "OVR" : "REC", gm ? C_WHITE : LU_DIM, 1);
+    int bt = lira_ui_chord_get(165);                              /* the eight round buttons: the voice plates, or the stock buttons */
+    frame(LU_SW(5), 2, 32, TOPBAR - 2, bt ? LU_ACC2 : LU_LINE, 1);
+    text_c(LU_SW(5), 4, 32, "BTN", bt ? C_WHITE : LU_DIM, 1);
     box(1, TOPBAR + 2, P->w - 2, L.foot_y - TOPBAR - 3, C_BG);
 
     for (int p = 0; p < 4; p++) {                                 /* the four panels (OUTPUT is one wide panel) */
-        if (page == LP_MIX && p == 1)
-            continue;
-        int x = LU_X0 + p * 2 * LU_COL, hot = bank == 2 + p, pw = page == LP_MIX && p == 0 ? 4 * LU_COL : 2 * LU_COL;
+        int x = LU_X0 + p * 2 * LU_COL, hot = bank == 2 + p, pw = 2 * LU_COL;
         frame(x + 1, LU_PANEL, pw - 2, LU_PANH, hot ? LU_SEL : LU_LINE, 1);
         text_c(x, LU_PANEL + 4, pw, ptitle[page][p], hot ? LU_SEL : LU_DIM, 1);
         if (page == LP_VOICES)
@@ -536,6 +555,16 @@ static void lu_press(const struct lu_spec *s, int dir)
         lira_ui_set(id, (lira_ui_get(id) + (dir < 0 ? 7 : 1)) & 7);
     else if (id >= 160 && id < 164)
         lira_ui_action(10 + id - 160);
+    else if (id >= 144 && id < 148)
+        lira_ui_chord_set(id, (lira_ui_chord_get(id) + (dir < 0 ? 11 : 1)) % 12);
+    else if (id == 148)
+        lira_ui_chord_set(148, (lira_ui_chord_get(148) + (dir < 0 ? 3 : 1)) & 3);
+    else if (id == 190)
+        lira_ui_action(7);
+    else if (id == 191)
+        lira_ui_action(9);
+    else if (id == 192)
+        lira_ui_action(14);
     else if (id == 150)
         lira_ui_action(0);
     else if (id == 151)
@@ -573,7 +602,7 @@ static void lira_touch(int kind, int id, int x, int d)
     }
     lira_ui_drag(id, 0, 0, 0, 0, 0);
     if (d <= TOPBAR + 1) {
-        int k = (P->w - 2 - x) / 38;                              /* the switches: 0 LATCH, 1 TRI / SINE, 2 X:, 3 STEP / FREE, 4 REC */
+        int k = (P->w - 3 - x) / 33;                              /* the switches: 0 LATCH, 1 TRI / SINE, 2 X:, 3 STEP / FREE, 4 REC, 5 BTN */
         if (k == 0)
             lira_ui_momentary(1);
         else if (k == 1)
@@ -584,6 +613,8 @@ static void lira_touch(int kind, int id, int x, int d)
             lira_ui_action(6);
         else if (k == 4)
             lira_ui_action(7);
+        else if (k == 5)
+            lira_ui_action(8);
         return;
     }
     for (int v = 0; v < 8; v++) {                                 /* plates */
@@ -645,7 +676,7 @@ static void lira_knob(int knob, int counts)
                 int st = lira_ui_accum(knob, counts, 300);
                 if (sp[i].kind == LK_STEP && st)
                     lira_ui_chord_set(sp[i].id, lira_ui_chord_get(sp[i].id) + st);
-                for (int k = 0; sp[i].kind == LK_BTN && k < (st < 0 ? -st : st) && k < 3; k++)
+                for (int k = 0; sp[i].kind == LK_BTN && sp[i].id < 190 && k < (st < 0 ? -st : st) && k < 3; k++)
                     lu_press(&sp[i], st > 0 ? 1 : -1);
             } else if (!(sp[i].id < 8 && chord)) {
                 lira_ui_set(sp[i].id, lira_ui_get(sp[i].id) + d);

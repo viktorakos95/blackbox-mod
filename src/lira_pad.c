@@ -179,9 +179,11 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     int8_t fine[8];              /* ... and how far each lies above its note, in cents (-50..49; 0 = exactly the note) */
     uint8_t sync_on;             /* which of them were synced at the last tick */
     uint8_t sync[4];             /* tempo sync of LFO A, LFO B, delay 1, delay 2: 0 off, else an index into div_beats */
-    uint8_t gmode, rp;           /* gesture recorder: 0 idle, 1 recording, 2 looping; rp = replaying (events are not recorded again) */
+    uint8_t gmode, rp;           /* gesture recorder: 0 idle, 1 armed for the next bar line, 2 recording the first take, 3 looping, 4 armed to overdub at the loop start, 5 overdubbing; rp = replaying (events are not recorded again) */
+    uint8_t glen_i, glayers;     /* take length (1 2 4 8 bars), layers in the loop (up to 3) */
+    uint8_t btn_on;              /* the eight round buttons are the voice plates (else they are the stock buttons) */
     uint16_t gn, gi;             /* events recorded, the next to play */
-    uint32_t glen, gpos, gstart; /* loop length, position, and when recording began (all in blocks) */
+    float gt, gtot, sph;         /* position in the take / loop and its length (frames), the free-running bar grid's phase */
     uint8_t free_enc;            /* the encoders move a chord voice freely (0.05 semitone) instead of a semitone a click */
     uint8_t lfo[4];              /* LFO shape (tri / square), combine (product / sum), link, delay modulation source (self / off / LFO) */
     int16_t kacc[4];             /* encoder counts not yet worth a step */
@@ -199,7 +201,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t shed;                /* 0 full, 1 one delay line, 2 no delay, 3 muted: steps taken when the audio task nears its deadline */
 };
 #define GEV_MAX 1024
-struct gev {                     /* one recorded gesture: when (blocks from the start), what (a control id, or 300 + voice for a plate, 400 + voice a chord pitch, 500 + stepped id, 600 + action) and its value */
+struct gev {                     /* one recorded gesture: when (frames from the bar line), what (a control id, or 300 + voice for a plate, 400 + voice a chord pitch, 500 + stepped id, 600 + action; the layer in bits 11..12) and its value */
     uint32_t t;
     uint16_t id;
     int16_t val;
@@ -230,18 +232,27 @@ static struct pool *pool(void)
 }
 
 static void fr_boot(void);
-static void greplay(struct pool *p, struct pg *g);
+static void gstep(struct pool *p, struct pg *g, int n);
+static void gdrop(struct pool *p, struct pg *g, int layer);
+float looper_bpm(void);
+int looper_grid_exact(float beats, float sph, int n);
 float looper_beat_frames(void);
 double looper_clock_now(void);
 
 static void grec(struct pg *g, int id, int val)
 {
     struct pool *p = (struct pool *)((uint8_t *)g - __builtin_offsetof(struct pool, pg));
-    if (g->gmode != 1 || g->rp || g->gn >= GEV_MAX)
+    if ((g->gmode != 2 && g->gmode != 5) || g->rp || g->gn >= GEV_MAX)
         return;
-    p->ev[g->gn].t = g->blk - g->gstart;
-    p->ev[g->gn].id = (uint16_t)id;
-    p->ev[g->gn].val = (int16_t)val;
+    uint32_t t = g->gt < 0.0f ? 0u : (uint32_t)g->gt;
+    unsigned k = g->gn;
+    while (k > 0 && p->ev[k - 1].t > t) {                 /* kept in time order: an overdub goes between the old events */
+        p->ev[k] = p->ev[k - 1];
+        k--;
+    }
+    p->ev[k].t = t;
+    p->ev[k].id = (uint16_t)(id | (g->gmode == 5 ? g->glayers : 0) << 11);
+    p->ev[k].val = (int16_t)val;
     g->gn++;
 }
 
@@ -356,6 +367,7 @@ void lira_register(void *table)
     g->seed = 1;
     lira_voicing(0, 0, 48, 36, 1, g->notes);
     g->free_enc = 0;
+    g->btn_on = 1;
     g->tail = 0;
     g->level = 700;
     for (int i = 0; i < NCTL; i++)
@@ -905,7 +917,7 @@ void lira_page_run(float *l, float *r, int n)
     if (n > 1024)
         n = 1024;
     uint32_t c0 = govern(g);
-    greplay(p, g);
+    gstep(p, g, n);
     int any = 0;
     for (int k = 0; k < 8; k++)
         any |= g->want[k];
@@ -1004,7 +1016,7 @@ void lira_page_run(float *l, float *r, int n)
                 float b = div_beats[g->sync[k]];
                 on |= (uint8_t)(1u << k);
                 if (k < 2) {
-                    double cyc = clk / (3840.0 * (double)b);
+                    double cyc = clk / (960.0 * (double)b);                 /* the sequencer's musical time: 960 ticks a beat */
                     lira_lfo_sync(&s->l, k, (float)FS / (bf * b), clk >= 0.0 ? (float)(cyc - (double)(int)cyc) : -1.0f);
                 } else {
                     lira_delay_sync(&s->l, k - 2, bf * b / (float)FS);
@@ -1135,12 +1147,12 @@ static void revoice(struct pg *g)
 
 static int stepped_max(int id)                            /* the highest index of a stepped knob */
 {
-    return id == 140 ? lira_space_count() - 1 : id == 141 ? 11 : id >= 144 ? 11 : 3;
+    return id == 140 ? lira_space_count() - 1 : id == 141 ? 11 : id == 148 ? 3 : id >= 144 ? 11 : 3;
 }
 
 static int stepped_get(const struct pg *g, int id)
 {
-    return id == 140 ? g->space : id == 141 ? g->root : id == 142 ? g->oct : id >= 144 ? g->sync[id - 144] : g->range - 1;
+    return id == 140 ? g->space : id == 141 ? g->root : id == 142 ? g->oct : id == 148 ? g->glen_i : id >= 144 ? g->sync[id - 144] : g->range - 1;
 }
 
 int lira_ui_chord_get(int id)                              /* the index behind a stepped knob, or 0/1 for the switches */
@@ -1149,12 +1161,18 @@ int lira_ui_chord_get(int id)                              /* the index behind a
     if (!p)
         return 0;
     struct pg *g = &p->pg;
-    if (id >= 140 && id <= 147)
+    if (id >= 140 && id <= 148)
         return stepped_get(g, id);
     if (id == 158)
         return g->gmode;
     if (id == 159)
         return g->gn;
+    if (id == 148)
+        return g->glen_i;
+    if (id == 149)
+        return g->glayers;
+    if (id == 165)
+        return g->btn_on;
     if (id >= 160 && id < 164)
         return g->lfo[id - 160];
     if (id == 157)
@@ -1165,7 +1183,7 @@ int lira_ui_chord_get(int id)                              /* the index behind a
 void lira_ui_chord_set(int id, int idx)                    /* idx is clamped to the knob's steps */
 {
     struct pool *p = pool();
-    if (!p || id < 140 || id > 147)
+    if (!p || id < 140 || id > 148)
         return;
     struct pg *g = &p->pg;
     int mx = stepped_max(id);
@@ -1178,6 +1196,8 @@ void lira_ui_chord_set(int id, int idx)                    /* idx is clamped to 
         g->root = (uint8_t)idx;
     else if (id == 142)
         g->oct = (uint8_t)idx;
+    else if (id == 148)
+        g->glen_i = (uint8_t)idx;
     else if (id >= 144)
         g->sync[id - 144] = (uint8_t)idx;
     else
@@ -1246,24 +1266,50 @@ void lira_ui_action(int a)
         g->notes[0] = last;
         g->fine[0] = lf;
         grec(g, 602, 1);
-    } else if (a == 7) {
-        if (g->gmode == 0) {                              /* record: from now on every gesture is kept */
-            g->gn = 0;
-            g->gstart = g->blk;
+    } else if (a == 7) {                                  /* REC, like SAMPLR's gesture REC: arm for the next bar line, record LEN bars, then loop */
+        struct pool *pp = p;
+        float bar = looper_beat_frames() * 4.0f;
+        switch (g->gmode) {
+        case 0:
             g->gmode = 1;
-        } else if (g->gmode == 1) {                       /* loop what was recorded */
-            g->glen = g->blk - g->gstart;
-            if (g->gn && g->glen > 1) {
-                g->gpos = 0;
-                g->gi = 0;
-                g->gmode = 2;
-            } else {
-                g->gmode = 0;
-            }
-        } else {                                          /* clear */
-            g->gmode = 0;
-            g->gn = 0;
+            break;
+        case 2:                                           /* the take ends at the next bar line */
+            g->gtot = bar * (float)(int)(g->gt / bar + 0.999f);
+            if (g->gtot < bar)
+                g->gtot = bar;
+            break;
+        case 3:
+            if (g->glayers < 3)
+                g->gmode = 4;                             /* another layer, from the loop start */
+            break;
+        case 5:                                           /* cancel this layer */
+            gdrop(pp, g, g->glayers);
+            g->gmode = 3;
+            break;
+        default:                                          /* armed: cancel */
+            g->gmode = g->glayers ? 3 : 0;
+            break;
         }
+    } else if (a == 9) {                                  /* UNDO: the last layer */
+        if (g->gmode == 5) {                              /* the layer being recorded goes */
+            gdrop(p, g, g->glayers);
+            g->gmode = 3;
+        } else if (g->gmode >= 2 && g->glayers) {
+            if (g->gmode == 4)
+                g->gmode = 3;
+            gdrop(p, g, g->glayers - 1);
+            g->glayers--;
+            if (!g->glayers) {
+                g->gmode = 0;
+                g->gn = 0;
+            }
+        }
+    } else if (a == 14) {                                 /* CLEAR */
+        g->gmode = 0;
+        g->gn = 0;
+        g->glayers = 0;
+    } else if (a == 8) {
+        g->btn_on ^= 1;
     } else {
         int cur = a == 0 ? g->chord_on : a == 3 ? g->just : a == 4 ? g->wave : a == 5 ? g->ext_src : a == 6 ? g->free_enc : a >= 10 && a < 14 ? g->lfo[a - 10] : -1;
         if (cur < 0)
@@ -1274,14 +1320,22 @@ void lira_ui_action(int a)
     }
 }
 
-/* One block of the loop: the gestures due are done again (through the same calls the screen makes, with recording off). */
-static void greplay(struct pool *p, struct pg *g)
+/* the events of one layer removed */
+static void gdrop(struct pool *p, struct pg *g, int layer)
 {
-    if (g->gmode != 2 || !g->glen)
-        return;
+    unsigned k = 0;
+    for (unsigned i = 0; i < g->gn; i++)
+        if (((p->ev[i].id >> 11) & 3) != (unsigned)layer)
+            p->ev[k++] = p->ev[i];
+    g->gn = (uint16_t)k;
+    g->gi = 0;
+}
+
+static void gfire(struct pool *p, struct pg *g, uint32_t until)
+{
     g->rp = 1;
-    while (g->gi < g->gn && p->ev[g->gi].t <= g->gpos) {
-        int id = p->ev[g->gi].id, v = p->ev[g->gi].val;
+    while (g->gi < g->gn && p->ev[g->gi].t < until) {
+        int id = p->ev[g->gi].id & 0x7ff, v = p->ev[g->gi].val;
         g->gi++;
         if (id < 300)
             lira_ui_set(id, v);
@@ -1297,10 +1351,59 @@ static void greplay(struct pool *p, struct pg *g)
             act_set(g, id - 600, v);
     }
     g->rp = 0;
-    if (++g->gpos >= g->glen) {
-        g->gpos = 0;
-        g->gi = 0;
+}
+
+/* One block of the gesture recorder, as SAMPLR's: armed, it waits for the bar line (the sequencer's clock when it runs, else the free-running
+   grid at the Blackbox tempo); then it keeps every gesture for LEN bars; then the loop plays them again through the same calls as the fingers
+   (recording off), cycle after cycle with the fraction of a frame carried; REC during the loop arms another layer from the loop start. */
+static void gstep(struct pool *p, struct pg *g, int n)
+{
+    float bf = looper_beat_frames();
+    if (g->gmode == 1) {
+        int off = looper_bpm() > 0.0f ? looper_grid_exact(4.0f, g->sph, n) : 0;
+        if (off >= 0) {
+            g->gn = 0;
+            g->glayers = 0;
+            g->gtot = bf * 4.0f * (float)(1 << g->glen_i);
+            g->gt = 0.0f;
+            g->gmode = 2;
+            for (int k = 0; k < 8; k++)                   /* plates already held down start the take */
+                if (g->want[k]) {
+                    g->gmode = 2;
+                    grec(g, 300 + k, 1);
+                }
+            g->gt = (float)(n - off);
+            n = 0;                                        /* (this block is already counted) */
+        }
+    } else if (g->gmode == 2) {
+        g->gt += (float)n;
+        if (g->gt >= g->gtot) {
+            g->gt -= g->gtot;
+            g->gmode = 3;
+            g->glayers = 1;
+            g->gi = 0;
+            gfire(p, g, (uint32_t)g->gt);
+        }
+    } else if (g->gmode >= 3) {
+        float end = g->gt + (float)n, tot = g->gtot;
+        gfire(p, g, (uint32_t)(end < tot ? end : tot));
+        if (end >= tot) {
+            g->gt = end - tot;
+            g->gi = 0;
+            if (g->gmode == 4) {
+                g->gmode = 5;
+            } else if (g->gmode == 5) {
+                g->glayers++;
+                g->gmode = 3;
+            }
+            gfire(p, g, (uint32_t)g->gt);
+        } else {
+            g->gt = end;
+        }
     }
+    g->sph += (float)n;
+    if (g->sph >= 16.0f * bf)
+        g->sph -= 16.0f * bf;
 }
 
 int lira_ui_note(int v)
@@ -1360,7 +1463,7 @@ int lira_ui_flats(void)                                    /* the page's notes a
 void lira_leds(void)
 {
     struct pool *p = pool();
-    if (!p)
+    if (!p || !p->pg.btn_on)
         return;
     for (int i = 0; i < 8; i++) {
         int led = i;
@@ -1456,7 +1559,7 @@ struct blob {
     int16_t mod[4], level, ex[18];
     uint8_t touch[4], src[4];
     int8_t notes[8], fine[8];                            /* the chord voices' notes and cents */
-    uint8_t misc[19];                                    /* chord on, space, root, register, span, just, wave, ext source, seed, rec source, LFO shape / combine / link / delay source */
+    uint8_t misc[21];                                    /* chord on, space, root, register, span, just, wave, ext source, seed, rec source, LFO shape / combine / link / delay source */
     uint8_t pad_[2];
     uint32_t crc;
 };
@@ -1509,6 +1612,8 @@ void lira_save(void)
     b->misc[14] = g->free_enc;
     for (int i = 0; i < 4; i++)
         b->misc[15 + i] = g->sync[i];
+    b->misc[19] = g->btn_on;
+    b->misc[20] = g->glen_i;
     for (int i = 0; i < 8; i++) {
         b->fine[i] = g->fine[i];
         b->notes[i] = g->notes[i];
@@ -1570,6 +1675,8 @@ void lira_load(void)
     g->free_enc = b->misc[14] & 1;
     for (int i = 0; i < 4; i++)
         g->sync[i] = (uint8_t)(b->misc[15 + i] < 12 ? b->misc[15 + i] : 0);
+    g->btn_on = b->misc[19] & 1;
+    g->glen_i = (uint8_t)(b->misc[20] & 3);
     revoice(g);
     int ok = 1;
     for (int i = 0; i < 8; i++)
