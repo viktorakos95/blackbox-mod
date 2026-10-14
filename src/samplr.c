@@ -2643,6 +2643,18 @@ static void sweep(struct sm *s)
     }
 }
 
+void samplr_stage_prof(uint32_t pre, uint32_t lira, uint32_t run_all)
+{
+    struct sm *s = trk_get(0, 0);
+    if (!s)
+        return;
+    struct smscr *sc = s->sc;
+    if (pre < 100000000u)
+        sc->pp += pre;
+    sc->pd += lira;
+    sc->pl += run_all > sc->last_sdur ? run_all - sc->last_sdur : 0u;
+}
+
 int samplr_run(float *bl, float *br, int n, float **snd)
 {
     struct sm *s = trk_get(0, 1);
@@ -2715,6 +2727,7 @@ int samplr_run(float *bl, float *br, int n, float **snd)
     if (s->sph >= w)
         s->sph -= w;
     uint32_t c1 = DWT_CYCCNT, period = c0 - s->t_last, dur = c1 - c0;
+    s->sc->last_sdur = dur;
     if (s->t_last && period > 1000u && period < 100000000u) {
         s->t_sum += dur;                                          /* load = cycles in this function / the (average) block period */
         s->t_psum += period;
@@ -2733,7 +2746,10 @@ int samplr_run(float *bl, float *br, int n, float **snd)
                 sc->shg = (uint16_t)(sc->pg / d);
                 sc->shb = (uint16_t)(sc->pb / d);
                 sc->shm = (uint16_t)(sc->pm / d);
-                sc->pr = sc->pg = sc->pb = sc->pm = 0;
+                sc->shp = (uint16_t)(sc->pp / d);
+                sc->shd = (uint16_t)(sc->pd / d);
+                sc->shl = (uint16_t)(sc->pl / d);
+                sc->pr = sc->pg = sc->pb = sc->pm = sc->pp = sc->pd = sc->pl = 0;
             }
             s->t_sum = s->t_psum = s->t_pmax = 0;
             s->t_n = 0;
@@ -2793,7 +2809,7 @@ uint32_t samplr_sig(void)
         if (v->g_on)
             h = h * 31u + (uint32_t)(v->g_centre / (s->len / 150 + 1)) + (uint32_t)v->g_size;
     }
-    h = h * 31u + (uint32_t)s->sc->prof + ((uint32_t)s->sc->shr + s->sc->shg + s->sc->shb + s->sc->shm) / 8u;
+    h = h * 31u + (uint32_t)s->sc->prof + ((uint32_t)s->sc->shr + s->sc->shg + s->sc->shb + s->sc->shm + s->sc->shp + s->sc->shd + s->sc->shl) / 8u;
     for (int q = 0; q < SM_TRACKS; q++)                           /* the track dots */
         h = h * 31u + (uint32_t)samplr_track_info(q) + (uint32_t)(s->tno == q) * 64u;
     return h;

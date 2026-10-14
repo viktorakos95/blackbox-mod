@@ -1854,10 +1854,13 @@ void looper_stage(uint8_t *obj, void *bufs)
     fw_stereo(buf, &l, &r);
     if (l && r && n > 0) {
         read_bpm(bufs);
+        uint32_t c_in = *(volatile uint32_t *)0xe0001004u, pre = c_in - *(volatile uint32_t *)0x2405ffd4u;   /* (cycles since the wake-up: stock voices, effects, synths) */
         lira_page_run(l, r, n);                    /* the LIRA page's voices, before the looper so SOURCE MIX records them */
         lira_rec_begin(l, r, n);
+        uint32_t c_l = *(volatile uint32_t *)0xe0001004u;
         if (!run(l, r, n))
             samplr_run(l, r, n, 0);
+        samplr_stage_prof(pre, c_l - c_in, *(volatile uint32_t *)0xe0001004u - c_l);
         lira_rec_end(l, r, n);                     /* what the looper added, for the pad recorder's LOOPER input */
     }
 }

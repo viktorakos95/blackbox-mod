@@ -152,7 +152,9 @@ struct smscr {
     uint8_t syncb, _sx[3];                  /* unused (was BLOCK / EXACT: grid lines are always at their exact frame) */
     uint32_t pr, pg, pb, pm;                /* cycles this report: voices (render), grains, reading + interpolating (inside both), the mix and the track strips */
     uint16_t shr, shg, shb, shm;            /* the last report of those, per mille of the audio block period */
-    uint8_t prof, _pf[3];                   /* the top bar shows them instead of V / G (tap it) */
+    uint32_t pp, pd, pl, last_sdur;             /* cycles this report: the audio task before the looper stage (stock voices, effects, the synths), the looper's run without SAMPLR, SAMPLR's last call */
+    uint16_t shp, shd, shl;                      /* their last report (per mille of the block period) */
+    uint8_t prof, _pf[3];                   /* the top bar: 0 V G, 1 P D L S (before the stage / the LIRA synth / looper / SAMPLR), 2 R G B M (inside SAMPLR); tap it */
     uint16_t gnow, gacc;                    /* grains sounding across all the tracks (last block / this block so far) */
 };
 
@@ -163,6 +165,7 @@ int samplr_track_now(void);
 void samplr_stop_all(void);                 /* silence every track: loops, takes, latches, sequences, clouds */
 int samplr_others_active(void);             /* another track than the shown one sounds, loops or records */
 int samplr_track_info(int t);               /* bits: 1 has a sample, 2 loop running, 4 recording, 8 armed, 16 sounding */
+void samplr_stage_prof(uint32_t pre, uint32_t lira, uint32_t run_all);   /* from looper_stage: cycles before it, in the LIRA page's synth, and in run() (SAMPLR's included) */
 int samplr_run(float *bl, float *br, int n, float **snd);   /* snd: the looper's four send buses (delay L R, reverb L R) or 0; returns 1 if a send was fed */
 int looper_grid_exact(float beats, float sph, int n);   /* in looper.c: the same grid at its exact frame */
 double looper_clock_now(void);
