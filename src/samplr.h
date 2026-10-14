@@ -149,7 +149,7 @@ struct smscr {
     float ld, pk;                           /* how much of its block the audio task has used: smoothed, and the recent worst (per mille) */
     uint32_t shed_t;
     double prev;                            /* the clock position of the previous block (for the grid lines) */
-    uint8_t syncb, _sx[3];                  /* 0 grid lines at their exact frame (EXACT, the default), 1 at the start of the block where the stock clock passes them (BLOCK) */
+    uint8_t syncb, _sx[3];                  /* unused (was BLOCK / EXACT: grid lines are always at their exact frame) */
     uint16_t gnow, gacc;                    /* grains sounding across all the tracks (last block / this block so far) */
 };
 
@@ -161,7 +161,6 @@ void samplr_stop_all(void);                 /* silence every track: loops, takes
 int samplr_others_active(void);             /* another track than the shown one sounds, loops or records */
 int samplr_track_info(int t);               /* bits: 1 has a sample, 2 loop running, 4 recording, 8 armed, 16 sounding */
 int samplr_run(float *bl, float *br, int n, float **snd);   /* snd: the looper's four send buses (delay L R, reverb L R) or 0; returns 1 if a send was fed */
-int looper_grid_cross(float beats, double prev, int n, float sph);   /* in looper.c: 0 / -1, the block-quantized grid line of the stock sequencer's clock */
 int looper_grid_exact(float beats, float sph, int n);   /* in looper.c: the same grid at its exact frame */
 double looper_clock_now(void);
 int looper_clock_on(void);
@@ -178,7 +177,7 @@ void samplr_select(int delta);              /* previous / next loaded pad sample
 void samplr_set_mode(int m);
 void samplr_toggle_gate(void);
 void samplr_set_slices(int n);
-void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch, 3 height = pitch, 4 find transients, 5 grain contour, 6 spray type, 7 pitch pattern, 8 grain size scale, 9 dry loop level, 10 interpolation, 11 reverse, 12 slicer sequence mode, 13 loop window back to the whole sample, 14 sync BLOCK / EXACT */
+void samplr_cycle(int what);                /* 0 quantize / snap / sync-free, 1 arp pattern, 2 latch, 3 height = pitch, 4 find transients, 5 grain contour, 6 spray type, 7 pitch pattern, 8 grain size scale, 9 dry loop level, 10 interpolation, 11 reverse, 12 slicer sequence mode, 13 loop window back to the whole sample */
 void samplr_set_env(int which, int step);   /* 0 attack, 1 release: step 0..96 (the ENV sheet's sliders) */
 void samplr_trans(int what);                /* transpose: +-1, +-12, 0 = back to 0 */
 void samplr_knob(int knob, int counts);     /* knobs 0..3 per mode (0 = volume); recorded into a take */

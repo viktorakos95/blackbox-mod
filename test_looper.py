@@ -17,6 +17,7 @@ e = Emu("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+loo
 e.uc.mem_map(0x38800000, 0x1000)                     # backup SRAM
 e.uc.mem_map(0x58024000, 0x1000)                     # RCC / PWR
 e.uc.mem_map(0xE0001000, 0x1000)                     # DWT cycle counter
+e.uc.mem_map(0xE000E000, 0x1000)                     # DEMCR (the clock monitor switches the cycle counter on)
 e.uc.mem_map(0xC0000000, 0x1400000)                  # SDRAM: the pool's buffers
 e.uc.mem_map(0x30000000, 0x40000)                    # fake engine + buffers
 ENGINE = 0x30000000
@@ -1122,7 +1123,9 @@ check("... and the page opens on SMPLR (mode 4)", e.r8(PAGE + 76) == 4, e.r8(PAG
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
 screens.clear()
 e.call("solo_song_pressed", APP, 0, 0, 0)
-check("SONG again on the SMPLR page: the stock song screen (0x2d)", screens == [0x2D], screens)
+check("SONG again on the SMPLR page: the TRIG page (Trigger2MIDI), no screen change", screens == [] and e.r8(PAGE + 76) == 5, (screens, e.r8(PAGE + 76)))
+e.call("solo_song_pressed", APP, 0, 0, 0)
+check("SONG once more on the TRIG page: the stock song screen (0x2d)", screens == [0x2D], screens)
 e.call("looper_page_goto", VIEW, 0)
 screens.clear()
 e.call("solo_song_pressed", APP, 0, 0, 0)

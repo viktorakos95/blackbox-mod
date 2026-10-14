@@ -664,7 +664,7 @@ def cblock(n, l=0.0):
 
 boot()
 opt(O_SYNC, 1)
-opt(O_QUANT, 2)                                  # 1/16 of 120 bpm = 6000 frames = 937.5 clock units at 40 units / 256 frames
+opt(O_QUANT, 2)                                  # the grid is exact sequencer ticks: 1/16 = 240 (this fixture's clock runs 40 units a block)
 CLKPOS[0] = 50000 + 7
 cblock(4)
 ev(0, REC_DOWN)
@@ -674,7 +674,7 @@ for i in range(30):
     block([0.2] * N)
     if mode(0) == RECM and began is None:
         began = (i, CLKPOS[0])
-check("sequencer clock: the take begins on a grid line of the sequencer's own clock (the line lies within that block)", began is not None and ((began[1] % 937.5) >= 937.5 - 41 or (began[1] % 937.5) < 1), began)
+check("sequencer clock: the take begins on a grid line of the sequencer's own clock (the line lies within that block)", began is not None and ((began[1] % 240) >= 240 - 41 or (began[1] % 240) < 1), began)
 for _ in range(400):
     clock(); block([0.2] * N)
 ev(0, REC_UP)

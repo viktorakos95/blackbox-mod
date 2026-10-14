@@ -265,8 +265,8 @@ void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
     (void)computed;
     ensure();
     int cur = app[APP_SCREEN], next = SCREEN_MIXER;
-    if (cur == SCREEN_MUTE && S->looper && S->view && looper_page_tab() == 5) {
-        looper_page_goto(S->view, 0);                  /* from the SMPLR tab MIX goes to the Looper's own first page */
+    if (cur == SCREEN_MUTE && S->looper && S->view && looper_page_tab() >= 5) {
+        looper_page_goto(S->view, 0);                  /* from the SMPLR or TRIG page MIX goes to the Looper's own first page */
         return;
     }
     if (cur == SCREEN_MIXER) {
@@ -286,8 +286,9 @@ void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
     fw_set_screen(app, next, a, b);
 }
 
-/* Replaces the set-screen call in the SONG button handler (screen 0x2d). SAMPLR is the first page of SONG: the button opens the
- * Looper page on its SMPLR tab (or switches to that tab when the page is up); pressed again it goes to the stock song screen. */
+/* Replaces the set-screen call in the SONG button handler (screen 0x2d). SONG has three pages: SAMPLR, TRIG (Trigger2MIDI), then the
+ * stock song screen. The button opens the Looper page on its SMPLR tab (or switches to that tab when the page is up), pressed
+ * again goes to TRIG, and once more to the stock song screen. */
 void solo_song_pressed(uint8_t *app, int computed, int a, int b)
 {
     (void)computed;
@@ -296,10 +297,11 @@ void solo_song_pressed(uint8_t *app, int computed, int a, int b)
     if (!looper_ready()) {
         fw_set_screen(app, 0x2d, a, b);
     } else if (cur == SCREEN_MUTE && S->looper && S->view) {
-        if (looper_page_tab() == 5)
-            fw_set_screen(app, 0x2d, a, b);
+        int tab = looper_page_tab();
+        if (tab == 6)
+            fw_set_screen(app, 0x2d, a, b);            /* SAMPLR -> TRIG -> the stock song screen */
         else
-            looper_page_goto(S->view, 5);
+            looper_page_goto(S->view, tab == 5 ? 6 : 5);
     } else {
         S->looper_pending = 1;
         looper_page_want(5);
