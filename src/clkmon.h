@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-#define CLK_SRC  2                   /* 0 = TRS jack (USART6), 1 = USB */
+#define CLK_SRC  2                   /* 0 = TRS jack (USART6), 1 = analog sync-in jack (USB stamps also land here if its hook is on) */
 #define CLK_WIN  48                  /* intervals the tempo fit looks at (2 beats) */
 #define CLK_XPW  32                  /* the sequencer-position fit looks at this many block calls */
 #define CLK_RING 8                   /* arrival stamps the interrupt can hold between two audio blocks */
@@ -103,4 +103,5 @@ void clkmon_stats(const struct clkmon *c, int src, struct clk_stats *o);
 float clkmon_mhz(const struct clkmon *c);            /* 0 until the first audio block */
 float clkmon_blk_ms(const struct clkmon *c, int max); /* the shortest (0) / longest (1) gap between two audio blocks, ms */
 uint32_t clkmon_sig(const struct clkmon *c);
-void clkmon_loop(struct clkmon *c, uint32_t ticks_into_bar, uint32_t info);   /* the looper began recording here */
+void clkmon_loop(struct clkmon *c, uint32_t ticks_into_bar, uint32_t info);
+uint32_t clkmon_adc(void *ring);                     /* the stock analog-pulse trigger, stamped */   /* the looper began recording here */

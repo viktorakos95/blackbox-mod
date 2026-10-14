@@ -373,7 +373,7 @@ static void clk_col(const struct clkmon *c, int src, int x, int d0, int st)
     clkmon_stats(c, src, &o);
     char b[40], *p;
     int has = o.n > 0, has_stk = c->r[src].n_stk > 0;
-    p = put_s(b, src ? "USB F8 " : "TRS F8 ");
+    p = put_s(b, src ? "ANA P  " : "TRS F8 ");
     p = put_u(p, o.f8);
     *p = 0;
     lp_text(x, d0, b, o.f8 ? C_CYAN : C_GREY, 1);

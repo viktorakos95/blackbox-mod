@@ -23,6 +23,6 @@ CLK sheet: SONG, SAMPLR, TRIG page, footer sheet CLK. Bottom line `BAR x.xx  LOO
 and where in the bar the looper began recording (1.00 / 5.00 = on the 1).
 
 ## Not done / unknown
-- Analog sync-in jack path (unmapped); only TRS MIDI clock is confirmed to reach the sequencer.
+- Analog sync-in jack: mapped in docs/analog-sync-notes.md (ADC channel polled once per audio block); CLK sheet source 2 column "ANA P" counts its pulses.
 - Driving the stock sequencer from our own filtered clock (unknown whether it accepts it).
 - MCL clock output timer ISR.
