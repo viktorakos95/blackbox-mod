@@ -144,11 +144,41 @@ e.uc.mem_write(FBP, bytes(16))
 e.uc.mem_write(FBP + 4, struct.pack("<HH", 320, 240))                # the frame buffer is 320 wide
 
 
+drawn_fills, drawn_pixels = [], []
+
+import os
+PAL = [struct.unpack("<I", open("firmware/BLACKBOX-3.1.9.bin", "rb").read()[0x080F1D80 - 0x08040000 + 4 * i:][:4])[0] for i in range(0x24)]
+
+
+def snap(name):
+    """LIRA_PNG=<dir>: write what the last draw() recorded as a picture (320 x 240, origin bottom left, palette at 0x080f1d80)."""
+    out = os.environ.get("LIRA_PNG")
+    if not out:
+        return
+    from PIL import Image
+    im = Image.new("RGB", (320, 240), (0, 0, 0))
+    px = im.load()
+    for x, y, w, h, c, _ in drawn_fills:
+        col = PAL[c] & 0xFFFFFF
+        rgb = ((col >> 16) & 255, (col >> 8) & 255, col & 255)
+        for yy in range(max(0, 240 - y - h), min(240, 240 - y)):
+            for xx in range(max(0, x), min(320, x + w)):
+                px[xx, yy] = rgb
+    for x, y, c in drawn_pixels:
+        col = PAL[c] & 0xFFFFFF
+        if 0 <= x < 320 and 0 <= 239 - y < 240:
+            px[x, 239 - y] = ((col >> 16) & 255, (col >> 8) & 255, col & 255)
+    os.makedirs(out, exist_ok=True)
+    im.resize((640, 480), Image.NEAREST).save(os.path.join(out, name + ".png"))
+
+
 def draw(cell=0):
     fills.clear()
     pixels.clear()
     celldraw.clear()
     e.call("looper_cell_draw", VIEW + 0x3AC + cell * 0x1A0, CTX, count=50_000_000)
+    drawn_fills[:] = [x for x in fills]
+    drawn_pixels[:] = list(pixels)
     return list(fills)
 
 
@@ -178,12 +208,13 @@ e.call("solo_set_mode", VIEW, 1)
 e.call("looper_page_tab")
 check("... on tab 6, the LIRA page", e.uc.reg_read(A.UC_ARM_REG_R0) == 6, e.uc.reg_read(A.UC_ARM_REG_R0))
 f = draw(0)
+snap("voices14")
 check("LIRA page painted: background first", f and f[0][:4] == (3, 0, 314, 224) and f[0][4] == 0x02, f[:1])
 inside = all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f)
 check("all fills lie inside the screen", inside, [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:4])
 check("text inside the screen", pixels and all(3 <= px < 317 and 0 <= py < 224 for px, py, _ in pixels), pixels[:3])
-check("eight plates (frames 36 px wide)", len({x[0] for x in f if x[2] == 36 and x[3] == 1}) >= 8, sorted({x[0] for x in f if x[3] == 1})[:12])
-check("the active group's four sliders have pink frames (TUNE 1-4)", sum(1 for x in f if x[4] == 0x20) >= 16, sum(1 for x in f if x[4] == 0x20))
+check("four big plates (frames 76 px wide) on the voice page", len({x[0] for x in f if x[2] == 76 and x[3] == 1}) >= 4, sorted({x[0] for x in f if x[3] == 1})[:12])
+check("the active group's four sliders have pink frames (the four tune sliders)", sum(1 for x in f if x[4] == 0x20) >= 16, sum(1 for x in f if x[4] == 0x20))
 
 
 def touch(kind, x_rel, d, up=True):
@@ -202,62 +233,115 @@ def get(c):
     return v - (1 << 32) if v & 0x80000000 else v
 
 
-PLD = 190                                                      # a plate row d (the plates start at foot_y - 26 = 183)
-touch("down", 3 + 38 * 2 + 5, PLD, up=False)
+def sel():
+    e.call("lira_ui_sel", 0xFFFFFFFF)
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+
+
+MSG = 0x24038100
+def knob(n, counts):                                              # n = the raw knob number of the message
+    e.uc.mem_write(MSG, struct.pack("<H", 0x32) + bytes(10) + struct.pack("<h", n) + bytes(2) + struct.pack("<h", counts))
+    e.call("looper_view_msg", VIEW, MSG)
+
+
+PLD = 170                                                      # the big plates: d 150 .. 205
+touch("down", 3 + 78 * 2 + 10, PLD, up=False)
 e.call("solo_touch_up", VIEW, PTA, 0)
-check("a tap on plate 3 switches the voice on (latch)", key(2) == 1 and key(1) == 0)
-touch("down", 3 + 38 * 2 + 5, PLD)
+check("a tap on big plate 3 switches the voice on (latch)", key(2) == 1 and key(1) == 0)
+touch("down", 3 + 78 * 2 + 10, PLD)
 e.call("solo_touch_up", VIEW, PTA, 0)
 check("... and the next tap off", key(2) == 0)
 touch("down", 314 - 20, 7)
 e.call("solo_touch_up", VIEW, PTA, 0)
-touch("down", 3 + 38 * 5 + 5, PLD)
-check("HOLD: plate 6 is on only while the finger is down", key(5) == 1)
+touch("down", 3 + 78 * 3 + 10, PLD)
+check("HOLD: plate 4 is on only while the finger is down", key(3) == 1)
 e.call("solo_touch_up", VIEW, PTA, 0)
-check("... released: off", key(5) == 0)
+check("... released: off", key(3) == 0)
 touch("down", 314 - 20, 7)
 e.call("solo_touch_up", VIEW, PTA, 0)
-# pair 2's FM source (top button of its column) and touch (bottom button)
-touch("down", 3 + 77 + 10, 95 + 5)
+# the right column (pair 2 = voices 3-4): FM source (left button) and touch (right button)
+touch("down", 158 + 12, 25)
 e.call("solo_touch_up", VIEW, PTA, 0)
 check("pair 2's FM Source steps (Self -> Off)", get(105) == 1, get(105))
-touch("down", 3 + 77 + 10, 95 + 86 - 6)
+touch("down", 158 + 74 + 4 + 12, 25)
 e.call("solo_touch_up", VIEW, PTA, 0)
 check("pair 2's Touch steps (Fast -> Follow)", get(101) == 2, get(101))
-# the Hold 1-4 slider (middle block, left): half way along sets about 500; Hold 5-8 is separate
-touch("down", 3 + 76, 65 + 6, up=False)
-check("Hold 1-4 follows the finger (about half way)", 450 < get(121) < 550 and get(122) == 0, (get(121), get(122)))
-touch("move", 3 + 140, 65 + 6)
-check("... and drags", get(121) > 850, get(121))
+touch("down", 158 + 76, 43)
+check("pair 2's MOD slider follows the finger (about half way)", 450 < get(109) < 550, get(109))
+touch("move", 158 + 140, 43)
+check("... and drags", get(109) > 850, get(109))
 e.call("solo_touch_up", VIEW, PTA, 0)
-touch("down", 159 + 76, 65 + 6)
+touch("down", 3 + 76, 58)
 e.call("solo_touch_up", VIEW, PTA, 0)
-check("Hold 5-8 is its own slider", 450 < get(122) < 550, get(122))
-# a vertical tune fader: pair 1, first fader, bottom = 0, top = 1000 (tune faders span d 133..167)
-touch("down", 3 + 5 + 10, 133 + 17)
-check("a Tune fader: touch half way up sets about 500", 400 < get(0) < 600, get(0))
+check("pair 1's SHARP slider", 450 < get(130) < 550 and get(131) != get(130), (get(130), get(131)))
+touch("down", 3 + 76, 85)
 e.call("solo_touch_up", VIEW, PTA, 0)
-# the encoders: knob 0 turns the first slider of the active group (TUNE 1 now)
-MSG = 0x24038100
-def knob(n, counts):
-    e.uc.mem_write(MSG, struct.pack("<H", 0x32) + bytes(10) + struct.pack("<h", n) + bytes(2) + struct.pack("<h", counts))
-    e.call("looper_view_msg", VIEW, MSG)
-t0 = get(0)
-knob(1, 80)                                                     # raw knob 1 is the bottom-left encoder (knob 0 after the swap)
-check("the left-bottom encoder turns Tune 1 (TUNE group)", get(0) == min(1000, t0 + 10), (t0, get(0)))
-touch("down", 3 + 10, 95 + 20)                                  # a MOD slider (pair 1): the active group becomes PAIRS
-e.call("solo_touch_up", VIEW, PTA, 0)
-m0 = get(108)
-knob(1, 80)
-check("after touching MOD 1 the same encoder turns MOD 1", get(108) == min(1000, m0 + 10) and get(0) == t0 + 10, (m0, get(108)))
-f = draw(0)
-check("redraw after the touches still inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
-e.uc.mem_write(APP + 0x8CA4, b"\x2f")                                # the mixer view is showing
-# the eight hardware buttons are the plates: message 0xf9, index at +0xc
-e.stub(0x080A2E60, lambda: None)                                    # the stock app message handler (must not see them)
+check("voice 1's tune slider (top left)", 450 < get(0) < 550, get(0))
+# the four encoders sit two left, two right: top-left = voice 1, bottom-left = voice 2, top-right = voice 3, bottom-right = voice 4
+for raw, voice in ((0, 0), (1, 1), (2, 2), (3, 3)):
+    before = [get(v) for v in range(4)]
+    knob(raw, 80)
+    after = [get(v) for v in range(4)]
+    check("raw knob %d turns voice %d only" % (raw, voice + 1), after[voice] == min(1000, before[voice] + 10) and
+          all(after[v] == before[v] for v in range(4) if v != voice), (before, after))
+# BACK flips to voices 5-8
+e.stub(0x080A2E60, lambda: None)
+e.uc.mem_write(APP + 0x8CA4, b"\x2f")
 def button(idx, id=0xF9):
     e.uc.mem_write(MSG, struct.pack("<H", id) + bytes(10) + struct.pack("<I", idx))
     e.call("looper_app_msg", APP, MSG)
+def set_ticks(n):                                                   # find looper_state.ticks by probing, then write it
+    for off in range(0, 0x300, 4):
+        old = e.r32(STATE + off)
+        e.w32(STATE + off, 0x12345678)
+        e.call("looper_ticks")
+        hit = e.uc.reg_read(A.UC_ARM_REG_R0) == 0x12345678
+        e.w32(STATE + off, n if hit else old)
+        if hit:
+            return
+    raise SystemExit("ticks not found")
+
+
+set_ticks(5000)
+check("the page starts on VOICE 1-4", sel() == 0, sel())
+button(11, 7)
+check("BACK flips to VOICE 5-8", sel() == 1, sel())
+touch("down", 3 + 76, 85)
+e.call("solo_touch_up", VIEW, PTA, 0)
+check("... where the first tune slider is voice 5", 450 < get(4) < 550, get(4))
+f = draw(0)
+snap("voices58")
+check("VOICE 5-8 drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
+# the footer tabs: DELAY, then TONE
+touch("down", 3 + 62 * 2 + 10, 215)
+e.call("solo_touch_up", VIEW, PTA, 0)
+check("the DELAY tab", sel() == 2, sel())
+touch("down", 3 + 76, 40)
+e.call("solo_touch_up", VIEW, PTA, 0)
+check("TIME 1 (big tile, top left) follows the finger", 450 < get(16) < 550, get(16))
+knob(0, 80)
+check("the top-left encoder turns TIME 1", get(16) in (510, 509, 511), get(16))
+knob(3, 80)
+check("the bottom-right encoder turns MIX", get(19) == min(1000, get(19)) and get(19) != 0, get(19))
+f = draw(0)
+snap("delay")
+check("DELAY drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
+touch("down", 3 + 62 * 3 + 10, 215)
+e.call("solo_touch_up", VIEW, PTA, 0)
+check("the TONE tab", sel() == 3, sel())
+touch("down", 3 + 76, 40)
+e.call("solo_touch_up", VIEW, PTA, 0)
+touch("down", 3 + 76, 90)
+e.call("solo_touch_up", VIEW, PTA, 0)
+check("HOLD 1-4 and HOLD 5-8 are separate big tiles", 450 < get(121) < 550 and 450 < get(122) < 550, (get(121), get(122)))
+touch("down", 3 + 38 * 4 + 5, 195)
+e.call("solo_touch_up", VIEW, PTA, 0)
+check("the small plate strip toggles voice 5", key(4) == 1, key(4))
+e.call("lira_ui_key", 4, 0)
+f = draw(0)
+snap("tone")
+check("TONE drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
+# the eight hardware buttons are the plates: message 0xf9, index at +0xc
 button(4)
 check("hardware button 5 toggles voice 5 on", key(4) == 1)
 e.uc.mem_write(0x24005000, b"")

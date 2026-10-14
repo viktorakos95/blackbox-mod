@@ -63,6 +63,10 @@ unsigned looper_screen_id(void);
 float looper_rate(void);
 unsigned looper_clk_pos(void);
 void looper_guard_drawing(int on);
+struct lay;
+static void lira_footer(const struct lay *L);
+static int lira_footer_hit(int x);
+static void lira_back(void);
 static void rehide(uint8_t *view);
 static void paint(uint8_t *view);
 static void widen(uint8_t *view);
@@ -1085,7 +1089,7 @@ static void draw_footer(const struct lay *L)
     }
     int x0 = 3 + NTABS * (TAB_W + 2) + 4;
     if (P->mode == M_LIRA) {
-        text(6, L->foot_y + 4, "BUTTONS=VOICES  INFO+PAD/SONG/MIX=GO", C_GREY, 1);
+        lira_footer(L);
         x0 = P->w;
     }
     if (P->mode == M_SMPLR) {                                     /* SAMPLR is a page of its own: SONG opens it, MIX goes to the Looper; the footer picks the sheet */
@@ -1907,6 +1911,10 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
             dirty_now(view);
             return;
         }
+        if (P->mode == M_LIRA && x < P->w - 60 && lira_footer_hit(x)) {      /* the page tabs */
+            dirty_now(view);
+            return;
+        }
     }
     int zone = looper_page_hit(x, d, &t, &v);
     if (zone == Z_NONE)
@@ -2231,6 +2239,10 @@ void looper_app_msg(void *app, const uint16_t *msg)
                 if (P->mode == M_LIRA) {                           /* the LIRA page takes none of the looper's buttons */
                     if (slot == B_FX)
                         break;
+                    if (slot == B_BACK) {                          /* BACK: the other four voices */
+                        lira_back();
+                        P->sig = 0;
+                    }
                     return;
                 }
                 if (P->mode == M_SMPLR) {                          /* on the SAMPLR page the buttons are SAMPLR's, never the looper's */
