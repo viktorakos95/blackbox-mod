@@ -1297,6 +1297,9 @@ for _ in range(60):
     busy(0.97)
     play()
 check("governor: sheds when the task has used 97 % of its block", e.r8(SHED) >= 1, e.r8(SHED))
+for _ in range(40):                                  # (the smoothed load settles first)
+    busy(0.67)
+    play(10)
 top = e.r8(SHED)
 for _ in range(30):
     busy(0.67)
