@@ -8,6 +8,8 @@ sym = symbols(os.path.join(ROOT, "out", "cave.elf"))
 PATCHES = [
     # MIX button: set_screen(app, 0x2e/0x2f) -> three-way cycle
     (0x080A32DE, bl(0x080A32DE, 0x0809EAEC), bl(0x080A32DE, sym["solo_mix_pressed"])),
+    # SONG button (button 3): set_screen(app, 0x2d) -> SAMPLR first, then the stock song screen
+    (0x080A329E, bl(0x080A329E, 0x0809EAEC), bl(0x080A329E, sym["solo_song_pressed"])),
     # GUI mixer (re)show: view set-mode -> arm/disarm Solo
     (0x0808BC40, bl(0x0808BC40, 0x080B5E44), bl(0x0808BC40, sym["solo_set_mode"])),
     # mixer cell mute-mode fills (green, red) -> solo colours + outline

@@ -38,10 +38,12 @@ typedef void (*player_fn)(uint8_t *seq, const void *clock, int32_t a, int32_t b,
 #define EVENT_SIZE    0x18
 #define EVENT_START   0x04
 #define EVENT_ID      0x0c
-#define GRACE         240        /* ticks (960 per 16th = a 64th): a note placed this close behind the playhead
+#define GRACE         240        /* ticks (960 a beat = a 16th; measured on the unit, docs/clock-findings.md): a note placed this close behind the playhead
                                     still plays, a hair late; his report: notes "close" ahead did not sound */
 
 void bkp_enable(void);
+void looper_clock(uint32_t lo, int32_t hi);
+void t2m_seq(const void *seq, uint32_t lo, int32_t hi);
 
 #define SLOTS 32
 struct seq_clock {
@@ -50,6 +52,7 @@ struct seq_clock {
         const void *seq;
         int64_t now;
     } slot[SLOTS];
+    uint32_t now_lo, now_hi;     /* the sequencer time (ticks, 960 a beat) the player was last given: SAMPLR's grid lines */
 };
 #define CLK ((volatile struct seq_clock *)0x38800700u)   /* backup SRAM, after comp.c's state */
 #define MAGIC 0x53514331u        /* "SQC1" */
@@ -87,6 +90,10 @@ void seq_play(uint8_t *seq, const void *clock, int32_t a, int32_t b, uint32_t e)
     int i = find(seq, 1);
     if (i >= 0)
         CLK->slot[i].now = now;
+    CLK->now_lo = (uint32_t)now;
+    CLK->now_hi = (uint32_t)(now >> 32);
+    t2m_seq(seq, (uint32_t)now, (int32_t)(now >> 32));    /* the clock monitor's transport readout (src/clkmon.c): this sequence's musical time */
+    looper_clock((uint32_t)t, (int32_t)(t >> 32));   /* the looper follows the transport: restarts, grid lines, where the loops are */
     fw_player(seq, clock, a, b, e);
 }
 
@@ -133,4 +140,10 @@ void seq_del(uint8_t *seq, uint32_t id, unsigned idx)
         return;
     fw_list_del(seq + SEQ_PATTERNS + idx * PATTERN_SIZE + PAT_LIST, id);
     fix_index(seq, idx, 0);
+}
+
+/* The sequencer time of the last block, in ticks (960 a beat) - what the note player compares the notes with. */
+double seqfix_now(void)
+{
+    return (double)CLK->now_hi * 4294967296.0 + (double)CLK->now_lo;
 }
