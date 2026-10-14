@@ -75,6 +75,7 @@ void t2m_boot(void)
         m->scan_saved[k] = defaults.scan_ms;
         t2m_reset(&m->st[k]);
     }
+    m->ui.last = 0xff;
     clkmon_boot(&m->clk);                       /* the cycle counter and the clock monitor's interrupt block */
     m->on[0] = 1;                               /* input L on, R off */
     R->mem = m;

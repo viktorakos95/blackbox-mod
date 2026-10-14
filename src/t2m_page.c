@@ -52,9 +52,27 @@ void lp_vline(int x, int d, int h, int color);
 enum { SH_HITS, SH_DETECT, SH_OUT, SH_CLK, SHEETS };
 enum { V_SENS, V_THRESH, V_RETRIG, V_MASK, V_SCAN, V_STRICT, V_SPEED, V_CURVE, V_NOTE, V_VEL, V_LEN, V_CHAN, V_CC, V_CCVAL,
        V_BLEED, V_RANGE, V_FLOOR, VALUES, V_NONE = -1 };
-static const char *const val_name[VALUES] = {"SENS", "THRESH", "RETRIG", "MASK", "SCAN", "STRICT", "SPEED", "CURVE",
-                                             "NOTE", "VEL", "LEN", "CHAN", "CC", "CC VAL", "BLEED", "RANGE",
-                                             "FLOOR"};
+static const char *const val_name[VALUES] = {"SENSITIVITY", "THRESHOLD", "RING GUARD", "DEAD TIME", "PEAK WINDOW", "SHARPNESS", "REACTION", "TOUCH CURVE", "NOTE", "VELOCITY", "NOTE LENGTH", "CHANNEL", "CC NUMBER", "CC VALUE", "BLEED GUARD", "GUARD REACH", "NOISE FLOOR"};
+/* what a value does, in plain words: shown under the settings for the one last touched (two lines of at most 50 characters) */
+static const char *const hint[VALUES][2] = {
+    {"Input gain before detection.", "Raise for soft pads, lower for loud ones."},
+    {"How loud a hit must be to count.", "Raise to ignore bleed from other drums."},
+    {"After a hit, the level to beat fades slowly.", "Higher = ringing and echoes ignored longer."},
+    {"After a hit everything is ignored this long.", "Shorter = faster rolls, more double hits."},
+    {"Time spent finding the hit's loudest point,", "which sets velocity. 0 with fixed velocity."},
+    {"How sharply the sound must jump above the", "background. Higher = only crisp hits count."},
+    {"How fast the detector reacts to an attack.", "Lower = quicker (delay 3 x this), more false hits."},
+    {"Velocity feel. Below 1: soft hits come out", "louder. Above 1: you have to hit harder."},
+    {"MIDI note sent for each hit. OFF = no note,", "the hits still show on this page."},
+    {"DYN = velocity follows how hard you hit.", "A number = every hit sends that velocity."},
+    {"DYN = the note ends when the hit has died away.", "A number = it ends after that many ms."},
+    {"MIDI channel of the notes and CCs.", ""},
+    {"Also send this CC number with every hit.", "OFF = no CC."},
+    {"DYN = CC value follows how hard you hit.", "A number = always that value."},
+    {"Rejects hits that ring on one pitch (bleed from", "other drums, resonance). OFF = never rejects."},
+    {"How far above the threshold the bleed guard", "still checks a hit. Bigger = checks louder hits."},
+    {"Quietest background a hit may start from.", "Lower lets tiny clicks in (-100 dB for clicks)."},
+};
 /* the settings sheets: three rows of four; the HITS sheet's knobs are DETECT's first row */
 static const int8_t sheet_vals[2][12] = {
     {V_SENS, V_THRESH, V_RETRIG, V_MASK, V_SCAN, V_STRICT, V_SPEED, V_CURVE, V_BLEED, V_RANGE, V_FLOOR, V_NONE},
@@ -301,6 +319,26 @@ static void draw_pads(const struct t2m_mem *m, int w, int d, int bh)
     }
 }
 
+/* the value whose hint shows: the last one touched on this sheet, else the first of the row the knobs are on */
+static int hint_value(const struct t2m_mem *m, int sheet)
+{
+    int l = m->ui.last;
+    for (int i = 0; i < 12; i++)
+        if (l != 0xff && sheet_vals[sheet - 1][i] == l)
+            return l;
+    return sheet_vals[sheet - 1][(m->ui.row % 3) * 4];
+}
+
+static void draw_hint(const struct t2m_mem *m, int sheet, int d)
+{
+    int v = hint_value(m, sheet);
+    if (v < 0 || v >= VALUES)
+        return;
+    lp_text(6, d, val_name[v], C_CYAN, 1);
+    lp_text(6, d + 11, hint[v][0], C_LIGHT, 1);
+    lp_text(6, d + 21, hint[v][1], C_LIGHT, 1);
+}
+
 /* the last 4 s, one lane per input, newest at the right, bar height = velocity */
 static void draw_hist(const struct t2m_mem *m, int w, int d0, int d1)
 {
@@ -529,7 +567,8 @@ void t2m_page_draw(int w, int foot)
         p = put_f(p, m->p[k].thresh, 2);
         *p = 0;
         lp_text(w - 60, md + 13, b, C_LIGHT, 1);
-        draw_hist(m, w, md + 26, foot - 12);
+        lp_text(6, md + 25, "knobs: SENSITIVITY THRESHOLD RING GUARD DEAD TIME", C_GREY, 1);
+        draw_hist(m, w, md + 36, foot - 12);
         return;
     }
 
@@ -548,11 +587,15 @@ void t2m_page_draw(int w, int foot)
             lp_text_c(x, rd + 3 + (rh - 3 > 26 ? 14 : 10), cw, b, sel ? C_WHITE : C_LIGHT, 1);
         }
     }
+    if (sheet == SH_DETECT)
+        draw_hint(m, sheet, rows_top(sheet) + 3 * rh + 1);
     if (sheet == SH_OUT) {
-        int td = rows_top(sheet) + 2 * rh + 6;
+        int td = rows_top(sheet) + 2 * rh + 4;
+        draw_hint(m, sheet, td);
+        td += 36;
         lp_text(6, td, "TRS = MIDI jack, USB, INT = the Blackbox itself", C_GREY, 1);
-        lp_text(6, td + 12, "INT: its pads play the channel + note they", C_GREY, 1);
-        lp_text(6, td + 24, "are set to in the MIDI settings", C_GREY, 1);
+        lp_text(6, td + 11, "INT: its pads play the channel + note they", C_GREY, 1);
+        lp_text(6, td + 22, "are set to in the MIDI settings", C_GREY, 1);
         p = put_s(b, "SENT INTO THE BLACKBOX ");
         p = put_u(p, m->looped[k]);
         if (m->looped_lost[k]) {
@@ -560,7 +603,7 @@ void t2m_page_draw(int w, int foot)
             p = put_u(p, m->looped_lost[k]);
         }
         *p = 0;
-        lp_text(6, td + 40, b, m->port[k] & T2M_PORT_INT ? C_LIGHT : C_GREY, 1);
+        lp_text(6, td + 36, b, m->port[k] & T2M_PORT_INT ? C_LIGHT : C_GREY, 1);
     }
 }
 
@@ -599,6 +642,9 @@ void t2m_page_touch(int x, int d, int w, int foot)
         if (d < rd || d >= rd + row_h(foot, sheet) - 3 || x < 4 || x >= w - 4)
             continue;
         UI->row = (uint8_t)r;
+        int c = (x - 4) / ((w - 8) / 4), v = c < 4 ? sheet_vals[sheet - 1][r * 4 + c] : V_NONE;
+        if (v != V_NONE)
+            UI->last = (uint8_t)v;
     }
 }
 
@@ -630,6 +676,7 @@ void t2m_page_knob(int knob, int counts)
     int v = sheet == SH_HITS ? sheet_vals[0][knob] : sheet_vals[sheet - 1][(UI->row % 3) * 4 + knob];
     if (v == V_NONE)
         return;
+    UI->last = (uint8_t)v;
     {
         t2m_params q = m->p[k];                       /* edit a copy: the audio task never sees half a change */
         uint8_t was_fixed = q.vel_mode;
@@ -664,7 +711,7 @@ uint32_t t2m_page_sig(void)
         h = (h ^ (m->hits[i] + (uint32_t)lit(m, i) * 977u + m->looped[i] * 31u + m->looped_lost[i] * 7u)) * 16777619u;
     }
     h = (h ^ (uint32_t)(m->on[0] | m->on[1] << 1 | m->port[0] << 2 | m->port[1] << 4 | m->ui.in << 6 | m->ui.row << 7 |
-                        m->ui.sheet << 9)) * 16777619u;
+                        m->ui.sheet << 9 | m->ui.last << 12)) * 16777619u;
     if (m->ui.sheet == SH_HITS) {                                     /* the history scrolls while it holds a hit */
         int fresh = 0;
         for (int i = 0; i < T2M_INPUTS; i++)
