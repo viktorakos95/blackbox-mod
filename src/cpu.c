@@ -84,6 +84,69 @@ static char *put_uint(char *p, unsigned v)
     return p;
 }
 
+/*
+ * Flash window test (MCL port, gate for milestone M2). patches/mclpad.py appends 256 KB of a known word pattern at
+ * 0x08140000..0x08180000 (past the window tested so far) and sets mclpad_on to a build id. Only then does the meter read the
+ * pad back, 2048 words a second (so 32 s, never a long stall in the audio task), and show on the label: " P37%" while running,
+ * " POK" when every word matched, " Fxxxx" (hex index of the first wrong word) otherwise. Result and progress live in backup SRAM
+ * (0x38800910: id, next word, first bad word) so they survive until the image changes; normal builds never touch the pad.
+ */
+const volatile uint32_t mclpad_on = 0;
+#define PAD_BASE  ((const volatile uint32_t *)0x08140000u)
+#define PAD_WORDS 65536u
+#define PAD_STEP  2048u
+#define PAD_ST    ((volatile uint32_t *)0x38800910u)
+#define PAD_NONE  0xffffffffu
+
+static uint32_t pad_word(uint32_t i)
+{
+    uint32_t w = i * 2654435761u;
+    w ^= w >> 15;
+    w *= 2246822519u;
+    return w ^ (w >> 13);      /* every step is a bijection, so no two pad words are equal */
+}
+
+static void pad_step(void)
+{
+    uint32_t id = mclpad_on;
+    if (!id)
+        return;
+    bkp_enable();
+    volatile uint32_t *s = PAD_ST;
+    if (s[0] != id) {
+        s[0] = id;
+        s[1] = 0;
+        s[2] = PAD_NONE;
+    }
+    uint32_t i = s[1];
+    for (uint32_t n = 0; n < PAD_STEP && i < PAD_WORDS; n++, i++)
+        if (PAD_BASE[i] != pad_word(i) && s[2] == PAD_NONE)
+            s[2] = i;
+    s[1] = i;
+}
+
+static char *pad_text(char *p)
+{
+    if (!mclpad_on || PAD_ST[0] != mclpad_on)
+        return p;
+    uint32_t bad = PAD_ST[2], at = PAD_ST[1];
+    *p++ = ' ';
+    if (bad != PAD_NONE) {
+        *p++ = 'F';
+        for (int sh = 12; sh >= 0; sh -= 4)
+            *p++ = "0123456789abcdef"[(bad >> sh) & 15];
+    } else if (at >= PAD_WORDS) {
+        *p++ = 'P';
+        *p++ = 'O';
+        *p++ = 'K';
+    } else {
+        *p++ = 'P';
+        p = put_uint(p, at * 100u / PAD_WORDS);
+        *p++ = '%';
+    }
+    return p;
+}
+
 /* "3.1.x 34/71% 41M Lok", "3.1.x --% 41M Lok", or "3.1.x 41M Lok" before the first second. At most 30 bytes. */
 static void compose(char *buf)
 {
@@ -105,8 +168,9 @@ static void compose(char *buf)
     *p++ = ' ';                  /* always, so it shows even where the load never does */
     p = put_uint(p, fw_ext_free() >> 20);
     *p++ = 'M';
-    *p++ = ' ';
     bkp_enable();
+    p = pad_text(p);
+    *p++ = ' ';
     p = looper_status(p);        /* the live looper: Lok, or why it is off */
     *p = 0;
 }
@@ -114,6 +178,7 @@ static void compose(char *buf)
 static void report(void)
 {
     char buf[40];
+    pad_step();
     compose(buf);
     for (int i = 0; i < LABELS; i++) {
         uint8_t *t = M->text[i];
