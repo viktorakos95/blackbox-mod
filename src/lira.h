@@ -113,6 +113,11 @@ void lira_param(lira_t *l, int id, float value);
    knobs are at LIRA_PITCH_UNITY; the note should lie in 33 .. 93, which every oscillator reaches. */
 #define LIRA_PITCH_UNITY 63.1809f
 float lira_tune_for_midi(int o, float midi);
+/* the range of MIDI notes oscillator o can reach at LIRA_PITCH_UNITY */
+void lira_tune_range(int o, float *lo, float *hi);
+/* tempo sync (the caller works out hz, the phase 0..1 within the cycle or -1, and seconds) */
+void lira_lfo_sync(lira_t *l, int which, float hz, float phase);
+void lira_delay_sync(lira_t *l, int which, float sec);
 void lira_key(lira_t *l, int sensor /* 0..7 */, int on);
 /* touch with a pressure/velocity: drive 0 = released, 0..1 = how far the envelope opens and how fast */
 void lira_touch(lira_t *l, int sensor, float drive);

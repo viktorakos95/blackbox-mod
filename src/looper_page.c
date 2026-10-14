@@ -2245,14 +2245,14 @@ void looper_app_msg(void *app, const uint16_t *msg)
             P->btn_id = (uint16_t)id;
             P->btn_index = (uint16_t)idx;
         }
-        if (P->mode == M_LIRA && id == MSG_BUTTON && idx <= 7 && !P->info_on) {   /* LIRA page: the eight buttons are the eight plates */
+        if (P->mode == M_LIRA && id == MSG_BUTTON && idx <= 7 && !P->info_on && lira_ui_chord_get(165)) {   /* LIRA page: the eight buttons are the eight plates (unless BTN is off) */
             if (lira_ui_button((int)idx, looper_ticks(), 20)) {
                 P->sig = 0;
                 lira_leds();
             }
             return;
         }
-        if (P->mode == M_LIRA && id == MSG_RELEASE && idx <= 7 && !P->info_on)
+        if (P->mode == M_LIRA && id == MSG_RELEASE && idx <= 7 && !P->info_on && lira_ui_chord_get(165))
             return;
         int is_mix = id == MSG_BUTTON && idx == BTN_MIX;
         int is_info = id == P->info_id && (id != MSG_BUTTON || idx == P->info_idx);
@@ -2284,6 +2284,10 @@ void looper_app_msg(void *app, const uint16_t *msg)
                         break;
                     if (slot == B_BACK) {                          /* BACK: the other four voices */
                         lira_back();
+                        P->sig = 0;
+                    }
+                    if (slot == B_REC) {                           /* REC: the gesture recorder, as on the SAMPLR page */
+                        lira_ui_action(7);
                         P->sig = 0;
                     }
                     return;

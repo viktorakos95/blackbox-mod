@@ -241,6 +241,33 @@ float lira_tune_for_midi(int o, float midi)
     return (p < 0.f ? 0.f : p > 1.f ? 1.f : p) * 127.f;
 }
 
+void lira_tune_range(int o, float *lo, float *hi)
+{
+    *lo = TUNE_LO[o & 7];
+    *hi = TUNE_HI[o & 7];
+}
+
+/* Tempo sync: LFO `which` (0 A, 1 B) at hz, its phase locked to `phase` (0..1) unless negative */
+void lira_lfo_sync(lira_t *l, int which, float hz, float phase)
+{
+    rset(which ? &l->lfo_b : &l->lfo_a, hz, l->n23);
+    if (phase >= 0.f)
+        *(which ? &l->pb : &l->pa) = wrap1(phase);
+}
+
+/* ... and delay line `which` at `sec` (folded by octaves into what the PT2399 can do) */
+void lira_delay_sync(lira_t *l, int which, float sec)
+{
+    const float lo = TD_MIN, hi = TD_MIN * fexp2(7.5826f);
+    if (!(sec > 1e-4f))
+        return;
+    while (sec > hi)
+        sec *= 0.5f;
+    while (sec < lo)
+        sec *= 2.f;
+    rset(&l->line[which & 1].time, sec, l->n23);
+}
+
 static void retune(lira_t *l, int o)
 {
     const float *lo = TUNE_LO, *hi = TUNE_HI;
@@ -504,7 +531,7 @@ void lira_process(lira_t *l, float *out, int n)
         const float fx = l->fol * 14.f;                       /* the external input's level, for Touch = Follow: compressed so quiet
                                                          hits still open the envelope (gain is ve squared, so it must reach 1) */
         const float fd = clip_(1.25f * fx / (fx + 1.f), 0.f, 1.f);
-        float vmod[4], vsh[4], vf[8], vgain[8], vleak[8], vtrim[8];
+        float vmod[4], vsh[4], vf[8], vgain[8], vleak[8], vtrim[8], vlvl[8];
         for (int v = 0; v < 4; v++) {
             lira_voice *vo = &l->v[v];
             rstep(&vo->mod, m);
@@ -536,7 +563,8 @@ void lira_process(lira_t *l, float *out, int n)
                     gn->leak_f = gn->leak * fexp2(0.5f * flog2(fmax_(f0, 1.f) * 0.001f));
                 }
                 vleak[o] = gn->leak_f;
-                vtrim[o] = gn->trim * gn->lvl.cur;
+                vtrim[o] = gn->trim;
+                vlvl[o] = gn->lvl.cur;
             }
         }
 
@@ -568,7 +596,7 @@ void lira_process(lira_t *l, float *out, int n)
                 float msrc = g0[v] * (l->bus[busa[v]] * gsa + l->bus[busb[v]] * gsb) +
                              g2[v] * (l->total_fb * gfb + lfo_fm) + g3[v] * ext +
                              (sidx[v] >= 0 ? l->bus[sidx[v]] : 0.f);
-                float mv = msrc * vmod[v], sh = vsh[v], y = 0.f;
+                float mv = msrc * vmod[v], sh = vsh[v], y = 0.f, yb = 0.f;
                 for (int k = 0; k < 2; k++) {
                     int o = 2 * v + k;
                     lira_gen *gn = &vo->g[k];
@@ -582,10 +610,12 @@ void lira_process(lira_t *l, float *out, int n)
                     float ga = vgain[o];
                     /* the envelope's transistor: gain, plus a bend that grows as it closes (waveshaper) */
                     float cv = wave * ga + WSHAPE * (1.f - ga) * ga * wave * wave;
-                    y += (cv + wave * vleak[o]) * vtrim[o];
+                    float tr = (cv + wave * vleak[o]) * vtrim[o];
+                    y += tr * vlvl[o];                    /* what is heard: the voice's level fader */
+                    yb += tr;                             /* what the other voices hear (FM): the voice itself, so a quiet voice can still be a modulator */
                 }
                 mix += y;
-                busn[v] = hip(&vo->hp, y, hp3c);
+                busn[v] = hip(&vo->hp, yb, hp3c);
             }
             for (int v = 0; v < 4; v++)
                 l->bus[v] = busn[v];

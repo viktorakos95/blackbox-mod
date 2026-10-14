@@ -2,8 +2,8 @@
  * Opened by the PAD button (second press on the pad screen). The engine is lira_pad.c's page instance, which the looper's
  * output stage runs: no pad or sample needed.
  *
- * One 8 x 38 px grid carries everything. At the bottom, always: the eight voices in two groups of four (a TUNE knob each, in its
- * pair's colour, and a big plate below it: tap = on / off, the top-right switch makes the plates HOLD). The eight hardware
+ * One 8 x 38 px grid carries everything. At the bottom, always: the eight voices in two groups of four (a small LEVEL knob and a TUNE knob each,
+ * in its pair's colour, and a big plate below them: tap = on / off, the top-right switch makes the plates HOLD). The eight hardware
  * buttons are the same plates. Above them one of three tabs (footer), each a row of four panels of four controls:
  *   VOICES   one panel per voice pair: MOD, SHARP, FM source, TOUCH
  *   SOUND    DELAY (time 1, 2, feedback, mix), MOD (mod 1, 2, LFO A, B), PITCH (hold 1-4, 5-8, pitch 1-4, 5-8), LFO (shape, combine, link, delay source)
@@ -16,13 +16,15 @@
 #include "lira_chord.h"
 
 #define LU_LEVEL  120
-#define LU_MAXS   32
+#define LU_MAXS   40
 #define LU_COL    38                                              /* the grid: eight columns of 38 px from x = 5 */
 #define LU_X0     5
 #define LU_PANEL  16                                              /* the panels' top (d) and height */
 #define LU_PANH   91
-#define LU_STRIP  110                                             /* the voice groups' top */
-#define LU_PLATE  157
+#define LU_STRIP  108                                             /* the voice groups' top */
+#define LU_LVL    110                                             /* the level knobs' row, above the tune knobs */
+#define LU_TUNE   131                                             /* the tune knobs' row */
+#define LU_PLATE  173
 #define LU_CARD   0x19                                            /* the card behind a control */
 #define LU_LINE   0x10                                            /* hairlines, frames */
 #define LU_DIM    0x16                                            /* labels */
@@ -84,6 +86,10 @@ struct lu_spec {
 #define LP_MIX    2
 #define LP_CHORD  3
 static const char *const lu_tabname[4] = {"VOICES", "SOUND", "MIX", "CHORD"};
+static const char *const lu_div[12] = {"OFF", "4 BAR", "2 BAR", "1 BAR", "1/2", "1/4D", "1/4", "1/8D", "1/8", "1/16D", "1/16", "1/16T"};
+static const char *const lu_len[4] = {"1 BAR", "2 BAR", "4 BAR", "8 BAR"};
+static const char *const lu_gst[6] = {"", "ARMED", "REC", "LOOP", "ARMED", "OVR"};
+static const char *const lu_lay[4] = {"", "1 LAYER", "2 LAYER", "3 LAYER"};
 static const char *const lu_lfo_name[4] = {"SHAPE", "COMBINE", "LINK", "DLY SRC"};
 static const char *const lu_lfo_val[4][3] = {{"TRI", "SQR", ""}, {"PROD", "SUM", ""}, {"OFF", "ON", ""}, {"SELF", "OFF", "LFO"}};
 static const char *const lu_touch[3] = {"SLOW", "FAST", "EXT"};
@@ -105,8 +111,11 @@ static int lu_specs(int sel, struct lu_spec *o)
 {
     int page = sel & 15, n = 0;
     static const char *const vn[8] = {"1", "2", "3", "4", "5", "6", "7", "8"};
-    for (int v = 0; v < 8; v++) {                                 /* the voice knobs, on every page */
-        LU_SP(n, v, LU_X0 + v * LU_COL, LU_STRIP + 3, LU_COL, 40, v >> 2, lu_enc_row[v & 3], LK_KNOB, lu_pair_col[v >> 1], 12, vn[v]);
+    static const char *const ln[8] = {"LV 1", "LV 2", "LV 3", "LV 4", "LV 5", "LV 6", "LV 7", "LV 8"};
+    for (int v = 0; v < 8; v++) {                                 /* the voice knobs, on every page: a level row above the tune row */
+        LU_SP(n, v, LU_X0 + v * LU_COL, LU_TUNE, LU_COL, 38, v >> 2, lu_enc_row[v & 3], LK_KNOB, lu_pair_col[v >> 1], 12, vn[v]);
+        n++;
+        LU_SP(n, 170 + v, LU_X0 + v * LU_COL, LU_LVL, LU_COL, 21, 6 + (v >> 2), lu_enc_row[v & 3], LK_KNOB, lu_pair_col[v >> 1], 8, ln[v]);
         n++;
     }
     int x, d;
@@ -125,18 +134,30 @@ static int lu_specs(int sel, struct lu_spec *o)
             LU_SP(n, 100 + p, x, d, LU_COL, 38, 2 + p, lu_enc_cell[3], LK_BTN, lu_pair_col[p], 0, "TOUCH");
             n++;
         }
-    } else if (page == LP_SOUND || page == LP_MIX) {
-        static const uint16_t ids[2][16] = {{16, 17, 18, 19, 125, 126, 14, 15, 121, 122, 123, 124, 160, 161, 162, 163},
-                                            {170, 171, 172, 173, 174, 175, 176, 177, 22, 23, LU_LEVEL, 21, 0, 0, 0, 0}};
-        static const char *const nm[2][16] = {{"TIME1", "TIME2", "FDBK", "MIX", "MOD1", "MOD2", "LFO A", "LFO B",
-                                               "H 1-4", "H 5-8", "P 1-4", "P 5-8", "SHAPE", "COMBINE", "LINK", "DLY SRC"},
-                                              {"LV 1", "LV 2", "LV 3", "LV 4", "LV 5", "LV 6", "LV 7", "LV 8",
-                                               "DRIVE", "DIST", "VOL", "EXT", "", "", "", ""}};
-        int pg = page == LP_MIX;
-        for (int i = 0; i < (pg ? 12 : 16); i++) {
+    } else if (page == LP_SOUND) {
+        static const uint16_t ids[16] = {16, 17, 18, 19, 125, 126, 14, 15, 121, 122, 123, 124, 160, 161, 162, 163};
+        static const char *const nm[16] = {"TIME1", "TIME2", "FDBK", "MIX", "MOD1", "MOD2", "LFO A", "LFO B",
+                                           "H 1-4", "H 5-8", "P 1-4", "P 5-8", "SHAPE", "COMBINE", "LINK", "DLY SRC"};
+        for (int i = 0; i < 16; i++) {
             lu_cell(i >> 2, i & 3, &x, &d);
-            LU_SP(n, ids[pg][i], x, d, LU_COL, 38, 2 + (i >> 2), lu_enc_cell[i & 3], pg && i < 8 ? LK_KNOB : !pg && i >= 12 ? LK_BTN : LK_KNOB,
-                  pg && i < 8 ? lu_pair_col[i >> 1] : LU_ACC1, 11, nm[pg][i]);
+            LU_SP(n, ids[i], x, d, LU_COL, 38, 2 + (i >> 2), lu_enc_cell[i & 3], i >= 12 ? LK_BTN : LK_KNOB, LU_ACC1, 11, nm[i]);
+            n++;
+        }
+    } else if (page == LP_MIX) {                                  /* OUTPUT (knobs), SYNC and GESTURE (buttons), STATUS (text) */
+        static const uint16_t ids[4] = {22, 23, LU_LEVEL, 21};
+        static const char *const nm[4] = {"DRIVE", "DIST", "VOL", "EXT"};
+        static const char *const sn[4] = {"LFO A", "LFO B", "ECHO 1", "ECHO 2"};
+        static const uint16_t gid[4] = {190, 148, 191, 192};
+        static const char *const gn[4] = {"REC", "LEN", "UNDO", "CLEAR"};
+        for (int i = 0; i < 4; i++) {
+            lu_cell(0, i, &x, &d);
+            LU_SP(n, ids[i], x, d, LU_COL, 38, 2, lu_enc_cell[i], LK_KNOB, LU_ACC1, 11, nm[i]);
+            n++;
+            lu_cell(1, i, &x, &d);                                /* tempo sync: how long one cycle / one echo is, in the Blackbox clock's beats */
+            LU_SP(n, 144 + i, x, d, LU_COL, 38, 3, lu_enc_cell[i], LK_BTN, LU_ACC2, 0, sn[i]);
+            n++;
+            lu_cell(2, i, &x, &d);
+            LU_SP(n, gid[i], x, d, LU_COL, 38, 4, lu_enc_cell[i], LK_BTN, LU_ACC1, 0, gn[i]);
             n++;
         }
     } else {
@@ -175,7 +196,7 @@ static void lu_pct(char **q, int v)
 
 static int lu_stepmax(int id)
 {
-    return id == 140 ? lira_space_count() - 1 : 3 + (id == 141) * 8;
+    return id == 140 ? lira_space_count() - 1 : id >= 144 ? 11 : 3 + (id == 141) * 8;
 }
 
 /* the knob position (0..1000) a control shows */
@@ -208,16 +229,36 @@ static void lu_round(int x, int d, int w, int h, int col)
     box(x + 1, d + 1, w - 2, h - 2, col);
 }
 
+/* a chord voice's pitch: its note name, or (moved off the note by hand) the MIDI number with cents, e.g. 64.37 */
+static void lu_pitch_text(int v, char *b)
+{
+    int h = lira_ui_pitch(v);
+    if (h % 100 == 0 && h >= 1200) {
+        lira_note_name(h / 100, lira_ui_flats(), b);
+        return;
+    }
+    char *q = b;
+    if (h < 0) {
+        *q++ = '-';
+        h = -h;
+    }
+    q = put_uint(q, (unsigned)(h / 100));
+    *q++ = '.';
+    *q++ = (char)('0' + (h % 100) / 10);
+    *q++ = (char)('0' + (h % 100) % 10);
+    *q = 0;
+}
+
 static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
 {
     int cx = s->x + s->w / 2, hot = s->bank == bank && s->bank >= 0;
-    char b[8], *q = b;
+    char b[10], *q = b;
     box(s->x + 2, s->d, s->w - 4, s->h, LU_CARD);
     if (s->kind == LK_KNOB || s->kind == LK_STEP) {
         int v = lu_value(s), cy = s->d + s->r + 2;
         lu_knob(cx, cy, s->r, v, chord && s->id < 8 ? C_GREY : s->col);
         if (s->id < 8 && chord) {                                 /* chord mode: the voice's note */
-            lira_note_name(lira_ui_note(s->id), lira_ui_flats(), b);
+            lu_pitch_text(s->id, b);
             text_c(s->x, cy + s->r + 3, s->w, b, C_WHITE, 1);
         } else if (s->id < 8) {
             q = put_uint(b, (unsigned)(s->id + 1));
@@ -226,7 +267,9 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
         } else if (s->kind == LK_STEP && s->id != 140) {          /* a stepped knob shows its setting */
             int k = lira_ui_chord_get(s->id);
             const char *t = b;
-            if (s->id == 141) {
+            if (s->id >= 144) {
+                t = lu_div[k];
+            } else if (s->id == 141) {
                 t = lira_root_name(k);
             } else if (s->id == 142) {
                 lira_note_name(36 + 12 * k, 0, b);
@@ -239,7 +282,7 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
                 b[5] = 0;
             }
             text_c(s->x, cy + s->r + 3, s->w, t, hot ? LU_SEL : LU_DIM, 1);
-        } else {
+        } else if (s->r != 8) {                                   /* (the small level knobs carry no label) */
             text_c(s->x, cy + s->r + 3, s->w, s->name, hot ? LU_SEL : LU_DIM, 1);
         }
     } else if (s->kind == LK_BTN) {                               /* two lines: what it is, what it is set to */
@@ -249,6 +292,16 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             st = lu_touch[lira_ui_get(s->id)], on = lira_ui_get(s->id) != 0;
         else if (s->id >= 104 && s->id < 108)
             st = lu_src[lira_ui_get(s->id)], on = lira_ui_get(s->id) != 1;
+        else if (s->id >= 144 && s->id < 148)
+            st = lu_div[lira_ui_chord_get(s->id)], on = lira_ui_chord_get(s->id) != 0;
+        else if (s->id == 148)
+            st = lu_len[lira_ui_chord_get(148)], on = 0;
+        else if (s->id == 190)
+            st = lu_gst[lira_ui_chord_get(158)], on = lira_ui_chord_get(158) != 0;
+        else if (s->id == 191)
+            st = lu_lay[lira_ui_chord_get(149)], on = lira_ui_chord_get(149) != 0;
+        else if (s->id == 192)
+            st = "", on = 0;
         else if (s->id >= 160 && s->id < 164) {
             int k = lira_ui_chord_get(s->id);
             st = lu_lfo_val[s->id - 160][k];
@@ -266,8 +319,10 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
         if (*st)
             text_c(s->x, s->d + 21, s->w, st, on ? C_WHITE : C_GREY, 1);
     } else {                                                      /* a note of a voice */
-        lira_note_name(lira_ui_note(s->id - 200), lira_ui_flats(), b);
-        {                                                         /* the letter big, the sharp and octave small */
+        lu_pitch_text(s->id - 200, b);
+        if (lira_ui_pitch(s->id - 200) % 100 || lira_ui_pitch(s->id - 200) < 1200)
+            text_c(s->x, s->d + 10, s->w, b, chord ? C_WHITE : C_GREY, 1);       /* moved off the note: the number */
+        else {                                                    /* the letter big, the sharp and octave small */
             int rest = 0;
             while (b[1 + rest])
                 rest++;
@@ -292,7 +347,7 @@ static void draw_lira(void)
     char b[40], *q;
     static const char *const ptitle[4][4] = {{"PAIR 1-2", "PAIR 3-4", "PAIR 5-6", "PAIR 7-8"},
                                              {"DELAY", "MOD", "HOLD/PITCH", "LFO"},
-                                             {"LEVEL 1-4", "LEVEL 5-8", "OUTPUT", ""},
+                                             {"OUTPUT", "TEMPO SYNC", "GESTURE", "STATUS"},
                                              {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"}};
     box(1, 1, P->w - 2, TOPBAR, C_BG);
     text(6, 4, "DRONE-8", C_WHITE, 1);
@@ -323,52 +378,96 @@ static void draw_lira(void)
                 *q = 0;
             }
     }
-    if (!*b) {                                                    /* (a diagnostic for now: free SDRAM, this synth's share of the audio task, the task's load, shedding) */
-        q = b;
-        if (lira_ui_load(2)) {
-            for (const char *t = "SHED "; *t;)
-                *q++ = *t++;
-            q = put_uint(q, (unsigned)lira_ui_load(2));
-        } else {
-            q = put_uint(q, lira_free_kb());
-            *q++ = 'K';
-        }
-        *q++ = ' ';
-        *q++ = 'D';
-        q = put_uint(q, (unsigned)lira_ui_load(0));
-        *q++ = ' ';
-        *q++ = 'C';
-        q = put_uint(q, (unsigned)lira_ui_load(1));
+    if (!*b && lira_ui_load(2)) {                                 /* the governor is cutting the synth's quality: say so (the rest is on the MIX tab) */
+        for (const char *t = "SHED "; *t;)
+            *q++ = *t++;
+        q = put_uint(q, (unsigned)lira_ui_load(2));
         *q = 0;
     }
+    b[9] = 0;                                                     /* (it must stay clear of the switches) */
     text(54, 4, b, *b ? C_WHITE : C_GREY, 1);
-    int mom = lira_ui_momentary(0), sine = lira_ui_chord_get(154);
-    frame(P->w - 50, 2, 46, TOPBAR - 2, mom ? LU_ACC2 : LU_LINE, 1);
-    text_c(P->w - 50, 4, 46, mom ? "HOLD" : "LATCH", LU_DIM, 1);
-    int xs = lira_ui_chord_get(156);
-    frame(P->w - 150, 2, 46, TOPBAR - 2, xs ? LU_ACC2 : LU_LINE, 1);
-    text_c(P->w - 150, 4, 46, xs == 0 ? "X:IN" : xs == 1 ? "X:MIX" : "X:BOTH", xs ? C_WHITE : LU_DIM, 1);
-    frame(P->w - 100, 2, 46, TOPBAR - 2, sine ? LU_ACC1 : LU_LINE, 1);
-    text_c(P->w - 100, 4, 46, sine ? "SINE" : "TRI", sine ? C_WHITE : LU_DIM, 1);
+    int mom = lira_ui_momentary(0), sine = lira_ui_chord_get(154), fr = lira_ui_chord_get(157), xs = lira_ui_chord_get(156), gm = lira_ui_chord_get(158);
+    /* six switches at the right, 32 px wide every 33, from the right: LATCH / HOLD, TRI / SINE, X:IN / X:MIX / X:ALL, STEP / FREE, REC, BTN */
+#define LU_SW(k) (P->w - 35 - 33 * (k))
+    frame(LU_SW(0), 2, 32, TOPBAR - 2, mom ? LU_ACC2 : LU_LINE, 1);
+    text_c(LU_SW(0), 4, 32, mom ? "HOLD" : "LATCH", LU_DIM, 1);
+    frame(LU_SW(1), 2, 32, TOPBAR - 2, sine ? LU_ACC1 : LU_LINE, 1);
+    text_c(LU_SW(1), 4, 32, sine ? "SINE" : "TRI", sine ? C_WHITE : LU_DIM, 1);
+    frame(LU_SW(2), 2, 32, TOPBAR - 2, xs ? LU_ACC2 : LU_LINE, 1);
+    text_c(LU_SW(2), 4, 32, xs == 0 ? "X:IN" : xs == 1 ? "X:MIX" : "X:ALL", xs ? C_WHITE : LU_DIM, 1);
+    frame(LU_SW(3), 2, 32, TOPBAR - 2, fr ? LU_ACC1 : LU_LINE, 1);                    /* what the encoders do to a chord voice: a semitone a click, or free */
+    text_c(LU_SW(3), 4, 32, fr ? "FREE" : "STEP", fr ? C_WHITE : LU_DIM, 1);
+    if (gm == 2 || gm == 5)                                       /* the gesture recorder (like SAMPLR's): armed, recording (filled), looping */
+        box(LU_SW(4), 2, 32, TOPBAR - 2, LU_SEL);
+    else
+        frame(LU_SW(4), 2, 32, TOPBAR - 2, gm == 3 ? LU_ACC2 : gm ? LU_SEL : LU_LINE, 1);
+    text_c(LU_SW(4), 4, 32, gm == 3 ? "LOOP" : gm == 1 || gm == 4 ? "ARM" : gm == 5 ? "OVR" : "REC", gm ? C_WHITE : LU_DIM, 1);
+    int bt = lira_ui_chord_get(165);                              /* the eight round buttons: the voice plates, or the stock buttons */
+    frame(LU_SW(5), 2, 32, TOPBAR - 2, bt ? LU_ACC2 : LU_LINE, 1);
+    text_c(LU_SW(5), 4, 32, "BTN", bt ? C_WHITE : LU_DIM, 1);
     box(1, TOPBAR + 2, P->w - 2, L.foot_y - TOPBAR - 3, C_BG);
 
-    for (int p = 0; p < 4; p++) {                                 /* the four panels */
-        if (page == LP_MIX && p == 3)
-            continue;
-        int x = LU_X0 + p * 2 * LU_COL, hot = bank == 2 + p;
-        frame(x + 1, LU_PANEL, 2 * LU_COL - 2, LU_PANH, hot ? LU_SEL : LU_LINE, 1);
-        text_c(x, LU_PANEL + 4, 2 * LU_COL, ptitle[page][p], hot ? LU_SEL : LU_DIM, 1);
+    for (int p = 0; p < 4; p++) {                                 /* the four panels (OUTPUT is one wide panel) */
+        int x = LU_X0 + p * 2 * LU_COL, hot = bank == 2 + p, pw = 2 * LU_COL;
+        frame(x + 1, LU_PANEL, pw - 2, LU_PANH, hot ? LU_SEL : LU_LINE, 1);
+        text_c(x, LU_PANEL + 4, pw, ptitle[page][p], hot ? LU_SEL : LU_DIM, 1);
         if (page == LP_VOICES)
             box(x + 6, LU_PANEL + 13, 2 * LU_COL - 12, 1, lu_pair_col[p]);
+        if (page == LP_MIX && p == 3) {                           /* what the audio task is doing (and the run before's peaks) */
+            char t[24];
+            char *u = t;
+            for (const char *w = "FREE "; *w;)
+                *u++ = *w++;
+            u = put_uint(u, lira_free_kb());
+            *u++ = 'K';
+            *u = 0;
+            text(x + 8, LU_PANEL + 18, t, C_WHITE, 1);
+            u = t;
+            for (const char *w = "CPU "; *w;)
+                *u++ = *w++;
+            u = put_uint(u, (unsigned)lira_ui_load(1));
+            *u = 0;
+            text(x + 8, LU_PANEL + 30, t, C_WHITE, 1);
+            u = t;
+            for (const char *w = "DRONE "; *w;)
+                *u++ = *w++;
+            u = put_uint(u, (unsigned)lira_ui_load(0));
+            *u = 0;
+            text(x + 8, LU_PANEL + 42, t, C_WHITE, 1);
+            if (lira_ui_prev(4)) {
+                u = t;
+                for (const char *w = "LAST C"; *w;)
+                    *u++ = *w++;
+                u = put_uint(u, (unsigned)lira_ui_prev(0));
+                *u++ = ' ';
+                *u++ = 'D';
+                u = put_uint(u, (unsigned)lira_ui_prev(1));
+                *u = 0;
+                text(x + 8, LU_PANEL + 56, t, LU_DIM, 1);
+                u = t;
+                *u++ = 'F';
+                u = put_uint(u, (unsigned)lira_ui_prev(2));
+                *u++ = 'K';
+                *u = 0;
+                text(x + 8, LU_PANEL + 68, t, LU_DIM, 1);
+            }
+        }
     }
-    for (int g = 0; g < 2; g++) {                                 /* the voice groups */
-        int x = LU_X0 + g * 4 * LU_COL, hot = bank == g;
-        frame(x + 1, LU_STRIP, 4 * LU_COL - 2, 46, hot ? LU_SEL : LU_LINE, 1);
+    for (int g = 0; g < 2; g++) {                                 /* the voice groups: level row, tune row (the colour bars first, so the encoders' frame lies over them) */
+        int x = LU_X0 + g * 4 * LU_COL;
         for (int k = 0; k < 2; k++)
             box(x + k * 2 * LU_COL + 6, LU_STRIP, 2 * LU_COL - 12, 2, lu_pair_col[g * 2 + k]);
     }
     for (int i = 0; i < n; i++)
         lu_draw_spec(&sp[i], bank, chord);
+    for (int g = 0; g < 2; g++) {                                 /* the groups' frames, over everything of theirs */
+        int x = LU_X0 + g * 4 * LU_COL;
+        frame(x + 1, LU_STRIP, 4 * LU_COL - 2, LU_PLATE - LU_STRIP - 3, LU_LINE, 1);
+        if (bank == g)
+            frame(x + 1, LU_TUNE - 1, 4 * LU_COL - 2, 40, LU_SEL, 1);
+        if (bank == 6 + g)
+            frame(x + 1, LU_STRIP, 4 * LU_COL - 2, 23, LU_SEL, 1);
+    }
     for (int v = 0; v < 8; v++) {                                 /* the plates */
         int x, d, w, h, on = lira_ui_key_get(v), col = lu_pair_col[v >> 1];
         lu_plate_rect(v, &x, &d, &w, &h);
@@ -440,7 +539,7 @@ static void lu_reset(const struct lu_spec *s)
 {
     if (s->kind == LK_STEP) {
         static const uint8_t def[4] = {0, 0, 1, 2};
-        lira_ui_chord_set(s->id, def[s->id - 140]);
+        lira_ui_chord_set(s->id, s->id >= 144 ? 0 : def[s->id - 140]);
     } else if (s->kind == LK_KNOB && !(s->id < 8 && lira_ui_chord_get(150))) {
         lira_ui_set(s->id, lira_ui_default(s->id));
     }
@@ -456,6 +555,16 @@ static void lu_press(const struct lu_spec *s, int dir)
         lira_ui_set(id, (lira_ui_get(id) + (dir < 0 ? 7 : 1)) & 7);
     else if (id >= 160 && id < 164)
         lira_ui_action(10 + id - 160);
+    else if (id >= 144 && id < 148)
+        lira_ui_chord_set(id, (lira_ui_chord_get(id) + (dir < 0 ? 11 : 1)) % 12);
+    else if (id == 148)
+        lira_ui_chord_set(148, (lira_ui_chord_get(148) + (dir < 0 ? 3 : 1)) & 3);
+    else if (id == 190)
+        lira_ui_action(7);
+    else if (id == 191)
+        lira_ui_action(9);
+    else if (id == 192)
+        lira_ui_action(14);
     else if (id == 150)
         lira_ui_action(0);
     else if (id == 151)
@@ -483,21 +592,29 @@ static void lira_touch(int kind, int id, int x, int d)
             int i = lira_ui_drag(id, 2, 0, 0, 0, 0), dy = lira_ui_drag(id, 3, 0, 0, 0, 0) - d;
             if (dy > 3 || dy < -3)
                 lira_ui_tap(0xffff, 0, 0);                        /* a drag is not the first half of a double tap */
-            if (i < n && sp[i].id < 8 && lira_ui_chord_get(150))       /* chord mode: the voice's note, 60 semitones over 80 px */
-                lira_ui_note_set(sp[i].id, lira_ui_drag(id, 4, 0, 0, 0, 0) + (lira_ui_drag(id, 3, 0, 0, 0, 0) - d) * 60 / 80);
-            else if (i < n)
+            if (i < n && sp[i].id < 8 && lira_ui_chord_get(150)) {     /* chord mode: the voice's pitch, free (60 semitones over 80 px), with a detent on every note */
+                int h = lira_ui_drag(id, 4, 0, 0, 0, 0) + dy * 75, nn = (h + 50) / 100;
+                lira_ui_pitch_set(sp[i].id, h - nn * 100 >= -12 && h - nn * 100 <= 12 ? nn * 100 : h);
+            } else if (i < n)
                 lu_set(&sp[i], lira_ui_drag(id, 4, 0, 0, 0, 0) + (lira_ui_drag(id, 3, 0, 0, 0, 0) - d) * 1000 / 80);
         }
         return;
     }
     lira_ui_drag(id, 0, 0, 0, 0, 0);
     if (d <= TOPBAR + 1) {
-        if (x >= P->w - 50)
+        int k = (P->w - 3 - x) / 33;                              /* the switches: 0 LATCH, 1 TRI / SINE, 2 X:, 3 STEP / FREE, 4 REC, 5 BTN */
+        if (k == 0)
             lira_ui_momentary(1);
-        else if (x >= P->w - 100)
+        else if (k == 1)
             lira_ui_action(4);
-        else if (x >= P->w - 150)
+        else if (k == 2)
             lira_ui_action(5);
+        else if (k == 3)
+            lira_ui_action(6);
+        else if (k == 4)
+            lira_ui_action(7);
+        else if (k == 5)
+            lira_ui_action(8);
         return;
     }
     for (int v = 0; v < 8; v++) {                                 /* plates */
@@ -519,10 +636,10 @@ static void lira_touch(int kind, int id, int x, int d)
             lira_ui_last(sp[i].id);
             if (sp[i].kind == LK_BTN)
                 lu_press(&sp[i], 1);
-            else if (lira_ui_tap(sp[i].id, looper_ticks(), 10))
+            else if (lira_ui_tap(sp[i].id, looper_ticks(), 100))
                 lu_reset(&sp[i]);                                 /* a double tap: back to the default */
             else
-                lira_ui_drag(id, 0, 3, i, d, sp[i].id < 8 && lira_ui_chord_get(150) ? lira_ui_note(sp[i].id) : lu_value(&sp[i]));
+                lira_ui_drag(id, 0, 3, i, d, sp[i].id < 8 && lira_ui_chord_get(150) ? lira_ui_pitch(sp[i].id) : lu_value(&sp[i]));
             return;
         }
     for (int p = 0; p < 4; p++)                                   /* the empty part of a panel or voice group: just makes it the encoders' */
@@ -530,7 +647,7 @@ static void lira_touch(int kind, int id, int x, int d)
             lu_bank(2 + p);
             return;
         }
-    if (d >= LU_STRIP && d < LU_STRIP + 46 && x >= LU_X0)
+    if (d >= LU_STRIP && d < LU_PLATE - 1 && x >= LU_X0)
         lu_bank(x < LU_X0 + 4 * LU_COL ? 0 : 1);
 }
 
@@ -545,14 +662,21 @@ static void lira_knob(int knob, int counts)
             if (d == 0)
                 d = counts > 0 ? 1 : -1;
             if (sp[i].kind == LK_NOTE || (sp[i].kind == LK_KNOB && sp[i].id < 8 && chord)) {
-                int v = sp[i].kind == LK_NOTE ? sp[i].id - 200 : sp[i].id, st = lira_ui_accum(knob, counts, 100);
-                if (chord && st)
-                    lira_ui_note_set(v, lira_ui_note(v) + st);       /* chromatic, a step per ~100 counts */
+                int v = sp[i].kind == LK_NOTE ? sp[i].id - 200 : sp[i].id;
+                if (chord && lira_ui_chord_get(157)) {               /* FREE: 0.05 semitone per unit, like the tune knob's own encoder feel */
+                    lira_ui_pitch_set(v, lira_ui_pitch(v) + d * 5);
+                } else if (chord) {                                  /* STEP: a semitone every ~100 counts; off a note, the next one in that direction */
+                    int st = lira_ui_accum(knob, counts, 100);
+                    for (int k = 0; k < (st < 0 ? -st : st); k++) {
+                        int h = lira_ui_pitch(v), nh = st > 0 ? (h / 100 + 1) * 100 : h % 100 ? (h / 100) * 100 : h - 100;
+                        lira_ui_pitch_set(v, nh < 3300 && nh < h ? (h < 3300 ? nh : 3300) : nh > 9300 && nh > h ? (h > 9300 ? nh : 9300) : nh);   /* STEP stays within A1..A6 (FREE and the drag go the oscillator's whole range) */
+                    }
+                }
             } else if (sp[i].kind == LK_BTN || sp[i].kind == LK_STEP) {   /* like the stock lists: a step per ~300 counts */
                 int st = lira_ui_accum(knob, counts, 300);
                 if (sp[i].kind == LK_STEP && st)
                     lira_ui_chord_set(sp[i].id, lira_ui_chord_get(sp[i].id) + st);
-                for (int k = 0; sp[i].kind == LK_BTN && k < (st < 0 ? -st : st) && k < 3; k++)
+                for (int k = 0; sp[i].kind == LK_BTN && sp[i].id < 190 && k < (st < 0 ? -st : st) && k < 3; k++)
                     lu_press(&sp[i], st > 0 ? 1 : -1);
             } else if (!(sp[i].id < 8 && chord)) {
                 lira_ui_set(sp[i].id, lira_ui_get(sp[i].id) + d);
