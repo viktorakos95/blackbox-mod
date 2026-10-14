@@ -60,12 +60,12 @@ check("only the stock bytes the cave patches differ (below 0x080F1E78, not the p
 
 # --- good pad: progress then OK
 e = make()
-check("normal label before the first second has no pad text", " P" not in label(e) and " F" not in label(e), label(e))
+check("label built at boot of the padded image shows ' P0%' (tells it from the old image)", " P0%" in label(e) and " F" not in label(e), label(e))
 seen = []
 for s in range(40):
     second(e)
     seen.append(label(e))
-check("first report: ' P3%' (2048 of 65536 words); the first second only arms the meter", " P" not in seen[0] and " P3%" in seen[1], seen[:2])
+check("first report: ' P3%' (2048 of 65536 words); the first second only arms the meter", " P0%" in seen[0] and " P3%" in seen[1], seen[:2])
 check("progress rises one step a report", " P6%" in seen[2] and " P9%" in seen[3], seen[:4])
 check("after 32 reports: ' POK', and it stays", " P96%" in seen[31] and " POK" in seen[32] and " POK" in seen[39], (seen[31], seen[32]))
 check("label stays within the 30 bytes the text object allows", max(len(x) for x in seen) <= 30, max(seen, key=len))

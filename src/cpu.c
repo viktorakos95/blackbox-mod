@@ -127,9 +127,10 @@ static void pad_step(void)
 
 static char *pad_text(char *p)
 {
-    if (!mclpad_on || PAD_ST[0] != mclpad_on)
+    if (!mclpad_on)
         return p;
-    uint32_t bad = PAD_ST[2], at = PAD_ST[1];
+    int fresh = PAD_ST[0] != mclpad_on;                  /* scan not started yet (or from another build): shows P0% */
+    uint32_t bad = fresh ? PAD_NONE : PAD_ST[2], at = fresh ? 0 : PAD_ST[1];
     *p++ = ' ';
     if (bad != PAD_NONE) {
         *p++ = 'F';
