@@ -79,8 +79,8 @@ def call_keep_r1(addr, *args):
 # ---- the store getter / setter, entered through the firmware's own addresses ----
 make_pad(fidelity=INTERP_LIRA)
 GET, SET = 0x08093E9C, 0x08093ECC
-check("getter (patched stock entry): a LIRA id on a pad store = its default (Tune 2 78/127)",
-      call_keep_r1(GET, REC, P0 + 1) == round(78 * 1000 / 127))
+check("getter (patched stock entry): a LIRA id on a pad store = its default (Tune 2 63.5/127)",
+      call_keep_r1(GET, REC, P0 + 1) == 500)
 check("getter: a stock id is read from the store (Loop Mode 1, Fidelity LIRA)",
       call_keep_r1(GET, REC, 0x8E) == 1 and call_keep_r1(GET, REC, 0xF1) == INTERP_LIRA)
 check("getter: an id the store does not hold reads 0", call_keep_r1(GET, REC, 0x123) == 0)
@@ -96,8 +96,8 @@ check("setter: a stock id changes in the store", call_keep_r1(GET, REC, 0x8E) ==
 e.call(SET, REC, 0x777, 9)
 check("setter: an id the store does not hold is ignored", e.r16(REC + 10) == 59 and call_keep_r1(GET, REC, 0x777) == 0)
 other = REC + 0x30                                  # the pad next to it: its own values
-check("each pad position has its own LIRA values", call_keep_r1(GET, other, P0 + 1) == round(78 * 1000 / 127))
-e.call(SET, REC, P0 + 1, round(78 * 1000 / 127))
+check("each pad position has its own LIRA values", call_keep_r1(GET, other, P0 + 1) == 500)
+e.call(SET, REC, P0 + 1, 500)
 
 # ---- the pages, through the real builder ----
 make_pad(mode=0, fidelity=0)
@@ -115,10 +115,10 @@ check("page 5 is the stock one", got[4] == stock[4])
 check("Loop Mode is the first entry of page 2", got[1][0] == 0x8E)
 check("page 1 keeps Level", got[0][0] == 4)
 pg1 = dict(pages(1))
-check("a page lists the pool's values (Tune 2)", pg1[P0 + 1] == round(78 * 1000 / 127), str(pg1))
+check("a page lists the pool's values (Tune 2)", pg1[P0 + 1] == 500, str(pg1))
 e.call(SET, REC, P0 + 1, 321)
 check("a change made through the setter shows in the page", dict(pages(1))[P0 + 1] == 321)
-e.call(SET, REC, P0 + 1, round(78 * 1000 / 127))
+e.call(SET, REC, P0 + 1, 500)
 
 make_pad(mode=0, fidelity=0)
 check("Fidelity Normal: stock pages", all(ids(p) == stock[p] for p in range(5)))

@@ -35,6 +35,7 @@ enum {
     LIRA_QUANTIZE,    /* 0/1 */
     LIRA_EXT,         /* 0..127: external audio in level (the Blackbox's line inputs), mixed in ahead of the delay */
     LIRA_WAVE,        /* 0 the oscillator's triangle (the plugin's), 1 a sine shaped from it */
+    LIRA_LVL1, LIRA_LVL2, LIRA_LVL3, LIRA_LVL4, LIRA_LVL5, LIRA_LVL6, LIRA_LVL7, LIRA_LVL8,   /* per-oscillator level (squared taper) */
     LIRA_NPARAMS
 };
 
@@ -53,6 +54,7 @@ typedef struct {
     float leak_f;                         /* bleed at the current pitch (refreshed every 8th block) */
     float vib_ph, vib_rate, vib_depth;
     lira_ramp tune;                       /* Hz */
+    lira_ramp lvl;                        /* this oscillator's level (a mixer fader) */
 } lira_gen;
 
 typedef struct {
@@ -96,6 +98,7 @@ typedef struct {
     int ext_n;                    /* frames valid in them */
     float ext_g;
     float fol;                    /* envelope follower of the external input */
+    int shed;                     /* load shedding set by the caller: 0 both delay lines, 1 one line, 2 no delay */
 } lira_t;
 
 int lira_size(void);

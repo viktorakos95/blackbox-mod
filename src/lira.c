@@ -295,6 +295,10 @@ void lira_param(lira_t *l, int id, float x)
     case LIRA_FEEDBACK: rset(&l->fbline, fexp2(2.f * d) * d, n); break;
     case LIRA_DEL_MIX: rset(&l->dmix, d, n); break;
     case LIRA_EXT: l->ext_g = 2.f * d * d; break;
+    case LIRA_LVL1: case LIRA_LVL2: case LIRA_LVL3: case LIRA_LVL4:
+    case LIRA_LVL5: case LIRA_LVL6: case LIRA_LVL7: case LIRA_LVL8:
+        rset(&l->v[(id - LIRA_LVL1) >> 1].g[(id - LIRA_LVL1) & 1].lvl, d * d, n);
+        break;
     case LIRA_MOD1: case LIRA_MOD2:
         rset(&l->line[id - LIRA_MOD1].mod, MOD_MAX * d * d, n);
         break;
@@ -343,7 +347,7 @@ void lira_reset(lira_t *l, float sr, int16_t *dl1, int16_t *dl2, int len, uint32
     static const float defs[LIRA_NPARAMS] = {
         0, 78, 74, 36, 27, 57, 60, 51, 1, 1, 1, 1, 14.3774f, 43.1321f, 103.038f, 71.8868f, 0, 0, 0, 0, 0, 0, 0, 0,
         66, 65, 0, 0, 0, 0, 1, 86, 69, 127, 42, 64, 1, 1, 94.5745f, 56.7447f, 54.0426f, 67.5532f, 40.7358f, 47.9245f,
-        2, 0, 0, 0};
+        2, 0, 0, 0, 0, 127, 127, 127, 127, 127, 127, 127, 127};
     for (int i = 0; i < LIRA_NPARAMS; i++)
         lira_param(l, i, defs[i]);
     lira_settle(l);
@@ -364,6 +368,7 @@ void lira_settle(lira_t *l)
         for (int k = 0; k < 2; k++) {
             lira_gen *g = &vo->g[k];
             rjump(&g->tune, g->tune.tgt);
+            rjump(&g->lvl, g->lvl.tgt);
             float f0 = g->tune.cur;
             g->leak_f = g->leak * fexp2(0.5f * flog2(fmax_(f0, 1.f) * 0.001f));
         }
@@ -470,6 +475,7 @@ void lira_process(lira_t *l, float *out, int n)
     }
 
     const int sine = l->params[LIRA_WAVE] > 0.5f;
+    const int nlines = l->shed >= 2 ? 0 : l->shed == 1 ? 1 : 2;
     int ei = 0;
     const int have_ext = l->ext_l && l->ext_r && l->ext_n > 0;
     float ext = 0.f;
@@ -512,6 +518,7 @@ void lira_process(lira_t *l, float *out, int n)
                 lira_gen *gn = &vo->g[k];
                 int o = 2 * v + k;
                 rstep(&gn->tune, m);
+                rstep(&gn->lvl, m);
                 gn->vib_ph = wrap1(gn->vib_ph + gn->vib_rate * dt);
                 float vib = fcos(gn->vib_ph - 0.25f) * gn->vib_depth * l->vibsw.cur;
                 /* envelope: RC. FAST makes the sensors less sensitive; a light touch opens it partly and slowly */
@@ -529,7 +536,7 @@ void lira_process(lira_t *l, float *out, int n)
                     gn->leak_f = gn->leak * fexp2(0.5f * flog2(fmax_(f0, 1.f) * 0.001f));
                 }
                 vleak[o] = gn->leak_f;
-                vtrim[o] = gn->trim;
+                vtrim[o] = gn->trim * gn->lvl.cur;
             }
         }
 
@@ -588,14 +595,14 @@ void lira_process(lira_t *l, float *out, int n)
             u += l->ext_g * ext;
             ei++;
             float lin = u + rnd(l) * 0.0002f + fbl * l->loop_lp, wet = 0.f;   /* the noise is the delay's (converters, clock) */
-            for (int i = 0; i < 2; i++) {
+            for (int i = 0; i < nlines; i++) {
                 lira_line *ln = &l->line[i];
                 float mv = delmod == 0 ? ln->self_lp * 0.5f : lfom;
                 wet += line_run(ln, lin, mv, k_ratio[i], d0[i], depth[i], dc);
             }
-            wet *= 0.5f;
+            wet *= nlines == 2 ? 0.5f : nlines == 1 ? 0.7f : 0.f;
             lop(&l->loop_lp, ptanh(wet), lp3k);               /* op-amp / PT2399 overload and the loop's filter */
-            float dly = u + dm * (ptanh(wet) - u);
+            float dly = nlines ? u + dm * (ptanh(wet) - u) : u;
 
             /* master: drive -> tanh (+ positive spike) -> mix with dry -> tanh -> tilt -> volume */
             float t = ptanh(hip(&l->hp1, dly * g, hp20c)), pw31 = 0.f;

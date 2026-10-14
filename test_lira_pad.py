@@ -73,8 +73,8 @@ check("pool pointer in backup SRAM, rewritten this boot",
 APP_PADS = 0x24020088 + 0x1840
 POOL_SIDE = 0xC0000000 + 4                       # side[pad position][control] int16, first in the pool
 got = {i: e.r16(POOL_SIDE + 2 * i) for i in range(NCTL)}     # the first position: LIRA-8's defaults
-check("pool: every pad position starts at LIRA-8's defaults (Tune 2 = 78/127, Touch = Fast, Ext In = 0)",
-      got[1] == round(78 * 1000 / 127) and got[24] == 1 and got[21] == 0, str(got))
+check("pool: every pad position starts at LIRA-8's defaults (Tune 2 = 63.5/127, Touch = Fast, Ext In = 0)",
+      got[1] == 500 and got[24] == 1 and got[21] == 0, str(got))
 DEFAULTS = {P0 + i: got[i] for i in range(NCTL)}
 SLOT0 = 4 + 2 * 20 * NCTL                        # the pool's first instance (its pad pointer)
 
