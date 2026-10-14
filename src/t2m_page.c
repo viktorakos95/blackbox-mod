@@ -567,8 +567,10 @@ void t2m_page_draw(int w, int foot)
         p = put_f(p, m->p[k].thresh, 2);
         *p = 0;
         lp_text(w - 60, md + 13, b, C_LIGHT, 1);
-        lp_text(6, md + 25, "knobs: SENSITIVITY THRESHOLD RING GUARD DEAD TIME", C_GREY, 1);
-        draw_hist(m, w, md + 36, foot - 12);
+        lp_text(6, md + 24, "KNOBS", C_REC, 1);                       /* the four knobs are live on this sheet: red */
+        lp_text(6 + 6 * 6, md + 24, "ACTIVE", C_REC, 1);
+        lp_text(6, md + 34, "SENSITIVITY THRESHOLD RING GUARD DEAD TIME", C_LIGHT, 1);
+        draw_hist(m, w, md + 46, foot - 12);
         return;
     }
 
