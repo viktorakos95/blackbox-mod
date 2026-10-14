@@ -159,6 +159,8 @@ static void gen_setup(lira_t *l, lira_gen *g)
     g->kt = 0.69314718f * (flog2((1.f - g->vn) / (1.f - g->vp)) + flog2(g->vp / g->vn));
     g->lr = 1.f / flog2((1.f - g->vn) / (1.f - g->vp));
     g->lf = 1.f / flog2(g->vp / g->vn);
+    g->lrt = g->lr * 1.44269504f;
+    g->lft = g->lf * 1.44269504f;
     g->linp = 0.f;
     g->mid = 0.5f * (g->vp + g->vn);
     g->inv_half = 2.f / (g->vp - g->vn);
@@ -170,6 +172,7 @@ static void gen_setup(lira_t *l, lira_gen *g)
     g->leak = LEAK_BASE * urand(l, 0.6f, 1.6f);
     g->vib_depth = urand(l, 0.0035f, 0.0065f);
     g->vib_ph = urand(l, 0.f, 1.f);
+    g->u = clip_(g->s ? flog2((1.f - g->vn) / fmax_(1.f - g->v, 1e-4f)) * g->lr : flog2(g->vp / fmax_(g->v, 1e-4f)) * g->lf, 0.f, 1.f);
 }
 
 /* Frequency modulation follows the plugin: f * (1 + mod), the oscillator stalls when that goes below zero. (The hardware
@@ -213,9 +216,11 @@ static inline void gen_tick(lira_gen *g, float f, float cpl, float isr, int lin,
     }
     g->sqp = cur;
     g->trip = (v - g->mid) * g->inv_half;
-    if (lin) {                  /* the triangle linear in time: undo the capacitor's exponential (charging: 1 - (1 - vn) e^-t, discharging: vp e^-t) */
-        float u = g->s ? flog2((1.f - g->vn) / fmax_(1.f - v, 1e-4f)) * g->lr : flog2(g->vp / fmax_(v, 1e-4f)) * g->lf;
-        u = clip_(u, 0.f, 1.f);
+    {   /* the triangle linear in time (for the sine): the capacitor's time t = ln((1 - vn) / (1 - v)) charging, ln(vp / v) discharging, runs by x a sample
+           whatever the frequency does (FM included), so the fraction of the half period just goes up by x / (the half's ln ratio): no logarithm, no division */
+        float u = h != 0.f ? d * x * (g->s ? g->lrt : g->lft) : g->u + x * (g->s ? g->lrt : g->lft);
+        u = u > 1.f ? 1.f : u;
+        g->u = u;
         g->linp = g->s ? 2.f * u - 1.f : 1.f - 2.f * u;
     }
     *sq = emit_sq;

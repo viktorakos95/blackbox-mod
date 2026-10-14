@@ -48,6 +48,7 @@ typedef struct {
     int s;                                /* gate output high */
     float sqp, trip;                      /* previous-sample square (PolyBLEP, one sample late) and triangle */
     float linp, lr, lf;                   /* the triangle linear in time (for the sine), and 1 / log2 of each half's voltage ratio */
+    float u, lrt, lft;                    /* how far through the half period (0..1), integrated; and 1 / ln of each half's voltage ratio: its rate per unit of x */
     float ve, drive;                      /* envelope voltage, touch drive (0 = not touched) */
     float t_slow, t_fast;                 /* release time constants of this voice, s */
     float trim, leak;                     /* level trim, bleed gain at 1 kHz */
