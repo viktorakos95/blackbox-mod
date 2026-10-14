@@ -34,6 +34,7 @@ static volatile uint32_t ready;
 static volatile uint32_t running;
 static volatile uint32_t sub;                                   /* 0..7: 192-PPQN ticks since the last 24-PPQN clock */
 static volatile uint32_t ticks;
+static volatile uint32_t isr_calls;                             /* every entry of the timer interrupt, ready or not (diagnostics) */
 static volatile uint32_t pending_start;                         /* send FA at the next tick */
 static uint32_t timer_hz;                                       /* counts per second after the prescaler */
 static volatile uint32_t period_hi, period_lo;                  /* 32.32 counts per 192-PPQN tick */
@@ -42,7 +43,7 @@ static void (*volatile tick_hook)(uint32_t);
 
 extern "C" {
 
-HOOK void bb_clock_down(void) { ready = 0; running = 0; }       /* TIM6 itself is not touched: its interrupt returns at once while ready is off */
+HOOK void bb_clock_down(void) { ready = 0; running = 0; isr_calls = 0; ticks = 0; }       /* TIM6 itself is not touched: its interrupt returns at once while ready is off */
 
 static uint32_t core_hz(void)
 {
@@ -133,12 +134,14 @@ HOOK void bb_clock_stop(int send_stop)
         for (uint32_t spin = 0; spin < 200000u && !bb_midi_tx_rt(0xfc); spin++) {}      /* the real-time FIFO drains at 31250 baud: wait for a slot (GUI task, ~ms) */
 }
 
+HOOK uint32_t bb_clock_isr_calls(void) { return isr_calls; }
 HOOK int bb_clock_running(void) { return (int)running; }
 HOOK uint32_t bb_clock_ticks(void) { return ticks; }
 HOOK void bb_clock_set_hook(void (*tick)(uint32_t)) { tick_hook = tick; }
 
 HOOK void mcl_tim6_isr(void)
 {
+    isr_calls++;
     T_SR = 0;                                                    /* UIF */
     if (ready != READY_MAGIC || !running)
         return;

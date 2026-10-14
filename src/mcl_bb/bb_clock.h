@@ -9,6 +9,7 @@ void bb_clock_start(uint32_t bpm_x10, int send_start);      /* tempo in 1/10 BPM
 void bb_clock_stop(int send_stop);             /* FC */
 void bb_clock_tempo(uint32_t bpm_x10);         /* takes effect at the next tick; no jump of the phase */
 int bb_clock_running(void);
+uint32_t bb_clock_isr_calls(void);             /* entries of the timer interrupt since boot, counted even when the clock is off */
 uint32_t bb_clock_ticks(void);                 /* 192-PPQN ticks since start */
 uint32_t bb_clock_timer_hz(void);              /* the measured TIM6 count rate (after its prescaler) */
 void bb_clock_set_hook(void (*tick)(uint32_t ticks192));   /* called from the timer interrupt on every 192-PPQN tick (MCL's sequencer trigger, M5) */

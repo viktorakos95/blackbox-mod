@@ -211,13 +211,14 @@ extern "C" uint32_t mcl_boot(void)
     return st;
 }
 
-#ifdef M3_TEST
 #define DWT_CYCCNT (*(volatile uint32_t *)0xe0001004u)
+#ifdef M3_TEST
 static uint8_t m3_ran;
 #endif
 
 #ifdef M4_TEST
 static uint8_t m4_ran;
+static uint32_t m4_i, m4_t, m4_x;                   /* after 250 ms of the clock: interrupt entries, ticks, bytes written to the UART */
 #endif
 
 /* Runs the blocking M3 hardware test once, from a label constructor (GUI task, never the audio task). No-op in normal images. */
@@ -243,6 +244,11 @@ extern "C" void mcl_gui(void)
         if (bb_midi_owner() && bb_clock_init()) {
             bb_midi_filter_clock(1);
             bb_clock_start(1200, 0);
+            uint32_t c0 = DWT_CYCCNT;
+            while (DWT_CYCCNT - c0 < 100000000u) {}       /* 250 ms at 400 MHz: ~96 ticks, 12 clock bytes expected */
+            m4_i = bb_clock_isr_calls();
+            m4_t = bb_clock_ticks();
+            m4_x = bb_midi_stat(2);
         }
     }
 #endif
@@ -295,12 +301,30 @@ extern "C" char *mcl_status_text(char *p, uint32_t room)
     }
 #endif
     if (s[0] != BKP_MAGIC || (s[1] & 0xff) != ST_OK) {        /* no booted runtime: the clock variables in SDRAM are garbage */
-    } else if (bb_clock_running()) {                      /* ' C120': the timer clock is running, tempo is fixed in this image */
+    } else if (bb_clock_running()) {                      /* the timer clock is running (M4 image: 120.0 BPM, fixed) */
+#ifdef M4_TEST
+        /* ' i96 t96 x12': timer interrupt entries, ticks, bytes the UART interrupt wrote, all after 250 ms of the clock. 96 / 96 / 12 = all fine. */
+        char *w = q;
+        const uint32_t v[3] = {m4_i, m4_t, m4_x};
+        const char tag[3] = {'i', 't', 'x'};
+        for (int k = 0; k < 3; k++) {
+            *w++ = ' ';
+            *w++ = tag[k];
+            uint32_t n = v[k] > 999 ? 999 : v[k];
+            if (n >= 100)
+                *w++ = (char)('0' + n / 100);
+            if (n >= 10)
+                *w++ = (char)('0' + n / 10 % 10);
+            *w++ = (char)('0' + n % 10);
+        }
+        q = w;
+#else
         *q++ = ' ';
         *q++ = 'C';
         *q++ = '1';
         *q++ = '2';
         *q++ = '0';
+#endif
     } else if (bb_clock_timer_hz()) {
         *q++ = ' ';
         *q++ = 'C';

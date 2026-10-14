@@ -205,3 +205,8 @@ At the first label (boot) it claims the MIDI jack, calibrates and starts **120.0
 Measure with one cable (no second correct DIN cable needed): a TRS-to-TRS loop cable from Blackbox MIDI OUT to MIDI IN, **Receive = Off** in the Blackbox settings (so the stock sequencer does not follow its own clock), then the CLK sheet:
 `F8 n` rising, `BPM 120`, and `ARR min-max sdN` = the spread of our own clock as received (the Arduino MCL's ~1 ms timer steps would show ~ms here; the stock-queue clock showed sd ~ 1 ms).
 Or Blackbox OUT (1010 cable) -> Machinedrum IN with the Machinedrum on external sync: it shows 120.
+
+### M4 first hardware report and the diagnostic image
+Loop cable, Receive off: label ` Mok C120`, but the CLK sheet showed BPM 0 and ARR 0 (no F8 received). ` C120` only meant "the software started the clock", so the cause was open (timer interrupt not firing /
+bytes not leaving the UART / not reaching the monitor). The next image runs the clock for 250 ms at boot and prints on the label ` i<n> t<n> x<n>`: timer-interrupt entries, ticks counted, bytes the UART interrupt wrote
+(expected 96 / 96 / 12). `i0` = the interrupt never fires (vector / NVIC / TIM6 clock); `i96 t0` = fires but the ready flag is off; `t96 x0` = ticks but nothing leaves (TX path); `x12` and still no F8 on the sheet = reaches the UART, not the monitor.
