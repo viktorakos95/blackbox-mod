@@ -66,19 +66,31 @@ const volatile uint32_t mclpad_on = 0;
 #define PAD_ST    ((volatile uint32_t *)0x38800910u)
 #define PAD_NONE  0xffffffffu
 
+/* (the cave has no .bss: the page's state is in the backup SRAM, 0x38800930..0x38800950, between the MCL status words and Trigger2MIDI's root) */
+struct mcl_ui {
+    uint8_t down[4];            /* the tile each touch id holds (index + 1), 0 = none */
+    uint16_t mask;              /* tiles shown pressed */
+    int16_t acc[4];             /* knob counts below one detent */
+    uint16_t pad;
+};
+#define UI ((volatile struct mcl_ui *)0x38800930u)
+
 /* MCL blob (milestone M2): patches/mclblob.py sets mcl_entry to the blob's entry table at 0x08120000 (0 = no blob in this image). */
 struct mcl_entry {
-    uint32_t magic, abi;                 /* "MCLB", 2 */
+    uint32_t magic, abi;                 /* "MCLB", 3 */
     uint32_t (*boot)(void);              /* once per power-up: .data, .bss, heap, constructors, self test */
     char *(*status)(char *, uint32_t);   /* "Mok" or "M<code>" (and test results) for the label, at most `room` characters */
     void (*gui)(void);                   /* slow work that must run in the GUI task (the M3 hardware test); a no-op otherwise */
     uint32_t compact;                    /* 1 (hardware test images): the label is just the status text */
+    const uint8_t *(*fb)(void);          /* abi 3, the MCL page: the 128x32 one-bit screen (SSD1306 layout), null while the runtime is down */
+    uint32_t (*sig)(void);               /* draws it; a hash of the picture (0 while the runtime is down) */
+    void (*input)(uint32_t kind, int32_t a, int32_t b);    /* 1: encoder a turned b detents; 2 / 3: button a down / up */
 };
 const volatile uint32_t mcl_entry = 0;
 static const struct mcl_entry *mcl_blob(void)
 {
     const struct mcl_entry *e = (const struct mcl_entry *)mcl_entry;
-    return e && e->magic == 0x424c434du && e->abi == 2 ? e : 0;
+    return e && e->magic == 0x424c434du && e->abi == 3 ? e : 0;
 }
 
 static void start(void)
@@ -95,6 +107,9 @@ static void start(void)
         bkp_enable();
         PAD_ST[0] = 0;               /* power-up: read the flash test pad again */
     }
+    bkp_enable();
+    for (unsigned i = 0; i < sizeof(struct mcl_ui) / 4; i++)
+        ((volatile uint32_t *)UI)[i] = 0;     /* the MCL page's state (backup SRAM is not cleared by a reset) */
     const struct mcl_entry *e = mcl_blob();
     if (e) {
         bkp_enable();
@@ -298,4 +313,106 @@ int cpu_text_c(uint8_t *text, const char *s)               /* FUN_080c70b8 */
     remember(2, text);
     compose(buf);
     return fw_text_set(text, s == VERSION ? buf : s);
+}
+
+/* ---- the MCL page (milestone M6; the fourth page of the SONG button). src/looper_page.c hands over the area between the top bar and the
+ * footer, the touches there and the four knobs. The blob's 128x32 screen is drawn 2x, white on black, the tiles below it are MCL's buttons
+ * (B1..B4 and SHIFT), the knobs are its encoders. Everything is a no-op while the blob is missing or its runtime is not up. */
+void lp_box(int x, int d, int w, int h, int color);
+void lp_frame(int x, int d, int w, int h, int color, int th);
+void lp_text_c(int x, int d, int w, const char *s, int color, int scale);
+
+#define MCL_SCALE   2
+#define MCL_TOP     20
+#define MCL_TILE_Y  (MCL_TOP + 32 * MCL_SCALE + 10)
+#define MCL_TILE_H  44
+#define MCL_TILES   5
+#define MCL_ENC_COUNTS 20       /* knob counts per detent (a guess, as the TRIG page's 40; tune on the unit) */
+
+static int mcl_tile_w(int w) { return (w - 8) / MCL_TILES; }
+
+static int mcl_x0(int w) { return (w - 128 * MCL_SCALE) / 2; }
+
+uint32_t mcl_page_sig(void)
+{
+    const struct mcl_entry *e = mcl_blob();
+    bkp_enable();
+    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u;
+}
+
+void mcl_page_draw(int w, int foot_y)
+{
+    static const char *const name[MCL_TILES] = {"B1", "B2", "B3", "B4", "SHIFT"};
+    static const char *const role[MCL_TILES] = {"FOLLOW", "INT", "STOP", "TENTHS", ""};   /* the test bench's meaning until MCL itself runs */
+    const struct mcl_entry *e = mcl_blob();
+    const uint8_t *fb = e ? e->fb() : 0;
+    int x0 = mcl_x0(w);
+    bkp_enable();
+    lp_box(1, 16, w - 2, foot_y - 16, 0x02);
+    lp_box(x0 - 2, MCL_TOP - 2, 128 * MCL_SCALE + 4, 32 * MCL_SCALE + 4, 0x0e);
+    if (!fb) {
+        lp_text_c(x0, MCL_TOP + 26, 128 * MCL_SCALE, e ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", 0x0c, 1);
+    } else {
+        for (int y = 0; y < 32; y++) {
+            int x = 0;
+            while (x < 128) {
+                while (x < 128 && !(fb[x + 128 * (y >> 3)] >> (y & 7) & 1))
+                    x++;
+                int s = x;
+                while (x < 128 && (fb[x + 128 * (y >> 3)] >> (y & 7) & 1))
+                    x++;
+                if (x > s)
+                    lp_box(x0 + s * MCL_SCALE, MCL_TOP + y * MCL_SCALE, (x - s) * MCL_SCALE, MCL_SCALE, 0x0f);
+            }
+        }
+    }
+    lp_frame(x0 - 3, MCL_TOP - 3, 128 * MCL_SCALE + 6, 32 * MCL_SCALE + 6, 0x10, 1);
+    int tw = mcl_tile_w(w);
+    for (int i = 0; i < MCL_TILES; i++) {
+        int on = UI->mask >> i & 1;
+        if (MCL_TILE_Y + MCL_TILE_H >= foot_y)
+            break;
+        lp_box(4 + i * tw + 1, MCL_TILE_Y + 1, tw - 3, MCL_TILE_H - 2, on ? 0x1b : 0x01);
+        lp_frame(4 + i * tw, MCL_TILE_Y, tw - 1, MCL_TILE_H, on ? 0x0f : 0x10, 1);
+        lp_text_c(4 + i * tw, MCL_TILE_Y + 10, tw - 1, name[i], on ? 0x0e : 0x0f, 2);
+        lp_text_c(4 + i * tw, MCL_TILE_Y + 32, tw - 1, role[i], on ? 0x0e : 0x16, 1);
+    }
+}
+
+void mcl_page_down(int id, int x, int d, int w, int foot_y)
+{
+    const struct mcl_entry *e = mcl_blob();
+    (void)foot_y;
+    int tw = mcl_tile_w(w), i = (x - 4) / tw;
+    bkp_enable();
+    if (!e || !e->fb() || x < 4 || i >= MCL_TILES || d < MCL_TILE_Y || d >= MCL_TILE_Y + MCL_TILE_H)
+        return;
+    UI->down[id & 3] = (uint8_t)(i + 1);
+    UI->mask |= (uint16_t)(1u << i);
+    e->input(2, i, 0);
+}
+
+void mcl_page_up(int id)
+{
+    const struct mcl_entry *e = mcl_blob();
+    bkp_enable();
+    int i = UI->down[id & 3] - 1;
+    if (i < 0)
+        return;
+    UI->down[id & 3] = 0;
+    UI->mask &= (uint16_t)~(1u << i);
+    if (e)
+        e->input(3, i, 0);
+}
+
+void mcl_page_knob(int knob, int counts)
+{
+    const struct mcl_entry *e = mcl_blob();
+    if (!e || knob < 0 || knob > 3)
+        return;
+    bkp_enable();
+    int a = UI->acc[knob] + counts, steps = a / MCL_ENC_COUNTS;
+    UI->acc[knob] = (int16_t)(a - steps * MCL_ENC_COUNTS);
+    if (steps)
+        e->input(1, knob, steps);
 }

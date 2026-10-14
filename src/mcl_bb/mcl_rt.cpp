@@ -15,6 +15,7 @@
 #include "bb_clock.h"
 #include "bb_m3test.h"
 #include "bb_midi.h"
+#include "bb_ui.h"
 
 extern "C" {
 extern uint32_t __data_lma[], __data_start[], __data_end[], __bss_start[], __bss_end[], __heap_start[], __heap_limit[];
@@ -394,15 +395,30 @@ extern "C" char *mcl_status_text(char *p, uint32_t room)
 
 struct mcl_entry {
     uint32_t magic;                                   /* "MCLB" */
-    uint32_t abi;                                     /* 2: status(p, room), gui() */
+    uint32_t abi;                                     /* 3: boot, status(p, room), gui(), compact; then the page: fb(), sig(), input() */
     uint32_t (*boot)(void);
     char *(*status)(char *, uint32_t);
     void (*gui)(void);
     uint32_t compact;                                 /* 1 in the hardware test images: the version label shows ONLY the status text (the stock text after it runs off the screen) */
+    const uint8_t *(*fb)(void);                       /* the 128x32 screen (bb_ui.h); null while the runtime is not up */
+    uint32_t (*sig)(void);                            /* draws it; a hash that changes with the picture (0 while the runtime is not up) */
+    void (*input)(uint32_t kind, int32_t a, int32_t b);     /* encoders and buttons from the page, GUI task */
 };
-#if defined(M3_TEST) || defined(M4_TEST) || defined(M5_TEST)
+static int ready(void)
+{
+    volatile uint32_t *s = BKP;
+    return s[0] == BKP_MAGIC && (s[1] & 0xff) == ST_OK;
+}
+static const uint8_t *page_fb(void) { return ready() ? bb_ui_fb() : 0; }
+static uint32_t page_sig(void) { return ready() ? bb_ui_sig() : 0; }
+static void page_input(uint32_t kind, int32_t a, int32_t b)
+{
+    if (ready())
+        bb_ui_input(kind, a, b);
+}
+#if defined(M3_TEST) || defined(M4_TEST) || defined(M5_TEST) || defined(COMPACT_LABEL)
 #define COMPACT 1u
 #else
 #define COMPACT 0u
 #endif
-extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 2, mcl_boot, mcl_status_text, mcl_gui, COMPACT};
+extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 3, mcl_boot, mcl_status_text, mcl_gui, COMPACT, page_fb, page_sig, page_input};

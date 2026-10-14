@@ -127,7 +127,12 @@ static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> til
 
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
 enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
-enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, M_TRIG, MODES };   /* M_TRIG: Trigger2MIDI (src/t2m_page.c), tab 6 */
+enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, M_TRIG, M_MCL, MODES };   /* M_TRIG: Trigger2MIDI (src/t2m_page.c), tab 6; M_MCL: the MCL screen (mcl_page_* in src/cpu.c), tab 7 */
+void mcl_page_draw(int w, int foot_y);
+void mcl_page_down(int id, int x, int d, int w, int foot_y);
+void mcl_page_up(int id);
+void mcl_page_knob(int knob, int counts);
+uint32_t mcl_page_sig(void);
 #define SM_SHEETS 4
 #define SMS_REC 1
 #define SMS_FX 2
@@ -370,6 +375,8 @@ int looper_page_hit(int x, int d, int *track, float *val)
             *track = 94;
             return Z_OPTC;
         }
+        if (P->mode == M_MCL)
+            return Z_NONE;                                        /* (no tabs, no sheets: only the STOCK FX button above) */
         if (P->mode == M_SMPLR || P->mode == M_TRIG) {            /* the sheets (track >= 10 tells Z_TAB apart) */
             int sh = (x - 3) / 60;
             if (x >= 3 && sh < (P->mode == M_TRIG ? 4 : SM_SHEETS) && (x - 3) % 60 < 58) {
@@ -936,7 +943,7 @@ static void tab_select(int i)
         samplr_leave();
     if (i == 5 && P->mode != M_SMPLR)
         samplr_enter();
-    P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : i == 4 ? M_MORE : i == 6 ? M_TRIG : M_SMPLR);
+    P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : i == 4 ? M_MORE : i == 6 ? M_TRIG : i == 7 ? M_MCL : M_SMPLR);
     if (i == 1 && FX_GROUP >= 2)
         set_fx_sel(0);
     else if (i == 2 && FX_GROUP < 2)
@@ -1103,6 +1110,10 @@ static void draw_footer(const struct lay *L)
             frame(3 + 60 * i, L->foot_y + 2, 58, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
             text_c(3 + 60 * i, L->foot_y + 4, 58, sh_name[i], on ? C_CYAN : C_GREY, 1);
         }
+        x0 = P->w;
+    }
+    if (P->mode == M_MCL) {
+        text(3, L->foot_y + 4, "MCL   KNOBS 1-4 = ENCODERS", C_CYAN, 1);
         x0 = P->w;
     }
     if (P->mode == M_SMPLR) {                                     /* SAMPLR is a page of its own: SONG opens it, MIX goes to the Looper; the footer picks the sheet */
@@ -1608,7 +1619,7 @@ static uint32_t signature(void)
               (uint32_t)(P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) << 29 | (uint32_t)(P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW) << 28)) * 16777619u;
     for (int o = 0; o < LOOPER_OPTS; o++)
         h = (h ^ (uint32_t)(looper_get_opt(o) * 1000.f + .5f)) * 16777619u;
-    return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : P->mode == M_TRIG ? t2m_page_sig() : 0u);
+    return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : P->mode == M_TRIG ? t2m_page_sig() : P->mode == M_MCL ? mcl_page_sig() : 0u);
 }
 
 /* Called for every mixer cell while the page shows: the first cell draws the whole page, the others nothing.
@@ -1662,6 +1673,8 @@ static void paint(uint8_t *view)
         draw_samplr();
     else if (P->mode == M_TRIG)
         t2m_page_draw(P->w, L.foot_y);
+    else if (P->mode == M_MCL)
+        mcl_page_draw(P->w, L.foot_y);
     draw_footer(&L);
     P->sig = signature();
     looper_guard_drawing(0);
@@ -1795,7 +1808,7 @@ void looper_page_want(int tab)
 
 int looper_page_tab(void)
 {
-    return P->mode == M_SMPLR ? 5 : P->mode == M_TRIG ? 6 : P->mode;
+    return P->mode == M_SMPLR ? 5 : P->mode == M_TRIG ? 6 : P->mode == M_MCL ? 7 : P->mode;
 }
 
 /* Switch the tab of the page that is up. */
@@ -1922,6 +1935,15 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         layout(0, &L);
         if (d < L.foot_y) {
             t2m_page_touch(x, d, P->w, L.foot_y);
+            dirty_now(view);
+            return;
+        }
+    }
+    if (P->mode == M_MCL) {
+        struct lay L;
+        layout(0, &L);
+        if (d < L.foot_y) {
+            mcl_page_down(id, x, d, P->w, L.foot_y);
             dirty_now(view);
             return;
         }
@@ -2068,6 +2090,8 @@ void looper_page_up(uint8_t *view, const int *pt, int id)
 {
     (void)pt;
     probe(id, 2);
+    if (P->mode == M_MCL)
+        mcl_page_up(id);
     if (P->mode != M_SMPLR || !sm_up(id))
         samplr_touch(2, id & 3, 0, 0);
     if (P->pressed == P_REC)
@@ -2100,9 +2124,11 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
                     samplr_knob(knob, counts);
             } else if (P->mode == M_TRIG)
                 t2m_page_knob(knob, counts);
+            else if (P->mode == M_MCL)
+                mcl_page_knob(knob, counts);
             else if (P->mode == M_MAIN)
                 P->sel = (uint8_t)knob;                                   /* altering a track's setting selects it */
-            if (P->mode == M_SMPLR || P->mode == M_TRIG) {
+            if (P->mode == M_SMPLR || P->mode == M_TRIG || P->mode == M_MCL) {
             } else if (P->mode == M_SETUP || P->mode == M_MORE) {
                 static const uint8_t op_s[4] = {LOOPER_O_GAIN, 0, 0, 0};
                 static const uint8_t op_m[4] = {LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET};
@@ -2226,7 +2252,7 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     return;
                 }
                 P->btn_t = looper_ticks();
-                if (P->mode == M_TRIG)
+                if (P->mode == M_TRIG || P->mode == M_MCL)
                     break;                                         /* the TRIG page has no use for them: the stock firmware gets them */
                 if (P->mode == M_SMPLR) {                          /* on the SAMPLR page the buttons are SAMPLR's, never the looper's */
                     if (slot == B_FX)

@@ -10,6 +10,7 @@ All of it is MIT-licensed, and these notices travel with every copy.
 | `reverb.h`, `fx_engine.h` | © Émilie Gillet (Mutable Instruments) | MIT | `src/munchi/tempo/`, notices in the files |
 | DaisySP `dsp.h` | © Electrosmith, Corp. | MIT | `src/munchi/daisysp/` |
 | State-variable filter, after stmlib `dsp/filter.h` (`Svf`) | © 2014 Émilie Gillet | MIT | reimplemented in `src/filter.c` |
+| Classic 5x7 font of Adafruit_GFX (`glcdfont`) | © 2012 Adafruit Industries | BSD | `src/mcl_bb/glcdfont.h`, license in `src/mcl_bb/ADAFRUIT_GFX_LICENSE.txt` |
 
 ## Not included
 

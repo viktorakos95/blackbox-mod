@@ -251,3 +251,23 @@ On the unit the version label is followed by stock text ("4GB") and the whole li
 KeyStep as master on MIDI IN, started before power-up: the label read **`e47`** (worst phase error 47 us over the last second), i.e. the loop locked and the KeyStep's clocks strayed at most 47 us from our smooth tempo. That matches the KeyStep's measured jitter
 (`clock-findings.md`: sd ~33-38 us on arrival), so the detector sees the master's real jitter and the loop is not adding any of its own; the emulator showed our output interval sd at about a fifth of the input's.
 Still open for M5: internal tempo / transport (the Blackbox's own sequencer) and analog sync, which need a live display to be measured, hence after M6.
+
+## M6: the MCL page (screen and input)
+
+After the merge with the clock agent's branch (`seqfix_now()`, CLK sheet, analog sync notes in `docs/analog-sync-notes.md`).
+
+- **Where:** the fourth page of the SONG button: SONG -> SAMPLR -> TRIG -> **MCL** -> the stock song screen (`solo_song_pressed`). Hook in `src/looper_page.c`
+  (mode `M_MCL`, tab 7: draw, touch down/up, knobs, redraw signature, footer text, no tabs); the page itself is `mcl_page_*` in `src/cpu.c`.
+  The hook is the only change to `looper_page.c` (about 25 lines, all marked `M_MCL` / `mcl_page_`).
+- **Screen:** the blob owns a 128x32 one-bit frame buffer in Adafruit_GFX / SSD1306 layout (`bb_ui_fb()`), so MCL's own GUI code can draw into it unchanged in M8.
+  The page draws it 2x (256x64, white on black, horizontal runs) and redraws when `bb_ui_sig()` (a hash of the picture) changes.
+- **Input:** the four knobs are encoders 1-4 (`MCL_ENC_COUNTS` = 20 stock counts a detent, a guess like the TRIG page's 40: tune on the unit); five touch tiles
+  under the screen are the buttons B1 B2 B3 B4 SHIFT (down and up, per touch id). Hardware REC / BACK / STOP / PLAY still go to the stock firmware on this page.
+- **Until MCL runs (M8)** the screen is a live test bench for the MIDI clock: B1 follows the MIDI clock on the jack (PLL, state shown LISTEN / 1 CLK / LOCKED / LOST),
+  B2 starts our own clock at the tempo of encoder 1 (1 BPM a detent, B4 held = tenths), B3 stops. Lines: mode, BPM, TICK count, phase error last/worst (us) and clocks processed,
+  the four encoder counts and the button bits. This is the live display the M5b work (internal and analog follow) needed.
+- **Backup SRAM:** the page's state is 16 bytes at 0x38800930 (cleared in `start()` at every power-up; the cave has no .bss).
+- **Font:** Adafruit_GFX's classic 5x7 font (BSD), `src/mcl_bb/glcdfont.h`, license text in `src/mcl_bb/ADAFRUIT_GFX_LICENSE.txt`, listed in THIRD_PARTY.md.
+- **Entry table abi 3:** `fb()`, `sig()`, `input(kind, a, b)` appended; `cpu.c` refuses any other abi.
+- **Tests:** `test_mcl_ui.py` (screen text decoded back from the frame buffer, buttons, encoder accumulation, tile mapping per touch id, blit coverage = lit pixels, state cleared at power-up).
+  NOT checked: how it looks on the real screen, touch feel, knob counts per detent.

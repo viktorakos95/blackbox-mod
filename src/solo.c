@@ -298,8 +298,10 @@ void solo_song_pressed(uint8_t *app, int computed, int a, int b)
         fw_set_screen(app, 0x2d, a, b);
     } else if (cur == SCREEN_MUTE && S->looper && S->view) {
         int tab = looper_page_tab();
-        if (tab == 6)
-            fw_set_screen(app, 0x2d, a, b);            /* SAMPLR -> TRIG -> the stock song screen */
+        if (tab == 7)
+            fw_set_screen(app, 0x2d, a, b);            /* SAMPLR -> TRIG -> MCL -> the stock song screen */
+        else if (tab == 6)
+            looper_page_goto(S->view, 7);
         else
             looper_page_goto(S->view, tab == 5 ? 6 : 5);
     } else {
