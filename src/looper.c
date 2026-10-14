@@ -1328,6 +1328,12 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
         wlen >>= 1;
     if (wlen < 64)
         wlen = len < 64 ? len : 64;
+    int fon = p->fm0 != 0.f || p->dfm != 0.f;         /* the filter off and faded out is left out (a third of a track's cost); its state starts from rest when it comes back */
+    if (!fon) {
+        float *z = &d->sv[t][0][0][0];
+        for (int q = 0; q < 8; q++)
+            z[q] = 0.f;
+    }
     for (int i = i0; i < i1; i++) {
         uint32_t m = place(k, pos, len);
         int16_t *a = frame_at(t, m);
@@ -1359,7 +1365,7 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
             xl = d->hold[t][0];
             xr = d->hold[t][1];
         }
-        {
+        if (fon) {
             int hp = p->filt == 2;
             float x2[2] = {xl, xr};
             float m = p->fm0 + p->dfm * (float)(i + 1);
