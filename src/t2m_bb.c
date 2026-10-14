@@ -89,6 +89,13 @@ void t2m_seq(const void *seq, uint32_t lo, int32_t hi)
         clkmon_seq(&m->clk, seq, lo, hi);
 }
 
+void t2m_loop(uint32_t ticks_into_bar)
+{
+    struct t2m_mem *m = t2m_mem();
+    if (m)
+        clkmon_loop(&m->clk, ticks_into_bar);
+}
+
 struct t2m_mem *t2m_mem(void)
 {
     return R->magic == MAGIC ? R->mem : 0;

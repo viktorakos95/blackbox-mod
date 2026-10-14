@@ -298,6 +298,8 @@ void clkmon_seq(struct clkmon *c, const void *seq, uint32_t lo, int32_t hi)
         x->seqs_max = x->blk_calls;
     if (!x->seq_id)
         x->seq_id = id;
+    if (id == x->seq_id)
+        c->now_lo = lo;
     if (id != x->seq_id) {                          /* another sequence: its latest time in this block, compared when the block ends */
         x->blk_other = lo;
         x->blk_have_other = 1;
@@ -450,4 +452,9 @@ uint32_t clkmon_sig(const struct clkmon *c)
     }
     h = (h ^ c->xp.calls ^ c->xp.restarts ^ (c->xp.spread << 8)) * 16777619u;
     return (h ^ (uint32_t)(c->mhz * 10.f)) * 16777619u;
+}
+
+void clkmon_loop(struct clkmon *c, uint32_t ticks_into_bar)
+{
+    c->lstart1 = ticks_into_bar + 1;
 }

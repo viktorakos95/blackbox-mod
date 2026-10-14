@@ -68,6 +68,7 @@ void bkp_enable(void);
 void looper_ui_poke(void);
 #include "samplr.h"
 double seqfix_now(void);
+void t2m_loop(uint32_t ticks_into_bar);
 #define SEQ_TPB 960.0     /* sequencer ticks a beat: measured on the unit (1924 ticks a second at 120 bpm, 2880 at 180), exact whatever the tempo */
 void solo_boot_reset(void);
 void looper_page_boot(void);
@@ -1517,6 +1518,8 @@ static void apply(int t, int b)
             k->mode = LOOPER_REC;
             k->rec = 0;
             k->own = OWN_NO;
+            if (S->cur_ok)
+                t2m_loop((uint32_t)dmod(seqfix_now() + (double)b * (double)S->rate, 4.0 * SEQ_TPB));   /* (clock monitor: where in the bar the take began) */
         } else if (k->mode == LOOPER_EMPTY) {
             if (opt_i(LOOPER_O_LEN) == LOOPER_LEN_FOLLOW) {
                 k->was_empty = 1;

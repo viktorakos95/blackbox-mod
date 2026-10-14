@@ -449,6 +449,15 @@ static void draw_clk(struct t2m_mem *m, int w, int foot)
     p = put_u(p, xp.spread);
     *p = 0;
     lp_text(4, d0 + 9 * st + 2, b, xp.calls ? C_LIGHT : C_GREY, 1);
+    p = put_s(b, "BAR ");
+    p = put_f(p, 1.f + (float)(m->clk.now_lo % 3840u) / 960.f, 2);
+    p = put_s(p, "  REC AT ");
+    if (m->clk.lstart1)
+        p = put_f(p, 1.f + (float)(m->clk.lstart1 - 1u) / 960.f, 2);
+    else
+        p = put_s(p, "-");
+    *p = 0;
+    lp_text(4, d0 + 10 * st + 2, b, xp.calls ? C_YELLOW : C_GREY, 1);
 }
 
 void t2m_page_draw(int w, int foot)
