@@ -451,11 +451,21 @@ static void draw_clk(struct t2m_mem *m, int w, int foot)
     lp_text(4, d0 + 9 * st + 2, b, xp.calls ? C_LIGHT : C_GREY, 1);
     p = put_s(b, "BAR ");
     p = put_f(p, 1.f + (float)(m->clk.now_lo % 3840u) / 960.f, 2);
-    p = put_s(p, "  REC AT ");
+    p = put_s(p, " LOOP ");
     if (m->clk.lstart1)
         p = put_f(p, 1.f + (float)(m->clk.lstart1 - 1u) / 960.f, 2);
     else
         p = put_s(p, "-");
+    if (m->clk.lstart1) {
+        p = put_s(p, " SEQ ");
+        p = put_f(p, 1.f + (float)(m->clk.lseq1 - 1u) / 960.f, 2);
+        p = put_s(p, " W");
+        p = put_u(p, m->clk.linfo & 15u);
+        p = put_s(p, " Q");
+        p = put_u(p, (m->clk.linfo >> 4) & 15u);
+        p = put_s(p, " S");
+        p = put_u(p, (m->clk.linfo >> 8) & 15u);
+    }
     *p = 0;
     lp_text(4, d0 + 10 * st + 2, b, xp.calls ? C_YELLOW : C_GREY, 1);
 }

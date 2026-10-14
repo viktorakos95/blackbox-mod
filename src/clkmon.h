@@ -71,6 +71,8 @@ struct clkmon {
     float mhz;                       /* core clock from the SysTick reload (the firmware's 1 kHz tick); 0 = not plausible */
     uint32_t reset;                  /* set by the page */
     uint32_t now_lo;                 /* the followed sequence's musical time at its last call */
+    uint32_t linfo;                  /* what the looper had then: when (0 now, 1 grid, 2 master wrap, 3 target) | quant << 4 | sync << 8 */
+    uint32_t lseq1;                  /* 1 + the followed sequence's ticks into the bar at that moment */
     uint32_t lstart1;                /* 1 + the sequencer ticks into the bar (0..3839) where the looper last began recording; 0 = none */
 };
 
@@ -101,4 +103,4 @@ void clkmon_stats(const struct clkmon *c, int src, struct clk_stats *o);
 float clkmon_mhz(const struct clkmon *c);            /* 0 until the first audio block */
 float clkmon_blk_ms(const struct clkmon *c, int max); /* the shortest (0) / longest (1) gap between two audio blocks, ms */
 uint32_t clkmon_sig(const struct clkmon *c);
-void clkmon_loop(struct clkmon *c, uint32_t ticks_into_bar);   /* the looper began recording here */
+void clkmon_loop(struct clkmon *c, uint32_t ticks_into_bar, uint32_t info);   /* the looper began recording here */

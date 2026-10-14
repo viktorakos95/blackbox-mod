@@ -454,7 +454,9 @@ uint32_t clkmon_sig(const struct clkmon *c)
     return (h ^ (uint32_t)(c->mhz * 10.f)) * 16777619u;
 }
 
-void clkmon_loop(struct clkmon *c, uint32_t ticks_into_bar)
+void clkmon_loop(struct clkmon *c, uint32_t ticks_into_bar, uint32_t info)
 {
+    c->linfo = info;
+    c->lseq1 = c->now_lo % 3840u + 1u;
     c->lstart1 = ticks_into_bar + 1;
 }
