@@ -1798,7 +1798,7 @@ static void apply(int t, int b)
 enum { E_LOOPER, E_SAMPLR, E_DRONE };               /* the engines, for the guard's priorities (below) */
 int looper_soft_threshold(int e);
 #define GUARD_SOFT 920                            /* per mille of the averaged load: where the engine that gives way first starts to fade (later ones a little higher) */
-#define FADE_OUT   (1.f / 375.f)                  /* ~1 s */
+#define FADE_OUT   (1.f / 750.f)                  /* ~2 s out; coming back takes ~2.5 s */
 #define WAKE (*(volatile uint32_t *)0x2405ffd4u)  /* cpu.c: the cycle count when the audio task woke up for this block */
 #define CYC  (*(volatile uint32_t *)0xe0001004u)
 
@@ -1896,11 +1896,7 @@ unsigned looper_load_avg(void)                     /* the whole task's load (per
 static void guard_decide(struct dsp *d)
 {
     struct guard *g = &d->gd;
-    int fading = 0, mark = looper_soft_threshold(E_LOOPER), lead = looper_page_leader(), back = 0;
-    if (lead != g->lead_seen) {                                           /* another page was opened */
-        g->lead_seen = (uint8_t)lead;
-        back = lead == E_LOOPER;                                          /* the Looper page: its tracks come back (and the others give way, if need be) */
-    }
+    int fading = 0, mark = looper_soft_threshold(E_LOOPER);
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
         if (g->gm[t] && !k->muted) {                                      /* the player unmuted it: it plays, and goes last next time */
@@ -1912,16 +1908,6 @@ static void guard_decide(struct dsp *d)
             g->urec[t]++;
         if (g->gct[t] < 0xffffu)
             g->gct[t]++;
-        if (back && g->fading[t]) {
-            g->fading[t] = 0;                                             /* (it turns back: fo runs down below) */
-            g->cool = 188;
-        }
-        if (back && g->gm[t]) {
-            k->muted = 0;
-            g->gm[t] = g->gc[t] = 0;
-            g->fo[t] = 1.f;                                               /* fading in */
-            g->cool = 3 * 188;
-        }
         if (g->fading[t]) {
             if (k->muted || !track_out(k)) {                              /* the player muted it meanwhile, or it stopped */
                 g->fading[t] = 0;
@@ -1942,7 +1928,7 @@ static void guard_decide(struct dsp *d)
                 fading = 1;
             }
         } else if (!g->gm[t] && g->fo[t] > 0.f) {
-            g->fo[t] = g->fo[t] > 2.f * FADE_OUT ? g->fo[t] - 2.f * FADE_OUT : 0.f;   /* turned back / coming back: fading in (~0.5 s) */
+            g->fo[t] = g->fo[t] > .8f * FADE_OUT ? g->fo[t] - .8f * FADE_OUT : 0.f;   /* turned back / coming back: fading in (~2.5 s) */
         }
     }
     if (!fading && !g->force && !g->cool) {                               /* a track the guard muted comes back (fading in) when the load with it would be under the mark: one at a time, the last to go first */

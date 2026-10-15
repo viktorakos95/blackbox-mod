@@ -276,6 +276,13 @@ def tq():
 def rms(o):
     return (sum(v * v for v in o[0]) / len(o[0])) ** 0.5
 
+def dsp_off_page(field):
+    src = '#include "src/looper_page.c"\nchar o_x[__builtin_offsetof(struct page, %s)];\n' % field
+    out = subprocess.run(["arm-none-eabi-gcc", "-I.", "-Isrc", "-mcpu=cortex-m7", "-mthumb", "-mfloat-abi=hard", "-mfpu=fpv5-d16", "-ffreestanding", "-S", "-x", "c", "-", "-o", "-"],
+                         input=src, capture_output=True, text=True, check=True).stdout.splitlines()
+    i = [k for k, l in enumerate(out) if l.strip() == "o_x:"][0]
+    return int(next(l.split()[1] for l in out[i:] if l.strip().startswith(".space")))
+PG = 0x38800f00
 def until(cond, nb, pre, whole):
     for i in range(nb):
         run_at(pre, whole, 1)
@@ -300,19 +307,19 @@ n1 = until(lambda: fading() != [0] * 4, 700, 0.10, 0.93)
 check("the average reaches the mark: track 3 starts to fade out, the others stay as set", fading() == [0, 0, 1, 0] and tq() == [0] * 4 and muted() == [0] * 4, (n1, fading(), tq(), muted()))
 f0 = fo()[2]
 o = run_at(0.10, 0.93, 100)
-check("... slowly (~1 s: about a quarter in 100 blocks)", 0.2 < fo()[2] - f0 < 0.35 and muted()[2] == 0, (f0, fo()[2], muted()))
-n2 = until(lambda: muted()[2] == 1, 600, 0.10, 0.93)
+check("... slowly (~2 s: about an eighth in 100 blocks)", 0.1 < fo()[2] - f0 < 0.17 and muted()[2] == 0, (f0, fo()[2], muted()))
+n2 = until(lambda: muted()[2] == 1, 1000, 0.10, 0.93)
 o = run_at(0.10, 0.93, 1)
 check("... then muted (the page shows it), and only that one", muted() == [0, 0, 1, 0] and gm() == [0, 0, 1, 0] and fading() == [0] * 4, (n2, muted(), gm(), fading()))
 check("... the other three sound", rms(o[-1]) > 0.3 * base, (rms(o[-1]), base))
 o = run_at(0.10, 0.93, 400)
 check("still at the mark: the next one (track 2) only after a good pause (3 s)", fading()[1] == 0 and muted()[1] == 0, (fading(), muted()))
-n3 = until(lambda: muted()[1] == 1, 900, 0.10, 0.93)
+n3 = until(lambda: muted()[1] == 1, 1800, 0.10, 0.93)
 check("... then track 2", muted() == [0, 1, 1, 0], (n3, muted()))
-n4 = until(lambda: fading()[0] == 1, 900, 0.10, 0.93)
+n4 = until(lambda: fading()[0] == 1, 1800, 0.10, 0.93)
 run_at(0.10, 0.93, 30)
 check("(track 1 fading)", fading()[0] == 1 and muted()[0] == 0, (n4, fading(), fo()))
-o = run_at(0.10, 0.70, 400)
+o = run_at(0.10, 0.70, 500)
 check("the load goes down during a fade: it turns back and fades in again", fading()[0] == 0 and muted()[0] == 0 and fo()[0] == 0.0, (fading(), muted(), fo()))
 o = run_at(0.10, 0.70, 300)
 check("... and room again: the muted ones come back by themselves, not all at once (one first, track 2)", muted() in ([0, 0, 1, 0], [0, 1, 1, 0]) and gm()[1] in (0, 1), (muted(), gm()))
@@ -321,8 +328,8 @@ check("... track 2 first (the last to go comes back first)", m1 > 0 and muted() 
 m2 = until(lambda: muted() == [0] * 4, 1200, 0.10, 0.70)
 check("... the other one after a pause, fading in, not jumping in (its gain starts at 0 and rises)", fo()[2] > 0.9, fo())
 o = run_at(0.10, 0.70, 60)
-check("... (a quarter of the way after 60 blocks)", 0.5 < fo()[2] < 0.9, fo())
-o = run_at(0.10, 0.70, 400)
+check("... (still near the start after 60 blocks: it takes ~2.5 s)", 0.85 < fo()[2] < 0.99, fo())
+o = run_at(0.10, 0.70, 1100)
 check("... and then the other, all back, fully faded in", muted() == [0] * 4 and gm() == [0] * 4 and fo() == [0.0] * 4 and rms(o[-1]) > 0.5 * base, (m2, muted(), gm(), fo(), rms(o[-1]), base))
 n5 = until(lambda: muted() != [0] * 4, 900, 0.10, 0.93)
 unmute_all()
@@ -359,9 +366,23 @@ n8 = until(lambda: muted() != [0] * 4 or fading() != [0] * 4, 1500, 0.10, 0.94)
 check("... and the looper fades a track at its mark (92 %) as it always did", n8 > 0, (n8, muted(), fading()))
 until(lambda: muted() != [0] * 4, 900, 0.10, 0.94)
 check("(a track is muted by the guard)", sum(muted()) >= 1 and sum(gm()) >= 1, (muted(), gm()))
-e.call("looper_page_set_leader", 0)                    # the Looper page is opened: its tracks come back at once, and fade in
-run_at(0.10, 0.94, 3)
-check("the Looper page is opened: what was muted comes back at once (fading in)", muted() == [0] * 4 and gm() == [0] * 4 and max(fo()) > 0.5, (muted(), gm(), fo()))
+# a page that is opened leads only after it has stayed open ~5 s; nothing is restored or removed at once
+e.call("looper_page_set_leader", 2)
+def poke_lead(v):
+    e.call("looper_ticks")
+    t = r0s()
+    e.uc.mem_write(PG + dsp_off_page("lead"), bytes([v]))
+    e.w32(PG + dsp_off_page("lead_t"), t)
+def leader():
+    e.call("looper_page_leader")
+    return r0s()
+poke_lead(0)                                           # the Looper page was just opened
+check("a page just opened does not lead yet (the old leader still counts)", leader() == 2, leader())
+run_at(0.10, 0.70, 900)
+check("... nor after ~2 s", leader() == 2, leader())
+run_at(0.10, 0.70, 1200)
+check("... but after ~5 s it does", leader() == 0, leader())
+e.call("looper_page_set_leader", 2)
 run_at(0.10, 0.70, 600)
 e.call("looper_page_set_leader", 3)
 check("no page opened yet: the old order (SAMPLR above the looper: no time kept for the tracks, its cap 90 %)", over(1, 0.60) == 0 and over(1, 0.89) == 0 and over(1, 0.91) == 1, (over(1, 0.60), over(1, 0.89), over(1, 0.91)))
@@ -377,8 +398,8 @@ peak = max(abs(v) for v in x)
 check("... a ramp to 0 within the block (no click from a cut mid-wave)", abs(x[-1]) < 0.01 * peak + 1e-5, (peak, x[-1]))
 o = run_at(0.10, 0.70, 5)
 check("... quiet while the next blocks fade it back in", max(max(abs(v) for v in b[0]) for b in o) < 0.5 * peak, (max(max(abs(v) for v in b[0]) for b in o), peak))
-o = run_at(0.10, 0.70, 400)
-check("... and back at its level a little later (~0.5 s fade-in)", muted() == [0] * 4 and fo() == [0.0] * 4 and rms(o[-1]) > 0.5 * base, (muted(), fo(), rms(o[-1]), base))
+o = run_at(0.10, 0.70, 1100)
+check("... and back at its level a little later (~2.5 s fade-in)", muted() == [0] * 4 and fo() == [0.0] * 4 and rms(o[-1]) > 0.5 * base, (muted(), fo(), rms(o[-1]), base))
 o = run_at(0.97, 0.99, 6)
 check("... while the time stays used up, they stay out", max(max(abs(v) for v in b[0]) for b in o[1:]) < 1e-6, max(max(abs(v) for v in b[0]) for b in o[1:]))
 o = run_at(0.10, 0.70, 400)

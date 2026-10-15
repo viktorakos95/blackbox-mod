@@ -105,7 +105,7 @@ for i in range(60):
     if not seen or seen[-1] != shed():
         seen.append(shed())
 check("85 % of the block used before the synth (it is not at the mark): no step, however long", seen == [0], str(seen))
-for i in range(440):
+for i in range(520):
     w = wave(0.975)
     r = math.sqrt(sum(v * v for v in w) / N)
     rmss.append(r)
@@ -117,19 +117,19 @@ r = rmss[-1]
 check("... and is silent once it has faded out", r == 0.0, "rms %.5f" % r)
 peak = max(rmss[:20])
 first_low = next((i for i, v in enumerate(rmss) if v < 0.5 * peak), None)
-check("... and the fade takes a long while (the output is still half or more 60 blocks after the step)", first_low is None or first_low > 120, str(first_low))
+check("... and the fade takes a long while (the output is still half or more 150 blocks after the step)", first_low is None or first_low > 150, str(first_low))
 check("... the delay lines going make no jump: the largest step between samples stays within 3x of the first blocks'",
       max(steps) < 3 * max(steps[:10]) + 1e-4, "max %.5f first %.5f" % (max(steps), max(steps[:10])))
 for _ in range(10):
     block(0.5)
 check("room again, but not for long enough: still out", shed() == 3, str(shed()))
 back = []
-for _ in range(400):
+for _ in range(900):
     back.append(block(0.5))
-check("after ~500 blocks it comes back", shed() == 0, str(shed()))
+check("after ~800 blocks (2 s) it comes back", shed() == 0, str(shed()))
 i0 = next((i for i, v in enumerate(back) if v > 0.001), None)
 lvl = sum(back[-30:]) / 30
-check("... fading in (the first blocks are quiet; it takes ~190 blocks to reach its level)", i0 is not None and back[i0] < 0.3 * lvl and sum(back[i0 + 150:i0 + 190]) / 40 > 0.6 * lvl, "first %.4f level %.4f" % (back[i0] if i0 is not None else -1, lvl))
+check("... fading in (the first blocks are quiet; it takes ~470 blocks (2.5 s) to reach its level)", i0 is not None and back[i0] < 0.3 * lvl and sum(back[i0 + 420:i0 + 460]) / 40 > 0.6 * lvl, "first %.4f level %.4f" % (back[i0] if i0 is not None else -1, lvl))
 # the whole audio task (cpu.c's running block count and load sum): work after the synth that the mid-task value cannot see
 CPU = 0x2405FFD0
 e.uc.mem_write(CPU, struct.pack("<IIIHH", 0x43505532, 0, 0, 0, 0))
@@ -182,11 +182,6 @@ e.call("looper_page_set_leader", 0)
 for _ in range(2500):
     block_w(0.5, 0.945)
 check("the Looper page opened last: the synth gives way before the looper (its mark is lower, 93.5 %): 94.5 % takes it out", shed() == 3, str(shed()))
-e.call("looper_page_set_leader", 2)
-run_n = 0
-for _ in range(10):
-    block_w(0.5, 0.945)
-check("... and the synth's page is opened: it comes back at once", shed() == 0, str(shed()))
 e.call("looper_page_set_leader", 3)
 for _ in range(2500):
     block_w(0.5, 0.6)

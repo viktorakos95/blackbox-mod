@@ -2685,7 +2685,7 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         struct smscr *sc = s->sc;
         int avg = (int)looper_load_avg(), mk = looper_soft_threshold(1);
         uint32_t since = s->tick - sc->shed_t;
-        if (avg >= mk - 20 && sc->shed < 5 && since > 188) {
+        if (avg >= mk - 20 && sc->shed < 5 && since > (avg >= mk + 25 ? 60u : 188u)) {   /* (well over the mark, as when stock pads pile on: quicker) */
             sc->shed++;
             sc->shed_t = s->tick;
         } else if (avg < mk - 70 && sc->shed > 0 && since > 376) {
@@ -2705,24 +2705,6 @@ int samplr_run(float *bl, float *br, int n, float **snd)
             if (q) {
                 fading |= q->gfade;
                 outn += q->gfade || q->gmu;
-            }
-        }
-        {
-            int lead = looper_page_leader();
-            if (lead != (int)sc->lead_seen) {                     /* another page was opened; if it is SAMPLR's, what was faded out comes back (fading in) */
-                sc->lead_seen = (uint8_t)lead;
-                if (lead == 1) {
-                    for (int t = 0; t < SM_TRACKS; t++) {
-                        struct sm *q = t ? trk_get(t, 0) : s;
-                        if (q) {
-                            q->gmu = 0;
-                            q->gfade = 0;
-                        }
-                    }
-                    sc->gcool = 3 * 188;
-                    fading = 0;
-                    outn = 0;
-                }
             }
         }
         if (sc->gcool)
@@ -2822,14 +2804,14 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         }
         float f0 = 1.f - q->gfd;                                  /* the guard's fade: a ramp across the block */
         if (q->gfade) {
-            q->gfd += (float)n / (1.f * 48000.f);
+            q->gfd += (float)n / (2.f * 48000.f);
             if (q->gfd >= 1.f) {                                  /* silent: out from the next block on */
                 q->gfd = 1.f;
                 q->gfade = 0;
                 q->gmu = 1;
             }
         } else if (q->gfd > 0.f) {
-            q->gfd -= (float)n / (.6f * 48000.f);
+            q->gfd -= (float)n / (2.5f * 48000.f);
             if (q->gfd < 0.f)
                 q->gfd = 0.f;
         }

@@ -165,7 +165,6 @@ struct smscr {
     uint16_t shxp, shxd, shxl, shxr;        /* their last report (per mille of the block period) */
     uint32_t t_end;                         /* the cycle count at the end of the looper stage this block (0: not reached) */
     uint16_t gcool, gcalm;                  /* the guard's track fades: blocks before the next may start; blocks in a row with room for one to return */
-    uint8_t lead_seen, _ls[3];              /* the leader as of the last block (when SAMPLR becomes it, its tracks come back) */
     uint8_t gout, _go[3];                   /* tracks out (fading or out) */
     uint8_t smute, mtop, mshown, _m;        /* out of time: a track left out of this block; any such block this report; the last report's */
     uint16_t gnow, gacc;                    /* grains sounding across all the tracks (last block / this block so far) */

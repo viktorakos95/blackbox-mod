@@ -178,6 +178,8 @@ struct page {
     int32_t tw2, tw3;                               /* the touch event's third and fourth words (a finger id?) */
     int32_t vrect[4];                               /* the mixer view's own rectangle, while the page widens it */
     uint8_t scr_h[8];                               /* the last distinct screen ids the app showed (newest first) */
+    uint8_t lead_eff, _le[3];                       /* the leader that counts: lead, once its page has stayed open for a while */
+    uint32_t lead_t;                                /* when lead last changed (looper_ticks) */
 };
 #define P ((volatile struct page *)0x38800f00u)
 #define PMAGIC 0x50414732u
@@ -938,8 +940,13 @@ static void tab_select(int i)
     if (i == 5 && P->mode != M_SMPLR)
         samplr_enter();
     P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : i == 4 ? M_MORE : i == 6 ? M_TRIG : i == 7 ? M_LIRA : M_SMPLR);
-    if (P->mode != M_TRIG)                                        /* (the TRIG page is nobody's: the leader stays) */
-        P->lead = (uint8_t)(P->mode == M_LIRA ? 2 : P->mode == M_SMPLR ? 1 : 0);
+    if (P->mode != M_TRIG) {                                      /* (the TRIG page is nobody's: the leader stays) */
+        uint8_t l = (uint8_t)(P->mode == M_LIRA ? 2 : P->mode == M_SMPLR ? 1 : 0);
+        if (l != P->lead) {
+            P->lead = l;
+            P->lead_t = looper_ticks();                           /* it leads only once its page has stayed open for a while (looper_page_leader) */
+        }
+    }
     if (i == 1 && FX_GROUP >= 2)
         set_fx_sel(0);
     else if (i == 2 && FX_GROUP < 2)
@@ -1903,7 +1910,7 @@ void looper_page_boot(void)
     }
     looper_guard(0);
     looper_guard_drawing(0);
-    P->lead = 3;                                             /* no page opened yet: the engines keep their own order (DRONE-8, SAMPLR, looper) */
+    P->lead = P->lead_eff = 3;                               /* no page opened yet: the engines keep their own order (DRONE-8, SAMPLR, looper) */
     P->info_set = 1;                                         /* INFO is message 0xc (seen as "INFO=12" on the unit);   */
     P->info_id = 0xc;                                        /* the backup SRAM does not survive a power cycle, so  */
     P->info_idx = 0;                                         /* nothing is learned by pressing any more              */
@@ -1925,7 +1932,10 @@ void looper_page_boot(void)
     P->rect_on = 0;
     P->clear_arm = 0;
     P->mode = M_MAIN;
-    P->lead = 0;                                                  /* (the Looper page is up) */
+    if (P->lead != 0) {
+        P->lead = 0;                                              /* (the Looper page is up) */
+        P->lead_t = looper_ticks();
+    }
     for (int t = 0; t < LOOPER_TRACKS; t++)
         P->fx_sel[t] = 0;
     P->_legacy = -1;
@@ -2434,11 +2444,15 @@ void looper_app_msg(void *app, const uint16_t *msg)
 /* The guard's leader: the engine whose page was opened last (0 looper, 1 SAMPLR, 2 DRONE-8), 3 none yet. */
 int looper_page_leader(void)
 {
-    return P->magic == PMAGIC && P->lead < 3 ? P->lead : 3;
+    if (P->magic != PMAGIC)
+        return 3;
+    if (P->lead != P->lead_eff && looper_ticks() - P->lead_t > 1900u)    /* ~5 s: a page that is only passed through leads nothing, and priorities never swing at once */
+        P->lead_eff = P->lead;
+    return P->lead_eff < 3 ? P->lead_eff : 3;
 }
 
 void looper_page_set_leader(int e)                             /* tests: as if that engine's page had been opened last */
 {
     P->magic = PMAGIC;
-    P->lead = (uint8_t)(e >= 0 && e < 3 ? e : 3);
+    P->lead = P->lead_eff = (uint8_t)(e >= 0 && e < 3 ? e : 3);
 }

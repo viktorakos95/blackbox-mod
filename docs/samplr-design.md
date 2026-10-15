@@ -528,3 +528,16 @@ takes three overdub layers.
   - a count of sounding grains per voice (`gcnt`, kept by grain_spawn / grains()) replaces two scans of every voice's grains per track and block.
 - The slicer in LOOP play mode has no LATCH any more (`lat_of`): a loop plays while the finger is down; taps no longer start loops that go on by themselves or stop them
   (the 8 latched loop voices of build 10 are unused). The LATCH button is not shown in that state. LATCH still works in the slicer's GATE / ONE modes and in the other modes.
+
+## Build 49 (gentle: slow fades, a leader that must stay a while)
+- Report on build 48: better; SAMPLR as before or a little better; SAMPLR + drone fine; SAMPLR + drone + looper: things came and went but not smoothly, and a page that was
+  opened became the winner at once and switched things off; the drone did not seem to lead on its own page when the CPU was short; the worst stutter left is SAMPLR (multi-touch,
+  recording, arp ...) plus a lot of stock pads (an old project, effects, knobs).
+- Leader: a page leads only after it has stayed open ~5 s (`looper_page_leader`: `lead` is the last page, `lead_eff` follows it after 1900 blocks); nothing is restored or
+  removed because a page was opened (the "come back at once" of build 46 is gone for all three engines); a tab that is only passed through changes nothing.
+- Fades, all at no CPU or RAM cost (constants): out ~2 s (looper tracks, SAMPLR tracks), ~2.5 s (the drone); in ~2.5 s for all three; the looper's removed tracks and the
+  drone wait ~2 s of room before they come back.
+- SAMPLR's quality steps come every ~0.5 s, every ~0.15 s when the load is 2.5 % over its mark (stock pads piling on).
+- Not changed: the stock engine (pads, their effects) is never touched. With SAMPLR busy and many stock pads the unit can still run out of time for a moment (the check for spikes
+  makes SAMPLR's tracks duck for those blocks); the figures show where the limit is: SAMPLR with 3 busy tracks costs about 30 % of a block (177 k instructions a 256-frame
+  block in the emulator), a heavy stock project 50-70 %.
