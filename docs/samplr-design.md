@@ -569,3 +569,7 @@ The Looper's MORE tab is gone: SETUP now holds all nine option rows (MONITOR INP
 - The averaged load rises with ~0.25 s (falls with ~0.5 s); SAMPLR's quality steps start 4 % earlier (mark - 6 %), so grains that are added quickly are thinned before the load reaches the fade mark.
 - SAMPLR: track 2's samples in lilac (palette 0x1e while the page draws), no yellow.
 - DRONE-8 3.1.AE merged. Profile (tools/prof_lira.py, full scenario): mono 16.5 %, WIDTH 0.8 17.0 %, DRIFT free: the stereo width costs 0.5 % of a block.
+
+## Build 57
+
+DRONE-8 3.1.AF merged (PAN: each oscillator its own random place). BACK on the Looper's MAIN tab now goes to the stock song screen (the undo is gone from the button); with the other pages: FX/FX2/SETUP -> MAIN, SAMPLR -> PLAY sheet -> Looper MAIN, TRIG -> sheet 1 -> SAMPLR, DRONE-8 -> TRIG. The round: SONG forward, BACK backward, both through the stock song screen.

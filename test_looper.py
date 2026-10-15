@@ -872,9 +872,10 @@ learn(5, 0xF9, 2)                                # PLAY
 check("BACK, STOP and PLAY learnt (slots 3 4 5)", e.r8(PAGE + 99) == 1 and e.r8(PAGE + 100) == 1 and e.r8(PAGE + 101) == 1)
 e.uc.mem_write(PAGE + 89, b"\x02")                # select track 3
 before = list(e.uc.mem_read(STATE + T0 + TSIZE * 2 + 8, 7))
+screens.clear()
 press(0xF9, 0)
 after = list(e.uc.mem_read(STATE + T0 + TSIZE * 2 + 8, 7))
-check("BACK: an undo event for the selected track (3), swallowed", after[6] == before[6] + 1 and not appmsg, (before, after, appmsg))
+check("BACK on the Looper's MAIN tab: the stock song screen, no undo, swallowed", screens == [0x2d] and after[6] == before[6] and not appmsg, (screens, before, after, appmsg))
 press(0xF9, 2)
 blocks(2)
 check("PLAY / PAUSE: the looper only (HW STOP PLAY = LOOPER)", appmsg == [], appmsg)

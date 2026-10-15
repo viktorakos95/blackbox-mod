@@ -318,6 +318,12 @@ void solo_song_pressed(uint8_t *app, int computed, int a, int b)
     }
 }
 
+/* BACK on the Looper's MAIN page: the stock song screen (what the page replaced). */
+void solo_song_screen(uint8_t *app)
+{
+    fw_set_screen(app, 0x2d, 0, 0);
+}
+
 /* Replaces the GUI's call to the mixer view's set-mode on every mixer (re)show. */
 void solo_set_mode(uint8_t *view, int mute_mode)
 {

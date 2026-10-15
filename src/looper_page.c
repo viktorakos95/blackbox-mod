@@ -58,6 +58,7 @@ typedef void (*msg_fn)(void *obj, const uint16_t *msg);
 #define fw_post     ((msg_fn)FN(0x080b5758))               /* queue a message for the GUI task (app + 0x30) */
 
 uint8_t *solo_looper_view(void);
+void solo_song_screen(uint8_t *app);
 void looper_guard(int mode);
 void looper_note_app(void *app);
 unsigned looper_screen_id(void);
@@ -2496,7 +2497,8 @@ void looper_app_msg(void *app, const uint16_t *msg)
                         P->info_on = 0;
                         P->entered = 0;
                     } else {
-                        looper_event(P->sel, LOOPER_EV_UNDO);      /* and on MAIN as before: undo on the selected track */
+                        solo_song_screen((uint8_t *)app);          /* and on MAIN: the stock song screen it replaced (SONG comes round to the Looper again) */
+                        return;
                     }
                     break;
                 case B_STOP:
