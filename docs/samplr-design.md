@@ -412,3 +412,26 @@ takes three overdub layers.
 - Merged after build 41: the DRONE-8 branch's 3.1.AA (engine ~30 % fewer instructions, per-sample state in locals, the same VMINNM / VMAXNM helpers; its governor also reads
   the whole task's load from cpu.c and steps down over 80 % / blocks over 87-88 %). lira.c is theirs as is (their file-wide -O2 pragma keeps loop patterns from becoming libc
   calls; the per-function -O2 of build 41 was dropped), `tools/prof_lira.py` is theirs. Order under load: SAMPLR and the looper's extras from 70 %, then DRONE-8 from 80 %.
+
+## Build 43 (a budget for every block: who gives way, in what order)
+- Reports on build 42: no stutter from DRONE-8 any more, but it cut out while the looper or SAMPLR (grains) played; SAMPLR + looper stuttered at C 97 / 100 with no `!`
+  shown; looper + pads / sequences stuttered; SAMPLR stuck at `!4` after the other tracks stopped. The wish: never a broken sound; rather something not used at all.
+- Why: inside the looper stage SAMPLR runs before the looper's tracks, so its governor never saw the looper (often 35-55 %), and the build-38 valve in the looper
+  was driven by that governor. SAMPLR's governor also counted its own cost: heavy granular plus the stock work stayed over its 64 % release line for good.
+  DRONE-8's governor (3.1.AA) counted SAMPLR's and the looper's time too, and muted itself for them.
+- The order now: stock pads and sequences (never touched), DRONE-8, SAMPLR, the looper's tracks. Each block:
+  - looper.c `guard_decide`, just before the tracks: the time used so far is known (stock, DRONE-8, SAMPLR); the tracks' cost is predicted from what they have
+    switched on (`track_model`: instructions fitted to the emulator's levels of the everything-on case, a SMOOTH grain search when it falls in this block) times the
+    cycles per instruction the unit showed lately (measured per track, worst lately); the rest of the task after the looper stage is its recent worst. Budget 90 % of
+    the block period. The best level that fits is used in this block: 0 everything, 1 one filter stage and no drive, 2 no grains (SPEED / PTCH like tape), 3 no filter or
+    crunch, 4 the tracks fade out within the block (play heads keep running). One level better after ~1 s (400 blocks) in which it fitted with a quarter to spare.
+  - samplr.c, at the top of `samplr_run`: its recent worst block against the time left if the looper's tracks gave up everything. Over 85 %: one shed step at once
+    (not every 16 blocks); over all of it: this block is not played (sequencers and gestures keep time), and it stays out until a fifth is spare (`!M` on the bar).
+    Back one level after ~1 s in which that level's remembered cost (fading over seconds) would have fitted with a quarter spare: its own cost no longer holds it back.
+    The old smoothed-load governor is gone.
+  - lira_pad.c `govern`: the whole task's load minus what SAMPLR and the looper's tracks took (`looper_yield_permille`): they give way within the block, so only the
+    stock work and the synth itself can make it step down.
+- SAMPLR top bar: `!n` SAMPLR's shed, `!M` SAMPLR left blocks out in the last second, `L!n` the looper's level (worst in the last second).
+- Tests: test_guard.py (new: levels in order with less room, the sound goes on at each, the fade-out in one block, back one level a second with a fade-in, a spike
+  acts in the same block); test_samplr.py's governor checks rewritten for the budget. NOT checked: the real cycle counts (the model's constants are emulator figures;
+  the cycles per instruction are learned on the unit, starting at 2.5).

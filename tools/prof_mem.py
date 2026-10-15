@@ -259,6 +259,7 @@ for t in range(4):
         for q, v in ((P_FILT, -0.4), (P_RES, 0.7), (P_CRUNCH, 0.3), (P_DRIVE, 0.5), (P_SD, 0.3), (P_SR, 0.3), (P_STAB, 0.5),
                      (P_SPEED, 0.3), (P_DROP, 0.3), (P_SCRM, 0.5), (P_PTCH, 0.2)):
             param(t, q, v)
+if len(sys.argv) > 2: e.call("looper_guard_force", int(sys.argv[2]))
 blocks(30)
 print("modes", [mode(t) for t in range(4)], "len", [tu(t, T_LEN) for t in range(4)])
 h = e.uc.hook_add(UC_HOOK_CODE, hk)

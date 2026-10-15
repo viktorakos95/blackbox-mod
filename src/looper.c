@@ -251,9 +251,19 @@ struct dsp {
     int32_t dseg[LOOPER_TRACKS], xf[LOOPER_TRACKS];
     uint8_t mact[LOOPER_TRACKS], dmute[LOOPER_TRACKS];
     float dtarget[LOOPER_TRACKS];
-    float win[256];                              /* the grain window (smoothstep up, then down) */
+    struct guard {                               /* the per-block budget (see guard_decide) */
+        uint32_t t_stage, t_end;                 /* cycle count at the last looper stage; at the end of it this block (0: not reached) */
+        float per;                               /* the block period, cycles (smoothed) */
+        float rest;                              /* the task after the looper stage (stock output, compressor, interrupts): recent worst, cycles */
+        float cpi;                               /* cycles per modelled instruction (track_model): recent worst */
+        float fx;                                /* the looper's own work after the tracks: recent worst, cycles */
+        uint32_t calm;                           /* blocks in a row with room for one level better */
+        uint8_t lvl, force, top, shown;          /* the level now; forced (+1, tests); the worst this report; the last report's */
+        uint16_t rep;
+        uint8_t aud[LOOPER_TRACKS];              /* the track plays out this block (decided with the level) */
+        uint16_t yield;                          /* SAMPLR and the looper's tracks in the last block, per mille of the period (they give way: DRONE-8's governor leaves them out) */
+    } gd;
     int16_t ws[5120];                            /* WSOLA: the candidate region, mono */
-    uint8_t winok;
     float zero[MAXN];
 };
 _Static_assert(sizeof(struct dsp) <= 32768, "dsp state must fit in one 32 KB buffer");
@@ -799,7 +809,7 @@ static inline float quant(float x, float q, float qi)
 static void targets(vtrack *k, float *g1)
 {
     int mode = k->mode;
-    int audible = (mode == LOOPER_PLAY || mode == LOOPER_DUB) && !k->muted && !S->paused;
+    int audible = (mode == LOOPER_PLAY || mode == LOOPER_DUB) && !k->muted && !S->paused && DSP()->gd.lvl < 4;   /* (guard level 4: out of time) */
     float pan = k->pan, master = 1.f + 3.f * S->opt[LOOPER_O_GAIN];
     g1[0] = g1[1] = 0.f;
     if (audible) {
@@ -1442,15 +1452,10 @@ __attribute__((optimize("O2"))) static void play_seg(struct dsp *d, int t, int i
         wlen >>= 1;
     if (wlen < 64)
         wlen = len < 64 ? len : 64;
-    int lsh = 0;                                      /* the audio task is near its limit (SAMPLR's governor measures it): 2 one filter stage, 3 no drive either */
-    {
-        uint8_t *sb = looper_scratch(9);
-        if (sb)
-            lsh = ((struct smscr *)sb)->shed;
-    }
+    const int lv = d->gd.lvl;                         /* the guard (guard_decide): 1 one filter stage and no drive, 2 no grains either, 3 no filter or crunch either */
     /* the settings are read through p (restrict: nothing here writes them, so they stay in registers or come from the caller's stack) */
-    const int fon = p->fm0 != 0.f || p->dfm != 0.f;   /* the filter off and faded out is left out; its state starts from rest when it comes back */
-    const int hp = p->filt == 2, two = lsh < 2, drv = p->drive && lsh < 3, sends = p->sd != 0.f || p->sr != 0.f;
+    const int fon = lv < 3 && (p->fm0 != 0.f || p->dfm != 0.f);   /* the filter off and faded out is left out; its state starts from rest when it comes back */
+    const int hp = p->filt == 2, two = lv < 1, drv = p->drive && lv < 1, sends = p->sd != 0.f || p->sr != 0.f, crunch = p->crunch && lv < 3;
     /* the state, in locals */
     float z[8];
     float *zs = &d->sv[t][0][0][0];
@@ -1466,7 +1471,7 @@ __attribute__((optimize("O2"))) static void play_seg(struct dsp *d, int t, int i
     if (mr) {
         mrs_get(d, t, &ms);
         ms.rev = rev;
-        ms.grains = p->ptch_on || (p->keep && (p->spd < .98f || p->spd > 1.02f));
+        ms.grains = lv < 2 && (p->ptch_on || (p->keep && (p->spd < .98f || p->spd > 1.02f)));
     }
     uint32_t hb = 0xffffffffu;                        /* the half buffer the pointer is in */
     int16_t *hbase = 0;
@@ -1495,7 +1500,7 @@ __attribute__((optimize("O2"))) static void play_seg(struct dsp *d, int t, int i
             int16_t nr = sat16((float)(int16_t)(w >> 16) * p->rptm + sr[i] * 32767.f);
             *a = (uint32_t)(uint16_t)nl | (uint32_t)(uint16_t)nr << 16;
         }
-        if (p->crunch) {
+        if (crunch) {
             if (hcnt == 0) {
                 hl0 = quant(xl, p->q, p->qi);
                 hl1 = quant(xr, p->q, p->qi);
@@ -1772,6 +1777,166 @@ static void apply(int t, int b)
 }
 
 /* One block of the whole looper: bl / br = the Out 1 bus (read as the "mix" source, then the loop is added to it). */
+/* --- the guard: a budget for every block, so the audio task never runs out of time.
+ * Order in the block: stock voices and effects, DRONE-8, SAMPLR, then the looper's tracks, then the stock output. When the tracks
+ * start, the time used so far is known exactly; what the tracks will take is predicted from what they have switched on
+ * (track_model, instructions measured in the emulator) times the cycles per instruction the unit has shown lately; what comes after
+ * is the recent worst. The best level that fits this block is used now; one level better again only after ~1 s with room to spare.
+ * Levels (all tracks): 0 everything, 1 one filter stage and no drive, 2 no grains either (SPEED / PTCH play like tape), 3 no filter
+ * or crunch either, 4 the tracks fade out (their play heads keep running, so they come back in time). */
+#define GUARD_BUDGET .90f                         /* of the block period: the rest is the margin for what the prediction misses */
+#define WAKE (*(volatile uint32_t *)0x2405ffd4u) /* cpu.c: the cycle count when the audio task woke up for this block */
+#define CYC  (*(volatile uint32_t *)0xe0001004u)
+
+/* A track's work for one block of n frames at guard level lv, in instructions (emulator profile, tools/prof_mem.py). */
+static float track_model(struct dsp *d, int t, vtrack *k, int lv, int n)
+{
+    float f = k->filt, sp = k->speed;
+    int filt = f < -.01f || f > .01f || d->fm[t] > 0.f;
+    int semi = (int)(k->ptch * 24.f + (k->ptch >= 0.f ? .5f : -.5f));
+    float spd = (sp >= 0.f ? 1.f + sp : 1.f + 2.f * sp) * (k->half ? .5f : 1.f);
+    int keep = opt_i(LOOPER_O_PITCH) >= 1;
+    int grains = semi != 0 || (keep && (spd < .98f || spd > 1.02f));
+    int mod = sp > .01f || sp < -.01f || k->stab > .01f || k->trim > .08f || k->drop > .02f || k->drop < -.02f || k->stut > .02f ||
+              k->stut < -.02f || k->scrm > .02f || k->scrm < -.02f || semi != 0 || (keep && k->half);
+    float c = 110.f;                                                      /* read, gain, output (fitted to the levels of the everything-on case) */
+    if (mod)
+        c += 170.f + (k->stab > .01f ? 40.f : 0.f) + (k->drop > .02f || k->drop < -.02f ? 25.f : 0.f);
+    if (grains && lv < 2)
+        c += 131.f;
+    if (filt && lv < 3)
+        c += lv < 1 ? 100.f : 60.f;
+    if (k->drive > .01f && lv < 1)
+        c += 70.f;
+    if (k->crunch > .02f && lv < 3)
+        c += 24.f;
+    if (k->send_d > 0.f || k->send_r > 0.f)
+        c += 16.f;
+    if (k->mode == LOOPER_DUB)
+        c += 30.f;
+    float x = 0.f;
+    if (grains && lv < 2 && opt_i(LOOPER_O_PITCH) == 2 && d->mact[t] && d->ghc[t] <= n)
+        x = 60000.f;                                                      /* SMOOTH: a new grain this block, and its waveform search */
+    return c * (float)n + x;
+}
+
+static int track_out(vtrack *k)                    /* the track plays out (or is still fading) this block */
+{
+    return k->len && (k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB) && (!k->muted || k->gain_l > GAIN_EPS || k->gain_r > GAIN_EPS);
+}
+
+/* From looper_stage, before DRONE-8: the block period. */
+static void guard_stage(struct dsp *d, uint32_t now)
+{
+    struct guard *g = &d->gd;
+    uint32_t per = now - g->t_stage;
+    g->t_stage = now;
+    if (per > 200000u && per < 20000000u)
+        g->per = g->per > 0.f ? g->per + ((float)per - g->per) * .02f : (float)per;
+    if (g->cpi <= 0.f)
+        g->cpi = 2.5f;                                                    /* (until the unit has shown its own) */
+}
+
+/* The cycles left in this block for what still has to run before the looper's tracks, if the tracks and the rest came to nothing:
+ * SAMPLR asks before it plays. Large when nothing is known yet. */
+int32_t looper_budget_left(void)
+{
+    if (S->magic != MAGIC || !S->ok)
+        return 0x7fffffff;
+    struct guard *g = &DSP()->gd;
+    uint32_t used = CYC - WAKE;
+    if (g->per <= 0.f || (float)used > 2.f * g->per)
+        return 0x7fffffff;
+    return (int32_t)(GUARD_BUDGET * g->per - (float)used - g->rest - g->fx);
+}
+
+/* Before the tracks: the level for this block. */
+static void guard_decide(struct dsp *d, int n)
+{
+    struct guard *g = &d->gd;
+    float m[5] = {0.f, 0.f, 0.f, 0.f, 0.f};
+    for (int t = 0; t < LOOPER_TRACKS; t++) {
+        vtrack *k = &S->t[t];
+        g->aud[t] = (uint8_t)track_out(k);
+        if (g->aud[t])
+            for (int lv = 0; lv < 4; lv++)
+                m[lv] += track_model(d, t, k, lv, n);
+    }
+    int32_t left = looper_budget_left();
+    int lv = 0;
+    if (g->force) {
+        lv = g->force - 1;
+    } else if (left != 0x7fffffff) {
+        float room = (float)left;
+        while (lv < 4 && m[lv] * g->cpi > room)
+            lv++;
+        if (lv >= g->lvl) {
+            g->calm = 0;                                                  /* worse (or the same) now: at once */
+        } else if (m[g->lvl - 1] * g->cpi < .75f * room && ++g->calm >= 400) {
+            lv = g->lvl - 1;                                              /* better: one level, after ~1 s with a quarter to spare */
+            g->calm = 0;
+        } else {
+            if (m[g->lvl - 1] * g->cpi >= .75f * room)
+                g->calm = 0;
+            lv = g->lvl;
+        }
+    }
+    g->lvl = (uint8_t)lv;
+    g->top = lv > g->top ? (uint8_t)lv : g->top;
+    if (++g->rep >= 375) {                                                /* the readout: the worst level in the last second */
+        g->shown = g->top;
+        g->top = (uint8_t)lv;
+        g->rep = 0;
+    }
+}
+
+/* After a track: what it cost, against the model (the worst lately sets the cycles per instruction). */
+static void guard_track(struct dsp *d, int t, uint32_t cyc, int n)
+{
+    struct guard *g = &d->gd;
+    vtrack *k = &S->t[t];
+    if (!g->aud[t] || g->lvl >= 4 || g->force)
+        return;
+    float m = track_model(d, t, k, g->lvl, n);
+    if (m < 1000.f || cyc > 50000000u)
+        return;
+    float r = (float)cyc / m;
+    r = r > 8.f ? 8.f : r;
+    g->cpi = r > g->cpi ? r : g->cpi + (r - g->cpi) * .002f;              /* up at once, down slowly */
+    if (g->cpi < .6f)
+        g->cpi = .6f;
+}
+
+/* From cpu.c when the audio task has finished its block: the rest after the looper stage. */
+void looper_block_done(uint32_t now)
+{
+    if (S->magic != MAGIC || !S->ok)
+        return;
+    struct guard *g = &DSP()->gd;
+    if (g->t_end) {
+        uint32_t r = now - g->t_end;
+        if (r < 20000000u)
+            g->rest = (float)r > g->rest ? (float)r : g->rest * .995f;
+        g->t_end = 0;
+    }
+}
+
+unsigned looper_yield_permille(void)               /* DRONE-8's governor: what of the last block will give way to it */
+{
+    return S->magic == MAGIC && S->ok ? DSP()->gd.yield : 0u;
+}
+
+int looper_guard_level(void)                       /* the worst level in the last second (the readouts) */
+{
+    return S->magic == MAGIC && S->ok ? DSP()->gd.shown : 0;
+}
+
+void looper_guard_force(int lv)                    /* tests: -1 back to the budget, else that level */
+{
+    if (S->magic == MAGIC && S->ok)
+        DSP()->gd.force = (uint8_t)(lv < 0 ? 0 : lv > 4 ? 5 : lv + 1);
+}
+
 static int run(float *bl, float *br, int n)
 {
     struct dsp *d = DSP();
@@ -1890,8 +2055,10 @@ static int run(float *bl, float *br, int n)
     }
     float *snd[4] = {d->acc[0], d->acc[1], d->acc[2], d->acc[3]};
     int sends = samplr_run(bl, br, n, snd);          /* SAMPLR first: SOURCE MIX records it, and its sends join the looper's delay and reverb */
+    guard_decide(d, n);                              /* what the tracks can afford this block */
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
+        uint32_t tc0 = CYC;
         struct pb p;
         setup(d, t, &p, k, n);
         if (p.sd > 0.f || p.sr > 0.f)
@@ -1905,7 +2072,9 @@ static int run(float *bl, float *br, int n)
         } else {
             seg(d, t, 0, n, sl, sr, &p);
         }
+        guard_track(d, t, CYC - tc0, n);
     }
+    uint32_t fx0 = CYC;
     for (int i = 0; i < n; i++) {
         bl[i] += d->out[0][i];
         br[i] += d->out[1][i];
@@ -1926,6 +2095,10 @@ static int run(float *bl, float *br, int n)
     S->gphase += (float)n;
     while (S->gphase >= gf)
         S->gphase -= gf;
+    {
+        float fx = (float)(CYC - fx0);
+        d->gd.fx = fx > d->gd.fx ? fx : d->gd.fx * .995f;
+    }
     return 1;
 }
 
@@ -2015,13 +2188,21 @@ void looper_stage(uint8_t *obj, void *bufs)
     if (l && r && n > 0) {
         read_bpm(bufs);
         uint32_t c_in = *(volatile uint32_t *)0xe0001004u, pre = c_in - *(volatile uint32_t *)0x2405ffd4u;   /* (cycles since the wake-up: stock voices, effects, synths) */
+        guard_stage(DSP(), c_in);
         lira_page_run(l, r, n);                    /* the LIRA page's voices, before the looper so SOURCE MIX records them */
         lira_rec_begin(l, r, n);
         uint32_t c_l = *(volatile uint32_t *)0xe0001004u;
         if (!run(l, r, n))
             samplr_run(l, r, n, 0);
-        samplr_stage_prof(pre, c_l - c_in, *(volatile uint32_t *)0xe0001004u - c_l);
+        uint32_t c_y = *(volatile uint32_t *)0xe0001004u - c_l;
+        samplr_stage_prof(pre, c_l - c_in, c_y);
+        {
+            struct guard *g = &DSP()->gd;
+            float y = g->per > 0.f ? (float)c_y * 1000.f / g->per : 0.f;
+            g->yield = (uint16_t)(y > 2000.f ? 2000.f : y);
+        }
         lira_rec_end(l, r, n);                     /* what the looper added, for the pad recorder's LOOPER input */
+        DSP()->gd.t_end = CYC | 1u;                /* (the guard's "rest" starts here: looper_block_done) */
     }
 }
 

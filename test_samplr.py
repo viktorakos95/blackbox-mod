@@ -1288,38 +1288,60 @@ touch(2, 0, 0, 0)
 play(6)
 e.call("samplr_trans", 0)
 e.uc.mem_write(SHED, b"\x00")
-# a loaded task makes it shed by itself (how much of its block the audio task has used when SAMPLR is done), and it comes back
-def busy(frac):
+# the budget (looper.c guard + samplr_run): SAMPLR's recent worst block against the time left in this block (the looper's tracks give way).
+# The emulator's cycle counter does not run: the block period (the guard's), the time used before SAMPLR and SAMPLR's worst are written.
+def dsp_off(field):
+    src = '#include "src/looper.c"\nchar o_x[__builtin_offsetof(struct dsp, %s)];\n' % field
+    out = subprocess.run(["arm-none-eabi-gcc", "-I.", "-Isrc", "-mcpu=cortex-m7", "-mthumb", "-mfloat-abi=hard", "-mfpu=fpv5-d16", "-ffreestanding", "-S", "-x", "c", "-", "-o", "-"],
+                         input=src, capture_output=True, text=True, check=True).stdout.splitlines()
+    return int([l.split()[1] for l in out if l.strip().startswith(".space")][0])
+FXB = e.r32(ENGINE + 0x1C * (FIRST + 5 * PER) + 4) & 0xFFFFFFFF
+G_PER, G_REST = FXB + dsp_off("gd.per"), FXB + dsp_off("gd.rest")
+SEST, SMUTE = SC + scr_off("sest"), SC + scr_off("smute")
+PB = 2_000_000
+def busy(frac, sest=None):
+    e.uc.mem_write(G_PER, struct.pack("<f", float(PB)))
+    e.uc.mem_write(G_REST, struct.pack("<f", 0.0))
+    if sest is not None:
+        e.uc.mem_write(SEST, struct.pack("<f", float(sest)))
     dwt = struct.unpack("<I", e.uc.mem_read(0xE0001004, 4))[0]
-    e.uc.mem_write(0x2405ffd4, struct.pack("<I", (dwt - int(frac * 2_000_000)) & 0xffffffff))
-e.uc.mem_write(SMP + OFF["t_per"], struct.pack("<I", 2_000_000))
-for _ in range(60):
-    busy(0.97)
+    e.uc.mem_write(0x2405ffd4, struct.pack("<I", (dwt - int(frac * PB)) & 0xffffffff))
+touch(0, 0, 3 * 64 + 10, 100)
+play(4)
+busy(0.75, 400_000)                                   # 300 k left (90 % budget), SAMPLR's worst 400 k: it does not fit
+o = play()
+check("budget: SAMPLR does not fit the time left: one step down at once", e.r8(SHED) >= 1, e.r8(SHED))
+check("budget: ... and this block is not played", e.r8(SMUTE) == 1 and max(abs(v) for v in o[0]) < 1e-6, (e.r8(SMUTE), max(abs(v) for v in o[0])))
+for _ in range(20):
+    busy(0.75, 400_000)
     play()
-check("governor: sheds when the task has used 97 % of its block", e.r8(SHED) >= 1, e.r8(SHED))
-for _ in range(40):                                  # (the smoothed load settles first)
-    busy(0.67)
-    play(10)
-top = e.r8(SHED)
-for _ in range(30):
-    busy(0.67)
-    play(10)
-check("governor: and holds in the band between (67 %)", e.r8(SHED) == top, (e.r8(SHED), top))
-for _ in range(30):
-    busy(0.20)
+check("budget: still no room: down to the last step, still out", e.r8(SHED) == 5 and e.r8(SMUTE) == 1, (e.r8(SHED), e.r8(SMUTE)))
+busy(0.30, 400_000)                                   # 1.2 M left
+o = play()
+check("budget: room again: played in the next block", e.r8(SMUTE) == 0 and max(abs(v) for v in o[0]) > 1e-3, (e.r8(SMUTE), max(abs(v) for v in o[0])))
+busy(0.30, 400_000)
+play(100)
+check("budget: not better at once (about a second first)", e.r8(SHED) == 5, e.r8(SHED))
+for _ in range(25):
+    busy(0.30, 400_000)
     play(100)
-check("governor: and comes back when it is quiet again", e.r8(SHED) == 0, e.r8(SHED))
-e.uc.mem_write(SMP + OFF["t_per"], struct.pack("<I", 0))
-
-# one spike now and then (a pad starting) is not a reason to hold back
-e.uc.mem_write(SMP + OFF["t_per"], struct.pack("<I", 2_000_000))
-for _ in range(10):
-    busy(0.99)
-    play()
-    busy(0.30)
-    play(99)
-check("governor: a single near miss every 100 blocks does not shed", e.r8(SHED) == 0, e.r8(SHED))
-e.uc.mem_write(SMP + OFF["t_per"], struct.pack("<I", 0))
+check("budget: then a level better each second while it fits (its own cost does not hold it back)", e.r8(SHED) == 0, e.r8(SHED))
+touch(2, 0, 0, 0)
+play(2)
+touch(0, 0, 3 * 64 + 10, 100)                         # (the slice again: the first one has played out by now)
+busy(0.30, 50_000)
+play(3)
+busy(0.99, 50_000)                                    # a pad / sequence spike: no time left at all in this block
+o = play()
+check("budget: a block with no time left is not played", e.r8(SMUTE) == 1, e.r8(SMUTE))
+busy(0.30, 50_000)
+o = play()
+check("budget: ... the next one with room is", e.r8(SMUTE) == 0 and max(abs(v) for v in o[0]) > 1e-3, (e.r8(SMUTE), max(abs(v) for v in o[0])))
+touch(2, 0, 0, 0)
+play(6)
+e.uc.mem_write(G_PER, struct.pack("<f", 0.0))
+e.uc.mem_write(SHED, b"\x00")
+e.uc.mem_write(SEST, struct.pack("<f", 0.0))
 
 # shed 4: the grains in all are capped (4), however many fingers and however dense
 e.call("samplr_set_mode", 3)

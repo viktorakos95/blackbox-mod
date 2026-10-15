@@ -245,6 +245,7 @@ float looper_bpm(void);
 int looper_grid_exact(float beats, float sph, int n);
 float looper_beat_frames(void);
 double looper_clock_now(void);
+unsigned looper_yield_permille(void);     /* looper.c: SAMPLR and the looper's tracks in the last block (they give way to this synth) */
 
 static void grec(struct pg *g, int id, int val)
 {
@@ -905,6 +906,11 @@ static uint32_t govern(struct pg *g)
         unsigned d = (uint16_t)(wn - g->wn);
         if (*(volatile uint32_t *)0x2405ffd0u == 0x43505532u && d >= 1u && d <= 4u && ws >= g->wsum && ws - g->wsum <= 9990u * d) {
             whole = (float)(ws - g->wsum) / (float)d;
+            /* SAMPLR and the looper's tracks give way to this synth within the block (looper.c guard), so their share is not a reason
+               for it to step down: only what cannot give way (stock voices and effects, this synth, the stock output) counts */
+            whole -= (float)looper_yield_permille();
+            if (whole < 0.0f)
+                whole = 0.0f;
             g->wl += (whole - g->wl) * 0.1f;
             g->wpk = g->wpk * 0.98f + (whole > 870.0f ? 1.0f : 0.0f);
         }

@@ -2684,6 +2684,26 @@ int samplr_run(float *bl, float *br, int n, float **snd)
     int fed = 0;
     s->sc->gnow = s->sc->gacc;
     s->sc->gacc = 0;
+    {   /* the budget (looper.c guard): the time left in this block, if the looper's tracks gave all theirs up. SAMPLR's recent worst
+         * block over 85 % of it: one step of shedding now (not after 16 blocks); over all of it: this block is not played (the sequencers
+         * and gestures keep their time) and it stays out until a fifth is to spare. The looper's tracks give way to what SAMPLR leaves. */
+        struct smscr *sc = s->sc;
+        int32_t left = looper_budget_left();
+        int mute = 0;
+        sc->sleft = -1.f;                                         /* (unknown: no limit) */
+        if (left != 0x7fffffff) {
+            float lf = left > 0 ? (float)left : 0.f;
+            sc->sleft = lf;
+            mute = sc->sest > lf || (sc->smute && sc->sest > .8f * lf);
+            if (sc->sest > .85f * lf && sc->shed < 5 && s->tick - sc->shed_t > 2) {
+                sc->shed++;
+                sc->shed_t = s->tick;
+                sc->scalm = 0;
+            }
+        }
+        sc->smute = (uint8_t)mute;
+        sc->mtop |= (uint8_t)mute;
+    }
     for (int t = 0; t < SM_TRACKS; t++) {                         /* every track that was ever used goes on playing (its loop, what it latched) */
         struct sm *q = t ? trk_get(t, 0) : s;
         if (!q)
@@ -2692,6 +2712,10 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         q->sph = s->sph;                                          /* one free-running grid for all the tracks */
         gest_run(q, n);
         sweep(q);
+        if (s->sc->smute) {                                       /* out of time (the budget above) */
+            q->tick++;
+            continue;
+        }
         int busy = run_voices(q, tl, tr, n);
         uint32_t cm = DWT_CYCCNT;
         if (!busy && q->flt.mix > 0.f) {                          /* (the filter's tail after the last note) */
@@ -2748,6 +2772,13 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         s->sph -= w;
     uint32_t c1 = DWT_CYCCNT, period = c0 - s->t_last, dur = c1 - c0;
     s->sc->last_sdur = dur;
+    if (dur < 50000000u) {
+        struct smscr *sc = s->sc;
+        if (!sc->smute)
+            sc->sest = (float)dur > sc->sest ? (float)dur : sc->sest * .99f;   /* up at once, down over ~1 s */
+        else
+            sc->sest *= .999f;                                    /* (not played: what it cost when it played fades slowly) */
+    }
     if (s->t_last && period > 1000u && period < 100000000u) {
         s->t_sum += dur;                                          /* load = cycles in this function / the (average) block period */
         s->t_psum += period;
@@ -2776,31 +2807,35 @@ int samplr_run(float *bl, float *br, int n, float **snd)
                 sc->shxr = (uint16_t)(sc->xrest / d1 > 9990u ? 9990u : sc->xrest / d1);
                 sc->pr = sc->pg = sc->pb = sc->pm = sc->pp = sc->pd = sc->pl = 0;
                 sc->xp = sc->xd = sc->xlp = sc->xrest = 0;
+                sc->mshown = sc->mtop;
+                sc->mtop = 0;
             }
             s->t_sum = s->t_psum = s->t_pmax = 0;
             s->t_n = 0;
         }
     }
     s->t_last = c0;
-    {   /* the governor. How much of its block the audio task has used by now (SAMPLR runs late in it, so this is nearly all of it: the stock voices, the looper, and SAMPLR) is
-         * the instantaneous version of the C readout (cpu.c keeps the cycle count of the wake-up at 0x2405ffd4). A smoothed value over 85 %, or three blocks over 95 % within
-         * about 50 blocks (100 % is a missed deadline; one spike alone does not count), sheds a step every 16 blocks; nothing is muted, each step only changes how it is computed or how many grains there are:
-         * 1 grains use linear interpolation, 2 and one channel, and all voices linear, 3 half the grain rate and 24 grains in all (40 at rest), 4 12 grains in all.
-         * One step back after ~2 s with the smoothed value under 78 % and no near misses lately. A C89/90 shut the Blackbox off, 95+ glitches for good. */
+    {   /* the governor, step back: what each level cost the last time it ran is remembered (fading over a few seconds, so a changed
+         * situation is tried again). One level better after ~1 s in which that cost would have fitted into the block's time left with a
+         * quarter to spare (unknown: half again what this level costs). Stepping down is the budget's, at the top of this function.
+         * Levels: 1 grains use linear interpolation, 2 and one channel, and all voices linear, 3 half the grain rate and 24 grains in all, 4 12, 5 6. */
         struct smscr *sc = s->sc;
-        uint32_t used = c1 - *(volatile uint32_t *)0x2405ffd4u;
-        if (s->t_per > 100000u && used < 2u * s->t_per) {
-            float inst = (float)used * 1000.f / (float)s->t_per;
-            sc->ld += (inst - sc->ld) * .1f;
-            sc->pk = sc->pk * .98f + (inst > 950.f ? 1.f : 0.f);   /* near misses lately: about one per spike, fading over ~50 blocks */
-            uint32_t since = s->tick - sc->shed_t;
-            if ((sc->ld > 700.f || sc->pk > 1.5f) && sc->shed < 5 && since > 16) {
-                sc->shed++;
-                sc->shed_t = s->tick;
-            } else if (sc->ld < 640.f && sc->pk < .5f && sc->shed > 0 && since > 400) {
-                sc->shed--;
-                sc->shed_t = s->tick;
+        int lv = sc->shed > 5 ? 5 : sc->shed;
+        for (int k = 0; k < 6; k++)
+            sc->lcost[k] = k == lv && !sc->smute ? sc->sest : sc->lcost[k] * .9995f;
+        if (lv > 0 && !sc->smute) {
+            float nxt = sc->lcost[lv - 1] > 0.f ? sc->lcost[lv - 1] : 1.5f * sc->sest;
+            if (sc->sleft < 0.f || nxt < .75f * sc->sleft) {
+                if (++sc->scalm >= 375) {
+                    sc->shed--;
+                    sc->shed_t = s->tick;
+                    sc->scalm = 0;
+                }
+            } else {
+                sc->scalm = 0;
             }
+        } else {
+            sc->scalm = 0;
         }
     }
     for (int t = 1; t < SM_TRACKS; t++) {                         /* the readouts and the load guard are the whole thing's */

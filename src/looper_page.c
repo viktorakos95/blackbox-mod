@@ -1209,6 +1209,20 @@ static void draw_sm_top(struct sm *s, const char *info)
         *q++ = '!';
         *q++ = (char)('0' + s->sc->shed);
     }
+    if (s->sc->mshown) {                                          /* SAMPLR left blocks out in the last second (no time left for it) */
+        *q++ = ' ';
+        *q++ = '!';
+        *q++ = 'M';
+    }
+    {
+        int gl = looper_guard_level();                            /* the looper's tracks held back (1 one filter stage, no drive; 2 no grains; 3 no filter; 4 faded out) */
+        if (gl > 0) {
+            *q++ = ' ';
+            *q++ = 'L';
+            *q++ = '!';
+            *q++ = (char)('0' + gl);
+        }
+    }
     *q = 0;
     int x = P->w - 6 - 6 * (int)(q - b);
     text(x, 4, b, C_GREY, 1);
