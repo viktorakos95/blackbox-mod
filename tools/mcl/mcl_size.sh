@@ -1,13 +1,15 @@
 #!/bin/bash
 # M1: compile MCL's core (src/mcl + src/resources/rp2040 + Adafruit GFX 1.12.1) for Cortex-M7 and report the size after a gc-sections link.
-# usage: tools/mcl/mcl_size.sh <MCL checkout> <Adafruit-GFX checkout> <outdir> [extra compile flags, e.g. -flto]
+# usage: [PLAT_INC="-I<dir> ..."] tools/mcl/mcl_size.sh <MCL checkout> <Adafruit-GFX checkout> <outdir> [extra compile flags, e.g. -flto]
+# PLAT_INC: platform header directories searched before MCL's own desktop ones (the Blackbox build passes its platform layer: the core must see the same
+# platform.h / memory.h / MidiUart.h as the platform code, or its locks, soft-interrupt triggers and buffer sizes are the desktop's).
 # Needs arm-none-eabi-gcc/g++. Platform layer and libc are NOT included (undefined symbols are ignored): the numbers are a lower bound.
 set -e
 M=$(realpath "$1"); G=$(realpath "$2"); O=$(realpath -m "$3"); shift 3; mkdir -p "$O"
 INC=$(cd "$M"; for d in src/platform/desktop src/platform/desktop_common src src/mcl include src/resources/rp2040 $(find src/mcl -type d | grep -vE "/tools(/|$)"); do echo -n "-I$M/$d "; done)
 CPU="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"
 printf '#define VERSION_STR "T5.00"\n' > "$O/defs.h"
-COMMON="$CPU -Os -ffunction-sections -fdata-sections -w -DARDUINO=10800 -DPLATFORM_DESKTOP=1 -DVERSION=5000 -include $O/defs.h -I$G $INC $*"
+COMMON="$CPU -Os -ffunction-sections -fdata-sections -w -DARDUINO=10800 -DPLATFORM_DESKTOP=1 -DVERSION=5000 -include $O/defs.h $PLAT_INC -I$G $INC $*"
 cd "$M"
 find src/mcl src/resources/rp2040 -name '*.cpp' | grep -vE "/(tools|Tests)/|Drivers/TBD" | xargs -P8 -I{} sh -c \
   'arm-none-eabi-g++ '"$COMMON"' -fno-exceptions -fno-rtti -fpermissive -std=gnu++17 -c {} -o '"$O"'/$(echo {} | tr / _).o'

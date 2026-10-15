@@ -35,7 +35,7 @@ inline uint64_t time_us_64() { return micros(); }
 #define DEBUG_PIN 2
 #define SERIAL_SPEED 9600
 
-#define DEFAULT_TURBO_SPEED 5
+#define DEFAULT_TURBO_SPEED 4                 /* TurboLight index 4 = 8x (250 kbit/s), what the Arduino MegaCommand runs */
 
 // Interrupt locking (the Blackbox port, src/mcl_bb/platform): raises BASEPRI to priority 3, which masks MCL's own soft interrupts and everything the audio and kernel
 // run at, but not the MIDI jack (0), the exact MIDI clock (1) and the MCL base timer (2). Nesting-safe: the old BASEPRI is restored.

@@ -171,6 +171,14 @@ check("FC: paused, the counters stand still", stat(0) == 0 and stat(1) == before
 c.call("bb_mcl_clk_transport", 0xFB)
 t = ticks(t, 8 * 3)
 check("FB: continues from where it stopped (counters go on)", stat(0) == 2 and stat(1) > before, (stat(0), before, stat(1)))
+turbo, mu = c.b["turbo_light"], c.b["MidiUart"]
+c.call("_ZN10TurboLight9set_speedEhP13MidiUartClass", turbo, 7, mu)          # what MCL does after peering an Elektron device at its 8x setting
+brr = c.e.r32(0x4001140C)
+check("TurboMIDI from MCL (TurboLight 8x): the jack switched to 250000 (BRR 800)", c.call("bb_midi_speed") == 250000 and brr == 800, (c.call("bb_midi_speed"), brr))
+c.call("_ZN10TurboLight9set_speedEhP13MidiUartClass", turbo, 0, mu)
+check("... and back to 1x (31250, BRR 6400)", c.call("bb_midi_speed") == 31250 and c.e.r32(0x4001140C) == 6400, (c.call("bb_midi_speed"), c.e.r32(0x4001140C)))
+for _ in range(10):
+    c.irq("bb_swirq2_isr")
 used = c.call("bb_mcl_isr_stack_used")
 print("     soft-interrupt stack used: %d of 6144 bytes" % used)
 check("the soft interrupts' own stack (6 KB) was used less than 2/3 over MIDI, the clock, the panel", 0 < used < 4096, used)

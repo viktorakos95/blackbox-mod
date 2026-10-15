@@ -40,11 +40,11 @@ public:
     size_t desktop_ingress(const uint8_t* data, size_t len);
     size_t desktop_egress(uint8_t* dst, size_t cap);
 
-    // Hardware/USB stubs that the rp2040 MidiUart defines and some MCL paths
-    // call through. Desktop has no baud-rate hardware, but keep `speed`
-    // coherent because MCL's port setup uses it to avoid repeat TurboMIDI
-    // negotiation.
-    void set_speed(uint32_t bps) { speed = bps ? bps : 31250; }
+    // TurboMIDI: the jack's object (MidiUart) changes USART6's speed once its
+    // queued bytes have left (bb_mcl.cpp); `speed` stays what the hardware runs
+    // at, which MCL's port setup reads to avoid a repeat negotiation.
+    void set_speed(uint32_t bps);
+    // Hardware/USB stubs that the rp2040 MidiUart defines and some MCL paths call through.
     void poll() {}
     void service_irq() {}
     void service_background() {}

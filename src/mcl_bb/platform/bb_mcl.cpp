@@ -20,6 +20,8 @@
 #include "bb_sd.h"
 
 #define HOOK extern "C" __attribute__((section(".hook"), used))
+#define DWT_CYCCNT (*(volatile uint32_t *)0xe0001004u)
+#define SYST_RVR   (*(volatile uint32_t *)0xe000e014u)
 
 extern void setup();
 extern void loop();
@@ -171,6 +173,22 @@ static void midi_tx_drain(void)
         st_tx_out += n;
         free_bytes -= n;
     }
+}
+
+/* TurboMIDI (TurboLight::set_speed: the speed command and 16 pad bytes are queued, then set_speed). The jack's object waits until its own rings have been
+ * handed to bb_midi (soft interrupt 2 does that, every 0.2 ms), then bb_midi waits until they have left the UART at the old speed and switches. A port that is
+ * not the jack (USB) keeps the plain bookkeeping. 50 ms each at most: then it switches anyway (the other side switches after the pad bytes in any case). */
+void MidiUartClass::set_speed(uint32_t bps)
+{
+    if (!bps)
+        bps = 31250;
+    if (this != &MidiUart || bb_in_interrupt()) {
+        speed = bps;
+        return;
+    }
+    uint32_t t0 = DWT_CYCCNT, lim = 50u * (SYST_RVR + 1u);
+    while ((txRb->rd != txRb->wr || txRb_realtime->rd != txRb_realtime->wr) && DWT_CYCCNT - t0 < lim) {}
+    speed = bb_midi_set_speed(bps, 50);
 }
 
 /* ---- the base timer (5 kHz) and the soft interrupts ---- */

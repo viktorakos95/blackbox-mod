@@ -73,6 +73,7 @@ class Core:
         except Exception:
             pass
         e.w32(0x2401F2A8, 0x2401F400)
+        e.w32(0x4001140C, 6400)                                 # USART6 BRR as the stock init leaves it (31250 baud, 200 MHz kernel clock): TurboMIDI scales from it
         emulate_primask(rg)
         rg.call("mcl_boot")
         self.card = H.Card(image, emu=e)

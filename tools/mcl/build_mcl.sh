@@ -6,7 +6,13 @@ set -e
 cd "$(dirname "$0")/../.."
 : "${MCL_DIR:?set MCL_DIR to the MCL checkout}" "${MCL_GFX:?set MCL_GFX to the Adafruit-GFX checkout}"
 M=$(realpath "$MCL_DIR"); G=$(realpath "$MCL_GFX"); O=out/mclobj; P=out/mclplat
-if [ ! -f $O/defs.h ] || [ -n "$MCL_REBUILD" ]; then tools/mcl/mcl_size.sh "$M" "$G" "$O" >/dev/null; fi
+PLAT="$(realpath src/mcl_bb/platform/common)"
+# the core is compiled against the Blackbox platform headers (locks, soft-interrupt triggers, buffer sizes, MidiUart), not MCL's desktop ones; it is rebuilt
+# whenever those headers change (or a core was built without them)
+STAMP="$PLAT $M $(cat "$PLAT"/*.h | sha1sum | cut -c1-16)"
+if [ ! -f $O/defs.h ] || [ -n "$MCL_REBUILD" ] || [ "$(cat $O/plat 2>/dev/null)" != "$STAMP" ]; then
+  rm -f $O/*.o; PLAT_INC="-I$PLAT" tools/mcl/mcl_size.sh "$M" "$G" "$O" >/dev/null; echo "$STAMP" > $O/plat
+fi
 rm -rf $P; mkdir -p $P
 INC=$(cd "$M"; for d in src src/mcl include src/resources/rp2040 $(find src/mcl -type d | grep -vE "/tools(/|$)"); do echo -n "-I$M/$d "; done)
 CPU="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"

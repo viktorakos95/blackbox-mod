@@ -18,7 +18,12 @@
 #define DWT_CYCCNT (*(volatile uint32_t *)0xe0001004u)
 #define USART6   0x40011400u
 #define U_CR1    (*(volatile uint32_t *)(USART6 + 0x00))
+#define U_BRR    (*(volatile uint32_t *)(USART6 + 0x0c))
 #define U_ISR    (*(volatile uint32_t *)(USART6 + 0x1c))
+#define SYST_RVR (*(volatile uint32_t *)0xe000e014u)
+#define CR1_UE    0x1u
+#define CR1_OVER8 0x8000u
+#define ISR_TC    0x40u
 #define U_TDR    (*(volatile uint32_t *)(USART6 + 0x28))
 #define CR1_TXEIE 0x80u
 #define ISR_TXE   0x80u
@@ -41,6 +46,7 @@ static volatile uint32_t rx_wr, rx_rd, tx_wr, tx_rd;
 static volatile uint8_t rt[16];
 static volatile uint32_t rt_wr, rt_rd;
 static volatile uint32_t st_rx, st_rx_drop, st_tx, st_tx_rej, st_redirect, st_rt_rej;
+static uint32_t uart_clk, cur_bps;             /* USART6's kernel clock (from the stock 31250 baud set-up), the speed now */
 
 /* entered from patched stock code, or the API MCL calls: the linker must keep them */
 #define HOOK __attribute__((section(".hook"), used))
@@ -62,6 +68,8 @@ HOOK void bb_midi_init(void)
     rx_wr = rx_rd = tx_wr = tx_rd = rt_wr = rt_rd = 0;
     owner = want = filter_clock = 0;
     st_rx = st_rx_drop = st_tx = st_tx_rej = st_redirect = st_rt_rej = 0;
+    cur_bps = 31250u;
+    uart_clk = (U_CR1 & CR1_OVER8) ? 0u : (U_BRR & 0xffffu) * 31250u;    /* (16x oversampling, what the stock init sets: BRR = clock / baud) */
     ready = READY_MAGIC;
 }
 
@@ -146,6 +154,33 @@ HOOK void bb_midi_claim(int immediate)
 }
 
 HOOK int bb_midi_owner(void) { return (int)owner; }
+
+/* The jack's speed (TurboMIDI, both directions). Waits, at most `wait_ms`, until everything queued has left at the old speed (both rings empty, the last
+ * stop bit out), then reprograms BRR with the UART disabled for a few cycles; a byte the other side sends during those cycles is lost (the TurboMIDI switch
+ * is a pause in both directions anyway). Not from an interrupt. Returns the speed now (unchanged if the clock is unknown or the speed out of range). */
+HOOK uint32_t bb_midi_set_speed(uint32_t bps, uint32_t wait_ms)
+{
+    if (ready != READY_MAGIC || !uart_clk || bps < 9600u || bps > 2000000u)
+        return cur_bps;
+    if (bps == cur_bps)
+        return cur_bps;
+    uint32_t t0 = DWT_CYCCNT, lim = wait_ms * (SYST_RVR + 1u);      /* (SysTick reload + 1 = core cycles per millisecond) */
+    for (;;) {
+        uint32_t i = irq_off();
+        bool idle = tx_rd == tx_wr && rt_rd == rt_wr && (U_ISR & ISR_TC);
+        if (idle || DWT_CYCCNT - t0 > lim) {
+            U_CR1 &= ~CR1_UE;
+            U_BRR = (uart_clk + bps / 2u) / bps;
+            U_CR1 |= CR1_UE;
+            cur_bps = bps;
+            irq_restore(i);
+            return cur_bps;
+        }
+        irq_restore(i);
+    }
+}
+
+HOOK uint32_t bb_midi_speed(void) { return cur_bps; }
 
 HOOK void bb_midi_filter_clock(int on) { filter_clock = on ? 1u : 0u; }
 

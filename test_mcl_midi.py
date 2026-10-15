@@ -59,6 +59,7 @@ r.isr(0x20)
 check("before boot: the interrupt goes to the stock handler", r.irq_calls == 1)
 
 # --- boot
+e.w32(U + 0x0C, 6400)                                          # BRR as the stock init leaves it: 31250 baud from a 200 MHz kernel clock
 lab = r.boot()
 check("boot ok (' Mok'), hooks live", lab.endswith(" Mok") and r.call("bb_midi_tx_free") == 8192, lab)
 r.tx([0x80, 0x40, 0x00])
@@ -146,6 +147,27 @@ r.isr(0x20 | 0x80)
 check("owner: RXNE is passed to the stock handler", r.irq_calls == 1)
 r.isr(0x08)
 check("owner: an overrun flag is passed to the stock handler", r.irq_calls == 2)
+
+# --- TurboMIDI: the jack's speed
+e.w32(U, e.r32(U) | 0x0D)                                        # UE, RE, TE as the stock init leaves them
+e.w32(U + 0x1C, 0x40 | 0x80)                                     # TC, TXE: the line is idle
+check("TurboMIDI: 8x (250000) when idle: BRR 800, UART enabled again, speed reported", r.call("bb_midi_set_speed", 250000, 50) == 250000 and e.r32(U + 0x0C) == 800 and e.r32(U) & 1 and r.call("bb_midi_speed") == 250000,
+      (e.r32(U + 0x0C), e.r32(U)))
+check("... 10x (312500): BRR 640", r.call("bb_midi_set_speed", 312500, 50) == 312500 and e.r32(U + 0x0C) == 640)
+check("... a speed out of range is refused, nothing changes", r.call("bb_midi_set_speed", 5, 50) == 312500 and e.r32(U + 0x0C) == 640)
+check("... back to 1x (31250): BRR 6400", r.call("bb_midi_set_speed", 31250, 50) == 31250 and e.r32(U + 0x0C) == 6400)
+from unicorn import UC_HOOK_MEM_READ
+clk = {"c": 0}
+def dwt_tick(uc, t, a, sz, v, _):
+    clk["c"] += 10_000
+    uc.mem_write(0xE0001004, struct.pack("<I", clk["c"] & 0xFFFFFFFF))
+hk = e.uc.hook_add(UC_HOOK_MEM_READ, dwt_tick, begin=0xE0001004, end=0xE0001007)
+e.w32(0xE000E014, 399_000 - 1)
+r.tx([0xF0, 0x00, 0x20, 0x3C, 0x00, 0x00, 0x20, 0x07, 0xF7] + [0] * 16)    # the speed command and its pad bytes, queued, not yet sent (no interrupt runs here)
+check("... queued bytes: it waits for them; the line never drains here, so after 50 ms it switches anyway", r.call("bb_midi_set_speed", 250000, 50) == 250000 and e.r32(U + 0x0C) == 800 and 50 * 399_000 <= clk["c"] < 60 * 399_000, clk["c"])
+e.uc.hook_del(hk)
+r.pump()
+r.call("bb_midi_set_speed", 31250, 50)
 
 # --- M3 hardware self test, with models
 T = build(True)
