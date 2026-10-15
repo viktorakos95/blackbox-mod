@@ -1044,7 +1044,7 @@ f = draw(0)
 check("SMPLR page: no footer tabs (a page of its own), nothing is drawn outside the screen",
       not any(x[2] == 34 and x[3] == 1 and x[1] <= 14 for x in f) and all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f),
       [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
-cols = [x for x in f if x[2] == 2 and x[4] == 0x16]
+cols = [x for x in f if x[2] == 2 and x[4] == 0x1c]
 check("SMPLR tab: 150 waveform columns of 2 px, growing along the ramp", len(cols) == 150 and cols[-1][3] > cols[10][3], (len(cols), cols[:1], cols[-1:]))
 check("SMPLR tab: slice lines (grey)", sum(1 for x in f if x[2] == 1 and x[4] == 0x09) >= 15)
 import subprocess as _sp

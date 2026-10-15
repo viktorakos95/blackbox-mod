@@ -107,6 +107,7 @@ struct font {
 #define C_TEAL   0x1a
 #define C_PINK   0x20            /* the stock selection frame (the active knob bank in the pad config) */
 #define C_TAB    0x01            /* 56565a: the stock tab buttons, which are textured on the real screen */
+#define C_WAVE   0x1c            /* SAMPLR waveform (pale mint while the SAMPLR page draws) */
 #define C_CYAN   0x1b            /* the selected tab */
 static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /* cyan, yellow, aqua, purple */
 
@@ -1304,7 +1305,7 @@ static void draw_samplr(void)
             int32_t fpos = (s->len / SM_COLS) * c;
             while (s->mode == SM_SLICER && sl_c < s->nslice - 1 && fpos >= s->cut[sl_c + 1])
                 sl_c++;
-            int slice = s->mode == SM_SLICER ? sl_c : -1, col = C_LIGHT;
+            int slice = s->mode == SM_SLICER ? sl_c : -1, col = C_WAVE;
             for (int f = 0; f < SM_NV; f++)
                 if (slice >= 0 && (s->v[f].on || s->v[f].env > 0.f) && s->v[f].slice == slice && s->v[f].vmode == SM_SLICER)
                     col = f < SM_VOICES ? track_colour[f] : f >= SM_LTBASE && f < SM_LTBASE + SM_LATV ? pool_colour[f - SM_LTBASE] : col;
@@ -1709,12 +1710,49 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
 
 #include "lira_ui.inc"
 
+/* Each page gets its own tint, the same way the DRONE page does (palette entries swapped while the page is drawn, then put back):
+ * the Looper is brushed silver (the EHX 45000 it follows), SAMPLR a little lighter and bluer with a pale mint waveform (C_WAVE).
+ * TRIG keeps the stock colours. */
+static const struct { uint8_t idx; uint32_t argb; } tint_looper[] = {
+    {0x02, 0xff25272b}, {0x19, 0xff1b1c1f}, {0x10, 0xff4c4f56},
+};
+static const struct { uint8_t idx; uint32_t argb; } tint_samplr[] = {
+    {0x02, 0xff1d2130}, {0x19, 0xff161926}, {0x10, 0xff3d4562}, {0x1c, 0xffb4ead6},
+};
+static int tint_set(uint32_t *save)
+{
+    const uint32_t *t = 0;
+    int n = 0;
+    if (P->mode == M_SMPLR) {
+        t = (const uint32_t *)tint_samplr; n = (int)(sizeof tint_samplr / sizeof tint_samplr[0]);
+    } else if (P->mode < M_SMPLR) {
+        t = (const uint32_t *)tint_looper; n = (int)(sizeof tint_looper / sizeof tint_looper[0]);
+    }
+    volatile uint32_t *pal = (volatile uint32_t *)0x24000000u;
+    for (int i = 0; i < n; i++) {
+        const struct { uint8_t idx; uint32_t argb; } *e = (const void *)(t + 2 * i);
+        save[i] = pal[e->idx];
+        pal[e->idx] = e->argb;
+    }
+    return n;
+}
+static void tint_restore(const uint32_t *save, int n)
+{
+    const uint32_t *t = P->mode == M_SMPLR ? (const uint32_t *)tint_samplr : (const uint32_t *)tint_looper;
+    volatile uint32_t *pal = (volatile uint32_t *)0x24000000u;
+    for (int i = 0; i < n; i++)
+        pal[((const uint8_t *)(t + 2 * i))[0]] = save[i];
+}
+
 /* The whole page, into the frame buffer the last stock draw pass handed over. */
 static void paint(uint8_t *view)
 {
     uint32_t pal_save[16];
+    int tn = 0;
     if (P->mode == M_LIRA)
         lu_theme_set(pal_save);
+    else
+        tn = tint_set(pal_save);
     geometry(view);
     rehide(view);
     widen(view);
@@ -1756,6 +1794,8 @@ static void paint(uint8_t *view)
     looper_guard_drawing(0);
     if (P->mode == M_LIRA)
         lu_theme_restore(pal_save);
+    else
+        tint_restore(pal_save, tn);
 }
 
 static void dirty(uint8_t *view)

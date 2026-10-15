@@ -549,3 +549,7 @@ takes three overdub layers.
 - **PAD** is the stock pad screen only (DRONE-8 no longer lives there).
 - **BACK** = previous page on TRIG only (-> SAMPLR). Looper (undo/erase), SAMPLR (gesture undo) and DRONE-8 (other voices) keep BACK for their own function.
 - Merged 3.1.AB (DRONE-8 optimisation from the LIRA branch).
+
+## Build 51
+
+Per-page tint (palette entries swapped only while the page draws, then put back; no extra CPU/RAM): Looper = silver-grey (bg 25272b, rail 4c4f56), SAMPLR = lighter blue-grey (bg 1d2130) with a pale mint waveform (palette 0x1c, `C_WAVE`), TRIG stock, DRONE-8 unchanged.
