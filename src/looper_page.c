@@ -1420,8 +1420,10 @@ static void draw_samplr(void)
     if (sh == 0) {                                                /* PLAY: the current mode's switches */
         const char *lab[7] = {0, 0, 0, 0, 0, 0, 0};
         int on[7] = {0, 0, 0, 0, 0, 0, 0};
-        lab[2] = "LATCH";
-        on[2] = (s->latchm >> s->mode) & 1;
+        if (!(s->mode == SM_SLICER && s->loopm)) {                /* (the slicer's LOOP play mode has no LATCH: a loop plays while the finger is down) */
+            lab[2] = "LATCH";
+            on[2] = (s->latchm >> s->mode) & 1;
+        }
         if (s->mode == SM_SLICER) {
             lab[0] = sm_q_name[s->qi & 3];
             on[0] = s->qi != 0;

@@ -516,3 +516,15 @@ takes three overdub layers.
   the average and nothing else, the hard check, sends at steps 0 / 3 / 5 and in the cut block, fades and returns, return on becoming leader).
 - Sends: no code path was found that stops SAMPLR's sends; they are tested at every step now. A faded-out track sends nothing, of course (its sends are post-fader):
   that is what "SAMPLR runs but does not sound" was.
+
+## Build 48 (SAMPLR about a third cheaper; the slicer's tap-toggled loops are gone)
+- Report on build 47: three tracks (an arp, a grain cloud, the slicer in LOOP mode) took SAMPLR to !4 / !5 with the looper muted and the drone off.
+- `tools/prof_samplr.py` (new): that scenario under Unicorn, instructions by function / by line (`lines`, with a -g cave build), and `ref FILE` to record 120 blocks of output
+  for before / after comparisons. 271 k -> 177 k instructions per 256-frame block (-35 %), output equal within float rounding (3.8e-6 on a peak of 18):
+  - my own emergency tail was 14 % of it (a float to 16-bit conversion with branches per sample): one pass now (peak, the NaN guard, the mix, the sends) with the hardware
+    saturating store (`__builtin_arm_ssat`), and only the last 64 frames of a block are kept (`SM_TAIL`; the backwards fade is 64 frames, 1.3 ms);
+  - the grain accumulate loop: the stereo position is folded into the two level ramps, restrict pointers (17 instructions a sample, the compiler's own unrolling did not help);
+  - samples outside the sample's range are zero-filled in runs, not one by one; the plain sample copy moves eight values at a time (load-multiple / store-multiple);
+  - a count of sounding grains per voice (`gcnt`, kept by grain_spawn / grains()) replaces two scans of every voice's grains per track and block.
+- The slicer in LOOP play mode has no LATCH any more (`lat_of`): a loop plays while the finger is down; taps no longer start loops that go on by themselves or stop them
+  (the 8 latched loop voices of build 10 are unused). The LATCH button is not shown in that state. LATCH still works in the slicer's GATE / ONE modes and in the other modes.

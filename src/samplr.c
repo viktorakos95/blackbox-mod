@@ -18,6 +18,13 @@ float looper_beat_frames(void);
 #define SMAGIC  0x534d5031u
 
 static void release_finger(struct sm *s, int mode, int id, int own, int lat);
+
+/* Whether LATCH counts in this mode. In the slicer's LOOP play mode it does not: a loop plays while the finger is down, and taps neither start nor stop loops
+ * that go on by themselves (that option, with up to 8 loops toggled by taps, is gone). */
+static inline int lat_of(const struct sm *s, int mode)
+{
+    return ((s->latchm >> mode) & 1) && !(mode == SM_SLICER && s->loopm);
+}
 static void loop_window(struct sm *s, int fxa, int fxb);
 static inline int grid(struct sm *s, float beats, int n);
 static void unlatch(struct sm *s, int mode);
@@ -353,7 +360,7 @@ void samplr_leave(void)
         return;
     for (int f = 0; f < SM_VOICES; f++)
         if (s->v[f].held || s->drag[f] >= 0)
-            release_finger(s, s->mode, f, 0, (s->latchm >> s->mode) & 1);
+            release_finger(s, s->mode, f, 0, lat_of(s, s->mode));
     for (int f = 0; f < SM_VOICES; f++)
         if (s->dmoved[f] >= 2)
             s->dmoved[f] = 0;                                     /* (a finger that was on the page's pitch box) */
@@ -1226,31 +1233,6 @@ static void touch_m(struct sm *s, int mode, int own, int lat, int kind, int id, 
             s->drag[id] = 101;
             return;
         }
-        if (kind == 0 && lat && s->loopm) {
-            /* LATCH + LOOP: a tap toggles that slice's loop, whichever finger plays it and however many are down */
-            for (int i = 0; i < SM_LATV - 2; i++) {
-                struct smvoice *lv = &s->v[SM_LTBASE + i];
-                if ((lv->on || lv->rep > 0.f) && lv->slice == sl && lv->vmode == SM_SLICER) {
-                    lv->rel = 1;
-                    lv->rep = 0.f;
-                    s->drag[id] = 101;
-                    return;
-                }
-            }
-            for (int i = 0; i < SM_LATV - 2; i++) {
-                struct smvoice *lv = &s->v[SM_LTBASE + i];
-                if (!lv->on && lv->env <= .0005f && !(lv->rep > 0.f) && lv->seen == lv->cmd) {
-                    lv->slice = (uint8_t)sl;
-                    ask(s, s->cut[sl]);
-                    fire(lv, mode, s->rev ? s->cut[sl + 1] - 1 : s->cut[sl], s->cut[sl], s->cut[sl + 1], rsign(s) * pitch_ratio(ysemi(s, mode, fy) + s->trans), yvol(s, mode, fy), !s->qi, 1, qbeats[s->qi & 3], qbeats[s->qi & 3]);
-                    lv->held = 0;
-                    lv->owner = (uint8_t)own;
-                    break;
-                }
-            }
-            s->drag[id] = 101;
-            return;
-        }
         if (kind == 1 && v->held && v->slice == sl)
             return;
         int32_t start = s->cut[sl], end = s->cut[sl + 1];
@@ -1335,7 +1317,7 @@ void samplr_touch(int kind, int id, int fx, int fy)
         return;
     fx = fx < 0 ? 0 : fx > 1023 ? 1023 : fx;
     fy = fy < 0 ? 0 : fy > 1023 ? 1023 : fy;
-    int lat = (s->latchm >> s->mode) & 1, was_drag = s->drag[id] >= 0 && s->drag[id] != 101;
+    int lat = lat_of(s, s->mode), was_drag = s->drag[id] >= 0 && s->drag[id] != 101;
     if (kind != 2) {
         s->lfx[id] = (int16_t)fx;
         s->lfy[id] = (int16_t)fy;
@@ -1370,7 +1352,7 @@ static void gest_capture_held(struct sm *s, int L)
         struct smev *e = &G->ev[L][G->n[L]++];
         e->t = 0;
         e->w = 0u | (uint32_t)f << 2 | EVMODE(s->mode) | (uint32_t)(s->lfx[f] & 1023) << 6 | (uint32_t)(s->lfy[f] & 1023) << 16 |
-               (uint32_t)((s->latchm >> s->mode) & 1) << 26;
+               (uint32_t)lat_of(s, s->mode) << 26;
         s->g_lastmv[f] = 0;
     }
     s->g_lmode[L] = s->mode;
@@ -1898,9 +1880,11 @@ static int sample_block_(struct sm *s, int32_t ip, float fr, float r, int m)
         int i = 0;
         while (i < m) {
             int32_t f = ip + i;
-            if (f < 0 || f >= len) {
-                s->sc->il[i] = s->sc->ir[i] = 0.f;
-                i++;
+            if (f < 0 || f >= len) {                              /* outside the sample: silence, for as long as that lasts */
+                int z = f < 0 && -f < m - i ? -f : m - i;
+                for (int q = 0; q < z; q++)
+                    s->sc->il[i + q] = s->sc->ir[i + q] = 0.f;
+                i += z;
                 continue;
             }
             int bi = (f >> 13) - c.b0, o = f & 8191, k = 8192 - o;
@@ -1908,12 +1892,17 @@ static int sample_block_(struct sm *s, int32_t ip, float fr, float r, int m)
             k = k > len - f ? len - f : k;
             int vk = c.valid[bi] - o;
             vk = vk < 0 ? 0 : vk > k ? k : vk;
-            for (int q = 0; q < vk; q++) {
+            int q = 0;
+            for (; q + 8 <= vk; q += 8) {                         /* (eight values at a time: a load-multiple and a store-multiple) */
+                __builtin_memcpy(s->sc->il + i + q, c.L[bi] + o + q, 32);
+                __builtin_memcpy(s->sc->ir + i + q, c.R[bi] + o + q, 32);
+            }
+            for (; q < vk; q++) {
                 s->sc->il[i + q] = c.L[bi][o + q];
                 s->sc->ir[i + q] = c.R[bi][o + q];
             }
-            for (int q = vk; q < k; q++)
-                s->sc->il[i + q] = s->sc->ir[i + q] = 0.f;
+            for (int z = vk; z < k; z++)
+                s->sc->il[i + z] = s->sc->ir[i + z] = 0.f;
             i += k;
         }
         return 1;
@@ -2113,7 +2102,7 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
         if (off >= 0) {                                           /* (else the note waits for its grid line) */
             v->seen = v->cmd;
             v->c_wait = 0;
-            if (v->held || !v->c_gate || ((s->latchm >> v->c_mode) & 1)) {
+            if (v->held || !v->c_gate || lat_of(s, v->c_mode)) {
                 v->start = v->c_start;
                 v->ipos = v->c_pos;
                 v->end = v->c_end;
@@ -2390,6 +2379,7 @@ static void grain_spawn(struct sm *s, struct smvoice *v, int off)
         g->gl = .7f * (1.f - p);
         g->gr = .7f * (1.f + p);
         g->on = 1;
+        v->gcnt++;
         return;
     }
 }
@@ -2463,10 +2453,12 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     float gain = v->gain * s->vol, ge = (e1 - e0) * (1.f / (float)n);
     s->sc->fmono = shed >= 2;
     s->sc->flin = shed >= 1;
-    for (int i = 0; i < SM_GRAINS; i++) {
+    int left = v->gcnt;                                           /* (only as far as the grains that sound) */
+    for (int i = 0; i < SM_GRAINS && left > 0; i++) {
         struct smgrain *g = &v->g[i];
         if (!g->on)
             continue;
+        left--;
         int i0 = g->delay < n ? g->delay : 0, m = n - i0;
         g->delay = 0;
         if (m > g->len - g->age)
@@ -2476,14 +2468,16 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
             const float *il = s->sc->il, *ir = s->sc->ir;
             if (g->cont == 0) {                                   /* the sine-like contour is a parabola: two additions a sample */
                 float t0 = (float)g->age * inv, w = 4.f * t0 * (1.f - t0), dw = 4.f * inv * (1.f - 2.f * t0 - inv), ddw = -8.f * inv * inv;
-                float amp = gain * (e0 + ge * (float)i0), damp = gain * ge, gl = g->gl, gr = g->gr;
+                float amp = gain * (e0 + ge * (float)i0), damp = gain * ge;
+                float al = amp * g->gl, ar = amp * g->gr, dal = damp * g->gl, dar = damp * g->gr;   /* (the stereo position folded into the level ramps) */
+                float *restrict ob_l = bl + i0, *restrict ob_r = br + i0;
                 for (int k = 0; k < m; k++) {
-                    float a = w * amp;
-                    bl[i0 + k] += il[k] * a * gl;
-                    br[i0 + k] += ir[k] * a * gr;
+                    ob_l[k] += il[k] * (w * al);
+                    ob_r[k] += ir[k] * (w * ar);
                     w += dw;
                     dw += ddw;
-                    amp += damp;
+                    al += dal;
+                    ar += dar;
                 }
             } else {
                 for (int k = 0; k < m; k++) {
@@ -2498,8 +2492,10 @@ static void grains(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
             g->frac = np - (float)kk;
         }
         g->age += m > 0 ? m : 0;
-        if (g->age >= g->len)
+        if (g->age >= g->len) {
             g->on = 0;
+            v->gcnt--;
+        }
     }
     s->sc->fmono = s->sc->flin = 0;
 }
@@ -2554,9 +2550,7 @@ static int run_voices(struct sm *s, float *bl, float *br, int n)
         any |= s->spot[i].used;
     for (int f = 0; f < SM_NV; f++) {
         struct smvoice *v = &s->v[f];
-        any |= v->on | (v->env > 0.f) | (v->seen != v->cmd) | v->g_on | (v->rep > 0.f) | (v->g_env > 0.f);
-        for (int i = 0; i < SM_GRAINS; i++)
-            any |= v->g[i].on;
+        any |= v->on | (v->env > 0.f) | (v->seen != v->cmd) | v->g_on | (v->rep > 0.f) | (v->g_env > 0.f) | v->gcnt;
     }
     any |= (s->dry_env > 0.f) | s->sq_on;
     if (!any) {
@@ -2572,6 +2566,7 @@ static int run_voices(struct sm *s, float *bl, float *br, int n)
             s->v[f].env = s->v[f].g_env = 0.f;
             for (int i = 0; i < SM_GRAINS; i++)
                 s->v[f].g[i].on = 0;
+            s->v[f].gcnt = 0;
         }
         for (int i = 0; i < SM_SPOTS; i++)
             s->spot[i].used = 0;
@@ -2597,8 +2592,7 @@ static int run_voices(struct sm *s, float *bl, float *br, int n)
         s->sc->pr += c1 - c0;
         s->sc->pg += DWT_CYCCNT - c1;
         nv += s->v[f].on;
-        for (int i = 0; i < SM_GRAINS; i++)
-            ng += s->v[f].g[i].on;
+        ng += s->v[f].gcnt;
     }
     dry_run(s, bl, br, n);
     s->n_voices = (uint8_t)nv;
@@ -2611,7 +2605,7 @@ static int run_voices(struct sm *s, float *bl, float *br, int n)
  * recording it (captured), or the take's timeline is running (a layer's). Whatever else is left over - after an odd order of events - is let go. */
 static void sweep(struct sm *s)
 {
-    int latA = (s->latchm >> SM_ARP) & 1, latG = (s->latchm >> SM_GRAIN) & 1, latS = (s->latchm >> SM_SLICER) & 1;
+    int latA = lat_of(s, SM_ARP), latG = lat_of(s, SM_GRAIN), latS = lat_of(s, SM_SLICER);
     for (int i = 0; i < SM_SPOTS; i++) {
         struct smspot *sp = &s->spot[i];
         if (!sp->used)
@@ -2783,11 +2777,11 @@ int samplr_run(float *bl, float *br, int n, float **snd)
                                        * sample without a jump), then it fades back in over the next blocks that have room. Its gestures and sequences keep their time. */
             s->sc->smute = 1;
             s->sc->mtop = 1;
-            if (q->tailn == (uint16_t)n && q->gfd <= 0.f) {
-                int sendt = snd && (q->fx_sd || q->fx_sr);
+            if (q->tailn > 0 && q->gfd <= 0.f) {
+                int sendt = snd && (q->fx_sd || q->fx_sr), tn = q->tailn;
                 float sd = (float)q->fx_sd * .01f, sr = (float)q->fx_sr * .01f;
-                for (int i = 0; i < n; i++) {
-                    float w = 1.f - (float)(i + 1) / (float)n, l = (float)q->tail[0][n - 1 - i] * (1.f / 32767.f) * w, r = (float)q->tail[1][n - 1 - i] * (1.f / 32767.f) * w;
+                for (int i = 0; i < tn; i++) {
+                    float w = 1.f - (float)(i + 1) / (float)tn, l = (float)q->tail[0][tn - 1 - i] * (1.f / 32767.f) * w, r = (float)q->tail[1][tn - 1 - i] * (1.f / 32767.f) * w;
                     bl[i] += l;
                     br[i] += r;
                     if (sendt) {
@@ -2847,33 +2841,35 @@ int samplr_run(float *bl, float *br, int n, float **snd)
                 tr[i] *= gk;
             }
         float sd = (float)q->fx_sd * .01f, sr = (float)q->fx_sr * .01f, pk = q->peak * .9f, mx = 0.f;
-        int send = snd && (q->fx_sd || q->fx_sr), bad = 0;
-        for (int i = 0; i < n; i++) {                             /* the level of the block (a NaN never raises it: it shows as 'bad' below) */
-            float a = __builtin_fabsf(tl[i]), b = __builtin_fabsf(tr[i]);
-            mx = a > mx ? a : mx;
-            mx = b > mx ? b : mx;
-            bad |= !(a < 8.f && b < 8.f);
+        int send = snd && (q->fx_sd || q->fx_sr);
+        /* One pass: the level of the block (a NaN never raises it), nothing but a number gets to the bus and the sends, the sends, and (for the last SM_TAIL frames)
+         * the end of the block for the emergency tail (16-bit, saturated by the hardware instruction). */
+        int tn = n < SM_TAIL ? n : SM_TAIL, ts = n - tn;
+        int16_t *t0 = q->tail[0] - ts, *t1 = q->tail[1] - ts;
+        for (int part = 0; part < 2; part++) {
+            int i0 = part ? ts : 0, i1 = part ? n : ts;
+            for (int i = i0; i < i1; i++) {
+                float l = tl[i], r = tr[i], al = __builtin_fabsf(l), ar = __builtin_fabsf(r);
+                mx = __builtin_fmaxf(mx, __builtin_fmaxf(al, ar));
+                l = al < 8.f ? l : 0.f;
+                r = ar < 8.f ? r : 0.f;
+                bl[i] += l;
+                br[i] += r;
+                if (part) {
+                    t0[i] = (int16_t)__builtin_arm_ssat((int)(l * 32767.f), 16);
+                    t1[i] = (int16_t)__builtin_arm_ssat((int)(r * 32767.f), 16);
+                }
+                if (send) {
+                    snd[0][i] += l * sd;
+                    snd[1][i] += r * sd;
+                    snd[2][i] += l * sr;
+                    snd[3][i] += r * sr;
+                }
+            }
         }
         pk = mx > pk ? mx : pk;
-        for (int i = 0; i < n; i++) {
-            float l = tl[i], r = tr[i];
-            if (bad) {                                            /* (nothing but a number gets to the bus and the sends) */
-                l = __builtin_fabsf(l) < 8.f ? l : 0.f;
-                r = __builtin_fabsf(r) < 8.f ? r : 0.f;
-            }
-            bl[i] += l;
-            br[i] += r;
-            q->tail[0][i] = (int16_t)(l > 1.f ? 32767.f : l < -1.f ? -32767.f : l * 32767.f);
-            q->tail[1][i] = (int16_t)(r > 1.f ? 32767.f : r < -1.f ? -32767.f : r * 32767.f);
-            if (send) {
-                snd[0][i] += l * sd;
-                snd[1][i] += r * sd;
-                snd[2][i] += l * sr;
-                snd[3][i] += r * sr;
-            }
-        }
         q->peak = pk;
-        q->tailn = (uint16_t)n;
+        q->tailn = (uint16_t)tn;
         fed |= send;
         q->tick++;
         s->sc->pm += DWT_CYCCNT - cm;

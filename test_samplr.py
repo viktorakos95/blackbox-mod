@@ -508,14 +508,18 @@ check("loop: the slice repeats with its own length (1024 frames)", abs(o[5000] -
 touch(2, 0, 0, 0)
 play(3)
 check("loop: silent after the lift", max(abs(x) for x in play(20)[0]) < 1e-4)
-e.call("samplr_cycle", 2)                                      # latch on
+e.call("samplr_cycle", 2)                                      # latch on: in the slicer's LOOP mode it does not count (no loops that go on by themselves, no tap toggles)
 touch(0, 0, 5 * 64 + 10, 100)
 touch(2, 0, 0, 0)
 play(40)
-check("loop + latch: keeps looping after the lift", max(abs(x) for x in play()[0]) > 0.05)
-e.call("samplr_cycle", 2)                                      # latch off: the loop stops
-play(30)
-check("latch off stops the loop", max(abs(x) for x in play()[0]) < 1e-4)
+check("loop + latch: LATCH does not apply in LOOP mode: the loop ends with the finger", max(abs(x) for x in play()[0]) < 1e-4)
+touch(0, 0, 5 * 64 + 10, 100)                                  # a tap while another... a second tap does not toggle anything
+touch(2, 0, 0, 0)
+touch(0, 0, 8 * 64 + 10, 100)
+touch(2, 0, 0, 0)
+play(40)
+check("... and taps add and remove no loops", max(abs(x) for x in play()[0]) < 1e-4)
+e.call("samplr_cycle", 2)                                      # latch off again
 setb(OFF["qi"], 3)                                             # Q 1/16 = 6000 frames: a repeat on every grid line
 touch(0, 0, 5 * 64 + 10, 100)
 rec = []
@@ -607,31 +611,9 @@ check("gesture: CLR stops and clears", e.r8(SMP + OFF["g_layers"]) == 0 and e.r8
 play(40)
 check("gesture: silent after CLR", max(abs(x) for x in play(5)[0]) < 1e-4)
 
-# per-mode LATCH and tap-to-toggle slice loops
+# per-mode LATCH (the slicer's LOOP mode has none: no loops that go on by themselves)
 e.call("samplr_set_mode", 0)
 setb(OFF["qi"], 0)
-setb(OFF["loopm"], 1)
-e.call("samplr_cycle", 2)                                      # latch on for the slicer only
-check("latch is per mode: the slicer's bit only", e.r8(SMP + OFF["latchm"]) == 1, e.r8(SMP + OFF["latchm"]))
-touch(0, 0, 5 * 64 + 10, 100)                                  # tap slice 5
-touch(2, 0, 0, 0)
-touch(0, 0, 8 * 64 + 10, 100)                                  # the same finger taps slice 8: a second loop
-touch(2, 0, 0, 0)
-o = []
-for _ in range(30):
-    o += play()[0]
-loud = max(abs(x) for x in o[-1024:])
-touch(0, 1, 5 * 64 + 10, 100)                                  # another finger taps slice 5 again: only that loop stops
-touch(2, 1, 0, 0)
-play(30)
-o2 = []
-for _ in range(20):
-    o2 += play()[0]
-check("two latched loops, then a tap on one stops just that one (the other keeps going)", loud > 0.1 and 0.05 < max(abs(x) for x in o2[-1024:]) < loud * 0.95, (loud, max(abs(x) for x in o2[-1024:])))
-touch(0, 2, 8 * 64 + 10, 100)                                  # a third finger taps slice 8: stops it too
-touch(2, 2, 0, 0)
-play(30)
-check("... and a tap on the other stops it as well", max(abs(x) for x in play(5)[0]) < 1e-4)
 e.call("samplr_set_mode", 2)
 touch(0, 0, 300, 0)
 touch(2, 0, 0, 0)
@@ -663,7 +645,7 @@ check("release 80 ms: the tail runs past the slice end", tail > 0.01, tail)
 setb(OFF["rel"], 0)
 play(30)
 
-# a take that starts with a finger already down, and one that keeps a latched slice loop
+# a take that starts with a finger already down
 def gwait(cond, limit=420):
     k = 0
     while not cond() and k < limit:
@@ -686,36 +668,6 @@ check("take with a finger already down: the slice plays from the very start of t
 e.call("samplr_gest", 3)
 play(40)
 
-e.call("samplr_set_mode", 0)
-setb(OFF["loopm"], 1)
-e.call("samplr_cycle", 2)                                      # slicer latch on
-e.call("samplr_gest", 0)
-gwait(lambda: e.r8(SMP + OFF["g_run"]) == 1)
-play(49)
-touch(0, 0, 8 * 64 + 10, 100)                                  # a tap starts a latched loop at about block 50
-touch(2, 0, 0, 0)
-play(150)
-touch(0, 1, 8 * 64 + 10, 100)                                  # and a tap stops it at about block 200
-touch(2, 1, 0, 0)
-gwait(lambda: e.r8(SMP + OFF["g_layers"]) == 1)
-pas = []
-for b in range(750):                                           # two passes of the loop
-    pas.append(max(abs(x) for x in play()[0]))
-def active(lo, hi, off):
-    return all(pas[off + b] > 0.02 for b in range(lo, hi))
-def quiet(lo, hi, off):
-    return all(pas[off + b] < 1e-4 for b in range(lo, hi))
-# find the loop start of the first pass from the first sound
-first = next(b for b, v in enumerate(pas) if v > 0.02)
-base = first - 52 if first >= 52 else first
-check("a recorded latched loop plays on its own: sounding between its start and stop", all(pas[first + 10 + k] > 0.02 for k in range(0, 120)), first)
-check("... and is stopped by the recorded second tap", all(pas[first + 170 + k] < 1e-4 for k in range(0, 60)), first)
-second = next(b for b in range(first + 200, 750) if pas[b] > 0.02)
-check("... and starts again in the next pass of the loop (375 blocks later)", abs(second - first - 375) < 8, (first, second))
-e.call("samplr_cycle", 2)
-setb(OFF["loopm"], 0)
-e.call("samplr_gest", 3)
-play(60)
 
 # GRAIN: scan drift, pitch pattern, contour, warp spray; a mode switch ends the old mode's latch
 VOFF = struct_offsets(["v"])["v"]
@@ -763,12 +715,8 @@ play(80)
 e.call("samplr_gest", 3)
 setb(OFF["g_bars"], 1)
 e.call("samplr_set_mode", 0)
-setb(OFF["loopm"], 1)
-e.call("samplr_cycle", 2)                                      # slicer latch on
-touch(0, 0, 8 * 64 + 10, 100)                                  # a latched loop is already playing...
-touch(2, 0, 0, 0)
 play(20)
-e.call("samplr_gest", 0)                                       # ... when REC is pressed
+e.call("samplr_gest", 0)                                       # REC is pressed
 gwait(lambda: e.r8(SMP + OFF["g_run"]) == 1)
 vol_of = lambda: struct.unpack("<f", e.uc.mem_read(SMP + OFF["vol"], 4))[0]
 p1 = []
@@ -784,11 +732,7 @@ for b in range(375):
     o = play()[0]
     p2.append(max(abs(x) for x in o))
     vols.append(vol_of())
-check("a latched loop that played when the take began is in the take (it plays on in the next pass)", sum(1 for v in p2[10:60] if v > 0.02) > 40, p2[10:20])
-check("... and not doubled by the live one", max(p2[10:60]) < 1.4 * max(p1[10:60]), (max(p2[10:60]), max(p1[10:60])))
 check("the recorded encoder turn comes back: the volume is 1 early in the pass and has dropped after block 100", vols[50] > 0.9 and vols[200] < 0.2, (vols[50], vols[200], v_end))
-e.call("samplr_cycle", 2)
-setb(OFF["loopm"], 0)
 e.uc.mem_write(SMP + OFF["vol"], struct.pack("<f", 1.0))
 e.call("samplr_gest", 3)
 play(60)
@@ -1032,13 +976,12 @@ e.call("samplr_set_mode", 0)
 e.call("samplr_tracks")
 check("tracks: the memory holds six", e.uc.reg_read(A.UC_ARM_REG_R0) == 6, e.uc.reg_read(A.UC_ARM_REG_R0))
 SMP0 = SMP
-e.call("samplr_set_mode", 0)
-setb(OFF["loopm"], 1)
-setb(OFF["latchm"], 1)
-touch(0, 0, 3 * 64 + 10, 100)
+e.call("samplr_set_mode", 1)                                   # TAPE with LATCH: the hold goes on after the lift
+setb(OFF["latchm"], 2)
+touch(0, 0, 400, 100)
 touch(2, 0, 0, 0)
 play(8)
-check("tracks: track 0 has a latched slice loop", max(abs(x) for x in play()[0]) > 0.05)
+check("tracks: track 0 has a latched tape hold", max(abs(x) for x in play()[0]) > 0.05)
 e.call("samplr_track", 1, count=50_000_000)
 e.call("samplr")
 SMP = e.uc.reg_read(A.UC_ARM_REG_R0)
@@ -1055,11 +998,11 @@ e.call("samplr_track", 0, count=50_000_000)
 e.call("samplr")
 back = e.uc.reg_read(A.UC_ARM_REG_R0)
 SMP = SMP0
-check("tracks: back on track 0 (slicer, latched)", back == SMP0 and sm(OFF["mode"], "B") == 0 and sm(OFF["latchm"], "B") == 1)
-e.call("samplr_cycle", 2)                                      # LATCH off: the loop ends
+check("tracks: back on track 0 (tape, latched)", back == SMP0 and sm(OFF["mode"], "B") == 1 and sm(OFF["latchm"], "B") == 2)
+e.call("samplr_cycle", 2)                                      # LATCH off: the hold ends
 play(10)
-check("tracks: LATCH off on track 0 ends its loop", max(abs(x) for x in play()[0]) < 1e-3)
-setb(OFF["loopm"], 0)
+check("tracks: LATCH off on track 0 ends its hold", max(abs(x) for x in play()[0]) < 1e-3)
+e.call("samplr_set_mode", 0)
 
 # a take on track 1 goes on replaying while track 0 is shown
 e.call("samplr_track", 1, count=50_000_000)
@@ -1223,10 +1166,9 @@ setb(OFF["rel"], 32)
 e.call("samplr_set_mode", 0)
 
 # PANIC / STOP twice: whatever other tracks still play on (latched things have no stop of their own) ends
-e.call("samplr_set_mode", 0)
-setb(OFF["loopm"], 1)
-setb(OFF["latchm"], 1)
-touch(0, 0, 3 * 64 + 10, 100)
+e.call("samplr_set_mode", 1)
+setb(OFF["latchm"], 2)
+touch(0, 0, 300, 100)
 touch(2, 0, 0, 0)
 e.call("samplr_track", 1, count=50_000_000)
 e.call("samplr")
@@ -1344,9 +1286,9 @@ check("(SAMPLR's own cost is not what the steps follow)", e.r8(SHED) == 0, e.r8(
 # the hard check, for a spike: the time already used leaves no room (stock work, the looper's tracks' time kept when they outrank SAMPLR)
 touch(2, 0, 0, 0)
 play(8)
-setb(OFF["loopm"], 1)
-setb(OFF["latchm"], 1)
-touch(0, 0, 3 * 64 + 10, 100)                          # a latched loop: it sounds on by itself
+e.call("samplr_set_mode", 1)                           # TAPE with LATCH: the hold sounds on by itself
+setb(OFF["latchm"], 2)
+touch(0, 0, 400, 100)
 touch(2, 0, 0, 0)
 play(8)
 o = play(4)
@@ -1367,8 +1309,8 @@ check("... with room again it fades in over ~0.6 s: the first block is quiet, th
 check("... no step was taken for it (the quality is not touched by a spike)", e.r8(SHED) == 0, e.r8(SHED))
 # the sends to the stock delay and reverb at every quality step and while a track fades or is cut
 e.call("samplr_stop_all")
-setb(OFF["loopm"], 0)
 setb(OFF["latchm"], 0)
+e.call("samplr_set_mode", 0)
 play(6)
 setb(OFF["fx_sd"], 100)
 setb(OFF["fx_sr"], 100)
@@ -1389,9 +1331,9 @@ for st_ in (0, 3, 5):
 e.uc.mem_write(SHED, b"\x00")
 touch(2, 0, 0, 0)
 play(8)
-setb(OFF["loopm"], 1)
-setb(OFF["latchm"], 1)
-touch(0, 0, 3 * 64 + 10, 100)                           # a latched loop sounds on by itself
+e.call("samplr_set_mode", 1)
+setb(OFF["latchm"], 2)
+touch(0, 0, 400, 100)                                   # a latched tape hold sounds on by itself
 touch(2, 0, 0, 0)
 gset(0.30, 500)
 play(130)
@@ -1403,29 +1345,27 @@ setb(OFF["fx_sd"], 0)
 setb(OFF["fx_sr"], 0)
 gset(0.30, 400)
 e.call("samplr_stop_all")
-setb(OFF["loopm"], 0)
 setb(OFF["latchm"], 0)
+e.call("samplr_set_mode", 0)
 play(150)
 
 # the guard's fades: the whole task's averaged load at SAMPLR's mark and the quality steps used. Two tracks sound: the shown one (0) and track 1; track 1
 # goes first, the shown one last.
 touch(2, 0, 0, 0)
 play(3)
-e.call("samplr_set_mode", 0)
-setb(OFF["loopm"], 1)
-setb(OFF["latchm"], 1)
-touch(0, 0, 3 * 64 + 10, 100)
+e.call("samplr_set_mode", 1)                           # TAPE with LATCH on both tracks: two holds that sound on by themselves
+setb(OFF["latchm"], 2)
+touch(0, 0, 400, 100)
 touch(2, 0, 0, 0)
 play(8)
 SMP_A = SMP
 e.call("samplr_track", 1, count=50_000_000)
 e.call("samplr")
 SMP_B = e.uc.reg_read(A.UC_ARM_REG_R0)
-e.call("samplr_set_mode", 0)
-e.uc.mem_write(SMP_B + OFF["loopm"], b"\x01")
-e.uc.mem_write(SMP_B + OFF["latchm"], b"\x01")
+e.call("samplr_set_mode", 1)
+e.uc.mem_write(SMP_B + OFF["latchm"], b"\x02")
 SMP = SMP_B
-touch(0, 0, 9 * 64 + 10, 100)
+touch(0, 0, 700, 100)
 touch(2, 0, 0, 0)
 play(8)
 e.call("samplr_track", 0, count=50_000_000)
@@ -1489,6 +1429,7 @@ e.call("samplr_stop_all")                              # (back to how the tests 
 for base_ in (SMP_A, SMP_B):
     e.uc.mem_write(base_ + OFF["loopm"], b"\x00")
     e.uc.mem_write(base_ + OFF["latchm"], b"\x00")
+    e.uc.mem_write(base_ + OFF["mode"], b"\x00")
     e.uc.mem_write(base_ + struct_offsets(["gmu"])["gmu"], b"\x00")
     e.uc.mem_write(base_ + struct_offsets(["gfd"])["gfd"], struct.pack("<f", 0.0))
     e.uc.mem_write(base_ + struct_offsets(["gfade"])["gfade"], b"\x00")

@@ -8,6 +8,7 @@
 #define SM_ARPV   4              /* voices of the arpeggiator's own notes (after the fingers') */
 #define SM_LAYERS 3              /* gesture overdub layers */
 #define SM_LFING  4              /* fingers per layer */
+#define SM_TAIL   64             /* frames kept of a track's last block (1.3 ms): the emergency fade plays them backwards */
 #define SM_LATV   8              /* voices for latched slice loops (not tied to a finger) */
 #define SM_LTBASE (SM_VOICES + SM_ARPV)
 #define SM_LBASE  (SM_LTBASE + SM_LATV)
@@ -52,7 +53,7 @@ struct smvoice {
     uint8_t _a[3];
     /* granular cloud */
     uint8_t g_on;
-    uint8_t _g[3];
+    uint8_t gcnt, _g[2];                    /* grains sounding (kept by grain_spawn and grains(): nothing scans for them) */
     int32_t g_centre, g_size;
     float g_acc, g_warp, g_warp2, g_env;     /* g_warp: smooth random walk of the scan / pan (WARP spray); g_env: the cloud's own attack / release (it keeps spawning while it fades) */
     uint8_t g_seq, _gs[3];                  /* step of the pitch pattern */
@@ -140,8 +141,8 @@ struct sm {
     float gcost;                            /* what a block of this track takes, averaged (cycles): the return of a faded track needs to know */
     float gfd;                              /* the guard's fade for this track: 0 sounding .. 1 out */
     uint8_t gfade, gmu;                     /* fading out for lack of time; out (not rendered; its gestures and sequences keep their time) */
-    uint16_t tailn;                         /* frames in tail (the last block this track played) */
-    int16_t tail[2][256];                   /* ... for the emergency fade: played backwards it joins the last sample without a jump */
+    uint16_t tailn;                         /* frames in tail (the end of the last block this track played; 0 none) */
+    int16_t tail[2][SM_TAIL];               /* ... for the emergency fade: played backwards it joins the last sample without a jump */
 };
 
 /* Scratch every track uses in turn (the audio task renders one voice at a time; the transient search runs in the GUI task): the head of effect block 9. */
