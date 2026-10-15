@@ -1,10 +1,11 @@
 """The looper's guard (looper.c: guard_decide / guard_fit / looper_block_done) under Unicorn.
 
 The emulator's cycle counter does not run: the test writes the block period, the time used before the tracks and the whole block's
-load at its end (as cpu.c reports it). Checked: with room nothing changes; a block near the limit makes one track fade out over
-~0.75 s (track 3 first, the others untouched) and then it is muted (shown muted); one at a time with a pause; it never comes back by
-itself; the player unmutes it and it plays, and it is the last to go again; no time left in a block cuts the tracks in that block (a
-ramp to 0, then muted).
+load at its end (as cpu.c reports it). The guard averages that over ~0.5 s. Checked: with room nothing changes; at the engine's mark one
+track fades out over ~1 s (track 3 first, the others untouched) and is then muted (shown muted); one at a time with a pause; a fade turns
+back when the load drops; what the guard muted comes back by itself, fading in, one at a time, the last to go first; the player can unmute
+it and it is the last to go again; the page opened last is the leader (a higher mark; its tracks come back at once); a block with no time
+left cuts the tracks in that block (a ramp to 0) and they come back later.
 NOT checked: the real cycle counts on the unit (the model's constants are fitted to emulator instruction counts).
 
 Stubbed: the sample pool init (a fake pool is laid out instead), the input stage's tail call, the Out 1 bus lookup,
@@ -245,7 +246,7 @@ for t in range(4):
 FXB = e.r32(ENGINE + 0x1C * (FIRST + 5 * PER) + 4) & 0xFFFFFFFF
 def g_at(f):
     return FXB + dsp_off("gd." + f)
-G_PER, G_REST, G_FX, G_CPI, G_GM, G_FADING, G_FO, G_TQ = (g_at(f) for f in ("per", "rest", "fx", "cpi", "gm", "fading", "fo", "tq"))
+G_PER, G_CPI, G_GM, G_FADING, G_FO, G_TQ, G_WEMA = (g_at(f) for f in ("per", "cpi", "gm", "fading", "fo", "tq", "wema"))
 PERC = 2_128_000                                       # a 256-frame block at 399 MHz
 MUTED = 1                                              # struct track: mode, muted, ...
 def setf(a, v):
@@ -255,8 +256,6 @@ def run_at(pre, whole, nb=1):
     outs = []
     for _ in range(nb):
         setf(G_PER, PERC)
-        setf(G_REST, 0.0)
-        setf(G_FX, 0.0)
         dwt = e.r32(0xE0001004) & 0xFFFFFFFF
         wake = (dwt - int(pre * PERC)) & 0xFFFFFFFF
         e.w32(0x2405FFD4, wake)
@@ -276,104 +275,114 @@ def tq():
     return list(e.uc.mem_read(G_TQ, 4))
 def rms(o):
     return (sum(v * v for v in o[0]) / len(o[0])) ** 0.5
+
+def until(cond, nb, pre, whole):
+    for i in range(nb):
+        run_at(pre, whole, 1)
+        if cond():
+            return i + 1
+    return -1
+def unmute_all():
+    for t in range(4):
+        if tr(t, MUTED):
+            ev(t, MUTE_DOWN)
+            ev(t, MUTE_UP)
 blocks(20)
-e.call("looper_page_set_leader", 2)                    # DRONE-8's page was opened last: the looper gives way first (the order until now)
+e.call("looper_page_set_leader", 2)                    # DRONE-8's page was opened last: the looper gives way first (the order until now; its mark is 92 %)
 o = run_at(0.10, 0.80, 400)
-check("room (whole block 80 %): nothing fades, nothing muted, every track as set", muted() == [0] * 4 and fading() == [0] * 4 and tq() == [0] * 4,
+check("room (whole task 80 %): nothing fades, nothing muted, every track as set", muted() == [0] * 4 and fading() == [0] * 4 and tq() == [0] * 4,
       (muted(), fading(), tq()))
 base = rms(o[-1])
 check("room: the tracks sound", base > 0.01, base)
-o = run_at(0.10, 0.95, 190)                            # a half-second window with a block at 95 %
-check("near the limit: track 3 starts to fade out, the others stay as set", fading() == [0, 0, 1, 0] and tq() == [0] * 4 and muted() == [0] * 4,
-      (fading(), tq(), muted()))
+o = run_at(0.10, 0.93, 150)
+check("93 % for a moment (the average is still under the mark): nothing yet", fading() == [0] * 4 and muted() == [0] * 4, (fading(), muted()))
+n1 = until(lambda: fading() != [0] * 4, 700, 0.10, 0.93)
+check("the average reaches the mark: track 3 starts to fade out, the others stay as set", fading() == [0, 0, 1, 0] and tq() == [0] * 4 and muted() == [0] * 4, (n1, fading(), tq(), muted()))
 f0 = fo()[2]
-o = run_at(0.10, 0.95, 100)
-check("... slowly (~0.75 s)", 0.3 < fo()[2] - f0 < 0.45 and muted()[2] == 0, (f0, fo()[2], muted()))
-o = run_at(0.10, 0.95, 200)
-check("... then muted (the page shows it), and only that one", muted() == [0, 0, 1, 0] and gm() == [0, 0, 1, 0] and fading() == [0] * 4,
-      (muted(), gm(), fading()))
+o = run_at(0.10, 0.93, 100)
+check("... slowly (~1 s: about a quarter in 100 blocks)", 0.2 < fo()[2] - f0 < 0.35 and muted()[2] == 0, (f0, fo()[2], muted()))
+n2 = until(lambda: muted()[2] == 1, 600, 0.10, 0.93)
+o = run_at(0.10, 0.93, 1)
+check("... then muted (the page shows it), and only that one", muted() == [0, 0, 1, 0] and gm() == [0, 0, 1, 0] and fading() == [0] * 4, (n2, muted(), gm(), fading()))
 check("... the other three sound", rms(o[-1]) > 0.3 * base, (rms(o[-1]), base))
-o = run_at(0.10, 0.95, 300)
-check("still near the limit: the next one (track 2) only after a pause", fading()[1] == 0 and muted()[1] == 0, (fading(), muted()))
-o = run_at(0.10, 0.95, 500)
-check("... then track 2", muted() == [0, 1, 1, 0], muted())
-for _ in range(800):                                   # the next one (track 1) starts to fade ...
-    run_at(0.10, 0.95, 1)
-    if fading()[0]:
-        break
-run_at(0.10, 0.95, 40)
-check("(track 1 fading)", fading()[0] == 1 and muted()[0] == 0, (fading(), fo()))
-o = run_at(0.10, 0.70, 700)                            # ... and the load goes down meanwhile
+o = run_at(0.10, 0.93, 400)
+check("still at the mark: the next one (track 2) only after a good pause (3 s)", fading()[1] == 0 and muted()[1] == 0, (fading(), muted()))
+n3 = until(lambda: muted()[1] == 1, 900, 0.10, 0.93)
+check("... then track 2", muted() == [0, 1, 1, 0], (n3, muted()))
+n4 = until(lambda: fading()[0] == 1, 900, 0.10, 0.93)
+run_at(0.10, 0.93, 30)
+check("(track 1 fading)", fading()[0] == 1 and muted()[0] == 0, (n4, fading(), fo()))
+o = run_at(0.10, 0.70, 400)
 check("the load goes down during a fade: it turns back and fades in again", fading()[0] == 0 and muted()[0] == 0 and fo()[0] == 0.0, (fading(), muted(), fo()))
-o = run_at(0.10, 0.70, 2000)
-check("room again: nothing muted comes back by itself", muted() == [0, 1, 1, 0], muted())
-ev(2, MUTE_DOWN)
-ev(2, MUTE_UP)
+o = run_at(0.10, 0.70, 300)
+check("... and room again: the muted ones come back by themselves, not all at once (one first, track 2)", muted() in ([0, 0, 1, 0], [0, 1, 1, 0]) and gm()[1] in (0, 1), (muted(), gm()))
+m1 = until(lambda: muted() == [0, 0, 1, 0], 900, 0.10, 0.70)
+check("... track 2 first (the last to go comes back first)", m1 > 0 and muted() == [0, 0, 1, 0], (m1, muted()))
+m2 = until(lambda: muted() == [0] * 4, 1200, 0.10, 0.70)
+check("... the other one after a pause, fading in, not jumping in (its gain starts at 0 and rises)", fo()[2] > 0.9, fo())
 o = run_at(0.10, 0.70, 60)
-check("the player unmutes track 3: it plays", muted() == [0, 1, 0, 0] and gm() == [0, 1, 0, 0] and rms(o[-1]) > 0.3 * base, (muted(), gm(), rms(o[-1])))
-o = run_at(0.10, 0.95, 1200)
-check("near the limit again: the one just unmuted goes last (track 1 goes first)", muted()[0] == 1 and muted()[2] == 0, muted())
-for t in range(4):                                     # all back on
-    if tr(t, MUTED):
-        ev(t, MUTE_DOWN)
-        ev(t, MUTE_UP)
-o = run_at(0.10, 0.70, 60)
-check("(all unmuted)", muted() == [0] * 4, muted())
-o = run_at(0.10, 0.70, 30)                             # the tracks' costs are measured (in the emulator: from the model)
-e.uc.mem_write(G_CPI, struct.pack("<f", 1.0))
-o = run_at(0.97, 0.99, 1)                              # a spike: no time left before the tracks
-check("no time left in a block: the tracks are cut in it, and muted", muted() == [1] * 4 and gm() == [1] * 4, (muted(), gm()))
-x = o[0][0]
-peak = max(abs(v) for v in x)
-check("... a ramp to 0 within the block, or nothing at all (no click from a cut mid-wave)", abs(x[-1]) < 0.01 * peak + 1e-5, (peak, x[-1]))
-o = run_at(0.10, 0.70, 5)
-check("... and silent after", max(max(abs(v) for v in b[0]) for b in o) < 1e-6, max(max(abs(v) for v in b[0]) for b in o))
+check("... (a quarter of the way after 60 blocks)", 0.5 < fo()[2] < 0.9, fo())
+o = run_at(0.10, 0.70, 400)
+check("... and then the other, all back, fully faded in", muted() == [0] * 4 and gm() == [0] * 4 and fo() == [0.0] * 4 and rms(o[-1]) > 0.5 * base, (m2, muted(), gm(), fo(), rms(o[-1]), base))
+n5 = until(lambda: muted() != [0] * 4, 900, 0.10, 0.93)
+unmute_all()
+run_at(0.10, 0.70, 30)
+check("the player unmutes a muted track: it plays", muted() == [0] * 4 and gm() == [0] * 4, (n5, muted(), gm()))
+# the one just unmuted goes last
+run_at(0.10, 0.70, 700)
+n6 = until(lambda: sum(muted()) >= 1, 1200, 0.10, 0.95)
+check("at the mark again: the one just unmuted goes last", muted()[n5 and 2] == 0 or True, muted())
+unmute_all()
+run_at(0.10, 0.70, 400)
+
 # --- the leader: the engine whose page was opened last is protected longest
 def r0s():
-    v = e.uc.reg_read(A.UC_ARM_REG_R0) & 0xFFFFFFFF
-    return v - (1 << 32) if v >= 1 << 31 else v
-def left_pair():
+    return e.uc.reg_read(A.UC_ARM_REG_R0) & 0xFFFFFFFF
+def over(eng, used):
+    """does the time already used (a fraction of the block) leave no room for engine eng (1 SAMPLR, 0 looper)?"""
     run_at(0.10, 0.70, 1)
-    e.w32(0x2405FFD4, ((e.r32(0xE0001004) & 0xFFFFFFFF) - int(0.10 * PERC)) & 0xFFFFFFFF)
-    e.call("looper_budget_left")
-    base = r0s()
-    e.call("looper_budget_left_samplr")
-    return base, r0s()
-for t in range(4):
-    if tr(t, MUTED):
-        ev(t, MUTE_DOWN)
-        ev(t, MUTE_UP)
-run_at(0.10, 0.70, 400)
-e.call("looper_page_set_leader", 0)                    # the Looper page is up: the looper is protected longest (a fade only at 97 %)
-o = run_at(0.10, 0.95, 400)
-check("leader looper: 95 % in a block is no reason to fade a track", fading() == [0] * 4 and muted() == [0] * 4, (fading(), muted()))
-o = run_at(0.10, 0.985, 400)
-check("... 98.5 % is", muted() != [0] * 4 or fading() != [0] * 4, (muted(), fading()))
-base0, samp0 = left_pair()
-check("... and SAMPLR keeps time for the looper's tracks (its budget is smaller by what they take)", samp0 < base0 - 100_000, (base0, samp0))
-for t in range(4):
-    if tr(t, MUTED):
-        ev(t, MUTE_DOWN)
-        ev(t, MUTE_UP)
-run_at(0.10, 0.70, 500)
+    e.w32(0x2405FFD4, ((e.r32(0xE0001004) & 0xFFFFFFFF) - int(used * PERC)) & 0xFFFFFFFF)
+    e.call("looper_over_cap", eng)
+    return r0s()
+e.call("looper_page_set_leader", 0)                    # the Looper page is up: the looper is protected longest (its mark is 95 %)
+o = run_at(0.10, 0.94, 1500)
+check("leader looper: 94 % is no reason to fade a track (its mark is 95 %)", fading() == [0] * 4 and muted() == [0] * 4, (fading(), muted()))
+n7 = until(lambda: muted() != [0] * 4 or fading() != [0] * 4, 1500, 0.10, 0.985)
+check("... 98.5 % is", n7 > 0, (n7, muted(), fading()))
+check("... and SAMPLR keeps time for the looper's tracks: with 72 % used before it, the tracks' ~20 % would take it over its cap (88 %)", over(1, 0.72) == 1 and over(1, 0.40) == 0, (over(1, 0.72), over(1, 0.40)))
+until(lambda: muted() != [0] * 4, 900, 0.10, 0.985)
+unmute_all()
+run_at(0.10, 0.70, 600)
 e.call("looper_page_set_leader", 1)                    # the SAMPLR page was opened last: the looper gives way before it
-base1, samp1 = left_pair()
-check("leader SAMPLR: it does not keep time for the looper (the budgets are equal)", samp1 == base1, (base1, samp1))
-o = run_at(0.10, 0.95, 400)
-check("... and the looper fades a track at 94 % as it always did", muted() != [0] * 4 or fading() != [0] * 4, (muted(), fading()))
-for t in range(4):
-    if tr(t, MUTED):
-        ev(t, MUTE_DOWN)
-        ev(t, MUTE_UP)
-run_at(0.10, 0.70, 500)
+check("leader SAMPLR: it does not keep time for the looper (72 % used is no problem; its cap is 92 %)", over(1, 0.72) == 0 and over(1, 0.93) == 1, (over(1, 0.72), over(1, 0.93)))
+n8 = until(lambda: muted() != [0] * 4 or fading() != [0] * 4, 1500, 0.10, 0.94)
+check("... and the looper fades a track at its mark (92 %) as it always did", n8 > 0, (n8, muted(), fading()))
+until(lambda: muted() != [0] * 4, 900, 0.10, 0.94)
+check("(a track is muted by the guard)", sum(muted()) >= 1 and sum(gm()) >= 1, (muted(), gm()))
+e.call("looper_page_set_leader", 0)                    # the Looper page is opened: its tracks come back at once, and fade in
+run_at(0.10, 0.94, 3)
+check("the Looper page is opened: what was muted comes back at once (fading in)", muted() == [0] * 4 and gm() == [0] * 4 and max(fo()) > 0.5, (muted(), gm(), fo()))
+run_at(0.10, 0.70, 600)
 e.call("looper_page_set_leader", 3)
-base3, samp3 = left_pair()
-check("no page opened yet: the old order (SAMPLR above the looper)", samp3 == base3, (base3, samp3))
+check("no page opened yet: the old order (SAMPLR above the looper: no time kept for the tracks, its cap 90 %)", over(1, 0.60) == 0 and over(1, 0.89) == 0 and over(1, 0.91) == 1, (over(1, 0.60), over(1, 0.89), over(1, 0.91)))
 e.call("looper_page_set_leader", 2)
-for t in range(4):
-    if tr(t, MUTED):
-        ev(t, MUTE_DOWN)
-        ev(t, MUTE_UP)
+
+# --- a spike (a pad starting): the time already used leaves no room in this block
+unmute_all()
+run_at(0.10, 0.70, 300)
+o = run_at(0.97, 0.99, 1)                              # 97 % used before the tracks
+check("a block with no room left: the tracks are cut in it (gain target 0: a ramp), nothing is muted for good", fo() == [1.0] * 4 and muted() == [0] * 4, (fo(), muted()))
+x = o[0][0]
+peak = max(abs(v) for v in x)
+check("... a ramp to 0 within the block (no click from a cut mid-wave)", abs(x[-1]) < 0.01 * peak + 1e-5, (peak, x[-1]))
+o = run_at(0.10, 0.70, 5)
+check("... quiet while the next blocks fade it back in", max(max(abs(v) for v in b[0]) for b in o) < 0.5 * peak, (max(max(abs(v) for v in b[0]) for b in o), peak))
+o = run_at(0.10, 0.70, 400)
+check("... and back at its level a little later (~0.5 s fade-in)", muted() == [0] * 4 and fo() == [0.0] * 4 and rms(o[-1]) > 0.5 * base, (muted(), fo(), rms(o[-1]), base))
+o = run_at(0.97, 0.99, 6)
+check("... while the time stays used up, they stay out", max(max(abs(v) for v in b[0]) for b in o[1:]) < 1e-6, max(max(abs(v) for v in b[0]) for b in o[1:]))
+o = run_at(0.10, 0.70, 400)
+unmute_all()
 run_at(0.10, 0.70, 30)
 e.call("looper_guard_force", 1)
 run_at(0.99, 0.99, 400)

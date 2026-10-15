@@ -532,10 +532,10 @@ void lira_process(lira_t *l, float *out, int n)
         bus[v] = l->bus[v];
     for (int o = 0; o < 8; o++)
         sqv[o] = l->sq[o];
-    /* The delay lines come and go gradually (shed): each line's weight in the wet sum and the wet's share of the output are smoothed over ~40 ms, so
+    /* The delay lines come and go gradually (shed): each line's weight in the wet sum and the wet's share of the output are smoothed over ~150 ms, so
        that nothing is cut, and a line that is not heard is not run. At rest these are 0.5, 0.5 and 1, and the arithmetic below is what it was. */
     const float tw0 = l->shed >= 2 ? 0.f : l->shed == 1 ? 0.7f : 0.5f, tw1 = l->shed >= 1 ? 0.f : 0.5f, tdg = l->shed >= 2 ? 0.f : 1.f;
-    const float kd = 1.f / (0.04f * sr);
+    const float kd = 1.f / (0.15f * sr);
     float da0 = 0.5f + l->wd0, da1 = 0.5f + l->wd1, ddg = 1.f - l->dgo;
     int ei = 0;
     const int have_ext = l->ext_l && l->ext_r && l->ext_n > 0;

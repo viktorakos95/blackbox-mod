@@ -206,6 +206,8 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint32_t wsum;
     float wl, wpk;               /* ... its smoothed load (permille) and near misses lately */
     float mf0, mf1;              /* the mute is a fade (0 sounding .. 1 silent): where it was at the start of this block and where it is at the end */
+    float dhold;                 /* this synth's share of the audio task (per mille) when it went out: the load with it back is the load now plus this */
+    uint8_t lead_seen;           /* the leader as of the last block (when this synth becomes it, it comes back) */
 };
 #define GEV_MAX 1024
 struct gev {                     /* one recorded gesture: when (frames from the bar line), what (a control id, or 300 + voice for a plate, 400 + voice a chord pitch, 500 + stepped id, 600 + action; the layer in bits 11..12) and its value */
@@ -246,7 +248,8 @@ float looper_bpm(void);
 int looper_grid_exact(float beats, float sph, int n);
 float looper_beat_frames(void);
 double looper_clock_now(void);
-unsigned looper_yield_permille(void);     /* looper.c: SAMPLR and the looper's tracks in the last block (they give way to this synth) */
+int looper_page_leader(void);              /* looper_page.c: the engine whose page was opened last (0 looper, 1 SAMPLR, 2 this synth, 3 none yet) */
+int looper_soft_threshold(int e);          /* looper.c: the mark on the averaged load where engine e (2 = this synth) starts to give way: the engine that gives way first the lowest, the one whose page was opened last the highest */
 
 static void grec(struct pg *g, int id, int val)
 {
@@ -570,7 +573,7 @@ int lira_render(const uint8_t *pad, void *voice, void *out, void *src)
 static void fade_step(struct pg *g, int n)
 {
     g->mf0 = g->mf1;
-    float step = (float)n / (0.5f * FS), back = (float)n / (0.3f * FS);
+    float step = (float)n / (1.5f * FS), back = (float)n / (1.0f * FS);
     if (g->shed >= 3)
         g->mf1 = g->mf1 + step > 1.0f ? 1.0f : g->mf1 + step;
     else
@@ -935,13 +938,7 @@ static uint32_t govern(struct pg *g)
         unsigned d = (uint16_t)(wn - g->wn);
         if (*(volatile uint32_t *)0x2405ffd0u == 0x43505532u && d >= 1u && d <= 4u && ws >= g->wsum && ws - g->wsum <= 9990u * d) {
             whole = (float)(ws - g->wsum) / (float)d;
-            /* SAMPLR and the looper's tracks give way to this synth within the block (looper.c guard), so their share is not a reason
-               for it to step down: only what cannot give way (stock voices and effects, this synth, the stock output) counts */
-            whole -= (float)looper_yield_permille();
-            if (whole < 0.0f)
-                whole = 0.0f;
-            g->wl += (whole - g->wl) * 0.1f;
-            g->wpk = g->wpk * 0.98f + (whole > 870.0f ? 1.0f : 0.0f);
+            g->wl += (whole - g->wl) * (1.0f / 188.0f);          /* the average over ~0.5 s: a moment of the screen or the SD card does not count */
         }
         g->wn = wn;
         g->wsum = ws;
@@ -955,12 +952,28 @@ static uint32_t govern(struct pg *g)
         volatile struct fr *fr = FR_CUR;
         if (fr->magic == FR_MAGIC && inst < 4000.0f && (uint16_t)inst > fr->c_pk)
             fr->c_pk = (uint16_t)inst;
-        int hot = inst > 900.0f || whole > 880.0f;
-        if ((g->ld > 750.0f || g->pk > 1.5f || g->wl > 800.0f || g->wpk > 1.5f || hot) && g->shed < 3 && since > (hot ? 3u : 16u)) {
-            g->shed++;
-            g->shed_blk = g->blk;
-        } else if (g->ld < 650.0f && g->pk < 0.5f && g->wl < 720.0f && g->wpk < 0.5f && g->shed > 0 && since > 400) {
-            g->shed--;
+        /* One decision, slow: the whole task's load averaged over ~0.5 s against this synth's mark (looper.c looper_soft_threshold: the lower the engine's
+           rank, the lower its mark; the engine whose page was opened last has the highest), and no more often than every ~0.8 s. At the mark the synth fades
+           out over ~1.5 s (shed 3: it runs as at step 2 meanwhile) and stops; it comes back, fading in over ~1 s, when the load with it back would be
+           under the mark with room to spare (and ~1.3 s have passed). Nothing in between: no half-states of the sound. Stock voices and effects alone
+           taking nearly the whole block (before the looper) is the one quick case. */
+        float mark = (float)looper_soft_threshold(2), load = g->wl > 0.0f ? g->wl : g->ld;
+        int lead = looper_page_leader();
+        if (lead != (int)g->lead_seen) {                         /* another page was opened; if it is this synth's, it comes back (fading in) */
+            g->lead_seen = (uint8_t)lead;
+            if (lead == 2 && g->shed >= 3) {
+                g->shed = 0;
+                g->shed_blk = g->blk;
+            }
+        }
+        if (g->shed < 3) {
+            if ((load >= mark && since > 300) || (inst > 960.0f && since > 40)) {
+                g->shed = 3;
+                g->shed_blk = g->blk;
+                g->dhold = (float)g->dsp;
+            }
+        } else if (load + g->dhold < mark - 30.0f && inst < 800.0f && since > 500) {
+            g->shed = 0;
             g->shed_blk = g->blk;
         }
     }
@@ -1026,7 +1039,7 @@ void lira_page_run(float *l, float *r, int n)
         rec_zero(p, 0, n);
         return;
     }
-    fade_step(g, n);                             /* the mute is a fade: out over ~0.5 s, back in over ~0.3 s */
+    fade_step(g, n);                             /* the mute is a fade: out over ~1.5 s, back in over ~1 s */
     if (g->mf0 >= 1.0f && g->mf1 >= 1.0f) {      /* the audio task is out of time, and this synth has faded out: it waits */
         rec_zero(p, 0, n);
         return;

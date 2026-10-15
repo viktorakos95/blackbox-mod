@@ -2437,5 +2437,6 @@ int looper_page_leader(void)
 
 void looper_page_set_leader(int e)                             /* tests: as if that engine's page had been opened last */
 {
+    P->magic = PMAGIC;
     P->lead = (uint8_t)(e >= 0 && e < 3 ? e : 3);
 }

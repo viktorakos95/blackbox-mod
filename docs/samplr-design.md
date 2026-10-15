@@ -486,3 +486,33 @@ takes three overdub layers.
 - Tests: test_guard.py (leader: threshold 97 % when the looper leads, SAMPLR keeps time for the looper's tracks, equal budgets otherwise), test_lira_gov.py (the mute is a
   fade: no block loses more than 40 % of the one before; the delay lines going make no jump; the synth fades back in), test_samplr.py (the emergency tail, the guard's
   fades and return, the fade-in). NOT checked: the real cycle counts; which page the person means to lead (the last opened is a guess).
+
+## Build 47 (simpler: slow marks on an averaged load, a stateless check for spikes)
+- Reports on build 46: three looper tracks muted at once with no fade while the Looper page (the leader) was open and DRONE-8 played; the drone stopped fast and its voices
+  came and went; with the Looper page open the drone stopped, on the DRONE page everything played (so no real overload); SAMPLR showed little cost yet did not sound
+  (tracks out), came back only when the looper had removed all four; even three fingers of grain on SAMPLR alone gave !5; stutter again with SAMPLR + stock pads;
+  SAMPLR seemed not to send to delay and reverb any more; "I don't think all these work together".
+- Why: the measures were wrong. The window-worst block (build 46) is dominated by pauses of other tasks (the screen, the SD card, a sample loading on the first touch:
+  a block that is 100 % full while nothing is wrong), and the cost estimates (a track's recent worst, SAMPLR's recent worst) were inflated by the same pauses, so every
+  engine saw "no time left" and cut or shed. DRONE-8's old marks (75-88 % of the block, from the first governor) were far under where the unit really starts to stutter
+  (C 90/100 played fine with four loops; C 94-97 did not).
+- Now:
+  - One measure for everything gradual: the whole task's load (what C shows) averaged over ~0.5 s (`wema`, looper.c). Each engine has a mark on it,
+    `looper_soft_threshold(e)`: 92 % for the engine that gives way first, +1.5 % for each engine ranking below it (so 92 / 93.5 / 95 %); the engine whose page
+    was opened last ranks highest (see build 46). Nothing looks at an engine's own cost any more.
+  - DRONE-8 (lira_pad.c): one decision, no half-states: at its mark (no more often than every ~0.8 s) it fades out over ~1.5 s (running as at step 2 meanwhile),
+    and it comes back, fading in over ~1 s, when the load with its own share added back is 3 % under the mark (and ~1.3 s have passed). Its delay lines fade
+    over ~150 ms. Stock work alone using more than 96 % of the block before the looper stage is the one quick case. A load that swings (granular SAMPLR) does not
+    move the average: the old governor, which followed the smoothed instantaneous load at 75-88 %, made the drone's voices come and go.
+  - SAMPLR (samplr.c): the quality steps (1-5) follow the average: a step when it is within 2 % of the mark, no more often than every ~0.5 s; one back at 7 % under,
+    every ~1 s. With the quality used (step >= 3) and the average at the mark, whole tracks fade out over ~1 s (the shown one last), one at a time, 3 s apart; they
+    come back by themselves, fading in over ~0.6 s, when the load with the track's share added is 3 % under the mark.
+  - The looper (looper.c): at its mark one track fades out over ~1 s and is muted (shown); a muted track comes back by itself (fading in, one at a time, the last to
+    go first) when the load with its share is 3 % under the mark, and at once when the Looper page is opened (leader). The player can unmute at any time.
+  - The check for spikes has no estimates and no memory (`looper_over_cap`): when the time already used in the block (stock work, DRONE-8, SAMPLR) plus, for SAMPLR,
+    the looper tracks' time if they outrank it, passes the engine's cap (88 %, +2 % per engine below it), the engine's tracks are left out of that block with a ramp to
+    0 (SAMPLR: the last block played backwards; the looper: the cheapest computation) and fade back in over the next blocks that have room. Nothing is muted for good.
+- Tests: test_guard.py (33), test_lira_gov.py (52: a swinging load does not move it, spikes do not count, hysteresis, leader), test_samplr.py (203: the steps follow
+  the average and nothing else, the hard check, sends at steps 0 / 3 / 5 and in the cut block, fades and returns, return on becoming leader).
+- Sends: no code path was found that stops SAMPLR's sends; they are tested at every step now. A faded-out track sends nothing, of course (its sends are post-fader):
+  that is what "SAMPLR runs but does not sound" was.

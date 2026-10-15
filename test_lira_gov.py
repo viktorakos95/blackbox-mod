@@ -100,35 +100,36 @@ def wave(load):
 seen = []
 rmss = []
 steps = []                                       # the largest jump between neighbouring samples in a block
-for i in range(260):
+for i in range(60):
     w = wave(0.85)
+    if not seen or seen[-1] != shed():
+        seen.append(shed())
+check("85 % of the block used before the synth (it is not at the mark): no step, however long", seen == [0], str(seen))
+for i in range(440):
+    w = wave(0.975)
     r = math.sqrt(sum(v * v for v in w) / N)
     rmss.append(r)
     steps.append(max(abs(w[k + 1] - w[k]) for k in range(N - 1)))
     if not seen or seen[-1] != shed():
         seen.append(shed())
-check("85 % load: it steps 1, 2, 3 (one line, none, muted)", seen == [0, 1, 2, 3] or seen == [1, 2, 3], str(seen))
+check("the stock work alone nearly fills the block (97.5 % before the synth): it goes out, in one step (no half-states of the sound)", seen == [0, 3], str(seen))
 r = rmss[-1]
-check("... and is silent at step 3 once it has faded out", r == 0.0, "rms %.5f" % r)
+check("... and is silent once it has faded out", r == 0.0, "rms %.5f" % r)
 peak = max(rmss[:20])
 first_low = next((i for i, v in enumerate(rmss) if v < 0.5 * peak), None)
-drops = [rmss[i] / rmss[i - 1] for i in range(1, len(rmss)) if rmss[i - 1] > 0.25 * peak]
-check("... the mute is a fade, not a cut: no block loses more than 40 % of the one before (the cut was 100 %)", min(drops) > 0.6, "worst ratio %.3f" % min(drops))
-check("... and the fade takes a while (the output is still half or more ten blocks after the step)", first_low is None or first_low > 20, str(first_low))
-check("... the delay lines going (steps 1, 2) make no jump: the largest step between samples stays within 3x of the first blocks'",
+check("... and the fade takes a long while (the output is still half or more 60 blocks after the step)", first_low is None or first_low > 120, str(first_low))
+check("... the delay lines going make no jump: the largest step between samples stays within 3x of the first blocks'",
       max(steps) < 3 * max(steps[:10]) + 1e-4, "max %.5f first %.5f" % (max(steps), max(steps[:10])))
-for _ in range(100):
+for _ in range(10):
     block(0.5)
-check("room again, but not for long enough: still muted", shed() == 3, str(shed()))
-for _ in range(100):
-    block(0.5)
-check("after ~400 blocks it steps back one", shed() == 2, str(shed()))
-back = [block(0.5) for _ in range(60)]
-check("... and the synth fades back in (it is sounding again within 100 blocks, not at once)", back[0] < 0.3 * max(back) and max(back) > 0.001, "first %.4f max %.4f" % (back[0], max(back)))
-for _ in range(900):
-    block(0.5)
-check("... and all the way back to full quality", shed() == 0 and block(0.5) > 0.001, str(shed()))
-
+check("room again, but not for long enough: still out", shed() == 3, str(shed()))
+back = []
+for _ in range(400):
+    back.append(block(0.5))
+check("after ~500 blocks it comes back", shed() == 0, str(shed()))
+i0 = next((i for i, v in enumerate(back) if v > 0.001), None)
+lvl = sum(back[-30:]) / 30
+check("... fading in (the first blocks are quiet; it takes ~190 blocks to reach its level)", i0 is not None and back[i0] < 0.3 * lvl and sum(back[i0 + 150:i0 + 190]) / 40 > 0.6 * lvl, "first %.4f level %.4f" % (back[i0] if i0 is not None else -1, lvl))
 # the whole audio task (cpu.c's running block count and load sum): work after the synth that the mid-task value cannot see
 CPU = 0x2405FFD0
 e.uc.mem_write(CPU, struct.pack("<IIIHH", 0x43505532, 0, 0, 0, 0))
@@ -142,27 +143,52 @@ def block_w(mid, whole):
     return block(mid)
 
 
-for _ in range(300):
+for _ in range(1500):
     block_w(0.5, 0.7)
 check("whole task at 70 %, 50 % by the time the synth runs: no step", shed() == 0, str(shed()))
-seen = []
-for i in range(200):
-    block_w(0.5, 0.84)
-    if not seen or seen[-1] != shed():
-        seen.append(shed())
-check("whole task at 84 % (50 % before the synth): it steps down all the same", seen[-1] >= 2 and seen == sorted(seen), str(seen))
-for _ in range(500):
-    block_w(0.5, 0.75)
-check("whole task at 75 %: no step back (hysteresis)", shed() == seen[-1], str(shed()))
-for _ in range(2000):
-    block_w(0.5, 0.6)
-check("whole task at 60 %: back to full quality", shed() == 0, str(shed()))
-for _ in range(3):
-    block_w(0.5, 0.92)
-for _ in range(5):
-    block_w(0.5, 0.7)
-check("three blocks over 88 %: a step within a few blocks", shed() >= 1, str(shed()))
 for _ in range(1500):
+    block_w(0.5, 0.93)
+check("whole task at 93 % (under its mark, 95 % with no page opened and this synth ranked highest): no step", shed() == 0, str(shed()))
+for _ in range(60):
+    block_w(0.5, 0.99)
+    block_w(0.5, 0.80)
+check("spikes to 99 % every other block average to 89 %: no step (a moment of the screen or the SD card is not a reason)", shed() == 0, str(shed()))
+n_to = 0
+for i in range(2000):
+    block_w(0.5, 0.97)
+    if shed() == 3:
+        n_to = i
+        break
+check("whole task at 97 % (over the mark): it goes out after a good while (the average has to get there), in one step", shed() == 3 and n_to > 150, (shed(), n_to))
+for _ in range(800):
+    block_w(0.5, 0.935)
+check("whole task at 93.5 % (between the mark less 3 % and the mark): it stays out (the hysteresis; no flapping)", shed() == 3, str(shed()))
+for _ in range(2500):
+    block_w(0.5, 0.6)
+check("whole task at 60 %: back", shed() == 0, str(shed()))
+# granular SAMPLR beside it: the load swings between 60 and 95 % every ~0.3 s; the average (~78 %) is far from the mark
+for i in range(40):
+    for _ in range(50):
+        block_w(0.5, 0.95)
+    for _ in range(50):
+        block_w(0.5, 0.60)
+check("a load that swings (granular): no step", shed() == 0, str(shed()))
+# the page opened last leads: its mark is the highest
+e.call("looper_page_set_leader", 2)
+for _ in range(2500):
+    block_w(0.5, 0.945)
+check("this synth's page opened last: its mark is the highest (95 %): 94.5 % is no reason", shed() == 0, str(shed()))
+e.call("looper_page_set_leader", 0)
+for _ in range(2500):
+    block_w(0.5, 0.945)
+check("the Looper page opened last: the synth gives way before the looper (its mark is lower, 93.5 %): 94.5 % takes it out", shed() == 3, str(shed()))
+e.call("looper_page_set_leader", 2)
+run_n = 0
+for _ in range(10):
+    block_w(0.5, 0.945)
+check("... and the synth's page is opened: it comes back at once", shed() == 0, str(shed()))
+e.call("looper_page_set_leader", 3)
+for _ in range(2500):
     block_w(0.5, 0.6)
 e.uc.mem_write(CPU, bytes(4))                                   # (the rest runs without the meter, as before)
 
