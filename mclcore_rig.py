@@ -81,7 +81,9 @@ class Core:
     def _q_receive(self):
         e = self.e
         ticks = e.arg(2)
-        if ticks == 50:                                          # the SD layer waiting for the streamer
+        lr = self.uc.reg_read(UC_ARM_REG_LR) & ~1
+        sleeping = self.b["bb_sleep_ms"] <= lr < self.b["bb_sleep_ms"] + 0x200      # the platform's sleep (also 50-tick slices), not the SD layer's wait
+        if ticks == 50 and not sleeping:                         # the SD layer waiting for the streamer
             self.blocked[0] = True
             e.ret(1)
             self.uc.emu_stop()
