@@ -3,11 +3,16 @@
 #include "bb_clock.h"
 #include "bb_midi.h"
 #include "bb_sdspy.h"
+#include "bb_sd.h"
+#include "bb_sdtest.h"
 #include "glcdfont.h"
 
 #define HOOK extern "C" __attribute__((section(".hook"), used))
 
 static uint8_t fb[BB_UI_W * BB_UI_H / 8];
+#ifdef SD_TEST
+static uint32_t sdtest_view;                                /* 0: the three tests' result lines, 1: the SD layer's counters */
+#endif
 static int32_t enc[4];
 static uint32_t btn_mask;
 static uint32_t mode;                                       /* 0 idle, 1 following the jack, 2 our own clock, 3 following the Blackbox's sequencer */
@@ -190,6 +195,22 @@ static void render(void)
 {
     for (unsigned i = 0; i < sizeof fb; i++)
         fb[i] = 0;
+#ifdef SD_TEST
+    if (sdtest_view == 0) {                                 /* the last results of the three tests (B1 list, B2 read, B3 write) */
+        for (int r = 0; r < 4; r++)
+            text(0, r, bb_sdtest_line(r));
+    } else {                                                /* the SD layer's own counters */
+        int c = text(0, 0, "REQ ");
+        number(c, 0, (int32_t)bb_sd_stat_get(0), 6);
+        c = text(0, 1, "TIMEOUTS ");
+        number(c, 1, (int32_t)bb_sd_stat_get(1), 3);
+        c = text(0, 2, "WORST WAIT MS ");
+        number(c, 2, (int32_t)bb_sd_stat_get(2), 6);
+        c = text(0, 3, "WORST CALL US ");
+        number(c, 3, (int32_t)bb_sd_stat_get(3), 6);
+    }
+    return;
+#endif
 #ifdef SD_SPY
     render_spy();
     return;
@@ -266,6 +287,17 @@ HOOK void bb_ui_input(uint32_t kind, int32_t a, int32_t b)
         }
     } else if (kind == 2 && a >= 0 && a < 5) {
         btn_mask |= 1u << a;
+#ifdef SD_TEST
+        if (a == 0)
+            bb_sdtest_list();
+        else if (a == 1)
+            bb_sdtest_read();
+        else if (a == 2)
+            bb_sdtest_write();
+        else if (a == 3)
+            sdtest_view ^= 1u;
+        return;
+#endif
 #ifdef SD_SPY
         if (a == 3)
             spy_view = (spy_view + 1u) % 9u;

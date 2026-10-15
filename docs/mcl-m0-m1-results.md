@@ -328,3 +328,25 @@ view 1 (tile B4) = overlaps in FatFs (F) and in the driver (D) with the first pa
   call (`bl 0x08088756` at 0x080743e8) is entered very often whenever the task gets the CPU.
 - Stock FatFs entry points found by FatFs source order and call counts (find_volume callers): f_opendir 0x080870f6, f_closedir 0x0808718c, f_readdir 0x080871a0, f_findnext 0x080871f0,
   f_findfirst 0x0808722e, f_stat 0x0808724a, f_getfree 0x08087290, f_truncate 0x080873c8, f_unlink 0x0808748e, f_mkdir 0x08087558, f_rename 0x080876c8 [Likely; to be confirmed against a RAM disk in the emulator].
+
+### M7 step 2: the SD layer (blob side, emulator-tested against the stock FatFs)
+- **The recon on the unit** (user, v3 image, photographed): data cache and instruction cache on, MPU on with 16 regions; all RAM is cacheable write-back (TEX0 C1 B1) **except** the three 64 KB regions
+  0x24050000 / 0x24060000 / 0x24070000 which are Device (C0 B1); the card driver's buffers on the unit were all between **0x24070D60 and 0x2407D5FC** (inside that non-cacheable window), reads and writes,
+  many not 32-byte aligned. Regions (n: base, log2 size, TEX C B): 0 20000000/17 011, 1 24000000/18 011, 2 24040000/16 011, 3-5 24050000..24070000/16 001, 6 30000000/19 011, 7 08000000/21 010 (flash),
+  8 C0000000/26 011 (SDRAM), 9 30000000/19, 10 60000000/13 001 shared (FMC), 11 1FF0F000/13, 12 10040000/16, 13-15 free.
+- **What that means:** the stock firmware keeps everything the card DMAs into in that non-cacheable window and does no cache maintenance in the driver. The stock FatFs build is `FF_FS_TINY`: its only sector
+  buffer is the volume window inside the FATFS object (offset 0x3c, in the window). **Every FatFs call of at most one sector goes through that window; only a read or write of 512 bytes or more can make FatFs
+  transfer whole sectors straight into the caller's buffer.** Verified in the emulator with the real FatFs: with requests of at most 511 bytes the card driver was only ever given the window (3500 transfers),
+  and a direct 2 KB `f_read` does hit the caller's buffer (negative control). **So MCL's SD layer never asks FatFs for 512 bytes or more in one call** (larger requests are split in `bb_sd_read/write`) and its buffers,
+  FIL (0x50 bytes) and DIR objects live in ordinary cached SDRAM. No MPU change, no cache maintenance, no non-cacheable memory of our own is needed.
+- **Layout facts learnt on the way:** FIL: objsize u64 at +0x10, flag +0x30, err +0x31, fptr u64 +0x38, size 0x50. FILINFO: fsize u64, fdate, ftime, fattrib at +12, altname at +13, fname at +26. FatFs entry points confirmed
+  against a FAT image: f_opendir 0x080870f6, f_closedir 0x0808718c, f_readdir 0x080871a0, f_stat 0x0808724a, f_truncate 0x080873c8, f_unlink 0x0808748e, f_mkdir 0x08087558, f_rename 0x080876c8 (f_findfirst/next 0x0808722e/0x080871f0).
+- **`bb_sd.cpp`:** one-slot mailbox, GUI side posts and sleeps on a FreeRTOS binary semaphore (created with the stock `xQueueGenericCreate`, 0x080883be; given with `xQueueGenericSend` 0x08088402, taken with
+  `xQueueGenericReceive` 0x08088756, 50 ms slices, 10 s limit), streamer side `mcl_sd_pump` (patch `patches/mclsd.py`, the call at 0x080743e8 in the pcmStreamer loop) runs one request per loop pass and then makes the
+  queue call it replaced. Ready flag set last at boot, cleared first. A request nobody waits for any more (timeout) is abandoned and its late result is dropped. Four files and two directories open at once.
+  API: open/close/read/write/seek/sync/truncate/size/tell, stat, mkdir, unlink, rename, opendir/readdir/closedir (long file names).
+- **`test_mcl_sd.py`** (stock FatFs on a mkfs.vfat FAT32 image, GUI and streamer contexts alternating): every operation, 300,000-byte write/read identical, seek, append, truncate, rename, a directory of 62 long-named entries,
+  handle exhaustion, busy mailbox, not-ready (a request found before boot is ignored), timeout and late completion, `fsck.vfat` clean afterwards, **mtools reads back what we wrote** (a card written by the blackbox
+  is readable by another FAT implementation) and the file that was on the card before is untouched. NOT checked: the real streamer's scheduling, real card timing, long-run behaviour (M9).
+- **Hardware test image:** `SDTEST=1 COMPACT=1 tools/mcl/build_blob.sh`, patch set `... cave mclblob mclsd`. MCL page: B1 lists the root (files / folders, the biggest file), B2 reads up to 256 KB of it twice with different
+  request sizes and compares checksums, B3 writes 128 KB of pattern to `/BBSD.TMP`, reads it back, compares and deletes it, B4 shows counters (requests, timeouts, worst wait, worst streamer-side call).

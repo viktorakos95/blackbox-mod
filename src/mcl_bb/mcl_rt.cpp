@@ -15,6 +15,7 @@
 #include "bb_clock.h"
 #include "bb_m3test.h"
 #include "bb_midi.h"
+#include "bb_sd.h"
 #include "bb_ui.h"
 
 extern "C" {
@@ -184,6 +185,7 @@ extern "C" uint32_t mcl_boot(void)
     volatile uint32_t *s = BKP;
     bb_midi_down();                                      /* hooks off before .bss is touched */
     bb_clock_down();
+    bb_sd_down();
     s[0] = BKP_MAGIC;
     s[2] = s[3] = 0;
     if (ALLOC_TOP_INIT != RAM_ORG || ALLOC_TOP > RAM_ORG) {
@@ -203,8 +205,10 @@ extern "C" uint32_t mcl_boot(void)
     for (ctor_t *c = __init_array_start; c < __init_array_end; c++, n++)
         (*c)();
     uint32_t bad = selftest();
-    if (!bad)
+    if (!bad) {
         bb_midi_init();                                  /* the MIDI hooks go live last */
+        bb_sd_init();                                    /* (the streamer's hook only runs requests once this has set its ready flag) */
+    }
     s[2] = n;
     s[3] = (uint32_t)((uintptr_t)__bss_end - (uintptr_t)__bss_start);
     uint32_t st = bad ? ST_SELFTEST : ST_OK;
