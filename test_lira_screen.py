@@ -509,16 +509,22 @@ button(9, 0xF6)                                                     # hardware S
 set_ticks(9950)
 button(10, 0xF7)
 check("STOP and PLAY with no loop change nothing", chord(158) == 0, chord(158))
-# PAD (button 0) is not a plate: it goes on to the stock handler, whose set-screen is solo_pad_pressed (back to the pads)
+# BTN on: button 0 is voice 1 like the others; BTN off: it is the stock PAD button (to the stock handler, whose set-screen is solo_pad_pressed)
 stockmsg = []
 e.stub(0x080A2E60, lambda: stockmsg.append(tuple(struct.unpack("<H", bytes(e.uc.mem_read(e.arg(1), 2))) +
                                                  struct.unpack("<I", bytes(e.uc.mem_read(e.arg(1) + 12, 4))))))
 set_ticks(10500)
 button(0)
-check("PAD on the page is not voice 1's plate: the stock handler gets it", key(0) == 0 and stockmsg == [(0xF9, 0)], (key(0), stockmsg))
-leds.clear()
-e.call("lira_leds")
-check("... and its LED is left to the firmware", all(l[1] != 0 for l in leds) and len(leds) == 7, leds)
+check("button 0 toggles voice 1 on, nothing goes to the stock handler", key(0) == 1 and not stockmsg, (key(0), stockmsg))
+set_ticks(10900)
+button(0)
+check("... and off again", key(0) == 0 and not stockmsg, (key(0), stockmsg))
+tap(130, 7)                                                       # BTN off
+set_ticks(11300)
+button(0)
+check("BTN off: button 0 goes to the stock handler (PAD, back to the pads) and is not a plate", key(0) == 0 and stockmsg == [(0xF9, 0)], (key(0), stockmsg))
+tap(130, 7)                                                       # BTN on again
+stockmsg.clear()
 # INFO (SHIFT on the looper pages) moves the encoders on within their part of the page; it is no modifier here
 def info():
     stockmsg.clear()
