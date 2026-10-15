@@ -557,3 +557,7 @@ Per-page tint (palette entries swapped only while the page draws, then put back;
 ## Build 53
 
 BACK (physical) = one step back: Looper FX/FX2/SETUP/MORE -> MAIN (on MAIN: undo, as before); SAMPLR -> its PLAY sheet, then Looper MAIN (the gesture undo is gone from the button); TRIG -> sheet 1, then SAMPLR; DRONE-8 -> TRIG (the voice-bank swap is gone from BACK; INFO still steps the encoders). New drone build merged.
+
+## Build 54
+
+The Looper's MORE tab is gone: SETUP now holds all nine option rows (MONITOR INPUT on K2, SPEED PITCH added; rows are 18 px) plus CLEAR ALL. The debug line of MORE is dropped. Tabs: MAIN FX FX2 SETUP.

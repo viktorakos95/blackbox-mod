@@ -141,12 +141,12 @@ enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, M_TRIG, M_LIRA, MODES };   /* M_T
 #define SMS_SMPL 3
 #define SM_SHEET (P->_r2)
 static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "REC", "FX", "SMPL"};
-#define NTABS 5                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
+#define NTABS 4                                                   /* MAIN FX FX2 SETUP MORE: FX2 is the FX tab on its second page (groups 2, 3) */
 /* hardware buttons the page can take over: slot numbers */
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
 
 #define TAB_W      34
-#define ROW_H      22                      /* SETUP: one option per row */
+#define ROW_H      18                      /* SETUP: one option per row */
 #define OPT_X      84                      /* SETUP: where the choices start */
 #define CHOICE_W   52
 #define SLIDER_W   150
@@ -316,6 +316,8 @@ static const struct optrow rows_setup[] = {
     {"FULL SCREEN", LOOPER_O_FULL, 2, {"OFF", "ON", 0, 0}},
     {"LOOP GAIN K1", LOOPER_O_GAIN, 0, {0, 0, 0, 0}},
     {"HW STOP PLAY", LOOPER_O_HWBTN, 2, {"LOOPER", "+STOCK", 0, 0}},
+    {"MONITOR INPUT K2", LOOPER_O_MON, 0, {0, 0, 0, 0}},
+    {"SPEED PITCH", LOOPER_O_PITCH, 3, {"TAPE", "GRAIN", "SMOOTH", 0}},
 };
 static const struct optrow rows_more[] = {
     {"MONITOR INPUT K1", LOOPER_O_MON, 0, {0, 0, 0, 0}},
@@ -326,7 +328,7 @@ static int opt_rows(void);
 
 static int opt_rows(void)
 {
-    return P->mode == M_MORE ? 2 : 7;
+    return P->mode == M_MORE ? 2 : 9;
 }
 
 static const struct optrow *page_rows(void)
@@ -815,9 +817,9 @@ static void draw_top(int t, const struct lay *L, const struct looper_info *k)
     box(x, 1, w, TOPBAR, C_BG);
     char b[24], *p = b;
     if (P->mode == M_SETUP || P->mode == M_MORE) {                /* what the knobs turn */
-        static const char *const nm_s[4] = {"GAIN ", "", "", ""};
+        static const char *const nm_s[4] = {"GAIN ", "MON ", "", ""};
         static const char *const nm_m[4] = {"MON ", "", "", ""};
-        static const uint8_t op_s[4] = {LOOPER_O_GAIN, 0, 0, 0};
+        static const uint8_t op_s[4] = {LOOPER_O_GAIN, LOOPER_O_MON, 0, 0};
         static const uint8_t op_m[4] = {LOOPER_O_MON, 0, 0, 0};
         const char *nm = P->mode == M_SETUP ? nm_s[t] : nm_m[t];
         for (const char *q = nm; *q; q++)
@@ -1100,7 +1102,7 @@ static void draw_setup(const struct lay *L)
 static void draw_footer(const struct lay *L)
 {
     box(1, L->foot_y + 1, P->w - 2, FOOT - 1, C_BG);
-    static const char *const tab[NTABS] = {"MAIN", "FX", "FX2", "SETUP", "MORE"};
+    static const char *const tab[NTABS] = {"MAIN", "FX", "FX2", "SETUP"};
     for (int i = 0; i < NTABS && P->mode < M_SMPLR; i++) {
         int on = i == 0 ? P->mode == M_MAIN : i == 1 ? P->mode == M_FX && FX_GROUP < 2 : i == 2 ? P->mode == M_FX && FX_GROUP >= 2 :
                  i == 3 ? P->mode == M_SETUP : P->mode == M_MORE;
@@ -2269,13 +2271,13 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
                 P->sel = (uint8_t)knob;                                   /* altering a track's setting selects it */
             if (P->mode == M_SMPLR || P->mode == M_TRIG) {
             } else if (P->mode == M_SETUP || P->mode == M_MORE) {
-                static const uint8_t op_s[4] = {LOOPER_O_GAIN, 0, 0, 0};
+                static const uint8_t op_s[4] = {LOOPER_O_GAIN, LOOPER_O_MON, 0, 0};
                 static const uint8_t op_m[4] = {LOOPER_O_MON, 0, 0, 0};
                 if (P->mode == M_MORE) {
                     if (knob == 0)
                         looper_set_opt(op_m[0], looper_get_opt(op_m[0]) + step);
-                } else if (knob == 0)
-                    looper_set_opt(op_s[0], looper_get_opt(op_s[0]) + step);
+                } else if (knob < 2)
+                    looper_set_opt(op_s[knob], looper_get_opt(op_s[knob]) + step);
             } else if (P->mode == M_FX) {
                 int p = FX_GROUP * 4 + knob_slot[knob & 3], tk = P->sel & 3;             /* knob n turns the n-th control of the pink square, on the selected track */
                 if (p >= FX_N) {
