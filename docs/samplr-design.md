@@ -393,3 +393,9 @@ takes three overdub layers.
   517k -> 408k, SPEED + filter + drive 756k -> 561k. Accesses to the effect memory (SDRAM) in the play loop: 15-30 k -> about 2 k a block (the track reads themselves not counted).
   On the unit the gain should be larger than the instruction counts say if SDRAM accesses are slow (the hardware L % was about 10x the emulator's instruction share): to be measured (L).
 - Stack: play_seg's frame is 512 bytes (the old seg with it inlined: about 216); WSOLA's search arrays are int16 now (448 -> 320). Deepest looper chain with SMOOTH: about 1 KB.
+
+## Build 40 (the worst block)
+- Report on build 39: four loops with some effects C 94 / 100, L 57; with a DRONE-8 note C 77 / 100, P 18 D 18 L 35 S 1, and it stutters. The average leaves room; the peak does not:
+  some blocks run over. (Facts from clock-findings.md that the numbers above did not use: core 399 MHz, 128-frame blocks; the emulator figures are per 256 frames = two blocks.)
+- The top bar now cycles V G -> P D L S (average) -> MAX P D L S (the worst single block of each stage in the last second, percent of one block period; S = SAMPLR's own peak)
+  -> R G B M. The worst-block numbers say which stage spikes when it stutters.

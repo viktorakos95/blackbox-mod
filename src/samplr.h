@@ -154,7 +154,9 @@ struct smscr {
     uint16_t shr, shg, shb, shm;            /* the last report of those, per mille of the audio block period */
     uint32_t pp, pd, pl, last_sdur;             /* cycles this report: the audio task before the looper stage (stock voices, effects, the synths), the looper's run without SAMPLR, SAMPLR's last call */
     uint16_t shp, shd, shl;                      /* their last report (per mille of the block period) */
-    uint8_t prof, _pf[3];                   /* the top bar: 0 V G, 1 P D L S (before the stage / the LIRA synth / looper / SAMPLR), 2 R G B M (inside SAMPLR); tap it */
+    uint8_t prof, _pf[3];                   /* the top bar: 0 V G, 1 P D L S (before the stage / the LIRA synth / looper / SAMPLR), 2 the same, worst block, 3 R G B M (inside SAMPLR); tap it */
+    uint32_t xp, xd, xlp;                   /* the worst block this report of pp, pd, pl (cycles) */
+    uint16_t shxp, shxd, shxl;              /* their last report (per mille of the block period) */
     uint16_t gnow, gacc;                    /* grains sounding across all the tracks (last block / this block so far) */
 };
 

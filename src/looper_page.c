@@ -1157,7 +1157,7 @@ static void draw_sm_top(struct sm *s, const char *info)
 {
     box(1, 1, P->w - 2, TOPBAR, C_BG);
     text(6, 4, info, C_CYAN, 1);
-    char b[24], *q = b;                                           /* C: the whole audio task (average / peak %), S: SAMPLR's share, V voices, G grains */
+    char b[48], *q = b;                                           /* C: the whole audio task (average / peak %), S: SAMPLR's share, V voices, G grains */
     *q++ = 'C';
     q = put_uint(q, (*(volatile uint16_t *)0x2405ffe2u + 5u) / 10u);
     *q++ = '/';
@@ -1167,13 +1167,21 @@ static void draw_sm_top(struct sm *s, const char *info)
         *q++ = 'S';
         q = put_uint(q, (s->t_avg_shown + 5u) / 10u);
     }
-    if (s->sc->prof == 1) {                                       /* tap the top bar: P = the audio task before the looper stage (stock voices and effects), D = the LIRA synth, L = the looper, S = SAMPLR (percent of the audio block) */
+    if (s->sc->prof == 1 || s->sc->prof == 2) {                   /* tap the top bar: P = the audio task before the looper stage (stock voices and effects), D = the LIRA synth, L = the looper, S = SAMPLR (percent of the audio block); again: the same, the worst block in the last second */
         static const char lab[4] = {'P', 'D', 'L', 'S'};
         const uint16_t v4[4] = {s->sc->shp, s->sc->shd, s->sc->shl, s->t_avg_shown};
+        const uint16_t x4[4] = {s->sc->shxp, s->sc->shxd, s->sc->shxl, s->t_peak_shown};
+        const uint16_t *v = s->sc->prof == 1 ? v4 : x4;
+        if (s->sc->prof == 2) {
+            *q++ = ' ';
+            *q++ = 'M';
+            *q++ = 'A';
+            *q++ = 'X';
+        }
         for (int i = 0; i < 4; i++) {
             *q++ = ' ';
             *q++ = lab[i];
-            q = put_uint(q, (v4[i] + 5u) / 10u);
+            q = put_uint(q, (v[i] + 5u) / 10u);
         }
     } else if (s->sc->prof) {                                     /* the next tap: inside SAMPLR (voices, grains, reading + interpolating inside both, mix + strips) */
         static const char lab[4] = {'R', 'G', 'B', 'M'};
@@ -1514,7 +1522,7 @@ static int sm_touch(int kind, int id, int x, int d)
     }
     if (d < ty - 2) {                                             /* the top bar: tap = V G / where the time goes */
         if (kind == 0 && s)
-            s->sc->prof = (uint8_t)((s->sc->prof + 1) % 3);
+            s->sc->prof = (uint8_t)((s->sc->prof + 1) % 4);
         P->sig = 0;
         return 1;
     }
