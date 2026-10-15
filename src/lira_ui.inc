@@ -4,11 +4,12 @@
  *
  * One 8 x 38 px grid carries everything. At the bottom, always: the eight voices in two groups of four (a small LEVEL knob and a TUNE knob each,
  * in its pair's colour, and a big plate below them: tap = on / off, the top-right switch makes the plates HOLD). The eight hardware
- * buttons are the same plates. Above them one of three tabs (footer), each a row of four panels of four controls:
+ * buttons are the same plates. Above them one of five tabs (footer), each a row of four panels of four controls:
  *   VOICES   one panel per voice pair: MOD, SHARP, FM source, TOUCH
  *   SOUND    DELAY (time 1, 2, feedback, mix), MOD (mod 1, 2, LFO A, B), PITCH (hold 1-4, 5-8, pitch 1-4, 5-8), LFO (shape, combine, link, delay source)
  *   MIX      LEVEL 1-4, LEVEL 5-8 (a fader per voice), OUTPUT (drive, dist, volume, ext in)
  *   CHORD    TONAL SPACE (space, root, register, span), VOICING (chord on, tuning, shuffle, rotate), the notes of the voices
+ *   TONE     WIDTH (stereo spread of the pairs and the delay lines), DRIFT (slow pitch wander per oscillator), DETUNE (the two of a pair apart: slow beating), BODY (bass lift)
  * The four encoders turn the four controls of the active group (white frame): the strip's voices 1-4 or 5-8, or a panel. A touch on
  * a control makes its group the active one; BACK flips between voices 1-4 and 5-8; INFO moves on within the part of the page the
  * group is in (lira_shift: the next panel, or levels / tunes 1-4 <-> 5-8; the page has no SHIFT mode). PAD (round button 0) is never a
@@ -87,7 +88,10 @@ struct lu_spec {
 #define LP_SOUND  1
 #define LP_MIX    2
 #define LP_CHORD  3
-static const char *const lu_tabname[4] = {"VOICES", "SOUND", "MIX", "CHORD"};
+#define LP_TONE   4
+#define LU_TABS   5
+#define LU_TABW   50                                              /* the footer's tabs: 48 px wide every 50 */
+static const char *const lu_tabname[LU_TABS] = {"VOICES", "SOUND", "MIX", "CHORD", "TONE"};
 static const char *const lu_div[12] = {"OFF", "4 BAR", "2 BAR", "1 BAR", "1/2", "1/4D", "1/4", "1/8D", "1/8", "1/16D", "1/16", "1/16T"};
 static const char *const lu_len[4] = {"1 BAR", "2 BAR", "4 BAR", "8 BAR"};
 static const char *const lu_gst[7] = {"", "ARMED", "REC", "LOOP", "ARMED", "OVR", "STOP"};
@@ -165,6 +169,13 @@ static int lu_specs(int sel, struct lu_spec *o)
         lu_cell(3, 2, &x, &d);                                    /* the engine switch, under the STATUS text */
         LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "ENGINE");
         n++;
+    } else if (page == LP_TONE) {                                 /* WIDTH, DRIFT, DETUNE, BODY in the first panel */
+        static const char *const nm[4] = {"WIDTH", "DRIFT", "DETUNE", "BODY"};
+        for (int i = 0; i < 4; i++) {
+            lu_cell(0, i, &x, &d);
+            LU_SP(n, 180 + i, x, d, LU_COL, 38, 2, lu_enc_cell[i], LK_KNOB, LU_ACC2, 11, nm[i]);
+            n++;
+        }
     } else {
         static const char *const nm[8] = {"SPACE", "ROOT", "OCT", "SPAN", "CHORD", "TUNE", "SHUFL", "CYCLE"};
         static const uint16_t ids[8] = {140, 141, 142, 143, 150, 153, 151, 152};
@@ -352,10 +363,11 @@ static void draw_lira(void)
     struct lu_spec sp[LU_MAXS];
     int n = lu_specs(sel, sp);
     char b[40], *q;
-    static const char *const ptitle[4][4] = {{"PAIR 1-2", "PAIR 3-4", "PAIR 5-6", "PAIR 7-8"},
-                                             {"DELAY", "MOD", "HOLD/PITCH", "LFO"},
-                                             {"OUTPUT", "TEMPO SYNC", "GESTURE", "STATUS"},
-                                             {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"}};
+    static const char *const ptitle[LU_TABS][4] = {{"PAIR 1-2", "PAIR 3-4", "PAIR 5-6", "PAIR 7-8"},
+                                                   {"DELAY", "MOD", "HOLD/PITCH", "LFO"},
+                                                   {"OUTPUT", "TEMPO SYNC", "GESTURE", "STATUS"},
+                                                   {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"},
+                                                   {"SPACE & TONE", "", "", ""}};
     box(1, 1, P->w - 2, TOPBAR, C_BG);
     text(6, 4, "DRONE-8", C_WHITE, 1);
     int last = lira_ui_last(-1);
@@ -419,6 +431,8 @@ static void draw_lira(void)
     box(1, TOPBAR + 2, P->w - 2, L.foot_y - TOPBAR - 3, C_BG);
 
     for (int p = 0; p < 4; p++) {                                 /* the four panels (OUTPUT is one wide panel) */
+        if (page == LP_TONE && p > 0)
+            continue;                                             /* (the TONE tab has the one) */
         int x = LU_X0 + p * 2 * LU_COL, hot = bank == 2 + p, pw = 2 * LU_COL;
         frame(x + 1, LU_PANEL, pw - 2, LU_PANH, hot ? LU_SEL : LU_LINE, 1);
         text_c(x, LU_PANEL + 4, pw, ptitle[page][p], hot ? LU_SEL : LU_DIM, 1);
@@ -492,9 +506,9 @@ static void draw_lira(void)
 static void lira_footer(const struct lay *L)
 {
     int page = lira_ui_sel(-1) & 15;
-    for (int i = 0; i < 4; i++) {
-        frame(LU_X0 + 62 * i, L->foot_y + 2, 60, FOOT - 3, page == i ? C_WHITE : LU_LINE, 1);
-        text_c(LU_X0 + 62 * i, L->foot_y + 4, 60, lu_tabname[i], page == i ? C_WHITE : C_GREY, 1);
+    for (int i = 0; i < LU_TABS; i++) {
+        frame(LU_X0 + LU_TABW * i, L->foot_y + 2, LU_TABW - 2, FOOT - 3, page == i ? C_WHITE : LU_LINE, 1);
+        text_c(LU_X0 + LU_TABW * i, L->foot_y + 4, LU_TABW - 2, lu_tabname[i], page == i ? C_WHITE : C_GREY, 1);
     }
 }
 
@@ -507,8 +521,8 @@ static void lira_page_set(int p, int bank)
 
 static int lira_footer_hit(int x)
 {
-    int i = (x - LU_X0) / 62;
-    if (x < LU_X0 || i > 3 || (x - LU_X0) % 62 >= 60)
+    int i = (x - LU_X0) / LU_TABW;
+    if (x < LU_X0 || i >= LU_TABS || (x - LU_X0) % LU_TABW >= LU_TABW - 2)
         return 0;
     lira_page_set(i, 2);                                          /* a new tab: its first panel is the encoder group */
     return 1;

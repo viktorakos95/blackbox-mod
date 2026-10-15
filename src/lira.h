@@ -102,6 +102,10 @@ typedef struct {
     float fol;                    /* envelope follower of the external input */
     int shed;                     /* load shedding set by the caller: 0 both delay lines, 1 one line, 2 no delay */
     int wave_on;                  /* the WAVE the oscillators' triangles were last kept for (gen_sync) */
+    float width, drift, detune, bodyc;   /* tone: stereo width, slow pitch wander, pair detune (all 0..1), bass lift (a gain; 0.41 is the original) */
+    float *out_r;                 /* the right channel, set by the caller before lira_process (NULL: mono, as the pads use it) */
+    float dr[8];                  /* the oscillators' pitch wander, relative */
+    float side_lp;                /* the side signal's top-end filter */
 } lira_t;
 
 int lira_size(void);
@@ -125,5 +129,8 @@ void lira_key(lira_t *l, int sensor /* 0..7 */, int on);
 /* touch with a pressure/velocity: drive 0 = released, 0..1 = how far the envelope opens and how fast */
 void lira_touch(lira_t *l, int sensor, float drive);
 void lira_process(lira_t *l, float *out, int n);
+/* The page's tone: width = stereo spread of the pairs and the two delay lines; drift = how far each oscillator wanders (up to ~6 cents, a
+   few seconds a turn); detune = spread of the two oscillators of a pair (up to 12 cents), which beats them slowly; body = the bass lift. */
+void lira_tone(lira_t *l, float width, float drift, float detune, float body);
 
 #endif

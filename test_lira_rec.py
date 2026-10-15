@@ -134,7 +134,9 @@ setbus(0.7, 0.8)
 e.call("lira_rec_copy_thunk", BUS, 0)
 l, r = getbus()
 rms = (sum(x * x for x in l) / N) ** 0.5
-check("DRONE: the bus holds the synth alone (sound, left = right, none of the 0.7 left)", rms > 0.002 and l == r and max(abs(x) for x in l) < 0.5, "rms %.4f" % rms)
+rms_r = (sum(x * x for x in r) / N) ** 0.5
+check("DRONE: the bus holds the synth alone (sound in both channels, in stereo, none of the 0.7 left)",
+      rms > 0.002 and rms_r > 0.002 and l != r and max(abs(x) for x in l + r) < 0.5, "rms %.4f %.4f" % (rms, rms_r))
 e.call("lira_ui_key", 0, 0)
 e.uc.reg_write(UC_ARM_REG_R4, NODE)
 e.call("lira_rec_store_thunk", 0, 0, 0, 0)

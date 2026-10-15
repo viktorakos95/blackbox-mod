@@ -112,6 +112,30 @@ e.call("lira_ui_action", 4)
 e.call("lira_load")
 got = (get(16), get(121), get(105), get(108), chord(140), chord(141), chord(150), chord(153), chord(154))
 check("load: the controls, FM source, chord state and waveform come back", got == want, "%s vs %s" % (got, want))
+# the TONE tab travels in a tail after the blob; older files (without it) still load and leave the tone as it is
+e.call("lira_ui_set", 180, 111)
+e.call("lira_ui_set", 181, 222)
+e.call("lira_ui_set", 182, 333)
+e.call("lira_ui_set", 183, 444)
+e.call("lira_save")
+tone_file = disk["bbmod.bin"]
+for c in range(180, 184):
+    e.call("lira_ui_set", c, 900)
+disk["bbmod.bin"] = tone_file
+e.call("lira_load")
+check("TONE: width / drift / detune / body come back", [get(c) for c in range(180, 184)] == [111, 222, 333, 444], str([get(c) for c in range(180, 184)]))
+old_file = tone_file[:-16]
+for c in range(180, 184):
+    e.call("lira_ui_set", c, 900)
+disk["bbmod.bin"] = old_file
+e.call("lira_ui_set", 16, 5)
+e.call("lira_load")
+check("a file from before the TONE tab still loads (the controls come back, the tone stays as it is)", get(16) == 321 and [get(c) for c in range(180, 184)] == [900] * 4, str((get(16), [get(c) for c in range(180, 184)])))
+bad_tail = bytearray(tone_file)
+bad_tail[-3] ^= 0xFF
+disk["bbmod.bin"] = bytes(bad_tail)
+e.call("lira_load")
+check("a damaged tail is ignored (the rest still loads)", [get(c) for c in range(180, 184)] == [900] * 4)
 # the pad settings (the pool's side rows) travel too: the page's row is checked above; check one side value through the getter of a pad store
 good = disk["bbmod.bin"]
 bad = bytearray(good)

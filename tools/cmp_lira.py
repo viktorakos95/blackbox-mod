@@ -74,7 +74,9 @@ def scen(params, keys, blocks=1500, later=()):
     return s
 
 
-BASE = {"FEEDBACK": 70, "DEL_MIX": 80, "MOD12": 60, "MOD34": 60, "MOD56": 60, "MOD78": 60, "SHARP12": 40, "SHARP56": 40,
+import os as _os
+_SH = int(_os.environ.get("SHARP", "40"))                          # SHARP=0 compares the engine where the knob is off (the morph changes the rest on purpose)
+BASE = {"FEEDBACK": 70, "DEL_MIX": 80, "MOD12": 60, "MOD34": 60, "MOD56": 60, "MOD78": 60, "SHARP12": _SH, "SHARP34": _SH, "SHARP56": _SH, "SHARP78": _SH,
         "DST_MIX": 60, "MOD1": 40, "MOD2": 40}
 SCEN = {
     "all voices, tri": scen(BASE, range(8)),

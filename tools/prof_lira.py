@@ -82,6 +82,9 @@ call("lira_init", L, D1, D2, DLEN, 0x6c697261, fargs=(SR,))
 scen = sys.argv[1] if len(sys.argv) > 1 else "full"
 setp = {"FEEDBACK": 70, "DEL_MIX": 80, "MOD12": 60, "MOD34": 60, "MOD56": 60, "MOD78": 60, "SHARP12": 40, "SHARP56": 40,
         "DST_MIX": 60, "MOD1": 40, "MOD2": 40}
+if scen.endswith("0"):                  # e.g. full0: SHARP at zero everywhere
+    scen = scen[:-1]
+    setp.update(SHARP12=0, SHARP34=0, SHARP56=0, SHARP78=0)
 if scen == "sine":
     setp["WAVE"] = 1
 if scen == "slowdelay":

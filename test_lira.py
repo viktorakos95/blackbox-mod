@@ -375,6 +375,102 @@ for o in range(8):                                                  # every osci
           0.0 < lib.lira_tune_for_midi(o, 33) + 1e-3 and lib.lira_tune_for_midi(o, 93) < 127.001)
 
 
+# ---- SHARP is a morph (3.1.AC): the sine is squared off gradually, no second waveform added ----
+def sharp_voice(sharp):
+    l = Lira(**dict(CLEAN, WAVE=1, SHARP12=sharp))
+    l.key(0, 1)
+    l.run(SR)
+    return l.run(1 << 16)
+
+
+sh_levels = {sp: sharp_voice(sp) for sp in (0, 20, 40, 60, 80, 100)}
+f_sh = peak_hz(sh_levels[0], 20, 8000)
+
+
+def harm_db(x, n):
+    return db(level_at(x, n * f_sh) / level_at(x, f_sh))
+
+
+check("SHARP low: the sine stays clean (5th below -80 dB at 0 and 20)", harm_db(sh_levels[0], 5) < -80 and harm_db(sh_levels[20], 5) < -75)
+check("SHARP rising: the 3rd harmonic comes first (40: 3rd above -30 dB, 5th below -45, 7th below -65)",
+      harm_db(sh_levels[40], 3) > -30 and harm_db(sh_levels[40], 5) < -45 and harm_db(sh_levels[40], 7) < -65,
+      "%.0f %.0f %.0f" % (harm_db(sh_levels[40], 3), harm_db(sh_levels[40], 5), harm_db(sh_levels[40], 7)))
+check("... and the upper ones follow smoothly (the 5th rises with every step)", [harm_db(sh_levels[k], 5) for k in (40, 60, 80, 100)] ==
+      sorted(harm_db(sh_levels[k], 5) for k in (40, 60, 80, 100)))
+rm = {k: math.sqrt(np.mean(v ** 2)) for k, v in sh_levels.items()}
+check("the level stays within 1.5 dB while it squares off", max(rm.values()) / min(rm.values()) < 1.19, str({k: round(v, 3) for k, v in rm.items()}))
+
+# ---- stereo, drift and detune (3.1.AC) ----
+import struct as _st
+_o = os.path.join(tmp, "off")
+open(_o + ".c", "w").write('#include "lira.h"\n#include <stddef.h>\n#include <stdio.h>\nint main(){printf("%d",(int)offsetof(lira_t,out_r));}')
+subprocess.check_call(["gcc", "-I" + os.path.join(HERE, "src"), "-o", _o, _o + ".c"])
+OUT_R = int(subprocess.check_output([_o]))
+lib.lira_tone.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 4
+
+
+def run_st(l, n, tone, stereo=True):
+    lib.lira_tone(l.mem, *tone)
+    a, b = (ctypes.c_float * n)(), (ctypes.c_float * n)()
+    ptr = ctypes.c_void_p(ctypes.addressof(b) if stereo else 0)
+    ctypes.memmove(ctypes.addressof(l.mem) + OUT_R, ctypes.byref(ptr), ctypes.sizeof(ptr))
+    lib.lira_process(l.mem, a, n)
+    return np.frombuffer(a, dtype=np.float32).astype(np.float64), np.frombuffer(b, dtype=np.float32).astype(np.float64)
+
+
+def full_drone():
+    l = Lira(DEL_MIX=60, FEEDBACK=50, DST_MIX=20, VIBRATO=0, FAST12=1, FAST34=1, FAST56=1, FAST78=1)
+    for i in range(8):
+        l.key(i, 1)
+    return l
+
+
+l = full_drone()
+run_st(l, SR, (0, 0, 0, 0.41))
+a, b = run_st(l, SR, (0, 0, 0, 0.41))
+check("width 0: left = right", np.array_equal(a, b) and np.std(a) > 0.01)
+l = full_drone()
+run_st(l, SR, (1, 0, 0, 0.41))
+a, b = run_st(l, 2 * SR, (1, 0, 0, 0.41))
+mid, side = (a + b) / 2, (a - b) / 2
+ratio = math.sqrt(np.mean(side ** 2) / np.mean(mid ** 2))
+check("width 1: a real stereo image (side %.2f of mid, correlation %.2f)" % (ratio, np.corrcoef(a, b)[0, 1]), 0.25 < ratio < 1.0 and np.corrcoef(a, b)[0, 1] < 0.85)
+check("... finite and bounded", np.all(np.isfinite(a)) and np.all(np.isfinite(b)) and max(abs(a).max(), abs(b).max()) < 1.5)
+l1, l2 = full_drone(), full_drone()
+run_st(l1, SR, (0.8, 0, 0, 0.41))
+run_st(l2, SR, (0.8, 0, 0, 0.41), stereo=False)
+a, _ = run_st(l1, 8192, (0.8, 0, 0, 0.41))
+c, d = run_st(l2, 8192, (0.8, 0, 0, 0.41), stereo=False)
+check("with no right buffer the engine stays mono (a pad's instance: no crash, a signal, nothing written)", np.std(c) > 0.01 and np.all(d == 0))
+
+
+def pitch_track(drift, detune, sec=40):
+    l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0))
+    l.key(0, 1)
+    x = np.concatenate([run_st(l, SR, (0, drift, detune, 0.41), stereo=False)[0] for _ in range(sec)])
+    f = []
+    for i in range(15, sec):                                        # after the envelope has settled
+        seg = x[i * SR:(i + 1) * SR]
+        zc = np.where((seg[:-1] < 0) & (seg[1:] >= 0))[0]
+        f.append(SR * (len(zc) - 1) / (zc[-1] - zc[0]))
+    return np.array(f)
+
+
+f_off, f_half, f_full = (pitch_track(d, 0) for d in (0.0, 0.5, 1.0))
+c_off, c_half, c_full = (1200 * math.log2(f.max() / f.min()) for f in (f_off, f_half, f_full))
+check("drift off: the pitch is steady (%.2f cents)" % c_off, c_off < 0.2)
+check("drift 0.5 wanders a few cents (%.1f), full more (%.1f), none beyond 25" % (c_half, c_full), 1.0 < c_half < c_full < 25.0)
+# detune: the two oscillators of a pair apart, beating
+l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0))
+l.set("TUNE2", 100)
+l.key(0, 1)
+l.key(1, 1)
+run_st(l, 20 * SR, (0, 0, 1.0, 0.41), stereo=False)
+x = run_st(l, 4 * SR, (0, 0, 1.0, 0.41), stereo=False)[0]
+env = np.abs(x[:len(x) // 441 * 441].reshape(-1, 441)).max(axis=1)
+check("detune 1.0: the pair beats slowly (envelope swings %.2f..%.2f)" % (env.min(), env.max()), env.max() > 1.5 * env.min())
+
+
 # CPU
 l = Lira()
 for i in range(8):
