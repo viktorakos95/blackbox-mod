@@ -406,6 +406,18 @@ void lira_reset(lira_t *l, float sr, int16_t *dl1, int16_t *dl2, int len, uint32
             gen_setup(l, &l->v[v].g[k]);
             l->v[v].g[k].vib_rate = VIB_HZ[perm[2 * v + k]] * urand(l, 0.92f, 1.08f);
         }
+    {   /* where each oscillator sits in the stereo image: eight evenly spaced places from left to right, dealt out at random (so no side gets crowded), each nudged a little */
+        int spot[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+        for (int i = 7; i > 0; i--) {
+            int j = (int)(0.5f * (rnd(l) + 1.f) * (float)(i + 1)), t = spot[i];
+            if (j > i)
+                j = i;
+            spot[i] = spot[j];
+            spot[j] = t;
+        }
+        for (int o = 0; o < 8; o++)
+            l->pan[o] = clip_(((float)spot[o] - 3.5f) * (0.85f / 3.5f) + 0.08f * rnd(l), -1.f, 1.f);
+    }
     static const float defs[LIRA_NPARAMS] = {
         0, 78, 74, 36, 27, 57, 60, 51, 1, 1, 1, 1, 14.3774f, 43.1321f, 103.038f, 71.8868f, 0, 0, 0, 0, 0, 0, 0, 0,
         66, 65, 0, 0, 0, 0, 1, 86, 69, 127, 42, 64, 1, 1, 94.5745f, 56.7447f, 54.0426f, 67.5532f, 40.7358f, 47.9245f,
@@ -552,11 +564,10 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
     const int nlines = l->shed >= 2 ? 0 : l->shed == 1 ? 1 : 2;
     float *out_r = stereo ? l->out_r : 0;
     const float wdt = stereo ? l->width : 0.f;
-    /* each oscillator's place in the stereo field: the pairs from left to right, the two of a pair a little apart (constant power; both 1 at the centre) */
+    /* each oscillator's place in the stereo field: its own random place (l->pan) scaled by the knob (constant power; both 1 at the centre) */
     float pgl[8], pgr[8];
     for (int o = 0; o < 8; o++) {
-        static const float pp[4] = {-0.6f, -0.2f, 0.2f, 0.6f};
-        float pan = wdt * (pp[o >> 1] + ((o & 1) ? 0.25f : -0.25f));
+        float pan = wdt * l->pan[o];
         pgl[o] = wdt > 0.f ? 1.41421356f * fcos((pan + 1.f) * 0.125f) : 1.f;      /* (fcos is an approximation: unity must stay exactly unity) */
         pgr[o] = wdt > 0.f ? 1.41421356f * fcos((1.f - pan) * 0.125f) : 1.f;
     }

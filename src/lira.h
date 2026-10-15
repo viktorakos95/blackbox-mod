@@ -106,6 +106,7 @@ typedef struct {
     float bodyc;                  /* the bass lift (a gain; 0.41, fixed) */
     float harm;                   /* low-order harmonics of the bass (0..1; fixed at LIRA_HARM) */
     float hb1, hb2, hbd, hbl;     /* their filters: the bass band (two poles), the rectifier's DC block, the harmonics' low-pass */
+    float pan[8];                 /* each oscillator's place in the stereo image (-1..1, random per unit, scaled by width) */
     float *out_r;                 /* the right channel, set by the caller before lira_process (NULL: mono, as the pads use it) */
     float dr[8];                  /* the oscillators' pitch wander, relative */
     float side_lp;                /* the side signal's top-end filter */
