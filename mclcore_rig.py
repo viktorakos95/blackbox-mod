@@ -1,0 +1,136 @@
+"""Rig for running MCL itself (the real core, M8) under Unicorn: the unit's image with the blob that links MCL (tools/mcl/build_mcl.sh), the stock FatFs on a FAT image
+behind the SD layer (sdharness.py), a GUI context and a streamer context that alternate when the GUI side blocks, a modelled timer / cycle counter, the MIDI jack as a plain list.
+
+MCL's task is run as the GUI context: `run(function, *args)` runs a blob function; whenever it sleeps or waits for the card (the blocking calls of the stock kernel that the blob makes) the
+streamer context runs one pass (mcl_sd_pump) and, for sleeps, the modelled time moves on. Interrupt handlers (base timer, soft interrupts) are called by `tick()` like the hardware would.
+Needs MCL_DIR and MCL_GFX (checkouts) to build; tests skip themselves when the MCL build is not available."""
+import os
+import shutil
+import struct
+import subprocess
+import sys
+
+from unicorn import UC_HOOK_MEM_READ
+from unicorn.arm_const import (UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_R4, UC_ARM_REG_R5, UC_ARM_REG_R6, UC_ARM_REG_R7,
+                               UC_ARM_REG_R8, UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11, UC_ARM_REG_R12, UC_ARM_REG_SP)
+
+import sdharness as H
+from emu import RET, STACK
+from mcl_rig import MGR, Rig, emulate_primask, syms
+
+NAMES = "solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper clkmon cave mclblob mclsd".split()
+Q_CREATE, Q_SEND, Q_RECEIVE = 0x080883BE, 0x08088402, 0x08088756
+CORE = 399_000_000
+REGS = [UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_R4, UC_ARM_REG_R5, UC_ARM_REG_R6, UC_ARM_REG_R7, UC_ARM_REG_R8, UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11,
+        UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC]
+
+
+def available():
+    return bool(os.environ.get("MCL_DIR") and os.environ.get("MCL_GFX"))
+
+
+def build_image(extra_env=None, out="out/mclcore-test"):
+    env = dict(os.environ, M3TEST="", M4TEST="", M5TEST="", SDSPY="", SDTEST="", COMPACT="")
+    env.update(extra_env or {})
+    subprocess.run(["sh", "tools/mcl/build_mcl.sh"], check=True, capture_output=True, env=env)
+    subprocess.run(["python3", "patch.py"] + NAMES, check=True, capture_output=True)
+    os.makedirs(out, exist_ok=True)
+    shutil.copy("out/" + "+".join(NAMES) + "/BLACKBOX.bin", out + "/BLACKBOX.bin")
+    shutil.copy("out/mcl.elf", out + "/mcl.elf")
+    return out
+
+
+class Core:
+    def __init__(self, d="out/mclcore-test", image="out/sd/core.img", files=()):
+        os.makedirs("out/sd", exist_ok=True)
+        H.make_image(image, files=files)
+        self.rg = rg = Rig(d)
+        self.e = e = rg.e
+        self.uc = uc = e.uc
+        self.b = rg.b
+        uc.mem_map(0x40001000, 0x1000) if False else None
+        # the timer / cycle counter model of clock_rig
+        uc.mem_map(0x40001000, 0x1000)
+        e.w32(0xE000E014, CORE // 1000 - 1)
+        e.w32(0xE000E010, 7)
+        e.w32(0x580244E8, 0)
+        self.st = st = {"dwt": 0, "step": 900}
+        DWT, TIM6 = 0xE0001004, 0x40001000
+
+        def dwt_read(u, a, addr, size, v, _):
+            st["dwt"] += st["step"]
+            u.mem_write(DWT, struct.pack("<I", st["dwt"] & 0xFFFFFFFF))
+
+        def cnt_read(u, a, addr, size, v, _):
+            psc = struct.unpack("<I", bytes(u.mem_read(TIM6 + 0x28, 4)))[0]
+            u.mem_write(TIM6 + 0x24, struct.pack("<I", int(st["dwt"] * 200_000_000 / CORE / (psc + 1)) & 0xFFFF))
+
+        uc.hook_add(UC_HOOK_MEM_READ, dwt_read, begin=DWT, end=DWT + 3)
+        uc.hook_add(UC_HOOK_MEM_READ, cnt_read, begin=TIM6 + 0x24, end=TIM6 + 0x27)
+        emulate_primask(rg)
+        rg.call("mcl_boot")
+        self.card = H.Card(image, emu=e)
+        self.blocked = [False]
+        self.sleeps = []
+        e.stub(Q_CREATE, value=0x24050000)
+        e.stub(Q_SEND, value=1)
+        e.stub(Q_RECEIVE, self._q_receive)
+        self.pump = 0
+
+    def _q_receive(self):
+        e = self.e
+        ticks = e.arg(2)
+        if ticks == 50:                                          # the SD layer waiting for the streamer
+            self.blocked[0] = True
+            e.ret(1)
+            self.uc.emu_stop()
+        else:
+            if ticks:
+                self.sleeps.append(ticks)
+                self.st["dwt"] += ticks * (CORE // 1000)         # time passes while a task sleeps
+            e.ret(0)
+
+    def service(self):
+        uc = self.uc
+        saved = [uc.reg_read(r) for r in REGS]
+        for r, v in zip((UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3), (0x24060000, 0, 0, 0)):
+            uc.reg_write(r, v)
+        uc.reg_write(UC_ARM_REG_SP, STACK - 0x10000)
+        uc.reg_write(UC_ARM_REG_LR, RET | 1)
+        self.pump += 1
+        uc.emu_start(self.b["mcl_sd_pump"] | 1, RET, count=50_000_000)
+        for r, v in zip(REGS, saved):
+            uc.reg_write(r, v)
+
+    def run(self, name, *args, count=200_000_000, max_loops=200_000):
+        uc = self.uc
+        addr = self.b[name] if isinstance(name, str) else name
+        for r, v in zip((UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3), args):
+            uc.reg_write(r, v & 0xFFFFFFFF)
+        uc.reg_write(UC_ARM_REG_SP, STACK)
+        uc.reg_write(UC_ARM_REG_LR, RET | 1)
+        pc = addr | 1
+        for _ in range(max_loops):
+            self.blocked[0] = False
+            uc.emu_start(pc, RET, count=count)
+            if not self.blocked[0]:
+                return uc.reg_read(UC_ARM_REG_R0)
+            self.service()
+            pc = uc.reg_read(UC_ARM_REG_PC) | 1
+        raise AssertionError("did not finish")
+
+    def irq(self, name, count=20_000_000):
+        """an interrupt handler of the blob, entered like the hardware would (own stack)"""
+        uc = self.uc
+        saved = [uc.reg_read(r) for r in REGS]
+        uc.reg_write(UC_ARM_REG_SP, STACK - 0x20000)
+        uc.reg_write(UC_ARM_REG_LR, RET | 1)
+        uc.emu_start(self.b[name] | 1, RET, count=count)
+        for r, v in zip(REGS, saved):
+            uc.reg_write(r, v)
+
+    def screen(self):
+        """the MCL page's frame buffer as text rows (# = lit pixel), 64 rows of 128"""
+        fb = self.run("bb_mcl_fb")
+        d = bytes(self.uc.mem_read(fb, 1024))
+        return ["".join("#" if d[y * 16 + (x >> 3)] >> (7 - (x & 7)) & 1 else "." for x in range(128)) for y in range(64)]

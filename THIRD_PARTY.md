@@ -11,6 +11,7 @@ All of it is MIT-licensed, and these notices travel with every copy.
 | DaisySP `dsp.h` | © Electrosmith, Corp. | MIT | `src/munchi/daisysp/` |
 | State-variable filter, after stmlib `dsp/filter.h` (`Svf`) | © 2014 Émilie Gillet | MIT | reimplemented in `src/filter.c` |
 | Classic 5x7 font of Adafruit_GFX (`glcdfont`) | © 2012 Adafruit Industries | BSD | `src/mcl_bb/glcdfont.h`, license in `src/mcl_bb/ADAFRUIT_GFX_LICENSE.txt` |
+| MCL desktop platform files (oled, GUI / LED hardware, MidiUart, global objects, SdFat.h, Arduino.h, ...), vendored and adapted for the Blackbox port | © Justin Mammarella, Yatao Li, Manuel Odendahl (MCL, fork by viktorakos95) | BSD 3-clause | `src/mcl_bb/platform/common/`, license in `src/mcl_bb/platform/common/LICENSE-MCL` |
 
 ## Not included
 

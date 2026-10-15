@@ -237,10 +237,10 @@ gui("bb_sd_closedir", d)
 check("listing a directory of 62 entries (long names): all there", cnt == 62 and "Project059.mcl" in seen and "big.bin" in seen and "hello.txt" in seen, (cnt, sorted(seen)[:3]))
 
 # ---- handles and the mailbox
-hs = [signed(gui("bb_sd_open", path("/Mcl/Project%03d.mcl" % i), 1)) for i in range(5)]
-check("four files at once, a fifth open is refused (-SD_BUSY)", hs[:4] == [0, 1, 2, 3] and hs[4] == -100, hs)
+hs = [signed(gui("bb_sd_open", path("/Mcl/Project%03d.mcl" % i), 1)) for i in range(9)]
+check("eight files at once, a ninth open is refused (-SD_BUSY)", hs[:8] == list(range(8)) and hs[8] == -100, hs)
 check("bad handle: SD_BAD_HANDLE", gui("bb_sd_close", 9) == 103 and signed(gui("bb_sd_read", 9, BUFB, 10)) == -103)
-for x in hs[:4]:
+for x in hs[:8]:
     gui("bb_sd_close", x)
 check("handles are free again after close", signed(gui("bb_sd_open", path("/Mcl/Project001.mcl"), 1)) == 0)
 gui("bb_sd_close", 0)

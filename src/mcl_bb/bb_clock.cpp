@@ -149,6 +149,7 @@ HOOK int bb_clock_init(void)
 }
 
 HOOK uint32_t bb_clock_timer_hz(void) { return timer_hz; }
+HOOK uint32_t bb_clock_prescaler(void) { return T_PSC + 1u; }
 
 static void set_period_counts(uint64_t counts_q32)
 {

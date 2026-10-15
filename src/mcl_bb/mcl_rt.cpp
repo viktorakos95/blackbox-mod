@@ -18,6 +18,15 @@
 #include "bb_sd.h"
 #include "bb_ui.h"
 
+/* When MCL itself is linked in (bb_mcl.cpp: the strong definitions) the page shows MCL's screen and feeds its panel; otherwise the diagnostic test bench (bb_ui.cpp). */
+extern "C" {
+__attribute__((weak)) int bb_mcl_active(void) { return 0; }
+__attribute__((weak)) const uint8_t *bb_mcl_fb(void) { return 0; }
+__attribute__((weak)) uint32_t bb_mcl_frames(void) { return 0; }
+__attribute__((weak)) uint32_t bb_mcl_start(uint32_t) { return 1; }
+__attribute__((weak)) void bb_mcl_page_input(uint32_t, int32_t, int32_t) {}
+}
+
 extern "C" {
 extern uint32_t __data_lma[], __data_start[], __data_end[], __bss_start[], __bss_end[], __heap_start[], __heap_limit[];
 typedef void (*ctor_t)(void);
@@ -234,6 +243,14 @@ static uint32_t m4_t, m4_r, m4_l;                   /* loop-back frame result (1
 /* Runs the blocking M3 hardware test once, from a label constructor (GUI task, never the audio task). No-op in normal images. */
 extern "C" void bb_rt_gui(void)
 {
+    {
+        volatile uint32_t *sm = BKP;
+        static uint8_t mcl_started;
+        if (!mcl_started && sm[0] == BKP_MAGIC && (sm[1] & 0xff) == ST_OK) {
+            mcl_started = 1;
+            bb_mcl_start(4096);                                  /* MCL's own task (a no-op in builds without MCL) */
+        }
+    }
 #ifdef M3_TEST
     volatile uint32_t *s = BKP;
     if (m3_ran || s[0] != BKP_MAGIC || (s[1] & 0xff) != ST_OK)
@@ -413,11 +430,15 @@ static int ready(void)
     volatile uint32_t *s = BKP;
     return s[0] == BKP_MAGIC && (s[1] & 0xff) == ST_OK;
 }
-static const uint8_t *page_fb(void) { return ready() ? bb_ui_fb() : 0; }
-static uint32_t page_sig(void) { return ready() ? bb_ui_sig() : 0; }
+static const uint8_t *page_fb(void) { return !ready() ? 0 : bb_mcl_active() ? bb_mcl_fb() : bb_ui_fb(); }
+static uint32_t page_sig(void) { return !ready() ? 0 : bb_mcl_active() ? bb_mcl_frames() * 2654435761u + 1u : bb_ui_sig(); }
 static void page_input(uint32_t kind, int32_t a, int32_t b)
 {
-    if (ready())
+    if (!ready())
+        return;
+    if (bb_mcl_active())
+        bb_mcl_page_input(kind, a, b);
+    else
         bb_ui_input(kind, a, b);
 }
 #if defined(M3_TEST) || defined(M4_TEST) || defined(M5_TEST) || defined(COMPACT_LABEL)

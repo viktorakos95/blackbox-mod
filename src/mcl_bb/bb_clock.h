@@ -24,6 +24,7 @@ uint32_t bb_clock_seq_stat(int which);         /* 0 stamps used, 1 restarts of t
 
 int bb_clock_running(void);                    /* the clock is being sent (internal, or MIDI-in sync locked) */
 uint32_t bb_clock_ticks(void);                 /* 192-PPQN ticks since start (reset to 0 by a received FA in sync mode) */
+uint32_t bb_clock_prescaler(void);             /* TIM6's prescaler divisor (counts of the timer clock per timer count): TIM7 uses the same to run at the same rate */
 uint32_t bb_clock_timer_hz(void);              /* the measured TIM6 count rate (after its prescaler) */
 uint32_t bb_clock_isr_calls(void);             /* entries of the timer interrupt since boot, counted even when the clock is off */
 void bb_clock_set_hook(void (*tick)(uint32_t ticks192));   /* called from the timer interrupt on every 192-PPQN tick (MCL's sequencer trigger) */

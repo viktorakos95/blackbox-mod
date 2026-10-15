@@ -39,3 +39,9 @@ PATCHES = [
     (0x08040118, struct.pack("<I", 0x08040315), struct.pack("<I", bsym["mcl_tim6_isr"] | 1)),      # vector 70 = IRQ 54 (TIM6): was a `b .` stub
     (end, b"", b"\xff" * (BLOB_ORG - end) + blob),
 ]
+# M8, MCL itself: the base timer (IRQ 55, TIM7) and three soft interrupts (IRQ 30, 44, 45), vectors that point at `b .` stubs in the stock firmware (checked below)
+for irq, name in ((55, "bb_tim7_isr"), (30, "bb_swirq1_isr"), (44, "bb_swirq2_isr"), (45, "bb_swirq3_isr")):
+    if name in bsym:
+        at = 0x08040000 + 4 * (16 + irq)
+        stub = struct.unpack("<I", open(os.path.join(ROOT, "firmware", "BLACKBOX-3.1.9.bin"), "rb").read()[at - 0x08040000:at - 0x08040000 + 4])[0]
+        PATCHES.append((at, struct.pack("<I", stub), struct.pack("<I", bsym[name] | 1)))

@@ -15,8 +15,8 @@
 enum { SD_OK = 0, SD_NO_FILE = 4, SD_NO_PATH = 5, SD_DENIED = 7, SD_EXIST = 8, SD_BUSY = 100, SD_TIMEOUT = 101, SD_NOT_READY = 102, SD_BAD_HANDLE = 103 };
 enum { SD_READ = 1, SD_WRITE = 2, SD_CREATE_NEW = 4, SD_CREATE_ALWAYS = 8, SD_OPEN_ALWAYS = 0x10, SD_APPEND = 0x30 };      /* the FatFs FA_ flags */
 enum { SD_ATTR_DIR = 0x10 };
-#define SD_FILES 4
-#define SD_DIRS  2
+#define SD_FILES 8
+#define SD_DIRS  4
 #define SD_NAME_MAX 256
 #define SD_TIMEOUT_MS 30000u
 

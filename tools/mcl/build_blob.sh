@@ -12,6 +12,6 @@ for f in mcl_rt bb_midi bb_clock bb_m3test bb_ui bb_sdspy bb_sd bb_sdtest; do
     -ffunction-sections -fdata-sections -Wall -Wextra -Werror $DEF -c -o out/$f.o src/mcl_bb/$f.cpp
   OBJS="$OBJS out/$f.o"
 done
-arm-none-eabi-g++ $CPU -nostartfiles -nostdlib -Wl,--gc-sections -Wl,-T,src/mcl_bb/mcl_blob.ld -Wl,-Map=out/mcl.map -o out/mcl.elf $OBJS -lgcc
+arm-none-eabi-g++ $CPU -nostartfiles -nostdlib -Wl,--gc-sections $EXTRA_LD -Wl,-T,src/mcl_bb/mcl_blob.ld -Wl,-Map=out/mcl.map -o out/mcl.elf $OBJS $EXTRA_OBJS -lm -lgcc
 arm-none-eabi-objcopy -O binary -j .entry -j .hook -j .text -j .ARM.extab -j .init_array -j .data out/mcl.elf out/mcl.bin
 arm-none-eabi-size -A out/mcl.elf | grep -E '^\.(entry|text|init_array|data|bss)'
