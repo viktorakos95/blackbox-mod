@@ -843,20 +843,31 @@ param(0, P_PTCH, 0.0)
 blocks(30)
 sa, ss = slope(flat(4))
 check("PTCH off: back to the loop", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
-param(0, P_DROP, -0.6)
-quiet = 0
-for _ in range(1200):
-    _, o = block([0.0] * N)
-    if max(abs(x) for x in o[0]) < 0.02:
-        quiet += 1
-check("DROP (random): some blocks are silent, not all", 5 < quiet < 1100, quiet)
+def wob_levels(nb):
+    ls, rs = [], []
+    for _ in range(nb):
+        _, o = block([0.0] * N)
+        ls.append((sum(x * x for x in o[0]) / N) ** .5)
+        rs.append((sum(x * x for x in o[1]) / N) ** .5)
+    return ls, rs
+param(0, P_DROP, 0.0)
+blocks(60)
+off_l, off_r = wob_levels(180)                         # (180 blocks = three passes of the 60-block loop: the same places in the loop each time)
+check("WOB off: the level is the loop's own", max(off_l) > 0.05, max(off_l))
+param(0, P_DROP, -0.8)
+blocks(60)
+ls, rs = wob_levels(180)
+rt = [a / b if b > 1e-9 else 1.0 for a, b in zip(ls, off_l)]
+check("WOB left (tremolo): the level swings with the beat (down to under half, back to full), both channels together",
+      min(rt) < 0.5 and max(rt) > 0.9 and all(abs(a - b) < 0.03 * max(ls) + 1e-6 for a, b in zip(ls, rs)), (min(rt), max(rt)))
 param(0, P_DROP, 0.8)
-quiet = 0
-for _ in range(300):
-    _, o = block([0.0] * N)
-    if max(abs(x) for x in o[0]) < 0.02:
-        quiet += 1
-check("DROP (pattern): some blocks are silent, not all", 10 < quiet < 290, quiet)
+blocks(60)
+ls, rs = wob_levels(180)
+rl = [a / b if b > 1e-9 else 1.0 for a, b in zip(ls, off_l)]
+rr = [a / b if b > 1e-9 else 1.0 for a, b in zip(rs, off_r)]
+check("WOB right (auto-pan): left and right swing against each other (one is down while the other is up)",
+      min(rl) < 0.5 and min(rr) < 0.5 and max(rl) > 0.9 and any(a < 0.5 < 0.9 < b for a, b in zip(rl, rr)) and any(b < 0.5 < 0.9 < a for a, b in zip(rl, rr)), (min(rl), max(rl), min(rr), max(rr)))
+param(0, P_DROP, 0.0)
 param(0, P_DROP, 0.0)
 blocks(60)
 param(0, P_STAB, 1.0)

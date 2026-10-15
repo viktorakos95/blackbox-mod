@@ -700,7 +700,7 @@ static char *put_pct(char *p, float v)
 
 static int fx_bipolar(int q)                                       /* engine parameters that go -1..1 */
 {
-    return q == LOOPER_P_FILT || q == LOOPER_P_SPEED || q == LOOPER_P_DROP || q == LOOPER_P_STUT || q == LOOPER_P_SCRM || q == LOOPER_P_PTCH;
+    return q == LOOPER_P_FILT || q == LOOPER_P_SPEED || q == LOOPER_P_WOB || q == LOOPER_P_STUT || q == LOOPER_P_SCRM || q == LOOPER_P_PTCH;
 }
 
 static float fx_default(int q)
@@ -718,14 +718,14 @@ static float fx_value(const struct looper_info *k, int param)
     if (param == 6 || param == 7)
         return (param == 6 ? k->reversed : k->half) ? 1.f : 0.f;
     if (param >= 8)
-        return param == 8 ? k->stab : param == 9 ? k->rpt : param == 10 ? k->speed : param == 11 ? k->drop :
+        return param == 8 ? k->stab : param == 9 ? k->rpt : param == 10 ? k->speed : param == 11 ? k->wob :
                param == 12 ? k->trim : param == 13 ? k->stut : param == 14 ? k->scrm : k->ptch;
     return param == LOOPER_P_FILT ? k->filt : param == LOOPER_P_RES ? k->res : param == LOOPER_P_CRUNCH ? k->crunch :
            param == LOOPER_P_DRIVE ? k->drive : param == LOOPER_P_SEND_D ? k->send_d : k->send_r;
 }
 
 static const char *const fx_name[FX_N] = {"FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB", "REV", "HALF",
-                                          "STAB", "RPT", "SPEED", "DROP", "TRIM", "STUT", "SCRM", "PTCH"};
+                                          "STAB", "RPT", "SPEED", "WOB", "TRIM", "STUT", "SCRM", "PTCH"};
 
 /* The text a knob shows on top: "LVL 0.0dB" / the pan line / the selected FX parameter's value. */
 static void fx_text(char *b, int param, float v)
@@ -752,14 +752,14 @@ static void fx_text(char *b, int param, float v)
         const char *o = n <= 0 ? "OFF" : n == 1 ? "1/2" : n == 2 ? "1/4" : n == 3 ? "1/8" : n == 4 ? "1/16" : n == 5 ? "1/32" : "1/64";
         for (; *o; o++)
             *p++ = *o;
-    } else if (param == 11 || param == 14) {                      /* DROP / SCRM: random (left) / pattern (right) */
+    } else if (param == 11 || param == 14) {                      /* WOB / SCRM: WOB tremolo (left) / auto-pan (right); SCRM random (left) / sequence (right) */
         float a = v < 0.f ? -v : v;
         if (a < .02f) {
             *p++ = 'O';
             *p++ = 'F';
             *p++ = 'F';
         } else {
-            const char *o = v < 0.f ? "RND " : "SEQ ";
+            const char *o = param == 11 ? (v < 0.f ? "TRM " : "PAN ") : v < 0.f ? "RND " : "SEQ ";
             for (; *o; o++)
                 *p++ = *o;
             p = put_pct(p, a);
@@ -2387,8 +2387,16 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     }
                     return;
                 }
-                if (P->mode == M_TRIG)
-                    break;                                         /* the TRIG page has no use for them: the stock firmware gets them */
+                if (P->mode == M_TRIG) {
+                    if (slot == B_BACK) {                          /* BACK: the previous page of SONG's round (SAMPLR); the TRIG page has no use of it */
+                        tab_select(5);
+                        P->info_on = 0;
+                        P->entered = 0;
+                        P->sig = 0;
+                        return;
+                    }
+                    break;                                         /* (the other buttons: the stock firmware gets them) */
+                }
                 if (P->mode == M_SMPLR) {                          /* on the SAMPLR page the buttons are SAMPLR's, never the looper's */
                     if (slot == B_FX)
                         break;                                     /* (FX stays the stock FX button) */

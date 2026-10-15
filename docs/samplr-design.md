@@ -541,3 +541,11 @@ takes three overdub layers.
 - Not changed: the stock engine (pads, their effects) is never touched. With SAMPLR busy and many stock pads the unit can still run out of time for a moment (the check for spikes
   makes SAMPLR's tracks duck for those blocks); the figures show where the limit is: SAMPLR with 3 busy tracks costs about 30 % of a block (177 k instructions a 256-frame
   block in the emulator), a heavy stock project 50-70 %.
+
+## Build 50
+
+- **WOB replaces DROP** (looper effect knob 11): bipolar, one cycle per beat, phase from the loop position. Left = tremolo (TRM), right = auto-pan (PAN). One smoothed LFO per sample, no random numbers, no extra buffers; cheaper than DROP. Depth changes ramp over the block.
+- **SONG round**: Looper MAIN -> SAMPLR -> TRIG -> DRONE-8 -> stock song screen -> Looper MAIN. From a looper FX/SETUP/MORE tab SONG first returns to MAIN. From any other stock screen SONG opens Looper MAIN. MCL is left out until its branch is merged.
+- **PAD** is the stock pad screen only (DRONE-8 no longer lives there).
+- **BACK** = previous page on TRIG only (-> SAMPLR). Looper (undo/erase), SAMPLR (gesture undo) and DRONE-8 (other voices) keep BACK for their own function.
+- Merged 3.1.AB (DRONE-8 optimisation from the LIRA branch).

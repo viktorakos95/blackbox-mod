@@ -286,32 +286,18 @@ void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
     fw_set_screen(app, next, a, b);
 }
 
-/* Replaces the set-screen call in the first button's handler (stock screen 2). A second press on that screen opens the LIRA
- * page (Looper page, tab 7); on the page the button goes back to the stock screen. */
+/* Replaces the set-screen call in the first button's handler (stock screen 2): PAD is the stock pads screen again (the DRONE-8 page lives on SONG). */
 void solo_pad_pressed(uint8_t *app, int computed, int a, int b)
 {
     (void)computed;
     ensure();
-    int cur = app[APP_SCREEN];
-    if (!looper_ready()) {
-        fw_set_screen(app, 2, a, b);
-    } else if (cur == SCREEN_MUTE && S->looper && S->view) {
-        if (looper_page_tab() == 7)
-            fw_set_screen(app, 2, a, b);
-        else
-            looper_page_goto(S->view, 7);
-    } else if (cur == 2) {
-        S->looper_pending = 1;
-        looper_page_want(7);
-        fw_set_screen(app, SCREEN_MUTE, a, b);
-    } else {
-        fw_set_screen(app, 2, a, b);
-    }
+    fw_set_screen(app, 2, a, b);
 }
 
-/* Replaces the set-screen call in the SONG button handler (screen 0x2d). SONG has three pages: SAMPLR, TRIG (Trigger2MIDI), then the
- * stock song screen. The button opens the Looper page on its SMPLR tab (or switches to that tab when the page is up), pressed
- * again goes to TRIG, and once more to the stock song screen. */
+/* Replaces the set-screen call in the SONG button handler (screen 0x2d). SONG cycles forward through the pages: Looper (MAIN), SAMPLR,
+ * TRIG (Trigger2MIDI), DRONE-8, then the stock song screen, and round to the Looper again. From any stock screen it opens the Looper's
+ * MAIN page; from one of the Looper's other tabs (FX, SETUP, MORE) it first goes back to MAIN. (BACK goes to the previous page where it
+ * has no use of its own: on TRIG; the Looper, SAMPLR and DRONE-8 pages use BACK themselves.) */
 void solo_song_pressed(uint8_t *app, int computed, int a, int b)
 {
     (void)computed;
@@ -320,14 +306,14 @@ void solo_song_pressed(uint8_t *app, int computed, int a, int b)
     if (!looper_ready()) {
         fw_set_screen(app, 0x2d, a, b);
     } else if (cur == SCREEN_MUTE && S->looper && S->view) {
-        int tab = looper_page_tab();
-        if (tab == 6)
-            fw_set_screen(app, 0x2d, a, b);            /* SAMPLR -> TRIG -> the stock song screen */
+        int tab = looper_page_tab();                   /* 0..3 the Looper's tabs, 5 SAMPLR, 6 TRIG, 7 DRONE-8 */
+        if (tab == 7)
+            fw_set_screen(app, 0x2d, a, b);            /* DRONE-8 -> the stock song screen */
         else
-            looper_page_goto(S->view, tab == 5 ? 6 : 5);
+            looper_page_goto(S->view, tab == 6 ? 7 : tab == 5 ? 6 : tab == 0 ? 5 : 0);
     } else {
         S->looper_pending = 1;
-        looper_page_want(5);
+        looper_page_want(0);
         fw_set_screen(app, SCREEN_MUTE, a, b);
     }
 }
