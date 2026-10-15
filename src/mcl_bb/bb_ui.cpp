@@ -191,12 +191,44 @@ static void render_spy(void)
     }
 }
 #endif
-extern "C" __attribute__((weak)) uint32_t bb_mcl_state(void);       /* bb_mcl.cpp (builds with MCL): 3 = the kernel had no memory for MCL's task */
+extern "C" __attribute__((weak)) uint32_t bb_mcl_state(void);
+extern "C" __attribute__((weak)) uint32_t bb_mcl_stack_words(void);
+extern "C" __attribute__((weak)) uint32_t bb_mcl_frames(void);
+extern "C" __attribute__((weak)) uint32_t bb_mcl_dbg(int i);       /* bb_mcl.cpp (builds with MCL): 3 = the kernel had no memory for MCL's task */
 
 static void render(void)
 {
     for (unsigned i = 0; i < sizeof fb; i++)
         fb[i] = 0;
+    if (bb_mcl_state && (bb_mcl_state() == 1 || bb_mcl_state() == 2) && bb_mcl_frames && bb_mcl_frames() == 0) {   /* MCL's task exists but has not drawn yet: where it is */
+        int c = text(0, 0, "S");
+        c = number(c, 0, (int32_t)bb_mcl_state(), 1);
+        c = text(c, 0, " STK");
+        c = number(c, 0, (int32_t)bb_mcl_stack_words(), 4);
+        c = text(c, 0, " ST");
+        c = number(c, 0, (int32_t)bb_mcl_dbg(0), 1);
+        c = text(c, 0, " LP");
+        number(c, 0, (int32_t)(bb_mcl_dbg(9) % 10000u), 4);
+        c = text(0, 1, "DLY");
+        c = number(c, 1, (int32_t)bb_mcl_dbg(1), 4);
+        c = text(c, 1, " MS");
+        c = number(c, 1, (int32_t)bb_mcl_dbg(2), 5);
+        c = text(c, 1, " NS");
+        number(c, 1, (int32_t)bb_mcl_dbg(10), 3);
+        c = text(0, 2, "IRQ");
+        c = number(c, 2, (int32_t)bb_mcl_dbg(3), 2);
+        c = text(c, 2, " K");
+        c = number(c, 2, (int32_t)(bb_mcl_dbg(4) / 1000u), 4);
+        c = text(c, 2, " T7");
+        number(c, 2, (int32_t)(bb_mcl_dbg(5) % 1000000u), 6);
+        c = text(0, 3, "SW");
+        c = number(c, 3, (int32_t)(bb_mcl_dbg(6) % 10000u), 4);
+        c = number(c, 3, (int32_t)(bb_mcl_dbg(7) % 10000u), 4);
+        c = number(c, 3, (int32_t)(bb_mcl_dbg(8) % 10000u), 4);
+        c = text(c, 3, " SD");
+        number(c, 3, (int32_t)(bb_sd_stat_get(0) % 1000u), 3);
+        return;
+    }
     if (bb_mcl_state && bb_mcl_state() == 3) {
         text(0, 0, "MCL NOT STARTED");
         text(0, 1, "NO MEMORY FOR ITS");

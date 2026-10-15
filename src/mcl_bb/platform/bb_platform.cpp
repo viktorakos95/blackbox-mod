@@ -29,6 +29,9 @@ enum { IRQ_SW1 = 30, IRQ_SW2 = 44, IRQ_SW3 = 45, IRQ_TIM7 = 55 };      /* vector
 extern uint8_t SW_IRQ1, SW_IRQ2, SW_IRQ3;
 uint8_t SW_IRQ1 = IRQ_SW1, SW_IRQ2 = IRQ_SW2, SW_IRQ3 = IRQ_SW3;
 
+extern "C" volatile uint32_t bb_dbg[16];
+volatile uint32_t bb_dbg[16];
+
 /* ---- time ---- */
 static volatile uint32_t ms_count;                               /* incremented by the base timer's 1 kHz part */
 static volatile uint32_t ms_tick_cyc;                            /* cycle counter at that increment */
@@ -79,6 +82,8 @@ static uint32_t sleep_sem;
 
 extern "C" void bb_sleep_ms(uint32_t ms)
 {
+    bb_dbg[1]++;
+    bb_dbg[2] = ms;
     if (bb_in_interrupt()) {                                      /* no scheduler to sleep in */
         delayMicroseconds(ms * 1000u);
         return;
@@ -86,6 +91,7 @@ extern "C" void bb_sleep_ms(uint32_t ms)
     if (!sleep_sem)
         sleep_sem = ((fn4)(0x080883beu | 1u))(1, 0, 3, 0);        /* xQueueGenericCreate: a binary semaphore */
     if (!sleep_sem) {
+        bb_dbg[10]++;
         delayMicroseconds(ms * 1000u);
         return;
     }
@@ -160,6 +166,7 @@ extern "C" void bb_base_timer_isr(void);                          /* bb_mcl.cpp:
 extern "C" __attribute__((section(".hook"), used)) void bb_tim7_isr(void)
 {
     T7_SR = 0;
+    bb_dbg[5]++;
     bb_base_timer_isr();
 }
 
@@ -167,6 +174,7 @@ void setup_irqs()
 {
     if (timers_running)
         return;
+    bb_dbg[3]++;
     bb_clock_init();                                              /* the cycle counter against the timers' clock: needed before TIM7 (same clock tree as TIM6) */
     uint32_t hz = bb_clock_timer_hz();
     if (!hz)
@@ -190,4 +198,5 @@ void setup_irqs()
     NVIC_ISER(1) = (1u << (IRQ_SW2 - 32)) | (1u << (IRQ_SW3 - 32)) | (1u << (IRQ_TIM7 - 32));
     T7_DIER = 1;
     T7_CR1 = 1;
+    bb_dbg[4] = hz;
 }

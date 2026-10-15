@@ -29,6 +29,7 @@ void handleIncomingMidi();
 
 static volatile uint32_t mcl_state;                              /* 0 not started, 1 starting (setup running), 2 running, 3 failed to start */
 static volatile uint32_t mcl_frames;
+extern "C" volatile uint32_t bb_dbg[16];                           /* progress counters (bb_platform.cpp defines them): 0 task stage, 1 delay calls, 2 last delay ms, 3 setup_irqs entered, 4 ... got its timer, 5 TIM7 interrupts, 6/7/8 soft interrupts 1/2/3, 9 loop passes, 10 sleep semaphore missing */
 static volatile uint32_t mcl_stack;                              /* the stack the task got, words */
 static uint8_t front[OLED_WIDTH * OLED_HEIGHT / 8];
 
@@ -48,6 +49,7 @@ HOOK const uint8_t *bb_mcl_fb(void) { return front; }
 HOOK uint32_t bb_mcl_frames(void) { return mcl_frames; }
 HOOK uint32_t bb_mcl_state(void) { return mcl_state; }
 HOOK uint32_t bb_mcl_stack_words(void) { return mcl_stack; }
+HOOK uint32_t bb_mcl_dbg(int i) { return i >= 0 && i < 16 ? bb_dbg[i] : 0; }
 
 /* ---- MIDI between MCL's MidiUart and bb_midi ---- */
 static volatile uint32_t st_rx_in, st_rx_clk, st_tx_out, st_tx_clk;     /* MIDI bytes: into MCL, clock / transport dropped from the jack, out to the jack, clock / transport dropped from MCL's output */
@@ -177,6 +179,7 @@ extern "C" uint8_t *const bb_isr_stack_top = isr_stack + ISR_STACK;
 
 extern "C" void bb_swirq1_body(void)                               /* the sequencer step */
 {
+    bb_dbg[6]++;
     MidiClock.inCallback = true;
     uint8_t lock = MidiUartParent::handle_midi_lock;
     MidiUartParent::handle_midi_lock = 1;
@@ -188,6 +191,7 @@ extern "C" void bb_swirq1_body(void)                               /* the sequen
 
 extern "C" void bb_swirq2_body(void)                               /* MIDI input, and MCL's output on its way */
 {
+    bb_dbg[7]++;
     midi_rx_pump();
     handleIncomingMidi();
     midi_tx_drain();
@@ -195,6 +199,7 @@ extern "C" void bb_swirq2_body(void)                               /* MIDI input
 
 extern "C" void bb_swirq3_body(void)                               /* the panel */
 {
+    bb_dbg[8]++;
     GUI_hardware.poll();
 }
 
@@ -292,11 +297,14 @@ static void mcl_task(void *)
 {
     for (uint32_t i = 0; i < ISR_STACK; i++)
         isr_stack[i] = 0xa5;                                       /* (painted, to see how much the soft interrupts ever use) */
+    bb_dbg[0] = 1;
     mcl_state = 1;
     bb_midi_claim(1);                                              /* MCL writes the jack (the stock firmware's own sends are redirected into the same ring) */
     if (!bb_midi_owner())
         bb_midi_claim(0);
+    bb_dbg[0] = 2;
     setup();                                                       /* (with the project menu: it returns when a project is loaded) */
+    bb_dbg[0] = 3;
     mcl_state = 2;
     bb_clock_set_transport_hook(bb_mcl_clk_transport);
     bb_clock_set_hook(bb_mcl_clk_tick);
@@ -304,6 +312,7 @@ static void mcl_task(void *)
     bb_midi_filter_clock(1);                                       /* ... and sends the clock and transport out: the stock firmware's own F8 / FA / FB / FC are dropped from here on
                                                                       (until then, in the start menu, they go out as before) */
     for (;;) {
+        bb_dbg[9]++;
         loop();
         if (!bb_midi_owner())
             bb_midi_claim(1);                                      /* (still waiting for an idle moment of the stock transmitter) */
@@ -321,8 +330,8 @@ struct ThreadDef {                                                 /* CMSIS-RTOS
 };
 static ThreadDef task_def;
 
-/* Creates the task (from the UI task, once, when the runtime is up). Returns the task handle (0 = the kernel had no memory for it, even for the smallest stack tried).
- * The stack comes from the kernel's heap, whose free size is not known here: ask for `stack_words` and, if that is refused, for less (3/4, 1/2, 3/8 of it). */
+/* Creates the task (from the UI task, once, when the runtime is up). Returns the task handle (0 = the kernel had no memory for it, even for the smaller stack tried).
+ * The stack comes from the kernel's heap, whose free size is not known here: ask for `stack_words` and, if that is refused, for less (7/8 of it; MCL needs about 13 KB). */
 HOOK uint32_t bb_mcl_start(uint32_t stack_words)
 {
     if (mcl_state)
@@ -333,8 +342,8 @@ HOOK uint32_t bb_mcl_start(uint32_t stack_words)
     task_def.instances = 1;
     uint32_t h = 0;
     mcl_state = 1;                                                  /* (before the task exists: the caller must not get here twice) */
-    for (uint32_t i = 0; i < 4 && !h; i++) {
-        static const uint8_t num[4] = {8, 6, 4, 3};
+    for (uint32_t i = 0; i < 2 && !h; i++) {
+        static const uint8_t num[2] = {8, 7};
         task_def.stack_words = stack_words * num[i] / 8;
         h = ((fn4)(0x08087a70u | 1u))((uint32_t)&task_def, 0, 0, 0);       /* osThreadCreate */
     }

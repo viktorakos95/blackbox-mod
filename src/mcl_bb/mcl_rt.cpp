@@ -430,15 +430,18 @@ static int ready(void)
     volatile uint32_t *s = BKP;
     return s[0] == BKP_MAGIC && (s[1] & 0xff) == ST_OK;
 }
-static const uint8_t *page_fb(void) { return !ready() ? 0 : bb_mcl_active() ? bb_mcl_fb() : bb_ui_fb(); }
-static uint32_t page_sig(void) { return !ready() ? 0 : bb_mcl_active() ? bb_mcl_frames() * 2654435761u + 1u : bb_ui_sig(); }
+/* MCL's screen once it has drawn; until then (and if it never does) the bench's diagnostic view of where its task is */
+static int mcl_drawn(void) { return bb_mcl_active() && bb_mcl_frames() != 0; }
+static const uint8_t *page_fb(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_fb() : bb_ui_fb(); }
+static uint32_t page_sig(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_frames() * 2654435761u + 1u : bb_ui_sig(); }
 static void page_input(uint32_t kind, int32_t a, int32_t b)
 {
     if (!ready())
         return;
-    if (bb_mcl_active())
-        bb_mcl_page_input(kind, a, b);
-    else
+    if (bb_mcl_active()) {
+        if (mcl_drawn())
+            bb_mcl_page_input(kind, a, b);
+    } else
         bb_ui_input(kind, a, b);
 }
 #if defined(M3_TEST) || defined(M4_TEST) || defined(M5_TEST) || defined(COMPACT_LABEL)
