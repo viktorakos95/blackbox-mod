@@ -486,6 +486,30 @@ fh = peak_hz(hi, 400, 4000)
 check("a voice above the bass band gets next to nothing (2nd harmonic %.0f dB, it was %.0f)" % (db(level_at(hi, 2 * fh) / level_at(hi, fh)), db(level_at(h_hi, 2 * fh) / level_at(h_hi, fh))), db(level_at(hi, 2 * fh) / level_at(hi, fh)) < -38)
 
 
+# ---- the air (3.1.AE+): a quiet noise between 3 and 10 kHz that follows the output's level ----
+def air_bands(wave=1):
+    l = Lira(**dict(CLEAN, WAVE=wave, DEL_MIX=0, TUNE1=70))
+    l.key(0, 1)
+    l.run(8 * SR)
+    x = l.run(6 * SR)
+    S = np.abs(np.fft.rfft(x * np.hanning(len(x)))) ** 2
+    fr = np.fft.rfftfreq(len(x), 1 / SR)
+    tot = S.sum()
+    return [10 * np.log10(S[(fr >= a) & (fr < b)].sum() / tot + 1e-30) for a, b in ((0, 500), (3000, 10000), (10000, 22050))], x
+
+
+bd, xs = air_bands()
+check("a sine now has some top: the 3-10 kHz band sits at %.0f dB (it was -100), above 10 kHz %.0f dB" % (bd[1], bd[2]), -60 < bd[1] < -48 and bd[2] < bd[1])
+l = Lira(DEL_MIX=0)
+for i in range(8):
+    l.key(i, 1)
+l.run(2 * SR)
+for i in range(8):
+    l.key(i, 0)
+tail = l.run(45 * SR)[-SR:]
+check("... and it is gone when the drone is (one second, 45 s after the keys went up: rms %.1e)" % np.sqrt(np.mean(tail ** 2)), np.sqrt(np.mean(tail ** 2)) < 2e-4)
+
+
 # CPU
 l = Lira()
 for i in range(8):

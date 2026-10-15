@@ -41,6 +41,7 @@
 #define MOD_MAX       0.45f      /* (assumed) maximum clock modulation, relative */
 #define ADM_MIN       0.0006f    /* (assumed) adaptive delta codec step limits */
 #define ADM_MAX       0.25f
+#define AIR_GAIN      0.018f     /* the air (assumed): noise between 3 and 10 kHz at about -54 dB of the output's own level, so a pure sine has some top to it without ever hissing in silence */
 
 #ifdef __ARM_FP                  /* VABS, VMINNM, VMAXNM: no compare, no branch to mispredict (same results for numbers) */
 static inline float fabs_(float x) { return __builtin_fabsf(x); }
@@ -576,6 +577,8 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
     const float driftb = l->drift > 0.f ? l->drift * l->drift * 0.0035f * 1.732f * fexp2(0.5f * flog2(2.f * (float)LIRA_CR * isr / 6.f)) : 0.f;
     const float bodyc = l->bodyc, harm = l->harm * 1.2f;
     const float lp160 = clip_(160.f * TWO_PI * isr, 0.f, 1.f), lp350 = clip_(350.f * TWO_PI * isr, 0.f, 1.f);
+    /* (the one-pole coefficients are 1 - exp(-2 pi f / sr): the plain 2 pi f / sr used elsewhere stops being a filter above sr / 6) */
+    const float lp10k = 1.f - fexp2(-10000.f * TWO_PI * isr * 1.44269504f), lp3k_ = 1.f - fexp2(-3000.f * TWO_PI * isr * 1.44269504f), kair = 1.f / (0.05f * sr);
     int ei = 0;
     const int have_ext = l->ext_l && l->ext_r && l->ext_n > 0;
     float ext = 0.f;
@@ -811,6 +814,11 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
                 hh = harm * lop(&l->hbl, hip(&l->hbd, fabs_(lb), hp20c), lp350);
             }
             float yt = ptanh(lop(&l->hf, yv + bodyc * lop(&l->lf, yv, lp150) + hh, lp9k)) * vol;
+            {   /* air: white noise between 3 and 10 kHz (two low-pass poles at 10 kHz minus one at 3 kHz), scaled by the output's own smoothed level: it breathes with the drone and is gone when it is */
+                float nz = rnd(l);
+                l->air_env += (fabs_(yt) - l->air_env) * kair;
+                yt += (lop(&l->air_hi2, lop(&l->air_hi, nz, lp10k), lp10k) - lop(&l->air_lo, nz, lp3k_)) * l->air_env * AIR_GAIN;
+            }
             if (out_r) {                                      /* the side: the voices' spread and the two delay lines one to each side, softened like the master's top */
                 float sd = (mixl - mixr) * 0.5f * 0.166667f;
                 if (nlines)

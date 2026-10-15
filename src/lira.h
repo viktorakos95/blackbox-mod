@@ -110,6 +110,7 @@ typedef struct {
     float *out_r;                 /* the right channel, set by the caller before lira_process (NULL: mono, as the pads use it) */
     float dr[8];                  /* the oscillators' pitch wander, relative */
     float side_lp;                /* the side signal's top-end filter */
+    float air_lo, air_hi, air_hi2, air_env;   /* the air: a quiet high noise that follows the output's level */
 } lira_t;
 
 int lira_size(void);
