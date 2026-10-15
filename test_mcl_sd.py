@@ -331,7 +331,7 @@ check("... again only the FatFs window ever reached the card driver", all(t[3] =
 check("... and the temporary file is really gone", gui("bb_sd_stat", path("/BBSD.TMP"), ent) == 4)
 tile(3)
 rows = screen()
-check("B4: counters page: requests counted, the one deliberate timeout of the test above, its 10 s wait as the worst wait", rows[0].startswith("REQ") and "TIMEOUTS   1" in rows[1] and "10015" in rows[2], rows)
+check("B4: counters page: requests counted, the one deliberate timeout of the test above, its 10 s wait as the worst wait, the streamer gap lines present", rows[0].startswith("REQ") and rows[0].endswith("TMO  1") and rows[1].startswith("STREAMER GAP MS") and rows[2].startswith("GAPS OVER 100MS") and "10015" in rows[3], rows)
 tile(3)
 # a failing card: write errors reach the screen
 

@@ -201,13 +201,17 @@ static void render(void)
             text(0, r, bb_sdtest_line(r));
     } else {                                                /* the SD layer's own counters */
         int c = text(0, 0, "REQ ");
-        number(c, 0, (int32_t)bb_sd_stat_get(0), 6);
-        c = text(0, 1, "TIMEOUTS ");
-        number(c, 1, (int32_t)bb_sd_stat_get(1), 3);
-        c = text(0, 2, "WORST WAIT MS ");
-        number(c, 2, (int32_t)bb_sd_stat_get(2), 6);
-        c = text(0, 3, "WORST CALL US ");
-        number(c, 3, (int32_t)bb_sd_stat_get(3), 6);
+        c = number(c, 0, (int32_t)bb_sd_stat_get(0), 6);
+        c = text(c, 0, " TMO ");
+        number(c, 0, (int32_t)bb_sd_stat_get(1), 2);
+        c = text(0, 1, "STREAMER GAP MS ");
+        number(c, 1, (int32_t)bb_sd_stat_get(4), 5);
+        c = text(0, 2, "GAPS OVER 100MS ");
+        number(c, 2, (int32_t)bb_sd_stat_get(5), 5);
+        c = text(0, 3, "WAIT MS ");
+        c = number(c, 3, (int32_t)bb_sd_stat_get(2), 5);
+        c = text(c, 3, " CALL US");
+        number(c, 3, (int32_t)bb_sd_stat_get(3) % 100000u, 6);
     }
     return;
 #endif

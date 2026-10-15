@@ -60,6 +60,7 @@ static struct {
 } req;
 static uint32_t sem;                                              /* binary semaphore: the streamer gives it when a request is done */
 static uint32_t st_requests, st_timeouts, st_wait_ms, st_call_us;
+static uint32_t last_pump, worst_gap_cyc, gaps_100ms;           /* the streamer loop's own rhythm: time between two passes through the hook */
 
 static inline uint32_t irq_off(void)
 {
@@ -82,6 +83,7 @@ HOOK void bb_sd_init(void)
     for (int i = 0; i < SD_DIRS; i++)
         dir_used[i] = 0;
     sem = 0;
+    last_pump = 0;
     barrier();
     ready = READY_MAGIC;                                         /* last: the streamer's hook looks at this */
 }
@@ -173,6 +175,14 @@ HOOK void bb_sd_service(void)
 
 HOOK uint32_t mcl_sd_pump(uint32_t queue, uint32_t item, uint32_t ticks, uint32_t peek)
 {
+    if (ready == READY_MAGIC) {
+        uint32_t now = DWT_CYCCNT, gap = now - last_pump;
+        if (last_pump && gap > worst_gap_cyc)
+            worst_gap_cyc = gap;
+        if (last_pump && gap > (SYST_RVR + 1u) * 100u)           /* 100 ms of ticks */
+            gaps_100ms++;
+        last_pump = now;
+    }
     bb_sd_service();
     return stock(Q_RECEIVE, queue, item, ticks, peek);
 }
@@ -434,6 +444,8 @@ HOOK uint32_t bb_sd_stat_get(int which)
     case 0: return st_requests;
     case 1: return st_timeouts;
     case 2: return st_wait_ms;
-    default: return st_call_us;
+    case 3: return st_call_us;
+    case 4: return (uint32_t)((uint64_t)worst_gap_cyc * 1000u / ((SYST_RVR + 1u) * 1000u));
+    default: return gaps_100ms;
     }
 }

@@ -350,3 +350,11 @@ view 1 (tile B4) = overlaps in FatFs (F) and in the driver (D) with the first pa
   is readable by another FAT implementation) and the file that was on the card before is untouched. NOT checked: the real streamer's scheduling, real card timing, long-run behaviour (M9).
 - **Hardware test image:** `SDTEST=1 COMPACT=1 tools/mcl/build_blob.sh`, patch set `... cave mclblob mclsd`. MCL page: B1 lists the root (files / folders, the biggest file), B2 reads up to 256 KB of it twice with different
   request sizes and compares checksums, B3 writes 128 KB of pattern to `/BBSD.TMP`, reads it back, compares and deletes it, B4 shows counters (requests, timeouts, worst wait, worst streamer-side call).
+
+### M7 on the unit (user, SD test image, real card)
+- B1 list: root = 10 files, 12 folders, biggest `music box.wav` 3461 KB (the name on the screen is cut at 21 characters).
+- B2: 256 KB of it read twice (4 KB requests, then 100-byte requests): checksums equal, **554 ms (462 KB/s)**.
+- B3: 128 KB written to `/BBSD.TMP` **474 ms (about 270 KB/s)**, read back **265 ms (about 480 KB/s)**, verify OK at byte 0 mismatches, deleted OK.
+- Counters after all that: 10,211 requests, **0 timeouts**, worst streamer-side call **6.4 ms**, worst wait **1872 ms** (the time before the streamer loop reached the hook, since the call itself was short; to be
+  explained with the new "streamer gap" counters). The page was slow to change while the tests ran: expected, the tests run in the UI task's touch handler and block it for 0.3 to 1 s.
+- Throughput note: 100-byte requests cost one mailbox round trip each; MCL's file access (small project / grid files) is far below what this image does.

@@ -53,6 +53,6 @@ int bb_sd_opendir(const char *path);                    /* handle >= 0, or -(FRE
 uint32_t bb_sd_readdir(int d, BbDirEnt *out);           /* SD_OK; out->name[0] == 0 at the end */
 uint32_t bb_sd_closedir(int d);
 
-/* statistics: 0 requests, 1 timeouts, 2 largest wait (ms), 3 largest streamer-side time of one call (us) */
+/* statistics: 0 requests, 1 timeouts, 2 largest wait (ms), 3 largest streamer-side time of one call (us), 4 longest gap between two passes of the streamer loop through the hook (ms), 5 how many gaps were over 100 ms */
 uint32_t bb_sd_stat_get(int which);
 }
