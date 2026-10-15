@@ -374,3 +374,22 @@ takes three overdub layers.
 - Tap the top bar of the SAMPLR page: V / G are replaced by R, G, B, M = percent of the audio block spent in the voices (render), the grains, reading + interpolating the sample (inside both),
   and the mix + track strips (`pr pg pb pm` in the scratch, DWT cycles around the calls, updated once a second). Tap again to go back. The numbers say what to optimize on the unit itself
   (the emulator counts instructions, not memory waits).
+
+## Builds 36-38 (stage profile, priorities)
+- 36: tap the SAMPLR top bar for P D L S (stock + effects before the looper stage, DRONE-8 / LIRA, looper, SAMPLR), again for R G B M, again for V G. Reports: SAMPLR 2-5 % with samples
+  loading; the looper 38-55 % with four tracks and effects, the stock part 15-30 %, DRONE-8 18-25 %.
+- 37: the looper leaves out a track's filter when it is off and faded out (its state restarts from rest).
+- 38: SAMPLR yields first: its governor sheds from 70 % (was 85 %), recovers under 64 %, and has a sixth step (6 grains in all), so it backs off before DRONE-8's own governor (75 %)
+  mutes its note. A safety valve in the looper, read from SAMPLR's shed level: from step 2 the second filter stage is left out, from step 3 the drive.
+
+## Build 39 (the looper's play loop optimized, nothing removed)
+- `play_seg` / `mod_read` (src/looper.c) kept every per-frame state in the effect memory (`struct dsp`, a pool buffer = SDRAM), and every store through it made the compiler reload all
+  settings and state each frame. Now: the filter, drive and crunch state and the play head's state (`struct mrs`: speed, stutter, scrambler, grains, wow, drop) are copied into locals
+  once a block and back after; frames are read as one 32-bit word through a pointer kept per 32 KB half buffer (the grains too, one per grain); the grain window is worked out every 8
+  frames (it steps there) instead of read from a table in SDRAM per frame; the plain read is skipped when the play head replaces it; wow / flutter and the DROP gain are skipped while
+  their knobs are at 0; sends are skipped at 0. The loop is compiled at -O2 (the cave is -Os).
+- Same sound: 9 scenarios (filter LP / HP with Res, drive, crunch, sends, SPEED, PTCH, STAB, reverse / half, overdub) match the build-38 output within 2e-6 (float rounding).
+- Emulator, 4 tracks, per 256-frame block (`tools/prof_mem.py`), build 38 -> 39: plain 136k -> 106k instructions, filter 268k -> 200k, filter + drive 375k -> 259k, SPEED (grains)
+  517k -> 408k, SPEED + filter + drive 756k -> 561k. Accesses to the effect memory (SDRAM) in the play loop: 15-30 k -> about 2 k a block (the track reads themselves not counted).
+  On the unit the gain should be larger than the instruction counts say if SDRAM accesses are slow (the hardware L % was about 10x the emulator's instruction share): to be measured (L).
+- Stack: play_seg's frame is 512 bytes (the old seg with it inlined: about 216); WSOLA's search arrays are int16 now (448 -> 320). Deepest looper chain with SMOOTH: about 1 KB.

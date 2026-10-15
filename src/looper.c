@@ -1051,13 +1051,12 @@ static void ws_region(int t, vtrack *k, uint32_t len, int32_t start, int n, int1
     }
 }
 
-static uint32_t wsola_start(struct dsp *d, int t, vtrack *k, uint32_t len, float ppos, int pdir, int32_t page, uint32_t nominal,
+__attribute__((noinline)) static uint32_t wsola_start(struct dsp *d, int t, vtrack *k, uint32_t len, float ppos, int pdir, int32_t page, uint32_t nominal,
                             int dir, float rr)
 {
     if (page < 0)
         return nominal;                           /* no grain before it */
-    int16_t off[WS_PTS];
-    int tg[WS_PTS];
+    int16_t off[WS_PTS], tg[WS_PTS];                  /* (on the audio task's stack: kept small) */
     for (int j = 0; j < WS_PTS; j++)
         off[j] = (int16_t)((float)(j * WS_STEP) * rr);
     int span = off[WS_PTS - 1] + 1;
@@ -1067,7 +1066,7 @@ static uint32_t wsola_start(struct dsp *d, int t, vtrack *k, uint32_t len, float
     for (int j = 0; j < WS_PTS; j++) {            /* what the grain before it plays next */
         int16_t one;
         ws_region(t, k, len, (int32_t)ppos + pdir * off[j], 1, &one);
-        tg[j] = (int)one >> 3;
+        tg[j] = (int16_t)((int)one >> 3);
     }
     int32_t b0 = dir > 0 ? (int32_t)nominal - WS_RG : (int32_t)nominal - WS_RG - span;
     ws_region(t, k, len, b0, n, d->ws);
@@ -1104,28 +1103,118 @@ static uint32_t wsola_start(struct dsp *d, int t, vtrack *k, uint32_t len, float
     return (uint32_t)(r < 0 ? r + (int32_t)len : r);
 }
 
-static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32_t len, uint32_t wlen, uint32_t pos, int on,
-                     int *xfade, float *xl, float *xr)
+/* The grain window (smoothstep up, then down) at step i of 256. */
+static inline float gwin(int i)
+{
+    float x = ((float)i + .5f) * (1.f / 256.f), q = x < .5f ? 2.f * x : 2.f * x - 1.f, sm = q * q * (3.f - 2.f * q);
+    return x < .5f ? sm : 1.f - sm;
+}
+
+/* The 32 KB half buffer h (0, 1, ...) of area a: the frames h * 8192 on. */
+static inline int16_t *half_at(uint8_t *eng, int a, uint32_t h)
+{
+    uint8_t *e = eng + ENTRY_SIZE * (uint32_t)(FIRST_ENTRY + a * TRACK_ENTRIES + (int)(h >> 1));
+    return *(int16_t **)(e + ((h & 1u) ? ENTRY_RIGHT : ENTRY_LEFT));
+}
+
+/* The play head's state for one track (struct dsp's per-track fields): play_seg copies it out of the effect memory (SDRAM) once
+ * a block and back after, so that the per-frame reads and writes stay in internal memory. */
+struct mrs {
+    float rp, wb, wl, stut_len_l;
+    uint32_t scr_n, rnd;
+    uint8_t stut_on, gv, stut_mode_l, dmute;
+    float gpos[2];
+    int32_t gag[2], ghc, dseg;
+    int8_t gdir[2];
+    float ph1, ph2, dgn, lpst[2], dtarget;
+    /* per block only (not kept in struct dsp) */
+    int rev;                                      /* the track plays backwards (k->rev, read once) */
+    int grains;                                   /* the grains run (pitch kept, or PTCH) while the controls act */
+    float gw[2];                                  /* the grains' window now (it steps every 8 frames) */
+    uint32_t gh[2];                               /* the half buffer each grain reads from, and where it is */
+    int16_t *gb[2];
+};
+
+static void mrs_get(const struct dsp *d, int t, struct mrs *s)
+{
+    s->rp = d->rp[t];
+    s->wb = d->wb[t];
+    s->wl = d->wl[t];
+    s->stut_len_l = d->stut_len_l[t];
+    s->scr_n = d->scr_n[t];
+    s->rnd = d->rnd[t];
+    s->stut_on = d->stut_on[t];
+    s->gv = d->gv[t];
+    s->stut_mode_l = d->stut_mode_l[t];
+    s->dmute = d->dmute[t];
+    for (int v = 0; v < 2; v++) {
+        s->gpos[v] = d->gpos[t][v];
+        s->gag[v] = d->gag[t][v];
+        s->gdir[v] = d->gdir[t][v];
+        s->lpst[v] = d->lpst[t][v];
+    }
+    s->ghc = d->ghc[t];
+    s->dseg = d->dseg[t];
+    s->ph1 = d->ph1[t];
+    s->ph2 = d->ph2[t];
+    s->dgn = d->dgn[t];
+    s->dtarget = d->dtarget[t];
+    for (int v = 0; v < 2; v++) {
+        s->gw[v] = s->gag[v] >= 0 ? gwin(s->gag[v] >> 3) : 0.f;
+        s->gh[v] = 0xffffffffu;
+        s->gb[v] = 0;
+    }
+}
+
+static void mrs_put(struct dsp *d, int t, const struct mrs *s)
+{
+    d->rp[t] = s->rp;
+    d->wb[t] = s->wb;
+    d->wl[t] = s->wl;
+    d->stut_len_l[t] = s->stut_len_l;
+    d->scr_n[t] = s->scr_n;
+    d->rnd[t] = s->rnd;
+    d->stut_on[t] = s->stut_on;
+    d->gv[t] = s->gv;
+    d->stut_mode_l[t] = s->stut_mode_l;
+    d->dmute[t] = s->dmute;
+    for (int v = 0; v < 2; v++) {
+        d->gpos[t][v] = s->gpos[v];
+        d->gag[t][v] = s->gag[v];
+        d->gdir[t][v] = s->gdir[v];
+        d->lpst[t][v] = s->lpst[v];
+    }
+    d->ghc[t] = s->ghc;
+    d->dseg[t] = s->dseg;
+    d->ph1[t] = s->ph1;
+    d->ph2[t] = s->ph2;
+    d->dgn[t] = s->dgn;
+    d->dtarget[t] = s->dtarget;
+}
+
+__attribute__((optimize("O2"))) static inline void mod_read(struct dsp *d, struct mrs *restrict s, uint8_t *eng, int t, vtrack *k,
+                                                           const struct pb *restrict p, uint32_t len, uint32_t wlen, uint32_t pos, int on,
+                                                           int *restrict xfade, float *restrict xl, float *restrict xr)
 {
     const float s16 = 1.f / 32767.f;
-    float rp = d->rp[t];
+    float rp = s->rp;
     if (on) {
-        if (p->stut_mode && (!d->stut_on[t] || p->stut_mode != d->stut_mode_l[t] || p->stut_len != d->stut_len_l[t])) {
+        if (p->stut_mode && (!s->stut_on || p->stut_mode != s->stut_mode_l || p->stut_len != s->stut_len_l)) {
             /* the stutter just came on, or the knob moved to another size / side: a new slice before or after the play head */
-            d->stut_on[t] = 1;
-            d->stut_mode_l[t] = (uint8_t)p->stut_mode;
-            d->stut_len_l[t] = p->stut_len;
-            d->wl[t] = p->stut_len < (float)len ? p->stut_len : (float)len;
-            d->wb[t] = p->stut_mode == 1 ? rp - d->wl[t] : rp;
-            rp = d->wb[t];
-        } else if (!p->stut_mode && d->stut_on[t]) {  /* ... and off: back to where the transport is */
-            d->stut_on[t] = 0;
+            s->stut_on = 1;
+            s->stut_mode_l = (uint8_t)p->stut_mode;
+            s->stut_len_l = p->stut_len;
+            s->wl = p->stut_len < (float)len ? p->stut_len : (float)len;
+            s->wb = p->stut_mode == 1 ? rp - s->wl : rp;
+            rp = s->wb;
+        } else if (!p->stut_mode && s->stut_on) {  /* ... and off: back to where the transport is */
+            s->stut_on = 0;
             rp = (float)pos;
         }
-        if (p->scr_mode && !d->stut_on[t] && len >= 16u * 64u) {      /* the scrambler: at each slice start, jump or follow */
+        if (p->scr_mode && !s->stut_on && len >= 16u * 64u) {      /* the scrambler: at each slice start, jump or follow */
             uint32_t slice = len >> 4, n = pos / slice;
-            if (n != d->scr_n[t]) {
-                d->scr_n[t] = n;
+            if (n != s->scr_n) {
+                s->scr_n = n;
                 uint32_t h = (n + 3u) * 2654435761u;
                 h ^= h >> 15;
                 h *= 2246822519u;
@@ -1133,8 +1222,8 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
                 float u;
                 uint32_t j;
                 if (p->scr_mode == 1) {               /* random: any slice, now and then */
-                    u = rnd01(&d->rnd[t]);
-                    j = (uint32_t)(rnd01(&d->rnd[t]) * 16.f) & 15u;
+                    u = rnd01(&s->rnd);
+                    j = (uint32_t)(rnd01(&s->rnd) * 16.f) & 15u;
                 } else {                              /* a sequence that repeats every pass */
                     u = (float)(h >> 24) * (1.f / 256.f);
                     j = (h >> 4) & 15u;
@@ -1143,7 +1232,7 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
             }
         }
     }
-    float wb0 = d->stut_on[t] && on ? d->wb[t] : 0.f, wl0 = d->stut_on[t] && on ? d->wl[t] : (float)wlen;
+    float wb0 = s->stut_on && on ? s->wb : 0.f, wl0 = s->stut_on && on ? s->wl : (float)wlen;
     float rpi = rp < 0.f ? rp + (float)len : rp;                  /* where to read (the stutter's window can reach back past 0) */
     if (rpi >= (float)len)
         rpi -= (float)len;
@@ -1154,14 +1243,14 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
         f = 0.f;
     }
     uint32_t i1 = i0 + 1;
-    if (d->stut_on[t] && on) {
+    if (s->stut_on && on) {
         if (i1 >= len)
             i1 = 0;
     } else if (i1 >= wlen) {
         i1 = 0;
     }
     float ml = 0.f, mr = 0.f;
-    int grains = on && (p->ptch_on || (p->keep && (p->spd < .98f || p->spd > 1.02f)));
+    int grains = on && s->grains;
     if (!grains) {
         int16_t *a = frame_at(t, place(k, i0, len)), *b = frame_at(t, place(k, i1, len));
         ml = (float)a[0] * s16;
@@ -1173,91 +1262,97 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
     if (grains) {
         /* grains of 2048 frames, a new one every 1024 at the play head, read at the pitch ratio (keep the pitch: 1; the tape's
          * own change when KEEP is off) and cross faded: speed and pitch apart */
-        if (!d->winok) {
-            for (int i = 0; i < 256; i++) {
-                float x = ((float)i + .5f) * (1.f / 256.f), q = x < .5f ? 2.f * x : 2.f * x - 1.f, sm = q * q * (3.f - 2.f * q);
-                d->win[i] = x < .5f ? sm : 1.f - sm;
-            }
-            d->winok = 1;
-        }
         float aspd = p->spd < 0.f ? -p->spd : p->spd;
         float rr = p->pratio * (p->keep ? 1.f : aspd);
-        if (d->ghc[t] <= 0) {
-            int v = d->gv[t] & 1;
-            d->gv[t] ^= 1;
+        if (s->ghc <= 0) {
+            int v = s->gv & 1;
+            s->gv ^= 1;
             int dirn = p->spd < 0.f ? -1 : 1;
-            d->gpos[t][v] = (float)(p->smooth ? wsola_start(d, t, k, len, d->gpos[t][v ^ 1], d->gdir[t][v ^ 1], d->gag[t][v ^ 1], i0, dirn, rr) : i0);
-            d->gag[t][v] = 0;
-            d->gdir[t][v] = (int8_t)dirn;
-            d->ghc[t] = GH;
+            s->gpos[v] = (float)(p->smooth ? wsola_start(d, t, k, len, s->gpos[v ^ 1], s->gdir[v ^ 1], s->gag[v ^ 1], i0, dirn, rr) : i0);
+            s->gag[v] = 0;
+            s->gw[v] = gwin(0);
+            s->gdir[v] = (int8_t)dirn;
+            s->ghc = GH;
         }
-        d->ghc[t]--;
+        s->ghc--;
         float fl = (float)len;
         for (int v = 0; v < 2; v++) {
-            int32_t ag = d->gag[t][v];
+            int32_t ag = s->gag[v];
             if (ag < 0)
                 continue;
-            float gp = d->gpos[t][v];
+            float gp = s->gpos[v];
             uint32_t ia = (uint32_t)gp;
             float gf = gp - (float)ia;
-            uint32_t pa = k->rev ? len - 1u - ia : ia;                   /* the frame and its neighbour: one lookup unless a block ends */
-            int16_t *g0 = frame_at(t, pa), *g1;
+            int rev = s->rev;
+            uint32_t pa = rev ? len - 1u - ia : ia;                      /* the frame and its neighbour: one lookup unless a block ends */
+            if ((pa >> 13) != s->gh[v]) {
+                s->gh[v] = pa >> 13;
+                s->gb[v] = half_at(eng, t, pa >> 13);
+            }
             uint32_t po = pa & (uint32_t)(HALF_FRAMES - 1);
-            if (k->rev ? po != 0u : (po != (uint32_t)(HALF_FRAMES - 1) && ia + 1 < len))
-                g1 = k->rev ? g0 - 2 : g0 + 2;
+            int16_t *g0 = s->gb[v] + 2 * po, *g1;
+            if (rev ? po != 0u : (po != (uint32_t)(HALF_FRAMES - 1) && ia + 1 < len))
+                g1 = rev ? g0 - 2 : g0 + 2;
             else
                 g1 = frame_at(t, place(k, ia + 1 >= len ? 0 : ia + 1, len));
-            float w = d->win[ag >> 3] * s16;
-            ml += w * ((float)g0[0] + ((float)g1[0] - (float)g0[0]) * gf);
-            mr += w * ((float)g0[1] + ((float)g1[1] - (float)g0[1]) * gf);
-            gp += d->gdir[t][v] > 0 ? rr : -rr;
+            float w = s->gw[v] * s16;
+            uint32_t u0 = *(uint32_t *)g0, u1 = *(uint32_t *)g1;   /* one word a frame */
+            float l0 = (float)(int16_t)u0, r0 = (float)(int16_t)(u0 >> 16), l1 = (float)(int16_t)u1, r1 = (float)(int16_t)(u1 >> 16);
+            ml += w * (l0 + (l1 - l0) * gf);
+            mr += w * (r0 + (r1 - r0) * gf);
+            gp += s->gdir[v] > 0 ? rr : -rr;
             if (gp >= fl)
                 gp -= fl;
             else if (gp < 0.f)
                 gp += fl;
-            d->gpos[t][v] = gp;
-            d->gag[t][v] = ag + 1 >= GG ? -1 : ag + 1;
+            s->gpos[v] = gp;
+            ag = ag + 1 >= GG ? -1 : ag + 1;
+            s->gag[v] = ag;
+            if (ag > 0 && !(ag & 7))
+                s->gw[v] = gwin(ag >> 3);
         }
     }
     if (on) {
-        float w = 1.f + p->wow * tri01(d->ph1[t]) + p->flut * tri01(d->ph2[t]);
-        spd *= w;
-        d->ph1[t] += .6f / SR;
-        d->ph2[t] += 6.3f / SR;
-        if (d->ph1[t] >= 1.f)
-            d->ph1[t] -= 1.f;
-        if (d->ph2[t] >= 1.f)
-            d->ph2[t] -= 1.f;
+        if (p->wow != 0.f || p->flut != 0.f) {        /* STAB at 0: no wobble to work out (the phases still run) */
+            float w = 1.f + p->wow * tri01(s->ph1) + p->flut * tri01(s->ph2);
+            spd *= w;
+        }
+        s->ph1 += .6f / SR;
+        s->ph2 += 6.3f / SR;
+        if (s->ph1 >= 1.f)
+            s->ph1 -= 1.f;
+        if (s->ph2 >= 1.f)
+            s->ph2 -= 1.f;
         if (p->nz > 0.f) {
-            ml += (rnd01(&d->rnd[t]) - .5f) * p->nz * 2.f;
-            mr += (rnd01(&d->rnd[t]) - .5f) * p->nz * 2.f;
+            ml += (rnd01(&s->rnd) - .5f) * p->nz * 2.f;
+            mr += (rnd01(&s->rnd) - .5f) * p->nz * 2.f;
         }
         if (p->lpa < .999f) {
-            d->lpst[t][0] += p->lpa * (ml - d->lpst[t][0]);
-            d->lpst[t][1] += p->lpa * (mr - d->lpst[t][1]);
-            ml = d->lpst[t][0];
-            mr = d->lpst[t][1];
+            s->lpst[0] += p->lpa * (ml - s->lpst[0]);
+            s->lpst[1] += p->lpa * (mr - s->lpst[1]);
+            ml = s->lpst[0];
+            mr = s->lpst[1];
         }
         float dt = 1.f;
         if (p->drop_mode == 1) {                      /* random cuts: long ones and short ones, some shallow, with gaps between */
-            if (d->dseg[t] <= 0) {
-                float r = rnd01(&d->rnd[t]), r2 = rnd01(&d->rnd[t]);
+            if (s->dseg <= 0) {
+                float r = rnd01(&s->rnd), r2 = rnd01(&s->rnd);
                 float v = p->drop_p;
-                if (!d->dmute[t]) {                   /* a gap has ended: a cut starts */
-                    d->dmute[t] = 1;
+                if (!s->dmute) {                   /* a gap has ended: a cut starts */
+                    s->dmute = 1;
                     float cl = r < .3f + .25f * (1.f - v) ? .18f + .45f * r2 : .012f + .09f * r2;     /* seconds: long or short */
                     if (v > .9f)
                         cl *= .35f;                   /* the far end: crumbs */
-                    d->dseg[t] = (int32_t)(cl * SR);
-                    d->dtarget[t] = rnd01(&d->rnd[t]) < .7f ? 0.f : .1f + .3f * r2;
+                    s->dseg = (int32_t)(cl * SR);
+                    s->dtarget = rnd01(&s->rnd) < .7f ? 0.f : .1f + .3f * r2;
                 } else {                              /* a cut has ended: a gap starts, shorter the further the knob */
-                    d->dmute[t] = 0;
+                    s->dmute = 0;
                     float gap = (.05f + 1.6f * (1.f - v) * (1.f - v)) * (.4f + 1.2f * r);
-                    d->dseg[t] = (int32_t)(gap * SR);
+                    s->dseg = (int32_t)(gap * SR);
                 }
             }
-            d->dseg[t]--;
-            dt = d->dmute[t] ? d->dtarget[t] : 1.f;
+            s->dseg--;
+            dt = s->dmute ? s->dtarget : 1.f;
         } else if (p->drop_mode == 2) {               /* a repeating pattern locked to the loop's position and the tempo */
             uint32_t idx = (uint32_t)(rpi / p->dstep);
             uint32_t h = (idx + 1u) * 2654435761u;
@@ -1268,9 +1363,13 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
             g *= 3266489917u;
             dt = (float)(h >> 24) < p->drop_p * 130.f || (float)(g >> 24) < p->drop_p * 45.f ? 0.f : 1.f;
         }
-        d->dgn[t] += (dt - d->dgn[t]) * (p->drop_mode == 2 ? .01f : .006f);
-        ml *= d->dgn[t];
-        mr *= d->dgn[t];
+        if (p->drop_mode || s->dgn != 1.f) {
+            s->dgn += (dt - s->dgn) * (p->drop_mode == 2 ? .01f : .006f);
+            if (!p->drop_mode && s->dgn > .99999f)    /* DROP off and faded back in: settled */
+                s->dgn = 1.f;
+            ml *= s->dgn;
+            mr *= s->dgn;
+        }
     }
     rp += spd;
     float we = wb0 + wl0;
@@ -1281,7 +1380,7 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
         rp += wl0;
     if (rp >= we || rp < wb0)
         rp = wb0;
-    d->rp[t] = rp;
+    s->rp = rp;
     if (on) {
         *xl = ml;
         *xr = mr;
@@ -1295,7 +1394,11 @@ static void mod_read(struct dsp *d, int t, vtrack *k, const struct pb *p, uint32
 
 uint8_t *looper_scratch(int i);
 
-static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, const float *sr, const struct pb *p)
+/* The play loop keeps everything it changes per frame in locals and writes it back once a block: the effect memory (struct dsp)
+ * is in SDRAM, and a store through it made the compiler reload every setting and state each frame. The frame is read through
+ * a pointer kept per 32 KB half buffer, as one word. Same arithmetic as before, in the same order. */
+__attribute__((optimize("O2"))) static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, const float *sr,
+                                                    const struct pb *restrict p)
 {
     vtrack *k = &S->t[t];
     uint32_t len = k->len, pos = k->pos;
@@ -1303,7 +1406,8 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
     int dubbing = k->mode == LOOPER_DUB;
     int save = dubbing && S->undo_track == t;
     uint32_t saved = S->undo_count;
-    int half = k->half;
+    int half = k->half, rev = k->rev;
+    uint8_t *eng = S->engine;
     const float s16 = 1.f / 32767.f;
     int use_mod = p->mod, xfade = d->xf[t];
     if (use_mod && !d->mact[t]) {                     /* the controls just came on: the play head starts where the loop is */
@@ -1336,79 +1440,104 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
         if (sb)
             lsh = ((struct smscr *)sb)->shed;
     }
-    int fon = p->fm0 != 0.f || p->dfm != 0.f;         /* the filter off and faded out is left out (a third of a track's cost); its state starts from rest when it comes back */
-    if (!fon) {
-        float *z = &d->sv[t][0][0][0];
-        for (int q = 0; q < 8; q++)
-            z[q] = 0.f;
+    /* the settings are read through p (restrict: nothing here writes them, so they stay in registers or come from the caller's stack) */
+    const int fon = p->fm0 != 0.f || p->dfm != 0.f;   /* the filter off and faded out is left out; its state starts from rest when it comes back */
+    const int hp = p->filt == 2, two = lsh < 2, drv = p->drive && lsh < 3, sends = p->sd != 0.f || p->sr != 0.f;
+    /* the state, in locals */
+    float z[8];
+    float *zs = &d->sv[t][0][0][0];
+    for (int q = 0; q < 8; q++)
+        z[q] = fon ? zs[q] : 0.f;
+    float od[6];
+    for (int q = 0; q < 6; q++)
+        od[q] = d->od[t][q / 3][q % 3];
+    float hl0 = d->hold[t][0], hl1 = d->hold[t][1];
+    uint32_t hcnt = d->hcnt[t];
+    const int mr = use_mod || xfade > 0;
+    struct mrs ms = {0};
+    if (mr) {
+        mrs_get(d, t, &ms);
+        ms.rev = rev;
+        ms.grains = p->ptch_on || (p->keep && (p->spd < .98f || p->spd > 1.02f));
     }
+    uint32_t hb = 0xffffffffu;                        /* the half buffer the pointer is in */
+    int16_t *hbase = 0;
     for (int i = i0; i < i1; i++) {
-        uint32_t m = place(k, pos, len);
-        int16_t *a = frame_at(t, m);
-        float xl = (float)a[0] * s16, xr = (float)a[1] * s16;
+        uint32_t m = rev ? len - 1 - pos : pos;
+        if ((m >> 13) != hb) {
+            hb = m >> 13;
+            hbase = half_at(eng, t, hb);
+        }
+        uint32_t *a = (uint32_t *)(hbase + 2 * (m & (uint32_t)(HALF_FRAMES - 1)));
+        uint32_t w = use_mod && !xfade && !dubbing ? 0u : *a;      /* the play head replaces it: not read */
+        float xl = (float)(int16_t)w * s16, xr = (float)(int16_t)(w >> 16) * s16;
         if (half) {
             int16_t *b = frame_at(t, place(k, pos + 1 >= len ? 0 : pos + 1, len));
             xl += ((float)b[0] * s16 - xl) * fr;
             xr += ((float)b[1] * s16 - xr) * fr;
         }
         if (use_mod || xfade > 0)
-            mod_read(d, t, k, p, len, wlen, pos, use_mod, &xfade, &xl, &xr);
+            mod_read(d, &ms, eng, t, k, p, len, wlen, pos, use_mod, &xfade, &xl, &xr);
         if (dubbing) {
             if (save && saved < len) {
-                int16_t *u = frame_at(UNDO_AREA, m);
-                u[0] = a[0];
-                u[1] = a[1];
+                *(uint32_t *)frame_at(UNDO_AREA, m) = w;
                 saved++;
             }
-            a[0] = sat16((float)a[0] * p->rptm + sl[i] * 32767.f);
-            a[1] = sat16((float)a[1] * p->rptm + sr[i] * 32767.f);
+            int16_t nl = sat16((float)(int16_t)w * p->rptm + sl[i] * 32767.f);
+            int16_t nr = sat16((float)(int16_t)(w >> 16) * p->rptm + sr[i] * 32767.f);
+            *a = (uint32_t)(uint16_t)nl | (uint32_t)(uint16_t)nr << 16;
         }
         if (p->crunch) {
-            if (d->hcnt[t] == 0) {
-                d->hold[t][0] = quant(xl, p->q, p->qi);
-                d->hold[t][1] = quant(xr, p->q, p->qi);
-                d->hcnt[t] = (uint32_t)p->hold_n;
+            if (hcnt == 0) {
+                hl0 = quant(xl, p->q, p->qi);
+                hl1 = quant(xr, p->q, p->qi);
+                hcnt = (uint32_t)p->hold_n;
             }
-            d->hcnt[t]--;
-            xl = d->hold[t][0];
-            xr = d->hold[t][1];
+            hcnt--;
+            xl = hl0;
+            xr = hl1;
         }
         if (fon) {
-            int hp = p->filt == 2;
-            float x2[2] = {xl, xr};
-            float m = p->fm0 + p->dfm * (float)(i + 1);
-            for (int c = 0; c < 2; c++) {
-                float x = x2[c];
-                if (p->fdrive > 0.f)
-                    x = soft(x * (1.f + 3.f * p->fdrive), 1.f, 1.f);
-                x = svf(x, &d->sv[t][0][c][0], &d->sv[t][0][c][1], p->g, R_BUTTERWORTH, p->h1, p->rg1, hp, 0.f, 0.f);
-                x2[c] = lsh >= 2 ? x : svf(x, &d->sv[t][1][c][0], &d->sv[t][1][c][1], p->g, p->r2, p->h2, p->rg2, hp, p->limit, p->ilimit);
+            float mx = p->fm0 + p->dfm * (float)(i + 1);
+            float x0 = xl, x1 = xr;
+            if (p->fdrive > 0.f) {
+                x0 = soft(x0 * (1.f + 3.f * p->fdrive), 1.f, 1.f);
+                x1 = soft(x1 * (1.f + 3.f * p->fdrive), 1.f, 1.f);
             }
-            xl += (x2[0] - xl) * m;
-            xr += (x2[1] - xr) * m;
+            x0 = svf(x0, &z[0], &z[1], p->g, R_BUTTERWORTH, p->h1, p->rg1, hp, 0.f, 0.f);
+            x1 = svf(x1, &z[2], &z[3], p->g, R_BUTTERWORTH, p->h1, p->rg1, hp, 0.f, 0.f);
+            if (two) {
+                x0 = svf(x0, &z[4], &z[5], p->g, p->r2, p->h2, p->rg2, hp, p->limit, p->ilimit);
+                x1 = svf(x1, &z[6], &z[7], p->g, p->r2, p->h2, p->rg2, hp, p->limit, p->ilimit);
+            }
+            xl += (x0 - xl) * mx;
+            xr += (x1 - xr) * mx;
         }
-        if (p->drive && lsh < 3) {
-            float x2[2] = {xl, xr};
-            for (int c = 0; c < 2; c++) {
-                float *st = d->od[t][c];
-                float cl = p->d_head * soft(x2[c] * p->d_gain * p->d_ihead, 1.f, 1.f);
-                float y = cl + p->d_k * cl * cl;
-                float h = y - st[0] + .99869f * st[1];
-                st[0] = y;
-                st[1] = h;
-                st[2] += p->d_tone * (h - st[2]);
-                x2[c] = st[2] * p->d_post;
-            }
-            xl = x2[0];
-            xr = x2[1];
+        if (drv) {
+            float cl = p->d_head * soft(xl * p->d_gain * p->d_ihead, 1.f, 1.f);
+            float y = cl + p->d_k * cl * cl;
+            float h = y - od[0] + .99869f * od[1];
+            od[0] = y;
+            od[1] = h;
+            od[2] += p->d_tone * (h - od[2]);
+            xl = od[2] * p->d_post;
+            cl = p->d_head * soft(xr * p->d_gain * p->d_ihead, 1.f, 1.f);
+            y = cl + p->d_k * cl * cl;
+            h = y - od[3] + .99869f * od[4];
+            od[3] = y;
+            od[4] = h;
+            od[5] += p->d_tone * (h - od[5]);
+            xr = od[5] * p->d_post;
         }
         float ol = xl * (p->g0[0] + p->dg[0] * (float)(i - p->base + 1)), orr = xr * (p->g0[1] + p->dg[1] * (float)(i - p->base + 1));
         d->out[0][i] += ol;
         d->out[1][i] += orr;
-        d->acc[0][i] += ol * p->sd;
-        d->acc[1][i] += orr * p->sd;
-        d->acc[2][i] += ol * p->sr;
-        d->acc[3][i] += orr * p->sr;
+        if (sends) {
+            d->acc[0][i] += ol * p->sd;
+            d->acc[1][i] += orr * p->sd;
+            d->acc[2][i] += ol * p->sr;
+            d->acc[3][i] += orr * p->sr;
+        }
         if (half) {
             fr += .5f;
             if (fr >= 1.f) {
@@ -1421,6 +1550,15 @@ static void play_seg(struct dsp *d, int t, int i0, int i1, const float *sl, cons
         if (pos >= len)
             pos = 0;
     }
+    if (mr)
+        mrs_put(d, t, &ms);
+    for (int q = 0; q < 8; q++)
+        zs[q] = z[q];
+    for (int q = 0; q < 6; q++)
+        d->od[t][q / 3][q % 3] = od[q];
+    d->hold[t][0] = hl0;
+    d->hold[t][1] = hl1;
+    d->hcnt[t] = hcnt;
     k->pos = pos;
     k->frac = fr;
     d->xf[t] = xfade;
