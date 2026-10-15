@@ -165,7 +165,7 @@ struct page {
     uint8_t mode, fx_sel[LOOPER_TRACKS];            /* the tab; fx_sel[0] = the FX group (the pink square's block of four controls) */
     uint8_t drag_param, drag_opt;                   /* a dial / slider being dragged */
     int16_t drag_y, drag_v0;                        /* dial drag: start y, start value x 1000 */
-    uint8_t clear_arm, sel, learn, _r5;            /* CLEAR ALL asked once; the selected track; the slot being learned */
+    uint8_t clear_arm, sel, learn, lead;            /* CLEAR ALL asked once; the selected track; the slot being learned; the engine whose page was opened last (the guard's leader): 0 looper, 1 SAMPLR, 2 DRONE-8, 3 none yet */
     uint16_t rect_on, touches;
     uint8_t bset[BTNS], bidx[BTNS];                 /* learned hardware buttons: set, button index ... */
     uint16_t bid[BTNS];                             /* ... and message id, per slot */
@@ -938,6 +938,8 @@ static void tab_select(int i)
     if (i == 5 && P->mode != M_SMPLR)
         samplr_enter();
     P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : i == 4 ? M_MORE : i == 6 ? M_TRIG : i == 7 ? M_LIRA : M_SMPLR);
+    if (P->mode != M_TRIG)                                        /* (the TRIG page is nobody's: the leader stays) */
+        P->lead = (uint8_t)(P->mode == M_LIRA ? 2 : P->mode == M_SMPLR ? 1 : 0);
     if (i == 1 && FX_GROUP >= 2)
         set_fx_sel(0);
     else if (i == 2 && FX_GROUP < 2)
@@ -1209,10 +1211,15 @@ static void draw_sm_top(struct sm *s, const char *info)
         *q++ = '!';
         *q++ = (char)('0' + s->sc->shed);
     }
-    if (s->sc->mshown) {                                          /* SAMPLR left blocks out in the last second (no time left for it) */
+    if (s->sc->mshown) {                                          /* SAMPLR had to cut a track in a spike in the last second */
         *q++ = ' ';
         *q++ = '!';
         *q++ = 'M';
+    }
+    if (s->sc->gout) {                                            /* SAMPLR tracks faded out (and later back in) for lack of time */
+        *q++ = ' ';
+        *q++ = 'x';
+        *q++ = (char)('0' + s->sc->gout);
     }
     {
         int gl = looper_guard_level();                            /* the looper: tracks it faded out and muted for lack of time (3 first, then 2, 1, 4); c: one had to be cut */
@@ -1224,6 +1231,11 @@ static void draw_sm_top(struct sm *s, const char *info)
             if (gl & 16)
                 *q++ = 'c';
         }
+    }
+    if (P->lead < 3) {                                            /* the leader: the engine whose page was opened last is the last to give way when time runs short */
+        *q++ = ' ';
+        *q++ = '>';
+        *q++ = P->lead == 0 ? 'L' : P->lead == 1 ? 'S' : 'D';
     }
     *q = 0;
     int x = P->w - 6 - 6 * (int)(q - b);
@@ -1889,6 +1901,7 @@ void looper_page_boot(void)
     }
     looper_guard(0);
     looper_guard_drawing(0);
+    P->lead = 3;                                             /* no page opened yet: the engines keep their own order (DRONE-8, SAMPLR, looper) */
     P->info_set = 1;                                         /* INFO is message 0xc (seen as "INFO=12" on the unit);   */
     P->info_id = 0xc;                                        /* the backup SRAM does not survive a power cycle, so  */
     P->info_idx = 0;                                         /* nothing is learned by pressing any more              */
@@ -1910,6 +1923,7 @@ void looper_page_boot(void)
     P->rect_on = 0;
     P->clear_arm = 0;
     P->mode = M_MAIN;
+    P->lead = 0;                                                  /* (the Looper page is up) */
     for (int t = 0; t < LOOPER_TRACKS; t++)
         P->fx_sel[t] = 0;
     P->_legacy = -1;
@@ -2413,4 +2427,15 @@ void looper_app_msg(void *app, const uint16_t *msg)
             return;
     }
     fw_app_msg(app, msg);
+}
+
+/* The guard's leader: the engine whose page was opened last (0 looper, 1 SAMPLR, 2 DRONE-8), 3 none yet. */
+int looper_page_leader(void)
+{
+    return P->magic == PMAGIC && P->lead < 3 ? P->lead : 3;
+}
+
+void looper_page_set_leader(int e)                             /* tests: as if that engine's page had been opened last */
+{
+    P->lead = (uint8_t)(e >= 0 && e < 3 ? e : 3);
 }

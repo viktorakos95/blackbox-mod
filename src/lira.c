@@ -532,7 +532,11 @@ void lira_process(lira_t *l, float *out, int n)
         bus[v] = l->bus[v];
     for (int o = 0; o < 8; o++)
         sqv[o] = l->sq[o];
-    const int nlines = l->shed >= 2 ? 0 : l->shed == 1 ? 1 : 2;
+    /* The delay lines come and go gradually (shed): each line's weight in the wet sum and the wet's share of the output are smoothed over ~40 ms, so
+       that nothing is cut, and a line that is not heard is not run. At rest these are 0.5, 0.5 and 1, and the arithmetic below is what it was. */
+    const float tw0 = l->shed >= 2 ? 0.f : l->shed == 1 ? 0.7f : 0.5f, tw1 = l->shed >= 1 ? 0.f : 0.5f, tdg = l->shed >= 2 ? 0.f : 1.f;
+    const float kd = 1.f / (0.04f * sr);
+    float da0 = 0.5f + l->wd0, da1 = 0.5f + l->wd1, ddg = 1.f - l->dgo;
     int ei = 0;
     const int have_ext = l->ext_l && l->ext_r && l->ext_n > 0;
     float ext = 0.f;
@@ -707,15 +711,22 @@ void lira_process(lira_t *l, float *out, int n)
             u += l->ext_g * ext;
             ei++;
             float lin = u + rnd(l) * 0.0002f + fbl * l->loop_lp, wet = 0.f;   /* the noise is the delay's (converters, clock) */
-            for (int i = 0; i < nlines; i++) {
-                lira_line *ln = &l->line[i];
+            da0 += (tw0 - da0) * kd;
+            da1 += (tw1 - da1) * kd;
+            ddg += (tdg - ddg) * kd;
+            if (da0 != 0.f || tw0 != 0.f) {
+                lira_line *ln = &l->line[0];
                 float mv = delmod == 0 ? ln->self_lp * 0.5f : lfom;
-                wet += line_run(ln, lin, mv, k_ratio[i], d0[i], depth[i], dc);
+                wet += line_run(ln, lin, mv, k_ratio[0], d0[0], depth[0], dc) * da0;
             }
-            wet *= nlines == 2 ? 0.5f : nlines == 1 ? 0.7f : 0.f;
+            if (da1 != 0.f || tw1 != 0.f) {
+                lira_line *ln = &l->line[1];
+                float mv = delmod == 0 ? ln->self_lp * 0.5f : lfom;
+                wet += line_run(ln, lin, mv, k_ratio[1], d0[1], depth[1], dc) * da1;
+            }
             const float pw = ptanh(wet);
             lop(&l->loop_lp, pw, lp3k);                       /* op-amp / PT2399 overload and the loop's filter */
-            float dly = nlines ? u + dm * (pw - u) : u;
+            float dly = ddg != 0.f ? u + dm * ddg * (pw - u) : u;
 
             /* master: drive -> tanh (+ positive spike) -> mix with dry -> tanh -> tilt -> volume */
             float t = ptanh(hip(&l->hp1, dly * g, hp20c)), pw31 = 0.f;
@@ -730,8 +741,17 @@ void lira_process(lira_t *l, float *out, int n)
             float yt = ptanh(lop(&l->hf, yv + 0.41f * lop(&l->lf, yv, lp150), lp9k));
             *out++ = yt * vol;
         }
+        if (fabs_(da0 - tw0) < 1e-4f)                           /* arrived: exactly there (so that rest is exact) */
+            da0 = tw0;
+        if (fabs_(da1 - tw1) < 1e-4f)
+            da1 = tw1;
+        if (fabs_(ddg - tdg) < 1e-4f)
+            ddg = tdg;
         n -= m;
     }
+    l->wd0 = da0 - 0.5f;
+    l->wd1 = da1 - 0.5f;
+    l->dgo = 1.f - ddg;
     for (int v = 0; v < 4; v++)
         l->bus[v] = bus[v];
     for (int o = 0; o < 8; o++)

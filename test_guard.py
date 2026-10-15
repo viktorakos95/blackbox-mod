@@ -277,6 +277,7 @@ def tq():
 def rms(o):
     return (sum(v * v for v in o[0]) / len(o[0])) ** 0.5
 blocks(20)
+e.call("looper_page_set_leader", 2)                    # DRONE-8's page was opened last: the looper gives way first (the order until now)
 o = run_at(0.10, 0.80, 400)
 check("room (whole block 80 %): nothing fades, nothing muted, every track as set", muted() == [0] * 4 and fading() == [0] * 4 and tq() == [0] * 4,
       (muted(), fading(), tq()))
@@ -327,10 +328,54 @@ peak = max(abs(v) for v in x)
 check("... a ramp to 0 within the block, or nothing at all (no click from a cut mid-wave)", abs(x[-1]) < 0.01 * peak + 1e-5, (peak, x[-1]))
 o = run_at(0.10, 0.70, 5)
 check("... and silent after", max(max(abs(v) for v in b[0]) for b in o) < 1e-6, max(max(abs(v) for v in b[0]) for b in o))
-e.call("looper_guard_force", 1)
+# --- the leader: the engine whose page was opened last is protected longest
+def r0s():
+    v = e.uc.reg_read(A.UC_ARM_REG_R0) & 0xFFFFFFFF
+    return v - (1 << 32) if v >= 1 << 31 else v
+def left_pair():
+    run_at(0.10, 0.70, 1)
+    e.w32(0x2405FFD4, ((e.r32(0xE0001004) & 0xFFFFFFFF) - int(0.10 * PERC)) & 0xFFFFFFFF)
+    e.call("looper_budget_left")
+    base = r0s()
+    e.call("looper_budget_left_samplr")
+    return base, r0s()
 for t in range(4):
-    ev(t, MUTE_DOWN)
-    ev(t, MUTE_UP)
+    if tr(t, MUTED):
+        ev(t, MUTE_DOWN)
+        ev(t, MUTE_UP)
+run_at(0.10, 0.70, 400)
+e.call("looper_page_set_leader", 0)                    # the Looper page is up: the looper is protected longest (a fade only at 97 %)
+o = run_at(0.10, 0.95, 400)
+check("leader looper: 95 % in a block is no reason to fade a track", fading() == [0] * 4 and muted() == [0] * 4, (fading(), muted()))
+o = run_at(0.10, 0.985, 400)
+check("... 98.5 % is", muted() != [0] * 4 or fading() != [0] * 4, (muted(), fading()))
+base0, samp0 = left_pair()
+check("... and SAMPLR keeps time for the looper's tracks (its budget is smaller by what they take)", samp0 < base0 - 100_000, (base0, samp0))
+for t in range(4):
+    if tr(t, MUTED):
+        ev(t, MUTE_DOWN)
+        ev(t, MUTE_UP)
+run_at(0.10, 0.70, 500)
+e.call("looper_page_set_leader", 1)                    # the SAMPLR page was opened last: the looper gives way before it
+base1, samp1 = left_pair()
+check("leader SAMPLR: it does not keep time for the looper (the budgets are equal)", samp1 == base1, (base1, samp1))
+o = run_at(0.10, 0.95, 400)
+check("... and the looper fades a track at 94 % as it always did", muted() != [0] * 4 or fading() != [0] * 4, (muted(), fading()))
+for t in range(4):
+    if tr(t, MUTED):
+        ev(t, MUTE_DOWN)
+        ev(t, MUTE_UP)
+run_at(0.10, 0.70, 500)
+e.call("looper_page_set_leader", 3)
+base3, samp3 = left_pair()
+check("no page opened yet: the old order (SAMPLR above the looper)", samp3 == base3, (base3, samp3))
+e.call("looper_page_set_leader", 2)
+for t in range(4):
+    if tr(t, MUTED):
+        ev(t, MUTE_DOWN)
+        ev(t, MUTE_UP)
+run_at(0.10, 0.70, 30)
+e.call("looper_guard_force", 1)
 run_at(0.99, 0.99, 400)
 check("forced off (tests): it does nothing", muted() == [0] * 4, muted())
 e.call("looper_guard_force", 0)

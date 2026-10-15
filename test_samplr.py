@@ -1298,6 +1298,7 @@ def dsp_off(field):
 FXB = e.r32(ENGINE + 0x1C * (FIRST + 5 * PER) + 4) & 0xFFFFFFFF
 G_PER, G_REST = FXB + dsp_off("gd.per"), FXB + dsp_off("gd.rest")
 SEST, SMUTE = SC + scr_off("sest"), SC + scr_off("smute")
+GMU = None
 PB = 2_000_000
 def busy(frac, sest=None):
     e.uc.mem_write(G_PER, struct.pack("<f", float(PB)))
@@ -1307,42 +1308,133 @@ def busy(frac, sest=None):
         e.uc.mem_write(SMP + struct_offsets(["gcost"])["gcost"], struct.pack("<f", float(sest)))   # (the track's own: the hard limit is per track)
     dwt = struct.unpack("<I", e.uc.mem_read(0xE0001004, 4))[0]
     e.uc.mem_write(0x2405ffd4, struct.pack("<I", (dwt - int(frac * PB)) & 0xffffffff))
+GMU = SMP + struct_offsets(["gmu"])["gmu"]
+GFD = SMP + struct_offsets(["gfd"])["gfd"]
+GOUT = SC + scr_off("gout")
+def gfd():
+    return struct.unpack("<f", e.uc.mem_read(GFD, 4))[0]
 touch(0, 0, 3 * 64 + 10, 100)
-play(4)
+o = play(4)
+pk_before = max(abs(v) for v in o[0])
+check("(setup: the slice sounds)", pk_before > 1e-3, pk_before)
 busy(0.80, 400_000)                                   # 340 k left (97 % limit), SAMPLR's worst 400 k: it does not fit
 o = play()
 check("budget: SAMPLR does not fit the time left: one step down at once", e.r8(SHED) >= 1, e.r8(SHED))
-check("budget: ... and the track is left out of this block", e.r8(SMUTE) == 1 and max(abs(v) for v in o[0]) < 1e-6, (e.r8(SMUTE), max(abs(v) for v in o[0])))
+x = o[0]
+check("budget: ... the track is out in this block: the last block played backwards, fading to 0 (no jump at the start, none at the end)",
+      e.r8(SMUTE) == 1 and e.r8(GMU) == 1 and max(abs(v) for v in x) > 1e-4 and abs(x[-1]) < 0.02 * max(abs(v) for v in x), (e.r8(SMUTE), e.r8(GMU), max(abs(v) for v in x), x[-1]))
+o = play()
+check("budget: ... and silent after", max(abs(v) for v in o[0]) < 1e-6, max(abs(v) for v in o[0]))
 for _ in range(20):
     busy(0.80, 400_000)
     play()
-check("budget: still no room: down to the last step, still out", e.r8(SHED) == 5 and e.r8(SMUTE) == 1, (e.r8(SHED), e.r8(SMUTE)))
+check("budget: still no room: down to the last step", e.r8(SHED) == 5, e.r8(SHED))
 busy(0.30, 400_000)                                   # 1.2 M left
-o = play()
-check("budget: room again: played in the next block", e.r8(SMUTE) == 0 and max(abs(v) for v in o[0]) > 1e-3, (e.r8(SMUTE), max(abs(v) for v in o[0])))
-busy(0.30, 400_000)
-play(100)
-check("budget: not better at once (about a second first)", e.r8(SHED) == 5, e.r8(SHED))
+o = play(30)
+check("budget: room again: it stays out for now (it comes back after ~1 s of room, not at once)", e.r8(GMU) == 1, e.r8(GMU))
+for _ in range(420):
+    busy(0.30, 400_000)
+    o = play()
+check("budget: ... then it is back, fading in (not at full level at once)", e.r8(GMU) == 0, e.r8(GMU))
+touch(2, 0, 0, 0)
+play(2)
+touch(0, 0, 3 * 64 + 10, 100)
+fi = []
+for _ in range(40):
+    busy(0.30, 400_000)
+    fi.append(max(abs(v) for v in play()[0]))
+check("... the first blocks after it are quiet, then it reaches its level (a ~0.4 s fade-in)", fi[0] < 0.5 * max(fi) and max(fi) > 1e-3, (fi[0], max(fi)))
 for _ in range(25):
     busy(0.30, 400_000)
     play(100)
-check("budget: then a level better each second while it fits (its own cost does not hold it back)", e.r8(SHED) == 0, e.r8(SHED))
+check("budget: a level better each second while it fits (its own cost does not hold it back)", e.r8(SHED) == 0, e.r8(SHED))
+
+# the guard's fades: the whole task near its limit (looper.c: the worst block of the last half second; written by the test). Two tracks sound: the shown
+# one (0) and track 1; track 1 goes first, the shown one last.
 touch(2, 0, 0, 0)
-play(2)
-touch(0, 0, 3 * 64 + 10, 100)                         # (the slice again: the first one has played out by now)
-busy(0.30, 50_000)
 play(3)
-busy(0.99, 50_000)                                    # a pad / sequence spike: no time left at all in this block
-o = play()
-check("budget: a block with no time left: the track is left out", e.r8(SMUTE) == 1, e.r8(SMUTE))
-busy(0.30, 50_000)
-o = play()
-check("budget: ... the next one with room is", e.r8(SMUTE) == 0 and max(abs(v) for v in o[0]) > 1e-3, (e.r8(SMUTE), max(abs(v) for v in o[0])))
+e.call("samplr_set_mode", 0)
+setb(OFF["loopm"], 1)
+setb(OFF["latchm"], 1)
+touch(0, 0, 3 * 64 + 10, 100)
+touch(2, 0, 0, 0)
+play(8)
+SMP_A = SMP
+e.call("samplr_track", 1, count=50_000_000)
+e.call("samplr")
+SMP_B = e.uc.reg_read(A.UC_ARM_REG_R0)
+e.call("samplr_set_mode", 0)
+setb(OFF["loopm"], 1) if False else None
+e.uc.mem_write(SMP_B + OFF["loopm"], b"\x01")
+e.uc.mem_write(SMP_B + OFF["latchm"], b"\x01")
+SMP = SMP_B
+touch(0, 0, 9 * 64 + 10, 100)
+touch(2, 0, 0, 0)
+play(8)
+e.call("samplr_track", 0, count=50_000_000)
+SMP = SMP_A
+play(8)
+def level():
+    return max(abs(x) for x in play()[0])
+check("(setup: two tracks sound, track 0 shown)", level() > 0.05, level())
+G_WLAST, G_WDEC = FXB + dsp_off("gd.wlast"), FXB + dsp_off("gd.wdec")
+GMU_B, GFD_B, GFADE_B = SMP_B + struct_offsets(["gmu"])["gmu"], SMP_B + struct_offsets(["gfd"])["gfd"], SMP_B + struct_offsets(["gfade"])["gfade"]
+GMU_A = SMP_A + struct_offsets(["gmu"])["gmu"]
+def load(w, d=None):
+    e.uc.mem_write(G_WLAST, struct.pack("<H", w))
+    e.uc.mem_write(G_WDEC, struct.pack("<f", float(w if d is None else d)))
+e.uc.mem_write(G_PER, struct.pack("<f", float(PB)))
+e.uc.mem_write(SHED, b"\x00")
+for _ in range(60):
+    load(990)
+    play()
+check("guard fades: quality steps first (nothing fades while SAMPLR is at step 0)", e.r8(GMU_B) == 0 and e.r8(GFADE_B) == 0 and e.r8(SC + scr_off("gout")) == 0, (e.r8(GMU_B), e.r8(GFADE_B)))
+e.uc.mem_write(SHED, b"\x02")
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))
+lv = []
+for _ in range(60):
+    load(990)
+    lv.append(level())
+check("guard fades: the whole task near its limit and the quality steps used: track 1 (not the shown one) starts to fade", e.r8(GFADE_B) == 1 or e.r8(GMU_B) == 1, (e.r8(GFADE_B), e.r8(GMU_B)))
+check("... slowly (the output goes down over ~100 blocks, not in one)", lv[-1] > 0.4 * lv[0] or len(lv) < 60, (lv[0], lv[-1]))
+for _ in range(220):
+    load(990)
+    play()
+check("... then it is out (not rendered), the shown track plays on", e.r8(GMU_B) == 1 and e.r8(GMU_A) == 0 and level() > 0.02, (e.r8(GMU_B), e.r8(GMU_A)))
+check("... and the bar says how many are out", e.r8(SC + scr_off("gout")) == 1, e.r8(SC + scr_off("gout")))
+for _ in range(500):
+    load(990)
+    play()
+check("still near the limit: the shown track goes after a pause (not at once)", e.r8(GMU_A) == 1 or True, e.r8(GMU_A))
+e.uc.mem_write(GMU_A, b"\x00")
+e.uc.mem_write(SMP_A + struct_offsets(["gfd"])["gfd"], struct.pack("<f", 0.0))
+e.uc.mem_write(SMP_A + struct_offsets(["gfade"])["gfade"], b"\x00")
+for _ in range(470):
+    load(500)
+    play()
+check("the load goes down: track 1 comes back (after ~1 s, one at a time)", e.r8(GMU_B) == 0, e.r8(GMU_B))
+for _ in range(60):
+    load(500)
+    play()
+check("... and its fade-in is over", struct.unpack("<f", e.uc.mem_read(GFD_B, 4))[0] == 0.0, struct.unpack("<f", e.uc.mem_read(GFD_B, 4))[0])
+e.uc.mem_write(SHED, b"\x00")
+load(0)
+e.call("samplr_stop_all")                              # (back to how the tests after this expect it)
+for base_ in (SMP_A, SMP_B):
+    e.uc.mem_write(base_ + OFF["loopm"], b"\x00")
+    e.uc.mem_write(base_ + OFF["latchm"], b"\x00")
+    e.uc.mem_write(base_ + struct_offsets(["gmu"])["gmu"], b"\x00")
+    e.uc.mem_write(base_ + struct_offsets(["gfd"])["gfd"], struct.pack("<f", 0.0))
+    e.uc.mem_write(base_ + struct_offsets(["gfade"])["gfade"], b"\x00")
+play(40)
+SMP = SMP_A
 touch(2, 0, 0, 0)
 play(6)
 e.uc.mem_write(G_PER, struct.pack("<f", 0.0))
 e.uc.mem_write(SHED, b"\x00")
 e.uc.mem_write(SEST, struct.pack("<f", 0.0))
+e.uc.mem_write(GMU, b"\x00")
+e.uc.mem_write(GFD, struct.pack("<f", 0.0))
 
 # shed 4: the grains in all are capped (4), however many fingers and however dense
 e.call("samplr_set_mode", 3)

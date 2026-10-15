@@ -267,9 +267,10 @@ struct dsp {
         uint8_t fading[LOOPER_TRACKS];           /* fading out, to be muted */
         uint8_t tq[LOOPER_TRACKS];               /* how it is computed this block: 0 as set, 3 the cheapest (cut in this block: no time for it) */
         uint8_t force, top, shown, cuts;         /* tests: no load decisions; tracks out this report (most), the last report's; cut in the last report */
+        uint16_t nblk;                           /* frames in a block */
         uint16_t rep;
         float fo[LOOPER_TRACKS];                 /* how far it is faded: 0 not at all (as set), 1 silent */
-        uint16_t yield;                          /* SAMPLR and the looper's tracks in the last block, per mille of the period (they give way: DRONE-8's governor leaves them out) */
+        uint16_t ysam, ylp;                      /* SAMPLR's and the looper tracks' share of the last block, per mille of the period (for the governors of the engines that outrank them) */
     } gd;
     int16_t ws[5120];                            /* WSOLA: the candidate region, mono */
     float zero[MAXN];
@@ -1794,8 +1795,10 @@ static void apply(int t, int b)
  *   checked against the time left up to GUARD_HARD of the block minus what comes after the looper (recent worst). A track that does not
  *   fit is cut in this block (a ramp to 0 within the block, computed as cheaply as possible; with no time even for that, at once) and
  *   muted. That is for spikes (a pad / sequence starting); the fades above keep it from being needed. */
+enum { E_LOOPER, E_SAMPLR, E_DRONE };               /* the engines, for the guard's priorities (below) */
+int looper_soft_threshold(int e);
 #define GUARD_HARD .97f                           /* of the block period: the end of everything */
-#define GUARD_SOFT 940                            /* per mille: a block this full starts a fade */
+#define GUARD_SOFT 940                            /* per mille: a block this full starts a fade (for the engine that gives way first; later ones a little higher) */
 #define FADE_OUT   (1.f / 280.f)                  /* ~0.75 s */
 #define WAKE (*(volatile uint32_t *)0x2405ffd4u)  /* cpu.c: the cycle count when the audio task woke up for this block */
 #define CYC  (*(volatile uint32_t *)0xe0001004u)
@@ -1848,9 +1851,10 @@ static float guard_est(struct dsp *d, int t, vtrack *k, int n)
 }
 
 /* From looper_stage, before DRONE-8: the block period. */
-static void guard_stage(struct dsp *d, uint32_t now)
+static void guard_stage(struct dsp *d, uint32_t now, int n)
 {
     struct guard *g = &d->gd;
+    g->nblk = (uint16_t)n;
     uint32_t per = now - g->t_stage;
     g->t_stage = now;
     if (per > 200000u && per < 20000000u)
@@ -1889,7 +1893,7 @@ static void guard_decide(struct dsp *d)
             if (k->muted || !track_out(k)) {                              /* the player muted it meanwhile, or it stopped */
                 g->fading[t] = 0;
                 g->fo[t] = 0.f;
-            } else if (g->wdec < (float)(GUARD_SOFT - 100)) {             /* the load went down meanwhile: it turns back */
+            } else if (g->wdec < (float)(looper_soft_threshold(E_LOOPER) - 100)) {   /* the load went down meanwhile: it turns back */
                 g->fading[t] = 0;
                 g->cool = 188;
             } else if ((g->fo[t] += FADE_OUT) >= 1.f) {                   /* faded: muted now (silent already, so nothing is heard) */
@@ -1908,7 +1912,7 @@ static void guard_decide(struct dsp *d)
     }
     if (g->cool)
         g->cool--;
-    if (!fading && !g->cool && !g->force && g->wlast >= GUARD_SOFT && g->wn == 0) {   /* (once a window: a fresh look each time) */    /* the worst block lately was near the limit: one track goes */
+    if (!fading && !g->cool && !g->force && g->wlast >= (unsigned)looper_soft_threshold(E_LOOPER) && g->wn == 0) {   /* (once a window: a fresh look each time) */    /* the worst block lately was near the limit: one track goes */
         static const int8_t give[LOOPER_TRACKS] = {2, 1, 0, 3};          /* 3, 2, 1, then 4 */
         int pick = -1;
         for (int pass = 0; pass < 2 && pick < 0; pass++)                  /* (one the player has just unmuted only if there is no other) */
@@ -1938,7 +1942,7 @@ static void guard_decide(struct dsp *d)
 }
 
 /* Before track t: does it fit the time left in this block? If not, it is cut here (and muted). Returns 0: play as set, 1: cut
- * with a ramp (computed as cheaply as possible), 2: no time even for that: not played. */
+ * with a ramp (computed as cheaply as possible). */
 static int guard_fit(struct dsp *d, int t, int n)
 {
     struct guard *g = &d->gd;
@@ -1954,12 +1958,9 @@ static int guard_fit(struct dsp *d, int t, int n)
     g->fo[t] = 0.f;
     g->cuts = 1;
     g->cool = 2 * 188;
-    if (track_model(d, t, k, 3, n) * g->cpi <= (float)left) {
-        g->tq[t] = 3;
-        return 1;
-    }
-    k->gain_l = k->gain_r = 0.f;
-    return 2;
+    g->tq[t] = 3;                                                         /* a ramp to 0 within the block, computed as cheaply as possible: even when that does not quite fit
+                                                                           (a few per cent over is better than a stop) */
+    return 1;
 }
 
 /* After a track played as set: what it cost (the hard limit's figure for it). */
@@ -2010,9 +2011,59 @@ void looper_block_done(uint32_t now)
     }
 }
 
-unsigned looper_yield_permille(void)               /* DRONE-8's governor: what of the last block will give way to it */
+/* Who gives way first. Priority, higher = protected longer: DRONE-8 3, SAMPLR 2, the looper 1 (the order until now), and the engine whose page was
+ * opened last goes to the top (+4). Each engine leaves out of its own load the time of the engines that rank below it (they give way within the
+ * block), and keeps time for the ones that rank above it. */
+int looper_page_leader(void);
+static int prio(int e)
 {
-    return S->magic == MAGIC && S->ok ? DSP()->gd.yield : 0u;
+    static const signed char dflt[3] = {1, 2, 3};
+    return dflt[e] + (looper_page_leader() == e ? 4 : 0);
+}
+
+static int below(int e)                            /* how many engines rank below e */
+{
+    int n = 0;
+    for (int o = 0; o < 3; o++)
+        n += o != e && prio(o) < prio(e);
+    return n;
+}
+
+int looper_soft_threshold(int e)                   /* per mille of a block that starts engine e's fade: the first to give way earliest */
+{
+    return GUARD_SOFT + 15 * below(e);
+}
+
+unsigned looper_yield_permille(void)               /* DRONE-8's governor: the last block's time of the engines that rank below it */
+{
+    if (S->magic != MAGIC || !S->ok)
+        return 0u;
+    struct guard *g = &DSP()->gd;
+    return (prio(E_SAMPLR) < prio(E_DRONE) ? g->ysam : 0u) + (prio(E_LOOPER) < prio(E_DRONE) ? g->ylp : 0u);
+}
+
+/* SAMPLR's budget: the time left before the hard limit if the looper's tracks took nothing, less the time of the tracks if they outrank SAMPLR. */
+int32_t looper_budget_left_samplr(void)
+{
+    int32_t left = looper_budget_left();
+    if (left == 0x7fffffff || prio(E_LOOPER) < prio(E_SAMPLR) || S->magic != MAGIC || !S->ok)
+        return left;
+    struct dsp *d = DSP();
+    float r = 0.f;
+    for (int t = 0; t < LOOPER_TRACKS; t++) {
+        vtrack *k = &S->t[t];
+        if (track_out(k) && !k->muted)
+            r += guard_est(d, t, k, d->gd.nblk);
+    }
+    return left - (int32_t)r;
+}
+
+unsigned looper_load_worst(int slow)               /* the whole task's worst block (per mille): the last half second, or the last ~50 blocks */
+{
+    if (S->magic != MAGIC || !S->ok)
+        return 0u;
+    struct guard *g = &DSP()->gd;
+    return slow ? g->wlast : (unsigned)g->wdec;
 }
 
 int looper_guard_level(void)                       /* the readout: tracks muted (or fading) by the guard, most in the last second; +16 if one had to be cut */
@@ -2147,11 +2198,7 @@ static int run(float *bl, float *br, int n)
     guard_decide(d);                                 /* the player's unmutes, the fades */
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
-        int fit = guard_fit(d, t, n);                /* the hard limit: a track that does not fit this block is cut (and muted) */
-        if (fit == 2) {
-            skip_seg(t, n);
-            continue;
-        }
+        guard_fit(d, t, n);                          /* the hard limit: a track that does not fit this block is cut with a ramp (and muted) */
         uint32_t tc0 = CYC;
         struct pb p;
         setup(d, t, &p, k, n);
@@ -2282,7 +2329,7 @@ void looper_stage(uint8_t *obj, void *bufs)
     if (l && r && n > 0) {
         read_bpm(bufs);
         uint32_t c_in = *(volatile uint32_t *)0xe0001004u, pre = c_in - *(volatile uint32_t *)0x2405ffd4u;   /* (cycles since the wake-up: stock voices, effects, synths) */
-        guard_stage(DSP(), c_in);
+        guard_stage(DSP(), c_in, n);
         lira_page_run(l, r, n);                    /* the LIRA page's voices, before the looper so SOURCE MIX records them */
         lira_rec_begin(l, r, n);
         uint32_t c_l = *(volatile uint32_t *)0xe0001004u;
@@ -2292,8 +2339,10 @@ void looper_stage(uint8_t *obj, void *bufs)
         samplr_stage_prof(pre, c_l - c_in, c_y);
         {
             struct guard *g = &DSP()->gd;
-            float y = g->per > 0.f ? (float)c_y * 1000.f / g->per : 0.f;
-            g->yield = (uint16_t)(y > 2000.f ? 2000.f : y);
+            uint32_t sam = samplr_last_dur();
+            float ys = g->per > 0.f ? (float)sam * 1000.f / g->per : 0.f, yl = g->per > 0.f && c_y > sam ? (float)(c_y - sam) * 1000.f / g->per : 0.f;
+            g->ysam = (uint16_t)(ys > 2000.f ? 2000.f : ys);
+            g->ylp = (uint16_t)(yl > 2000.f ? 2000.f : yl);
         }
         lira_rec_end(l, r, n);                     /* what the looper added, for the pad recorder's LOOPER input */
         DSP()->gd.t_end = CYC | 1u;                /* (the guard's "rest" starts here: looper_block_done) */

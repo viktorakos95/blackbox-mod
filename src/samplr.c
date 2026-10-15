@@ -2688,7 +2688,7 @@ int samplr_run(float *bl, float *br, int n, float **snd)
          * block over 85 % of it: one step of shedding now (not after 16 blocks). The hard limit is per track, below. The looper's tracks
          * give way to what SAMPLR leaves. */
         struct smscr *sc = s->sc;
-        int32_t left = looper_budget_left();
+        int32_t left = looper_budget_left_samplr();
         sc->sleft = -1.f;                                         /* (unknown: no limit) */
         if (left != 0x7fffffff) {
             float lf = left > 0 ? (float)left : 0.f;
@@ -2701,6 +2701,52 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         }
         sc->smute = 0;
     }
+    {   /* The guard's fades (the page opened last is the leader, see looper.c): when the whole task's worst block in the last half second reaches this engine's
+         * mark (the first to give way: the earliest) and the quality steps are used, one track fades out over ~0.75 s and is then out: not rendered (its
+         * gestures and sequences keep their time). The one on the page goes last, the others from the highest number down. They come back one at a time, the
+         * lowest number (the one on the page first) first, fading in over ~0.4 s, after ~1 s in which the load stayed 12 % under the mark and the track's
+         * remembered cost fits the time left. */
+        struct smscr *sc = s->sc;
+        int fading = 0, outn = 0, thr = looper_soft_threshold(1);
+        for (int t = 0; t < SM_TRACKS; t++) {
+            struct sm *q = t ? trk_get(t, 0) : s;
+            if (q) {
+                fading |= q->gfade;
+                outn += q->gfade || q->gmu;
+            }
+        }
+        if (sc->gcool)
+            sc->gcool--;
+        if (!fading && !sc->gcool && sc->shed >= 2 && looper_load_worst(1) >= (unsigned)thr && s->tick > 8) {
+            int pick = -1;
+            for (int pass = 0; pass < 2 && pick < 0; pass++)      /* (the track on the page only when there is no other) */
+                for (int t = SM_TRACKS - 1; t >= 0 && pick < 0; t--) {
+                    struct sm *q = t ? trk_get(t, 0) : s;
+                    if (q && !q->gmu && q->peak > .002f && (pass || t != (int)s->tno))
+                        pick = t;
+                }
+            if (pick >= 0) {
+                (pick ? trk_get(pick, 0) : s)->gfade = 1;
+                sc->gcool = 2 * 188;
+                sc->gcalm = 0;
+            }
+        } else if (!fading && outn && (float)looper_load_worst(0) < (float)(thr - 120)) {
+            if (++sc->gcalm >= 375) {
+                for (int t = 0; t < SM_TRACKS; t++) {
+                    struct sm *q = t ? trk_get(t, 0) : s;
+                    if (q && q->gmu && (sc->sleft < 0.f || q->gcost < .75f * sc->sleft)) {
+                        q->gmu = 0;                               /* back: fading in from where it was */
+                        sc->gcalm = 0;
+                        sc->gcool = 188;
+                        break;
+                    }
+                }
+            }
+        } else if (!fading) {
+            sc->gcalm = 0;
+        }
+        sc->gout = (uint8_t)outn;
+    }
     for (int t = 0; t < SM_TRACKS; t++) {                         /* every track that was ever used goes on playing (its loop, what it latched) */
         struct sm *q = t ? trk_get(t, 0) : s;
         if (!q)
@@ -2710,13 +2756,38 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         uint32_t tq0 = DWT_CYCCNT;
         gest_run(q, n);
         sweep(q);
+        if (q->gmu) {                                             /* out for lack of time (the guard): nothing rendered */
+            q->peak *= .9f;
+            q->tick++;
+            continue;
+        }
         {   /* the hard limit: a track whose recent worst block does not fit the time left is left out of this block (its gestures and
              * sequences keep their time). Only a spike gets here; the shedding above keeps it from being needed. */
-            int32_t left = looper_budget_left();
+            int32_t left = looper_budget_left_samplr();
             if (left != 0x7fffffff && q->gcost > (float)(left > 0 ? left : 0)) {
                 s->sc->smute = 1;
                 s->sc->mtop = 1;
                 q->gcost *= .999f;
+                if (q->tailn == (uint16_t)n && q->gfd <= 0.f) {   /* a spike: out in this block, with the last block played backwards (it joins the last sample, no jump) */
+                    int sendt = snd && (q->fx_sd || q->fx_sr);
+                    float sd = (float)q->fx_sd * .01f, sr = (float)q->fx_sr * .01f;
+                    for (int i = 0; i < n; i++) {
+                        float w = 1.f - (float)(i + 1) / (float)n, l = (float)q->tail[0][n - 1 - i] * (1.f / 32767.f) * w, r = (float)q->tail[1][n - 1 - i] * (1.f / 32767.f) * w;
+                        bl[i] += l;
+                        br[i] += r;
+                        if (sendt) {
+                            snd[0][i] += l * sd;
+                            snd[1][i] += r * sd;
+                            snd[2][i] += l * sr;
+                            snd[3][i] += r * sr;
+                        }
+                    }
+                    fed |= sendt;
+                }
+                q->gmu = 1;                                       /* it stays out until the load allows (then it fades in) */
+                q->gfd = 1.f;
+                q->gfade = 0;
+                q->tailn = 0;
                 q->tick++;
                 continue;
             }
@@ -2745,6 +2816,26 @@ int samplr_run(float *bl, float *br, int n, float **snd)
                 for (int b = 0; b < 8; b++)
                     ((float *)q->flt.s)[b] = 0.f;
         }
+        float f0 = 1.f - q->gfd;                                  /* the guard's fade: a ramp across the block */
+        if (q->gfade) {
+            q->gfd += (float)n / (.75f * 48000.f);
+            if (q->gfd >= 1.f) {                                  /* silent: out from the next block on */
+                q->gfd = 1.f;
+                q->gfade = 0;
+                q->gmu = 1;
+            }
+        } else if (q->gfd > 0.f) {
+            q->gfd -= (float)n / (.4f * 48000.f);
+            if (q->gfd < 0.f)
+                q->gfd = 0.f;
+        }
+        float f1 = 1.f - q->gfd, fd = (f1 - f0) / (float)n;
+        if (f0 < 1.f || f1 < 1.f)
+            for (int i = 0; i < n; i++) {
+                float gk = f0 + fd * (float)(i + 1);
+                tl[i] *= gk;
+                tr[i] *= gk;
+            }
         float sd = (float)q->fx_sd * .01f, sr = (float)q->fx_sr * .01f, pk = q->peak * .9f, mx = 0.f;
         int send = snd && (q->fx_sd || q->fx_sr), bad = 0;
         for (int i = 0; i < n; i++) {                             /* the level of the block (a NaN never raises it: it shows as 'bad' below) */
@@ -2762,6 +2853,8 @@ int samplr_run(float *bl, float *br, int n, float **snd)
             }
             bl[i] += l;
             br[i] += r;
+            q->tail[0][i] = (int16_t)(l > 1.f ? 32767.f : l < -1.f ? -32767.f : l * 32767.f);
+            q->tail[1][i] = (int16_t)(r > 1.f ? 32767.f : r < -1.f ? -32767.f : r * 32767.f);
             if (send) {
                 snd[0][i] += l * sd;
                 snd[1][i] += r * sd;
@@ -2770,6 +2863,7 @@ int samplr_run(float *bl, float *br, int n, float **snd)
             }
         }
         q->peak = pk;
+        q->tailn = (uint16_t)n;
         fed |= send;
         q->tick++;
         s->sc->pm += DWT_CYCCNT - cm;
@@ -2939,4 +3033,10 @@ const char *samplr_cont_name(int c)
 const char *samplr_ppat_name(int p)
 {
     return ppat_name[(unsigned)p % 5];
+}
+
+uint32_t samplr_last_dur(void)
+{
+    struct sm *s = trk_get(0, 0);
+    return s ? s->sc->last_sdur : 0u;
 }

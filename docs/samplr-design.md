@@ -464,3 +464,25 @@ takes three overdub layers.
   its quality steps (`!n`) and their recovery as in build 43. SAMPLR has no track mute yet, so its tracks are not faded / muted like the looper's.
 - Tests: test_guard.py rewritten (room: nothing; near the limit: track 3 fades over ~0.75 s, then muted, only that one; the next after a pause; turns back when
   the load drops; nothing comes back by itself; the player unmutes; the one just unmuted goes last; a block with no time left cuts and mutes, ramp to 0).
+
+## Build 46 (the page opened last leads; everything that goes, fades)
+- Wishes after build 45: the page you open wins; whatever is removed or added back (voices, effects, grains, tracks) fades smoothly.
+- The leader: `looper_page.c` remembers which of the three pages (Looper, SAMPLR, DRONE-8) was opened last (`P->lead`; TRIG leaves it; none yet = 3). Priority in looper.c `prio()`:
+  DRONE-8 3, SAMPLR 2, looper 1, and the leader +4. Each engine leaves out of its own load the time of the engines that rank below it (DRONE-8's governor:
+  `looper_yield_permille`), and keeps time for the ones above it (SAMPLR's budget `looper_budget_left_samplr` minus the looper tracks' estimate when the looper leads).
+  The looper's fade mark is staggered by rank: 94 % for the engine that gives way first, +1.5 % per engine below it (`looper_soft_threshold`), SAMPLR's the same.
+  The top bar shows `>L`, `>S` or `>D`.
+- Fades:
+  - DRONE-8 (lira_pad.c): the mute at step 3 is a fade now. The synth runs as at step 2 while its output ramps down over ~0.5 s (`fade_step`, `mute_ramp`), stops when
+    silent, and fades in over ~0.3 s when the step goes down (page and pad paths). Its delay lines (lira.c) come and go over ~40 ms: each line's weight in the wet sum and
+    the wet's share of the output are smoothed, a line that is not heard is not run. At rest the output is bit-identical to before.
+  - SAMPLR (samplr.c): when the whole task's worst block in the last half second reaches its mark and the quality steps are used (shed >= 2), one track fades out over
+    ~0.75 s (not the shown one until there is no other; highest number first) and is then out (not rendered; gestures and sequences keep time). Back one at a time
+    after ~1 s with the load 12 % under the mark and its remembered cost fitting, fading in over ~0.4 s. `x<n>` on the top bar = tracks out.
+  - The emergency (a spike with no time left in the block): SAMPLR plays the track's last block backwards with a ramp to 0 (each track keeps its last block as 16-bit,
+    `tail`), which joins the last sample without a jump; the track then stays out and returns as above. The looper's cut is always a ramp in the block (the cheapest
+    computation, even if that overshoots the block by a few per cent).
+  - The looper's own removal (build 45): 0.75 s fade, then muted, shown muted; the player unmutes.
+- Tests: test_guard.py (leader: threshold 97 % when the looper leads, SAMPLR keeps time for the looper's tracks, equal budgets otherwise), test_lira_gov.py (the mute is a
+  fade: no block loses more than 40 % of the one before; the delay lines going make no jump; the synth fades back in), test_samplr.py (the emergency tail, the guard's
+  fades and return, the fade-in). NOT checked: the real cycle counts; which page the person means to lead (the last opened is a guess).

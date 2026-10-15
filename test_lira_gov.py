@@ -89,19 +89,42 @@ for _ in range(40):
     block(0.5)
 r = block(0.5)
 check("50 % load: full quality, the synth sounds", shed() == 0 and r > 0.001, "shed %d rms %.4f" % (shed(), r))
+def wave(load):
+    cyc[0] += PER
+    e.w32(0xE0001004, cyc[0] & 0xFFFFFFFF)
+    e.w32(0x2405FFD4, (cyc[0] - int(PER * load)) & 0xFFFFFFFF)
+    e.uc.mem_write(L, bytes(4 * N))
+    e.uc.mem_write(R, bytes(4 * N))
+    e.call("lira_page_run", L, R, N)
+    return list(struct.unpack(f"<{N}f", bytes(e.uc.mem_read(L, 4 * N))))
 seen = []
-for i in range(120):
-    r = block(0.85)
+rmss = []
+steps = []                                       # the largest jump between neighbouring samples in a block
+for i in range(260):
+    w = wave(0.85)
+    r = math.sqrt(sum(v * v for v in w) / N)
+    rmss.append(r)
+    steps.append(max(abs(w[k + 1] - w[k]) for k in range(N - 1)))
     if not seen or seen[-1] != shed():
         seen.append(shed())
 check("85 % load: it steps 1, 2, 3 (one line, none, muted)", seen == [0, 1, 2, 3] or seen == [1, 2, 3], str(seen))
-check("... and is silent at step 3", r == 0.0, "rms %.5f" % r)
-for _ in range(300):
+r = rmss[-1]
+check("... and is silent at step 3 once it has faded out", r == 0.0, "rms %.5f" % r)
+peak = max(rmss[:20])
+first_low = next((i for i, v in enumerate(rmss) if v < 0.5 * peak), None)
+drops = [rmss[i] / rmss[i - 1] for i in range(1, len(rmss)) if rmss[i - 1] > 0.25 * peak]
+check("... the mute is a fade, not a cut: no block loses more than 40 % of the one before (the cut was 100 %)", min(drops) > 0.6, "worst ratio %.3f" % min(drops))
+check("... and the fade takes a while (the output is still half or more ten blocks after the step)", first_low is None or first_low > 20, str(first_low))
+check("... the delay lines going (steps 1, 2) make no jump: the largest step between samples stays within 3x of the first blocks'",
+      max(steps) < 3 * max(steps[:10]) + 1e-4, "max %.5f first %.5f" % (max(steps), max(steps[:10])))
+for _ in range(100):
     block(0.5)
 check("room again, but not for long enough: still muted", shed() == 3, str(shed()))
-for _ in range(150):
+for _ in range(100):
     block(0.5)
 check("after ~400 blocks it steps back one", shed() == 2, str(shed()))
+back = [block(0.5) for _ in range(60)]
+check("... and the synth fades back in (it is sounding again within 100 blocks, not at once)", back[0] < 0.3 * max(back) and max(back) > 0.001, "first %.4f max %.4f" % (back[0], max(back)))
 for _ in range(900):
     block(0.5)
 check("... and all the way back to full quality", shed() == 0 and block(0.5) > 0.001, str(shed()))

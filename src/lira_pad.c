@@ -205,6 +205,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint16_t wn;                 /* the whole audio task, from cpu.c: its block count and load sum when last read, */
     uint32_t wsum;
     float wl, wpk;               /* ... its smoothed load (permille) and near misses lately */
+    float mf0, mf1;              /* the mute is a fade (0 sounding .. 1 silent): where it was at the start of this block and where it is at the end */
 };
 #define GEV_MAX 1024
 struct gev {                     /* one recorded gesture: when (frames from the bar line), what (a control id, or 300 + voice for a plate, 400 + voice a chord pitch, 500 + stepped id, 600 + action; the layer in bits 11..12) and its value */
@@ -563,6 +564,33 @@ int lira_render(const uint8_t *pad, void *voice, void *out, void *src)
     return fw_render(pad, voice, out, src);
 }
 
+/* The mute is a fade, never a cut: at step 3 the synth goes on running (as at step 2, so the load comes down at once) while its output fades
+   out over ~0.5 s, and it stops only when it is silent; coming back (the step goes down) it fades in over ~0.3 s. A block's gain is a ramp from
+   where the fade was at its start to where it is at its end (mf0, mf1; once a block, in fade_step). */
+static void fade_step(struct pg *g, int n)
+{
+    g->mf0 = g->mf1;
+    float step = (float)n / (0.5f * FS), back = (float)n / (0.3f * FS);
+    if (g->shed >= 3)
+        g->mf1 = g->mf1 + step > 1.0f ? 1.0f : g->mf1 + step;
+    else
+        g->mf1 = g->mf1 - back < 0.0f ? 0.0f : g->mf1 - back;
+}
+
+static void mute_ramp_part(const struct pg *g, float *x, int m, int i0, int n)   /* frames i0.. of the block's n */
+{
+    if (g->mf0 <= 0.0f && g->mf1 <= 0.0f)
+        return;
+    float a = 1.0f - g->mf0, b = 1.0f - g->mf1, d = (b - a) / (float)n;
+    for (int i = 0; i < m; i++)
+        x[i] *= a + d * (float)(i0 + i + 1);
+}
+
+static void mute_ramp(const struct pg *g, float *x, int n)
+{
+    mute_ramp_part(g, x, n, 0, n);
+}
+
 /* For every voice of a LIRA pad: voice = the engine voice. */
 static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
 {
@@ -582,11 +610,11 @@ static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
         clear(buf);                                  /* every instance is busy: this pad stays silent */
         return;
     }
-    if (p->pg.shed >= 3) {                           /* the audio task is out of time */
+    if (p->pg.mf0 >= 1.0f && p->pg.mf1 >= 1.0f) {   /* the audio task is out of time, and this synth has faded out */
         clear(buf);
         return;
     }
-    s->l.shed = p->pg.shed;
+    s->l.shed = p->pg.shed >= 3 ? 2 : p->pg.shed;    /* (while it fades out it runs as at step 2) */
     unsigned mask = sensors(pad);
     for (int k = 0; k < 8; k++)
         if (mask & (1u << k)) {
@@ -639,6 +667,7 @@ static void lira_pad_voice(const void *voice, void *buf, const uint8_t *pad)
         }
     }
     lira_process(&s->l, ch[0], n);
+    mute_ramp(&p->pg, ch[0], n);
     if (ch[1])
         for (int i = 0; i < n; i++)
             ch[1][i] = ch[0][i];
@@ -997,11 +1026,12 @@ void lira_page_run(float *l, float *r, int n)
         rec_zero(p, 0, n);
         return;
     }
-    if (g->shed >= 3) {                          /* the audio task is out of time: this synth waits */
+    fade_step(g, n);                             /* the mute is a fade: out over ~0.5 s, back in over ~0.3 s */
+    if (g->mf0 >= 1.0f && g->mf1 >= 1.0f) {      /* the audio task is out of time, and this synth has faded out: it waits */
         rec_zero(p, 0, n);
         return;
     }
-    s->l.shed = g->shed;
+    s->l.shed = g->shed >= 3 ? 2 : g->shed;      /* (while it fades out it runs as at step 2) */
     if (s->clearing) {
         int a = (s->clearing - 1) * (DLEN / CLEAR_STEPS);
         int b = s->clearing == CLEAR_STEPS ? DLEN : a + DLEN / CLEAR_STEPS;
@@ -1085,6 +1115,7 @@ void lira_page_run(float *l, float *r, int n)
         s->l.ext_l = exl;
         s->l.ext_r = exr;
         lira_process(&s->l, tmp, m);
+        mute_ramp_part(g, tmp, m, i0, n);
         for (int i = 0; i < m; i++) {
             l[i0 + i] += tmp[i] * gain;
             r[i0 + i] += tmp[i] * gain;
