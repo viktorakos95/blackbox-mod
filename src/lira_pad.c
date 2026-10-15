@@ -1601,7 +1601,7 @@ void lira_leds(void)
     struct pool *p = pool();
     if (!p || !p->pg.btn_on)
         return;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 1; i < 8; i++) {                         /* (button 0 is PAD on the page: its LED stays the firmware's) */
         int led = i;
         ((void (*)(void *, int, int))FN(0x080436b0))((void *)0x240021bcu, led, p->pg.want[i]);
         *(volatile uint8_t *)(0x24009a2cu + 12u * (unsigned)led + 8u) = 2;

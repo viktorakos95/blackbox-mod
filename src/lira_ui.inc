@@ -10,7 +10,9 @@
  *   MIX      LEVEL 1-4, LEVEL 5-8 (a fader per voice), OUTPUT (drive, dist, volume, ext in)
  *   CHORD    TONAL SPACE (space, root, register, span), VOICING (chord on, tuning, shuffle, rotate), the notes of the voices
  * The four encoders turn the four controls of the active group (white frame): the strip's voices 1-4 or 5-8, or a panel. A touch on
- * a control makes its group the active one; BACK flips between voices 1-4 and 5-8. Inside a panel the encoders sit like the
+ * a control makes its group the active one; BACK flips between voices 1-4 and 5-8; INFO moves on within the part of the page the
+ * group is in (lira_shift: the next panel, or levels / tunes 1-4 <-> 5-8; the page has no SHIFT mode). PAD (round button 0) is never a
+ * plate: it goes back to the pads, and PAD on the pad screen comes back here. Inside a panel the encoders sit like the
  * controls: top-left, top-right, bottom-left, bottom-right.
  */
 #include "lira_chord.h"
@@ -517,6 +519,31 @@ static void lira_back(void)
 {
     int sel = lira_ui_sel(-1), bank = (sel >> 4) & 7;
     lira_page_set(sel & 15, bank == 0 ? 1 : 0);
+}
+
+static void lu_bank(int bank);
+
+/* INFO (SHIFT elsewhere): the encoders move on within the part of the page they are in. The panels above: the next panel of the tab
+   that has encoder controls (four, or three); the level knobs: voices 1-4 <-> 5-8; the tune knobs: voices 1-4 <-> 5-8. */
+static void lira_shift(void)
+{
+    int sel = lira_ui_sel(-1), bank = (sel >> 4) & 7;
+    if (bank <= 1 || bank >= 6) {
+        bank ^= 1;
+    } else {
+        struct lu_spec sp[LU_MAXS];
+        int n = lu_specs(sel, sp);
+        for (int k = 1; k <= 4; k++) {
+            int b = 2 + (bank - 2 + k) % 4, has = 0;
+            for (int i = 0; i < n; i++)
+                has |= sp[i].bank == b;
+            if (has) {
+                bank = b;
+                break;
+            }
+        }
+    }
+    lu_bank(bank);
 }
 
 static void lu_bank(int bank)

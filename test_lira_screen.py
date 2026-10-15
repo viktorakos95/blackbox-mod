@@ -508,6 +508,40 @@ button(9, 0xF6)                                                     # hardware S
 set_ticks(9950)
 button(10, 0xF7)
 check("STOP and PLAY with no loop change nothing", chord(158) == 0, chord(158))
+# PAD (button 0) is not a plate: it goes on to the stock handler, whose set-screen is solo_pad_pressed (back to the pads)
+stockmsg = []
+e.stub(0x080A2E60, lambda: stockmsg.append(tuple(struct.unpack("<H", bytes(e.uc.mem_read(e.arg(1), 2))) +
+                                                 struct.unpack("<I", bytes(e.uc.mem_read(e.arg(1) + 12, 4))))))
+set_ticks(10500)
+button(0)
+check("PAD on the page is not voice 1's plate: the stock handler gets it", key(0) == 0 and stockmsg == [(0xF9, 0)], (key(0), stockmsg))
+leds.clear()
+e.call("lira_leds")
+check("... and its LED is left to the firmware", all(l[1] != 0 for l in leds) and len(leds) == 7, leds)
+# INFO (SHIFT on the looper pages) moves the encoders on within their part of the page; it is no modifier here
+def info():
+    stockmsg.clear()
+    button(0, 0xC)
+    return sel()
+
+
+e.call("lira_ui_sel", 0)
+check("INFO on the tune knobs: voices 1-4 -> 5-8 -> 1-4", [info() >> 4, info() >> 4] == [1, 0] and not stockmsg, (sel(), stockmsg))
+e.call("lira_ui_sel", 6 << 4)
+check("INFO on the level knobs: voices 1-4 -> 5-8 -> 1-4", [info() >> 4, info() >> 4] == [7, 6], sel())
+e.call("lira_ui_sel", 0 | 2 << 4)
+seq = [info() for _ in range(4)]
+check("INFO on the panels (VOICES tab): each panel in turn, the tab kept", seq == [0x30, 0x40, 0x50, 0x20], [hex(s) for s in seq])
+e.call("lira_ui_sel", 2 | 2 << 4)
+seq = [info() >> 4 for _ in range(4)]
+check("INFO on the MIX tab's panels: all four in turn", seq == [3, 4, 5, 2], seq)
+set_ticks(11000)
+button(4)
+check("after INFO the round buttons are still the plates (no SHIFT mode)", key(4) == 1, key(4))
+f = draw(0)
+check("INFO only flashes the frame (state 2): the footer has no SHIFT here", e.r8(PAGE + 7) == 2, e.r8(PAGE + 7))
+e.call("lira_ui_key", 4, 0)
+e.call("lira_ui_sel", 0)
 PALRAM = 0x24000000
 e.uc.mem_write(PALRAM, b"".join(struct.pack("<I", 0xFF000000 + 0x010101 * i) for i in range(36)))
 orig = bytes(e.uc.mem_read(PALRAM, 144))
