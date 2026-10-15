@@ -79,7 +79,7 @@ static uint32_t sleep_sem;
 
 extern "C" void bb_sleep_ms(uint32_t ms)
 {
-    if (bb_in_interrupt() || !timers_running) {                   /* no scheduler to sleep in */
+    if (bb_in_interrupt()) {                                      /* no scheduler to sleep in */
         delayMicroseconds(ms * 1000u);
         return;
     }

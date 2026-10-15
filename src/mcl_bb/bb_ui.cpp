@@ -191,10 +191,18 @@ static void render_spy(void)
     }
 }
 #endif
+extern "C" __attribute__((weak)) uint32_t bb_mcl_state(void);       /* bb_mcl.cpp (builds with MCL): 3 = the kernel had no memory for MCL's task */
+
 static void render(void)
 {
     for (unsigned i = 0; i < sizeof fb; i++)
         fb[i] = 0;
+    if (bb_mcl_state && bb_mcl_state() == 3) {
+        text(0, 0, "MCL NOT STARTED");
+        text(0, 1, "NO MEMORY FOR ITS");
+        text(0, 2, "TASK (16 KB STACK)");
+        return;
+    }
 #ifdef SD_TEST
     if (sdtest_view == 0) {                                 /* the last results of the three tests (B1 list, B2 read, B3 write) */
         for (int r = 0; r < 4; r++)

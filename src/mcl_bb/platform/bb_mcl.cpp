@@ -160,7 +160,22 @@ extern "C" void bb_base_timer_isr(void)
     }
 }
 
-HOOK void bb_swirq1_isr(void)                                      /* the sequencer step */
+/* The three soft interrupts run MCL's sequencer, MIDI processing and panel poll in interrupt context, like its RP2040 port. MCL's calls go deep (a sequencer step through
+ * the engines, the MIDI parser's callbacks), and the stock firmware's main stack (what an interrupt runs on) is of an unknown size, so the handlers switch to a stack
+ * of their own, in the blob's RAM: they have all the same priority and never nest, so one stack serves the three; interrupts that come in on top (TIM7, TIM6, the stock
+ * audio, ...) use it too, hence the margin. */
+#define ISR_STACK 6144
+static uint8_t isr_stack[ISR_STACK + 8] __attribute__((aligned(8)));
+extern "C" uint8_t *const bb_isr_stack_top = isr_stack + ISR_STACK;
+
+#define TRAMPOLINE(name, body)                                                                                                                       \
+    extern "C" void body(void);                                                                                                                      \
+    extern "C" __attribute__((naked, section(".hook"), used)) void name(void)                                                                         \
+    {                                                                                                                                                \
+        asm volatile("push {r4, lr}\n mov r4, sp\n ldr r0, =bb_isr_stack_top\n ldr r0, [r0]\n mov sp, r0\n bl " #body "\n mov sp, r4\n pop {r4, pc}\n"); \
+    }
+
+extern "C" void bb_swirq1_body(void)                               /* the sequencer step */
 {
     MidiClock.inCallback = true;
     uint8_t lock = MidiUartParent::handle_midi_lock;
@@ -171,16 +186,28 @@ HOOK void bb_swirq1_isr(void)                                      /* the sequen
     midi_tx_drain();
 }
 
-HOOK void bb_swirq2_isr(void)                                      /* MIDI input, and MCL's output on its way */
+extern "C" void bb_swirq2_body(void)                               /* MIDI input, and MCL's output on its way */
 {
     midi_rx_pump();
     handleIncomingMidi();
     midi_tx_drain();
 }
 
-HOOK void bb_swirq3_isr(void)                                      /* the panel */
+extern "C" void bb_swirq3_body(void)                               /* the panel */
 {
     GUI_hardware.poll();
+}
+
+TRAMPOLINE(bb_swirq1_isr, bb_swirq1_body)
+TRAMPOLINE(bb_swirq2_isr, bb_swirq2_body)
+TRAMPOLINE(bb_swirq3_isr, bb_swirq3_body)
+
+HOOK uint32_t bb_mcl_isr_stack_used(void)                           /* diagnostics: bytes of the soft interrupts' stack that were ever touched (the stack is painted at boot) */
+{
+    uint32_t n = ISR_STACK;
+    for (uint32_t i = 0; i < ISR_STACK && isr_stack[i] == 0xa5; i++)
+        n--;
+    return n;
 }
 
 /* ---- the clock: bb_clock's two hooks (its timer interrupt, priority 1). The Blackbox is the master: bb_clock follows its sequencer (internal, TRS MIDI or analog sync
@@ -263,16 +290,19 @@ HOOK uint32_t bb_mcl_clk_stat(int which)
 /* ---- the task ---- */
 static void mcl_task(void *)
 {
+    for (uint32_t i = 0; i < ISR_STACK; i++)
+        isr_stack[i] = 0xa5;                                       /* (painted, to see how much the soft interrupts ever use) */
     mcl_state = 1;
     bb_midi_claim(1);                                              /* MCL writes the jack (the stock firmware's own sends are redirected into the same ring) */
     if (!bb_midi_owner())
         bb_midi_claim(0);
-    bb_midi_filter_clock(1);                                       /* the stock firmware's own F8 / FA / FB / FC are bb_clock's now */
     setup();                                                       /* (with the project menu: it returns when a project is loaded) */
     mcl_state = 2;
     bb_clock_set_transport_hook(bb_mcl_clk_transport);
     bb_clock_set_hook(bb_mcl_clk_tick);
     bb_clock_sync_seq();                                           /* the clock follows the Blackbox's sequencer */
+    bb_midi_filter_clock(1);                                       /* ... and sends the clock and transport out: the stock firmware's own F8 / FA / FB / FC are dropped from here on
+                                                                      (until then, in the start menu, they go out as before) */
     for (;;) {
         loop();
         if (!bb_midi_owner())
