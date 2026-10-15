@@ -67,7 +67,7 @@ void looper_guard_drawing(int on);
 struct lay;
 static void lira_footer(const struct lay *L);
 static int lira_footer_hit(int x);
-static void lira_back(void);
+static void lira_back(void) __attribute__((unused));   /* (BACK now goes back a page; the voice swap is no longer on a button) */
 static void rehide(uint8_t *view);
 static void paint(uint8_t *view);
 static void widen(uint8_t *view);
@@ -2417,9 +2417,12 @@ void looper_app_msg(void *app, const uint16_t *msg)
                         P->sig = 0;
                         return;
                     }
-                    if (slot == B_BACK) {                          /* BACK: the other four voices */
-                        lira_back();
+                    if (slot == B_BACK) {                          /* BACK: the previous page of SONG's round (TRIG) */
+                        tab_select(6);
+                        P->info_on = 0;
+                        P->entered = 0;
                         P->sig = 0;
+                        return;
                     }
                     if (slot == B_REC) {                           /* REC: the gesture recorder, as on the SAMPLR page */
                         lira_ui_action(7);
@@ -2428,8 +2431,11 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     return;
                 }
                 if (P->mode == M_TRIG) {
-                    if (slot == B_BACK) {                          /* BACK: the previous page of SONG's round (SAMPLR); the TRIG page has no use of it */
-                        tab_select(5);
+                    if (slot == B_BACK) {                          /* BACK: its first sheet, then the previous page of SONG's round (SAMPLR) */
+                        if (t2m_page_sheet_now() != 0)
+                            t2m_page_sheet(0);
+                        else
+                            tab_select(5);
                         P->info_on = 0;
                         P->entered = 0;
                         P->sig = 0;
@@ -2442,9 +2448,14 @@ void looper_app_msg(void *app, const uint16_t *msg)
                         break;                                     /* (FX stays the stock FX button) */
                     if (slot == B_REC)
                         samplr_gest(0);
-                    else if (slot == B_BACK)
-                        samplr_gest(2);
-                    else if (slot == B_STOP)
+                    else if (slot == B_BACK) {                     /* BACK: the PLAY sheet, then the previous page of SONG's round (Looper MAIN) */
+                        if (SM_SHEET != 0)
+                            SM_SHEET = 0;
+                        else
+                            tab_select(0);
+                        P->info_on = 0;
+                        P->entered = 0;
+                    } else if (slot == B_STOP)
                         samplr_gest(6);
                     else
                         samplr_gest(5);
@@ -2477,7 +2488,13 @@ void looper_app_msg(void *app, const uint16_t *msg)
                     break;
                 }
                 case B_BACK:
-                    looper_event(P->sel, LOOPER_EV_UNDO);          /* BACK: undo on the selected track */
+                    if (P->mode != M_MAIN) {                       /* BACK: from FX / SETUP / MORE first to MAIN, */
+                        tab_select(0);
+                        P->info_on = 0;
+                        P->entered = 0;
+                    } else {
+                        looper_event(P->sel, LOOPER_EV_UNDO);      /* and on MAIN as before: undo on the selected track */
+                    }
                     break;
                 case B_STOP:
                     looper_transport(LOOPER_T_STOP);

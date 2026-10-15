@@ -553,3 +553,7 @@ takes three overdub layers.
 ## Build 51
 
 Per-page tint (palette entries swapped only while the page draws, then put back; no extra CPU/RAM): Looper = silver-grey (bg 25272b, rail 4c4f56), SAMPLR = lighter blue-grey (bg 1d2130) with a pale mint waveform (palette 0x1c, `C_WAVE`), TRIG stock, DRONE-8 unchanged.
+
+## Build 53
+
+BACK (physical) = one step back: Looper FX/FX2/SETUP/MORE -> MAIN (on MAIN: undo, as before); SAMPLR -> its PLAY sheet, then Looper MAIN (the gesture undo is gone from the button); TRIG -> sheet 1, then SAMPLR; DRONE-8 -> TRIG (the voice-bank swap is gone from BACK; INFO still steps the encoders). New drone build merged.

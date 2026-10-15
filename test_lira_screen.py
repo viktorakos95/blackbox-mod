@@ -359,7 +359,12 @@ def set_ticks(n):                                                   # find loope
 set_ticks(5000)
 check("the encoder group is voices 1-4 (bank 0)", sel() == 0, sel())
 button(11, 7)
-check("BACK: voices 5-8 (bank 1)", sel() == 16, sel())
+e.call("looper_page_tab")
+check("BACK on the page goes back to the TRIG page", e.uc.reg_read(A.UC_ARM_REG_R0) == 6, e.uc.reg_read(A.UC_ARM_REG_R0))
+e.call("looper_page_goto", VIEW, 7)
+set_ticks(5200)
+button(0, 0xc)
+check("INFO: voices 5-8 (bank 1)", sel() == 16, sel())
 before = [get(v) for v in range(8)]
 knob(1, 80)
 check("... the bottom-left encoder now turns voice 5", get(4) == before[4] + 10 and get(0) == before[0], (before, [get(v) for v in range(8)]))
