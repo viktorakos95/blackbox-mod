@@ -73,7 +73,7 @@ static uint32_t acq_now;                                         /* acquisition 
 /* Follow the Blackbox's own transport (M5b): seqfix.c stamps (cycle counter, sequencer time at 960 a beat) at every call of the stock note player; the interrupt fits a
  * straight line through the last SQ_N stamps of one sequence and turns it into "virtual" input clocks for the same PLL: the instants the fitted line passes every 40th tick. */
 #define SQ_STAMP    ((volatile uint32_t *)0x38800940u)       /* {version, sequence, cycles, now_lo, now_hi} */
-#define SQ_N        64
+#define SQ_N        128                                         /* 340 ms of stamps at 120 BPM: the slope of the line is steadier the longer the window */
 #define SQ_MIN      8                                           /* stamps before the line is trusted */
 static volatile uint32_t src_seq;                               /* the input is the stamps, not the jack */
 static uint32_t sq_ver, sq_prim, sq_prim_t;                    /* last version seen, the followed sequence, its last stamp's cycles */
@@ -81,7 +81,7 @@ static uint32_t sq_cyc[SQ_N];
 static int64_t sq_now[SQ_N];
 static uint32_t sq_n, sq_wr;                                    /* stamps in the window, next slot */
 static int64_t sq_next_k;                                       /* next 24-PPQN clock (sequencer time / 40) to turn into a virtual input clock */
-static uint32_t sq_running, sq_announce, sq_from_zero;
+static uint32_t sq_running, sq_announce, sq_from_zero, sq_resync;
 static uint32_t sq_restarts, sq_accepted;
 static int32_t sq_offset_cyc;                                   /* shifts the virtual clocks later (audio output delay), core cycles */
 #define POLL_COUNTS   1000u                                     /* listening: look at the stamp ring every ~1 ms */
@@ -217,7 +217,7 @@ HOOK void bb_clock_sync_seq(void)
     sq_reset();
     sq_ver = SQ_STAMP[0];
     sq_prim = 0;
-    sq_running = sq_announce = 0;
+    sq_running = sq_announce = sq_resync = 0;
     sq_restarts = sq_accepted = 0;
     sq_next_k = 0;
     sync_begin();
@@ -377,7 +377,8 @@ static void pll_clock(uint32_t t, uint32_t now)
         return;
     }
     pend_adj += (int32_t)(((int64_t)(e >> KP_SHIFT) << 16) / (int32_t)cpc_q16);      /* proportional: move the next tick */
-    P_q16 += (int64_t)((int64_t)e << 16) >> KI_SHIFT;           /* integral: change the period */
+    if (!src_seq)
+        P_q16 += (int64_t)((int64_t)e << 16) >> KI_SHIFT;       /* integral: change the period (not when following the sequencer: its fit gives the period) */
     uint64_t pmin = (uint64_t)core_cps * 60u / (24u * 300u), pmax = (uint64_t)core_cps * 60u / (24u * 20u);
     if ((P_q16 >> 16) < pmin)
         P_q16 = pmin << 16;
@@ -490,6 +491,7 @@ static void seq_feed(uint32_t now)
                             if (d > 12 || d < -12) {
                                 sq_restarts++;
                                 sq_reset();
+                                sq_resync = 1;                    /* numbers the clocks again from the new position (not 960 skips later) */
                             }
                         }
                         sq_cyc[sq_wr & (SQ_N - 1)] = cyc;
@@ -516,14 +518,26 @@ static void seq_feed(uint32_t now)
     sq_fit f;
     if (!sq_line(&f))
         return;
-    if (!sq_running) {                                           /* the transport has been running long enough to trust the line */
-        sq_running = 1;
-        sq_announce = 1;
-        sq_from_zero = f.now_o < 400;                            /* started from the top (the window opens within ~170 ms of the start) */
+    if (!sq_running || sq_resync) {                              /* the transport has been running long enough to trust the line */
+        if (!sq_running) {
+            sq_running = 1;
+            sq_announce = 1;
+            sq_from_zero = f.now_o < 400;                        /* started from the top (the window opens within ~170 ms of the start) */
+        }
+        sq_resync = 0;
         int64_t newest = sq_now[(sq_wr - 1u) & (SQ_N - 1)];
         sq_next_k = newest >= 0 ? newest / 40 : -((-newest) / 40) - 1;
         if (sq_next_k * 40 < newest - 40)
             sq_next_k++;
+    }
+    if (sync_state >= SY_LOCKED) {
+        /* The fitted slope IS the tempo, averaged over the whole window: use it as the PLL's period (smoothed 1/8 per call) instead of letting the loop re-estimate it from
+           single clocks, which passes the stamps' jitter on to the tempo (it showed as a few tenths of a BPM). The loop then only corrects the phase. */
+        uint64_t whole = 40ull * 256u * (uint64_t)f.sxx / (uint64_t)f.sxy;                 /* cycles per 40 ticks, whole part */
+        uint64_t rem = 40ull * 256u * (uint64_t)f.sxx % (uint64_t)f.sxy;
+        uint64_t target = (whole << 16) + (rem << 16) / (uint64_t)f.sxy;
+        P_q16 += ((int64_t)target - (int64_t)P_q16) >> 3;
+        period_from_cycles();
     }
     for (int guard = 0; guard < 8; guard++) {
         uint32_t t = sq_when(&f, sq_next_k * 40) + (uint32_t)sq_offset_cyc;

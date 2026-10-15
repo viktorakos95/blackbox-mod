@@ -292,3 +292,11 @@ is what the note player is given, and the analog jack is polled once per audio b
   `test_seqfix.py` checks the stamp.
 - **NOT checked (hardware only):** how big the stamps' real jitter is, what the stock sequencer does at stop / locate / loop (does `now` freeze, reset, or stop being called), whether the
   fitted clock matches the audio the unit plays (the offset), the analog jack's own jitter on top.
+
+### M5b on the unit
+- BBOX works for the internal clock and for the KeyStep driving the Blackbox. With the Blackbox's own MIDI clock **receive set to off** (Settings), B1 (our PLL on the jack) still follows the KeyStep
+  while BBOX follows only the internal tempo: the two sources are independent, as designed (B1 listens to the jack itself; BBOX to what the stock sequencer does).
+- The physical PLAY button does nothing on the MCL page: on the SAMPLR / TRIG / MCL pages the hardware buttons are left to the stock firmware (they were not mapped for these pages).
+- First build: the tempo read-out wobbled by a few tenths of a BPM. Cause: the PLL's integral term re-estimated the tempo from single clocks and passed the stamps' jitter on.
+  Fix: the fitted slope (now over 128 stamps, 340 ms) sets the PLL's period directly (smoothed 1/8 per call), the loop only corrects the phase; a locate renumbers the clocks from the new position at
+  once (the old catch-up stalled the clock for up to 2 s). Emulator: tempo reads 119.9 .. 120.0 over 6 s at stamp jitter 115 us and 345 us (sd); largest gap after a locate 21 ms.

@@ -143,6 +143,18 @@ check("interval mean 20,833.3 us, sd %.1f us (the stamps have +-115 us of jitter
 k = len(s.bytes(0xF8))
 check("clock count follows the sequencer (about 12 s x 48 a second)", abs(k - 12 * 48) < 80, k)
 
+# --- 1b. how steady the tempo reads (the screen shows it in tenths of a BPM): sampled every 100 ms over 8 s, with the stamps jittering +-115 us (sd) or 3x that
+for jit in (400, 1200):
+    s = Seq()
+    s.start()
+    ev = blocks(120, T0, 12, jitter_us=jit)
+    reads = []
+    for k in range(1, 81):
+        s.run([x for x in ev if s.t < x[0] <= T0 + (2 + k / 10) * CORE], T0 + (2 + k / 10) * CORE)
+        if k > 20:
+            reads.append(s.r.call("bb_clock_bpm_x10"))
+    check("stamp jitter %d us: tempo reads between %d and %d (tenths of a BPM) over 6 s" % (jit, min(reads), max(reads)), max(reads) - min(reads) <= 2 and abs(statistics.mean(reads) - 1200) <= 1, (min(reads), max(reads)))
+
 # --- 2. stop (the player stops being called), start again from the top, then pause and continue
 s = Seq()
 s.start()
