@@ -228,8 +228,8 @@ static void render(void)
             c = number(c, 2, (int32_t)bb_mcl_dbg(18), 1);
             c = number(c, 2, (int32_t)bb_mcl_dbg(19), 1);
             c = number(c, 2, bb_mcl_kern(14) == bb_mcl_kern(2) ? 1 : 0, 1);
-            hex8(0, 3, bb_mcl_kern(5));                     /* tasks, ready lists of priority 0..4 */
-            hex8(9, 3, bb_mcl_kern(10));                    /* MCL's TCB word 0 (its saved stack pointer) */
+            hex8(9, 3, bb_mcl_kern(40));                    /* the zeroed run around MCL's TCB: its lowest address and the first non-zero word above */
+            hex8(0, 3, bb_mcl_kern(41));
             return;
         }
         int c = text(0, 0, "S");

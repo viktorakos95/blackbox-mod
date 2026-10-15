@@ -60,6 +60,20 @@ HOOK uint32_t bb_mcl_kern(int i)
     case 2: return tcb;
     case 3: return *(volatile uint32_t *)0x2401f2a8u;                 /* pxCurrentTCB */
     case 4: { volatile uint32_t *c = (volatile uint32_t *)*(volatile uint32_t *)0x2401f2a8u; return c ? c[4] : 0; }   /* its owner word (= itself in a TCB) */
+    case 40: case 41: {                                               /* the run of zero words around MCL's TCB: 40 its lowest address, 41 the first non-zero word at or above the TCB (<= 64 KB scanned each way) */
+        volatile uint32_t *w = (volatile uint32_t *)tcb;
+        if (!tcb)
+            return 0;
+        uint32_t n = 0;
+        if (i == 40) {
+            while (n < 16384u && w[-(int32_t)n - 1] == 0)
+                n++;
+            return tcb - 4u * n;
+        }
+        while (n < 16384u && w[n] == 0)
+            n++;
+        return tcb + 4u * n;
+    }
     case 5: {                                                         /* number of tasks, ready list lengths of priorities 0..4 (nibbles) */
         uint32_t v = (*(volatile uint32_t *)0x2401f1a8u & 15u) << 20;
         for (uint32_t p = 0; p < 5; p++)
