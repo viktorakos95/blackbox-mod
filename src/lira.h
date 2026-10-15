@@ -48,11 +48,13 @@ typedef struct {
     int s;                                /* gate output high */
     float sqp, trip;                      /* previous-sample square (PolyBLEP, one sample late) and triangle */
     float linp, lr, lf;                   /* the triangle linear in time (for the sine), and 1 / log2 of each half's voltage ratio */
+    float u, lrt, lft;                    /* how far through the half period (0..1), integrated; and 1 / ln of each half's voltage ratio: its rate per unit of x */
     float ve, drive;                      /* envelope voltage, touch drive (0 = not touched) */
     float t_slow, t_fast;                 /* release time constants of this voice, s */
     float trim, leak;                     /* level trim, bleed gain at 1 kHz */
     float leak_f;                         /* bleed at the current pitch (refreshed every 8th block) */
     float vib_ph, vib_rate, vib_depth;
+    float bph;                            /* phase of the cheap stand-in that carries a closed oscillator's bleed */
     lira_ramp tune;                       /* Hz */
     lira_ramp lvl;                        /* this oscillator's level (a mixer fader) */
 } lira_gen;
@@ -99,6 +101,7 @@ typedef struct {
     float ext_g;
     float fol;                    /* envelope follower of the external input */
     int shed;                     /* load shedding set by the caller: 0 both delay lines, 1 one line, 2 no delay */
+    int wave_on;                  /* the WAVE the oscillators' triangles were last kept for (gen_sync) */
 } lira_t;
 
 int lira_size(void);

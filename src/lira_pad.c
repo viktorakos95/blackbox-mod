@@ -181,8 +181,11 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t sync[4];             /* tempo sync of LFO A, LFO B, delay 1, delay 2: 0 off, else an index into div_beats */
     uint8_t gmode, rp;           /* gesture recorder: 0 idle, 1 armed for the next bar line, 2 recording the first take, 3 looping, 4 armed to overdub at the loop start, 5 overdubbing; rp = replaying (events are not recorded again) */
     uint8_t glen_i, glayers;     /* take length (1 2 4 8 bars), layers in the loop (up to 3) */
+    uint8_t pend;                /* a STOP (16) or PLAY (17) of the loop waiting for the next bar line */
+    uint8_t off;                 /* the engine switch: the synth does not run at all (no modulation, no tail, no delay lines) */
     uint8_t btn_on;              /* the eight round buttons are the voice plates (else they are the stock buttons) */
     uint16_t gn, gi;             /* events recorded, the next to play */
+    double gridf;                /* the free-running grid, in frames, never wrapped */
     float gt, gtot, sph;         /* position in the take / loop and its length (frames), the free-running bar grid's phase */
     uint8_t free_enc;            /* the encoders move a chord voice freely (0.05 semitone) instead of a semitone a click */
     uint8_t lfo[4];              /* LFO shape (tri / square), combine (product / sum), link, delay modulation source (self / off / LFO) */
@@ -199,6 +202,9 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint16_t dsp;                /* this synth's own share of a block (permille, smoothed) */
     uint32_t per;                /* the last sane block period in cycles */
     uint8_t shed;                /* 0 full, 1 one delay line, 2 no delay, 3 muted: steps taken when the audio task nears its deadline */
+    uint16_t wn;                 /* the whole audio task, from cpu.c: its block count and load sum when last read, */
+    uint32_t wsum;
+    float wl, wpk;               /* ... its smoothed load (permille) and near misses lately */
 };
 #define GEV_MAX 1024
 struct gev {                     /* one recorded gesture: when (frames from the bar line), what (a control id, or 300 + voice for a plate, 400 + voice a chord pitch, 500 + stepped id, 600 + action; the layer in bits 11..12) and its value */
@@ -233,6 +239,7 @@ static struct pool *pool(void)
 
 static void fr_boot(void);
 static void gstep(struct pool *p, struct pg *g, int n);
+static void apply_sync(struct pg *g, struct slot *s);
 static void gdrop(struct pool *p, struct pg *g, int layer);
 float looper_bpm(void);
 int looper_grid_exact(float beats, float sph, int n);
@@ -806,22 +813,28 @@ unsigned lira_ui_sig(void)
     unsigned h = 0;
     if (!p)
         return 0;
-    for (int k = 0; k < 8; k++)
-        h = h << 1 | p->pg.want[k];
-    return h | (unsigned)p->pg.momentary << 8 | (unsigned)p->pg.sel << 9;
+    const struct pg *g = &p->pg;
+    if (g->gmode < 3 || g->gmode == 6)                   /* (while a loop plays, its plates and knobs are not redrawn: the loop's own gestures would repaint the page all the time; the LEDs show the plates) */
+        for (int k = 0; k < 8; k++)
+            h = h << 1 | g->want[k];
+    unsigned prog = g->gmode >= 2 && g->gmode != 6 && g->gtot > 1.0f ? (unsigned)(g->gt * 8.0f / g->gtot) : 0;
+    return h | (unsigned)g->momentary << 8 | (unsigned)g->sel << 9 | prog << 20 | (unsigned)g->gmode << 24 | (unsigned)g->off << 28 | (unsigned)g->pend << 29;
 }
 
 /* The load governor. How much of its block the audio task has used by the time this runs (the stock voices and effects) is the
    instantaneous version of the CPU meter (cpu.c keeps the wake-up's cycle count at 0x2405ffd4). The Blackbox switches itself off at
-   about 89 %, and the file and GUI tasks starve before that, so when the smoothed value passes 80 %, or blocks near 95 % keep coming,
-   this synth steps down: one delay line, no delay, then silence; a step back after ~2 s with room again. Returns the cycle count now. */
+   about 89 %, and the file and GUI tasks starve before that, so when the smoothed value passes 75 %, or blocks near 95 % keep coming,
+   this synth steps down: one delay line, no delay, then silence; a step back after ~2 s with room again. That value cannot see the stock
+   work after this synth, so the whole task's load of each block (cpu.c's running sum) counts too: smoothed over 80 %, blocks over 87 %
+   coming again, or one over 88 %. Returns the cycle count now. */
 /* A flight recorder in the backup SRAM (it survives a reset, maybe a power cut): this run's peaks, and the run before's, shown in the top bar
    so that a shut-down tells what it ran into. */
 struct fr {
     uint32_t magic;
     uint16_t c_pk, d_pk, free_min;       /* peak audio-task load and this synth's share (permille), least free SDRAM (KB) */
     uint8_t shed, pad;
-    uint32_t blocks;
+    uint16_t w_pk;                       /* worst block of the whole audio task (cpu.c's peak, permille): the part after this synth runs counts too */
+    uint16_t pad2;
 };
 #define FR_CUR  ((volatile struct fr *)0x38800bc0u)
 #define FR_PREV ((volatile struct fr *)0x38800bd0u)
@@ -836,7 +849,7 @@ static void fr_boot(void)
         o->d_pk = c->d_pk;
         o->free_min = c->free_min;
         o->shed = c->shed;
-        o->blocks = c->blocks;
+        o->w_pk = c->w_pk;
     } else {
         o->magic = 0;
     }
@@ -844,7 +857,7 @@ static void fr_boot(void)
     c->c_pk = c->d_pk = 0;
     c->free_min = 0xffff;
     c->shed = 0;
-    c->blocks = 0;
+    c->w_pk = 0;
 }
 
 int lira_ui_prev(int which)                              /* the run before: 0 load peak %, 1 synth share %, 2 least free KB, 3 deepest shed, 4 valid */
@@ -852,7 +865,7 @@ int lira_ui_prev(int which)                              /* the run before: 0 lo
     volatile struct fr *o = FR_PREV;
     if (o->magic != FR_MAGIC)
         return which == 4 ? 0 : -1;
-    return which == 0 ? (o->c_pk + 5) / 10 : which == 1 ? (o->d_pk + 5) / 10 : which == 2 ? o->free_min : which == 3 ? o->shed : 1;
+    return which == 0 ? (o->c_pk + 5) / 10 : which == 1 ? (o->d_pk + 5) / 10 : which == 2 ? o->free_min : which == 3 ? o->shed : which == 5 ? (o->w_pk + 5) / 10 : 1;
 }
 
 static uint32_t govern(struct pg *g)
@@ -869,7 +882,11 @@ static uint32_t govern(struct pg *g)
         volatile struct fr *fr = FR_CUR;
         if (fr->magic == FR_MAGIC) {
             unsigned fk = lira_free_kb();
-            fr->blocks++;
+            {
+                uint16_t w = *(volatile uint16_t *)0x2405ffe4u;
+                if (w < 4000u && w > fr->w_pk)
+                    fr->w_pk = w;
+            }
             if (fk < fr->free_min)
                 fr->free_min = (uint16_t)(fk > 65535u ? 65535u : fk);
             if (g->shed > fr->shed)
@@ -880,6 +897,20 @@ static uint32_t govern(struct pg *g)
     }
     if (period > 100000u && period < 100000000u)
         g->per = period;
+    float whole = -1.0f;
+    {   /* The whole audio task's load of the block before, from cpu.c's running sum (its "n" goes up by one a block and back to 0 each
+           second): unlike `used` below it counts the stock work that runs after this synth, which is what the 89 % switch-off sees. */
+        uint16_t wn = *(volatile uint16_t *)0x2405ffdcu;
+        uint32_t ws = *(volatile uint32_t *)0x2405ffd8u;
+        unsigned d = (uint16_t)(wn - g->wn);
+        if (*(volatile uint32_t *)0x2405ffd0u == 0x43505532u && d >= 1u && d <= 4u && ws >= g->wsum && ws - g->wsum <= 9990u * d) {
+            whole = (float)(ws - g->wsum) / (float)d;
+            g->wl += (whole - g->wl) * 0.1f;
+            g->wpk = g->wpk * 0.98f + (whole > 870.0f ? 1.0f : 0.0f);
+        }
+        g->wn = wn;
+        g->wsum = ws;
+    }
     uint32_t used = c0 - *(volatile uint32_t *)0x2405ffd4u;
     if (period > 100000u && period < 100000000u && used < 2u * period) {
         float inst = (float)used * 1000.0f / (float)period + (float)g->dsp;   /* (this runs before the synth: add its last share) */
@@ -889,10 +920,11 @@ static uint32_t govern(struct pg *g)
         volatile struct fr *fr = FR_CUR;
         if (fr->magic == FR_MAGIC && inst < 4000.0f && (uint16_t)inst > fr->c_pk)
             fr->c_pk = (uint16_t)inst;
-        if ((g->ld > 750.0f || g->pk > 1.5f || inst > 900.0f) && g->shed < 3 && since > (inst > 900.0f ? 3u : 16u)) {
+        int hot = inst > 900.0f || whole > 880.0f;
+        if ((g->ld > 750.0f || g->pk > 1.5f || g->wl > 800.0f || g->wpk > 1.5f || hot) && g->shed < 3 && since > (hot ? 3u : 16u)) {
             g->shed++;
             g->shed_blk = g->blk;
-        } else if (g->ld < 650.0f && g->pk < 0.5f && g->shed > 0 && since > 400) {
+        } else if (g->ld < 650.0f && g->pk < 0.5f && g->wl < 720.0f && g->wpk < 0.5f && g->shed > 0 && since > 400) {
             g->shed--;
             g->shed_blk = g->blk;
         }
@@ -924,6 +956,11 @@ void lira_page_run(float *l, float *r, int n)
     any |= g->ex[0] > 480 || g->ex[1] > 480;     /* Hold above 12 o'clock: the voices drone with no touch */
     for (int k = 0; k < 4; k++)
         any |= g->touch[k] == 2;                 /* Touch = Ext: the input opens the voices, so the engine has to keep running */
+    if (g->off) {                                /* switched off: nothing runs */
+        g->dsp = 0;
+        rec_zero(p, 0, n);
+        return;
+    }
     if (!g->init) {
         if (!any) {
             rec_zero(p, 0, n);
@@ -1005,29 +1042,8 @@ void lira_page_run(float *l, float *r, int n)
                 lira_param(&s->l, LIRA_PITCH1234 + k, (float)g->ex[2 + k] * (127.0f / 1000.0f));
             lira_param(&s->l, LIRA_MOD1 + k, (float)g->ex[4 + k] * (127.0f / 1000.0f));
         }
-        {   /* tempo sync: the Blackbox's clock (internal or external, whatever the looper follows) sets the LFOs and the delay times, and the LFOs' phase follows it */
-            static const float div_beats[12] = {0.0f, 16.0f, 8.0f, 4.0f, 2.0f, 1.5f, 1.0f, 0.75f, 0.5f, 0.375f, 0.25f, 0.16667f};
-            float bf = looper_beat_frames();
-            double clk = looper_clock_now();
-            uint8_t on = 0;
-            for (int k = 0; k < 4; k++) {
-                if (!g->sync[k] || g->sync[k] >= 12)
-                    continue;
-                float b = div_beats[g->sync[k]];
-                on |= (uint8_t)(1u << k);
-                if (k < 2) {
-                    double cyc = clk / (960.0 * (double)b);                 /* the sequencer's musical time: 960 ticks a beat */
-                    lira_lfo_sync(&s->l, k, (float)FS / (bf * b), clk >= 0.0 ? (float)(cyc - (double)(int)cyc) : -1.0f);
-                } else {
-                    lira_delay_sync(&s->l, k - 2, bf * b / (float)FS);
-                }
-            }
-            for (int k = 0; k < 4; k++)
-                if ((g->sync_on >> k & 1) && !(on >> k & 1))
-                    s->vals[14 + k] = -1;                     /* off again: the knob's value applies (ctls[14..17] = LFO A, LFO B, Time 1, Time 2) */
-            g->sync_on = on;
-        }
     }
+    apply_sync(g, s);
     const float *xl = 0, *xr = 0;
     int xn = 0;
     uint32_t eng = *(volatile uint32_t *)0x38800bf8u;
@@ -1079,7 +1095,36 @@ int lira_ui_load(int which)
     struct pool *p = pool();
     if (!p)
         return 0;
+    if (which == 3 || which == 4)                        /* the audio task's average / worst block of the last second: the numbers cpu.c shows (and the SAMPLR debug line) */
+        return (*(volatile uint16_t *)(which == 3 ? 0x2405ffe2u : 0x2405ffe4u) + 5) / 10;
     return which == 0 ? (p->pg.dsp + 5) / 10 : which == 1 ? (int)(p->pg.ld + 5.0f) / 10 : p->pg.shed;
+}
+
+/* Tempo sync: the Blackbox's clock (internal or external, whatever the looper follows) sets the LFOs' and delays' lengths, and the LFOs' phase
+   is locked to it every block: to the sequencer's musical time while a sequence runs (960 ticks a beat), else to the free-running bar grid
+   that the gesture recorder shares (never wrapped, so a cycle of any length stays in step). */
+static void apply_sync(struct pg *g, struct slot *s)
+{
+    static const float div_beats[12] = {0.0f, 16.0f, 8.0f, 4.0f, 2.0f, 1.5f, 1.0f, 0.75f, 0.5f, 0.375f, 0.25f, 0.16667f};
+    float bf = looper_beat_frames();
+    double clk = looper_clock_now();
+    uint8_t on = 0;
+    for (int k = 0; k < 4; k++) {
+        if (!g->sync[k] || g->sync[k] >= 12)
+            continue;
+        float b = div_beats[g->sync[k]];
+        on |= (uint8_t)(1u << k);
+        if (k < 2) {
+            double cyc = clk >= 0.0 ? clk / (960.0 * (double)b) : g->gridf / ((double)bf * (double)b);
+            lira_lfo_sync(&s->l, k, (float)FS / (bf * b), (float)(cyc - (double)(int)cyc));
+        } else {
+            lira_delay_sync(&s->l, k - 2, bf * b / (float)FS);
+        }
+    }
+    for (int k = 0; k < 4; k++)
+        if ((g->sync_on >> k & 1) && !(on >> k & 1))
+            s->vals[14 + k] = -1;                         /* off again: the knob's value applies (ctls[14..17] = LFO A, LFO B, Time 1, Time 2) */
+    g->sync_on = on;
 }
 
 /* A finger's drag on the page (state kept here: the cave has no .bss). op 0: set kind / idx / y0 / v0, 1: read kind, 2: idx,
@@ -1173,6 +1218,12 @@ int lira_ui_chord_get(int id)                              /* the index behind a
         return g->glayers;
     if (id == 165)
         return g->btn_on;
+    if (id == 194)
+        return g->off;
+    if (id == 167)
+        return g->pend;
+    if (id == 166)                                         /* the loop's position, 0..8 */
+        return g->gmode >= 2 && g->gmode != 6 && g->gtot > 1.0f ? (int)(g->gt * 8.0f / g->gtot) : 0;
     if (id >= 160 && id < 164)
         return g->lfo[id - 160];
     if (id == 157)
@@ -1282,6 +1333,11 @@ void lira_ui_action(int a)
             if (g->glayers < 3)
                 g->gmode = 4;                             /* another layer, from the loop start */
             break;
+        case 6:                                           /* paused: REC plays on */
+            g->gmode = 3;
+            g->gt = 0.0f;
+            g->gi = 0;
+            break;
         case 5:                                           /* cancel this layer */
             gdrop(pp, g, g->glayers);
             g->gmode = 3;
@@ -1304,12 +1360,31 @@ void lira_ui_action(int a)
                 g->gn = 0;
             }
         }
+    } else if (a == 15 || a == 16 || a == 17) {           /* STOP / PLAY of the loop (15 toggles, 16 stops, 17 plays): like SAMPLR's SYNC, they wait for the next bar line */
+        if (g->gmode >= 3) {
+            int eff = g->pend ? (g->pend == 16 ? 6 : 3) : (g->gmode == 6 ? 6 : 3);     /* where the loop will be: 6 stopped, 3 playing */
+            int want = a == 15 ? (eff == 6 ? 17 : 16) : a;
+            if (want == (eff == 6 ? 16 : 17)) {
+                ;                                             /* (already so) */
+            } else if (g->pend) {
+                g->pend = 0;                                  /* the opposite press takes the waiting one back */
+            } else {
+                g->pend = (uint8_t)want;
+            }
+        }
     } else if (a == 14) {                                 /* CLEAR */
         g->gmode = 0;
         g->gn = 0;
         g->glayers = 0;
     } else if (a == 8) {
         g->btn_on ^= 1;
+    } else if (a == 18) {                                 /* ENGINE on / off: off stops the synth, its tail and its modulation, and the next start is fresh */
+        g->off ^= 1;
+        if (g->off) {
+            g->init = 0;
+            g->tail = 0;
+            g->dsp = 0;
+        }
     } else {
         int cur = a == 0 ? g->chord_on : a == 3 ? g->just : a == 4 ? g->wave : a == 5 ? g->ext_src : a == 6 ? g->free_enc : a >= 10 && a < 14 ? g->lfo[a - 10] : -1;
         if (cur < 0)
@@ -1359,6 +1434,23 @@ static void gfire(struct pool *p, struct pg *g, uint32_t until)
 static void gstep(struct pool *p, struct pg *g, int n)
 {
     float bf = looper_beat_frames();
+    const int n0 = n;
+    if (g->pend) {                                        /* a STOP / PLAY waits for the bar line (at once without a clock) */
+        if (g->gmode < 3) {
+            g->pend = 0;
+        } else if ((looper_bpm() > 0.0f ? looper_grid_exact(4.0f, g->sph, n) : 0) >= 0) {
+            if (g->pend == 17 && g->gmode == 6) {
+                g->gmode = 3;
+                g->gt = 0.0f;
+                g->gi = 0;
+            } else if (g->pend == 16 && g->gmode != 6) {
+                if (g->gmode == 5)
+                    gdrop(p, g, g->glayers);
+                g->gmode = 6;
+            }
+            g->pend = 0;
+        }
+    }
     if (g->gmode == 1) {
         int off = looper_bpm() > 0.0f ? looper_grid_exact(4.0f, g->sph, n) : 0;
         if (off >= 0) {
@@ -1384,7 +1476,7 @@ static void gstep(struct pool *p, struct pg *g, int n)
             g->gi = 0;
             gfire(p, g, (uint32_t)g->gt);
         }
-    } else if (g->gmode >= 3) {
+    } else if (g->gmode >= 3 && g->gmode != 6) {
         float end = g->gt + (float)n, tot = g->gtot;
         gfire(p, g, (uint32_t)(end < tot ? end : tot));
         if (end >= tot) {
@@ -1392,6 +1484,9 @@ static void gstep(struct pool *p, struct pg *g, int n)
             g->gi = 0;
             if (g->gmode == 4) {
                 g->gmode = 5;
+                for (int k = 0; k < 8; k++)               /* plates held when the layer starts are part of it */
+                    if (g->want[k])
+                        grec(g, 300 + k, 1);
             } else if (g->gmode == 5) {
                 g->glayers++;
                 g->gmode = 3;
@@ -1401,7 +1496,8 @@ static void gstep(struct pool *p, struct pg *g, int n)
             g->gt = end;
         }
     }
-    g->sph += (float)n;
+    g->gridf += (double)n0;
+    g->sph += (float)n0;
     if (g->sph >= 16.0f * bf)
         g->sph -= 16.0f * bf;
 }

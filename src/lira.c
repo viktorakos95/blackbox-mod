@@ -42,11 +42,16 @@
 #define ADM_MIN       0.0006f    /* (assumed) adaptive delta codec step limits */
 #define ADM_MAX       0.25f
 
-/* (min / max are one instruction each on this FPU, vminnm / vmaxnm; the compare-and-select versions were branches) */
+#ifdef __ARM_FP                  /* VABS, VMINNM, VMAXNM: no compare, no branch to mispredict (same results for numbers) */
 static inline float fabs_(float x) { return __builtin_fabsf(x); }
 static inline float fmin_(float a, float b) { return __builtin_fminf(a, b); }
 static inline float fmax_(float a, float b) { return __builtin_fmaxf(a, b); }
-static inline float clip_(float x, float lo, float hi) { return __builtin_fminf(__builtin_fmaxf(x, lo), hi); }
+#else
+static inline float fabs_(float x) { return x < 0.f ? -x : x; }
+static inline float fmin_(float a, float b) { return a < b ? a : b; }
+static inline float fmax_(float a, float b) { return a > b ? a : b; }
+#endif
+static inline float clip_(float x, float lo, float hi) { return fmin_(fmax_(x, lo), hi); }
 static inline float floor_(float x) { int i = (int)x; return (float)(i - ((float)i > x)); }
 
 static float fexp2(float x)    /* 2^x, relative error < 3e-9 (envelopes apply it every 0.4 ms: it must be accurate near 0) */
@@ -160,6 +165,8 @@ static void gen_setup(lira_t *l, lira_gen *g)
     g->kt = 0.69314718f * (flog2((1.f - g->vn) / (1.f - g->vp)) + flog2(g->vp / g->vn));
     g->lr = 1.f / flog2((1.f - g->vn) / (1.f - g->vp));
     g->lf = 1.f / flog2(g->vp / g->vn);
+    g->lrt = g->lr * 1.44269504f;
+    g->lft = g->lf * 1.44269504f;
     g->linp = 0.f;
     g->mid = 0.5f * (g->vp + g->vn);
     g->inv_half = 2.f / (g->vp - g->vn);
@@ -171,6 +178,7 @@ static void gen_setup(lira_t *l, lira_gen *g)
     g->leak = LEAK_BASE * urand(l, 0.6f, 1.6f);
     g->vib_depth = urand(l, 0.0035f, 0.0065f);
     g->vib_ph = urand(l, 0.f, 1.f);
+    g->u = clip_(g->s ? flog2((1.f - g->vn) / fmax_(1.f - g->v, 1e-4f)) * g->lr : flog2(g->vp / fmax_(g->v, 1e-4f)) * g->lf, 0.f, 1.f);
 }
 
 /* Frequency modulation follows the plugin: f * (1 + mod), the oscillator stalls when that goes below zero. (The hardware
@@ -181,11 +189,9 @@ static const float VIB_HZ[8] = {6.47f, 5.89f, 5.40f, 4.98f, 4.62f, 4.52f, 3.81f,
 
 /* One sample of the oscillator. f = frequency, cpl = supply coupling from the neighbours (rail units). Returns the
    square and triangle one sample late (PolyBLEP corrects the sample before and after each edge). */
-static inline void gen_tick(lira_gen *g, float f, float cpl, float isr, int lin, float *tri, float *sq)
+static inline void gen_tick(lira_gen *g, float x, float cpl, int lin, float *tri, float *sq)
 {
-    float x = f * g->kt * isr;
-    if (x > 0.5f)
-        x = 0.5f;
+    x = clip_(x, 0.f, 0.5f);                                       /* x: f * kt / sr, the time step in units of RC */
     float a = x * (1.f - x * 0.5f * (1.f - x * (1.f / 3.f)));     /* 1 - exp(-x) */
     float v0 = g->v, v = v0 + ((g->s ? 1.f : 0.f) + cpl - v0) * a;
     float emit_sq = g->sqp, emit_tri = lin ? g->linp : g->trip, d = 0.f, h = 0.f, thr = 0.f;
@@ -213,14 +219,26 @@ static inline void gen_tick(lira_gen *g, float f, float cpl, float isr, int lin,
         cur -= 0.5f * h * (1.f - d) * (1.f - d);
     }
     g->sqp = cur;
-    g->trip = (v - g->mid) * g->inv_half;
-    if (lin) {                  /* the triangle linear in time: undo the capacitor's exponential (charging: 1 - (1 - vn) e^-t, discharging: vp e^-t) */
-        float u = g->s ? flog2((1.f - g->vn) / fmax_(1.f - v, 1e-4f)) * g->lr : flog2(g->vp / fmax_(v, 1e-4f)) * g->lf;
-        u = clip_(u, 0.f, 1.f);
+    if (lin) {  /* the triangle linear in time (for the sine): the capacitor's time t = ln((1 - vn) / (1 - v)) charging, ln(vp / v) discharging, runs by x a sample
+                   whatever the frequency does (FM included), so the fraction of the half period just goes up by x / (the half's ln ratio): no logarithm, no division */
+        float u = h != 0.f ? d * x * (g->s ? g->lrt : g->lft) : g->u + x * (g->s ? g->lrt : g->lft);
+        u = fmin_(u, 1.f);
+        g->u = u;
         g->linp = g->s ? 2.f * u - 1.f : 1.f - 2.f * u;
-    }
+    } else      /* (only the waveform in use is kept: gen_sync brings the other one back when WAVE changes) */
+        g->trip = (v - g->mid) * g->inv_half;
     *sq = emit_sq;
     *tri = emit_tri;
+}
+
+/* WAVE changed: the triangle now in use, from the capacitor (lin: how far through the half period, as gen_setup) */
+static void gen_sync(lira_gen *g, int lin)
+{
+    if (lin) {
+        g->u = clip_(g->s ? flog2((1.f - g->vn) / fmax_(1.f - g->v, 1e-4f)) * g->lr : flog2(g->vp / fmax_(g->v, 1e-4f)) * g->lf, 0.f, 1.f);
+        g->linp = g->s ? 2.f * g->u - 1.f : 1.f - 2.f * g->u;
+    } else
+        g->trip = (g->v - g->mid) * g->inv_half;
 }
 
 /* sin(pi/2 x) for -1 <= x <= 1 from the oscillator's triangle: an odd polynomial, error 1.6e-4 (-76 dB), so the sine's own
@@ -475,7 +493,7 @@ static inline float line_run(lira_line *ln, float in, float mv, float k_ratio, f
     return y;
 }
 
-__attribute__((optimize("O2"))) void lira_process(lira_t *l, float *out, int n)
+void lira_process(lira_t *l, float *out, int n)
 {
     const float sr = l->sr, isr = 1.f / sr;
     const float hp3c = 1.f - 3.f * TWO_PI * isr, hp1c = 1.f - 1.f * TWO_PI * isr;
@@ -503,6 +521,17 @@ __attribute__((optimize("O2"))) void lira_process(lira_t *l, float *out, int n)
     }
 
     const int sine = l->params[LIRA_WAVE] > 0.5f;
+    if (sine != l->wave_on) {
+        for (int o = 0; o < 8; o++)
+            gen_sync(&l->v[o >> 1].g[o & 1], sine);
+        l->wave_on = sine;
+    }
+    /* what every sample reads and writes, in locals for the block (the compiler cannot keep struct members in registers across the delay's stores) */
+    float bus[4], sqv[8], tfb_s = l->total_fb, fol = l->fol;
+    for (int v = 0; v < 4; v++)
+        bus[v] = l->bus[v];
+    for (int o = 0; o < 8; o++)
+        sqv[o] = l->sq[o];
     const int nlines = l->shed >= 2 ? 0 : l->shed == 1 ? 1 : 2;
     int ei = 0;
     const int have_ext = l->ext_l && l->ext_r && l->ext_n > 0;
@@ -529,16 +558,19 @@ __attribute__((optimize("O2"))) void lira_process(lira_t *l, float *out, int n)
         rstep(&l->hold[0], m);
         rstep(&l->hold[1], m);
         rstep(&l->vibsw, m);
-        const float fx = l->fol * 14.f;                       /* the external input's level, for Touch = Follow: compressed so quiet
+        const float fx = fol * 14.f;                       /* the external input's level, for Touch = Follow: compressed so quiet
                                                          hits still open the envelope (gain is ve squared, so it must reach 1) */
         const float fd = clip_(1.25f * fx / (fx + 1.f), 0.f, 1.f);
-        float vmod[4], vsh[4], vf[8], vgain[8], vleak[8], vtrim[8], vlvl[8];
+        float vmod[4], vat[4], vas[4], vf[8], vx[8], vga[8], vgb[8], vbl[8], vlvl[8];
+        uint8_t vact[8];
         for (int v = 0; v < 4; v++) {
             lira_voice *vo = &l->v[v];
             rstep(&vo->mod, m);
             rstep(&vo->sharp, m);
             vmod[v] = vo->mod.cur;
-            vsh[v] = vo->sharp.cur;
+            const float sh = vo->sharp.cur;
+            vat[v] = TRI_AMP * (1.f - sh);                    /* the wave: triangle <-> square */
+            vas[v] = SQ_AMP * sh;
             float h = l->hold[v >> 1].cur, h0 = vo->fast ? HOLD_FAST : HOLD_SLOW;
             float gh = clip_((h - h0) / (1.f - h0), 0.f, 1.f);
             gh *= gh;
@@ -559,14 +591,36 @@ __attribute__((optimize("O2"))) void lira_process(lira_t *l, float *out, int n)
                     gn->ve *= expm_small(dt / (vo->fast ? gn->t_fast : gn->t_slow));   /* gain = ve^2 */
                 float f0 = gn->tune.cur;
                 vf[o] = f0 * (1.f + vib + ENV_PITCH * (1.f - gn->ve));
-                vgain[o] = fmin_(gn->ve * gn->ve + gh, 1.f);
+                vx[o] = vf[o] * gn->kt * isr;            /* the oscillator's time step, before FM */
+                const float ga = fmin_(gn->ve * gn->ve + gh, 1.f);
+                vact[o] = ga > 2e-4f || gn->drive > 0.f;   /* a closed oscillator (-74 dB and no touch) is not run: its bleed is far below the delay's own noise, and a voice at rest costs nothing */
                 if (((l->cb + o) & 7) == 0) {            /* slow function of pitch: one oscillator per block, every 8th */
                     gn->leak_f = gn->leak * fexp2(0.5f * flog2(fmax_(f0, 1.f) * 0.001f));
                 }
-                vleak[o] = gn->leak_f;
-                vtrim[o] = gn->trim;
+                /* the envelope's transistor: gain, plus a bend that grows as it closes (waveshaper), the bleed, the trim:
+                   (wave * ga + WSHAPE (1 - ga) ga wave^2 + wave * leak) * trim = wave * (vga + vgb * wave) */
+                vga[o] = (ga + gn->leak_f) * gn->trim;
+                vgb[o] = WSHAPE * (1.f - ga) * ga * gn->trim;
+                vbl[o] = vat[v] * gn->leak_f * gn->trim;     /* a closed oscillator: its bleed only */
                 vlvl[o] = gn->lvl.cur;
             }
+        }
+
+        /* FM: each pair's modulation as weights on the four voice buses, the master output and the inputs (the Pd patch's 0.001
+           cross-fade floors kept), depth folded in */
+        float wb[4][4], wtf[4], wtc[4], wx[4];
+        for (int v = 0; v < 4; v++) {
+            for (int j = 0; j < 4; j++)
+                wb[v][j] = 0.f;
+            wb[v][busa[v]] += g0[v] * gsa;
+            wb[v][busb[v]] += g0[v] * gsb;
+            if (sidx[v] >= 0)
+                wb[v][sidx[v]] += 1.f;
+            for (int j = 0; j < 4; j++)
+                wb[v][j] *= vmod[v];
+            wtf[v] = g2[v] * gfb * vmod[v];
+            wtc[v] = g2[v] * lfo_fm * vmod[v];
+            wx[v] = g3[v] * vmod[v];
         }
 
         rstep(&l->fbline, m);
@@ -591,27 +645,54 @@ __attribute__((optimize("O2"))) void lira_process(lira_t *l, float *out, int n)
         for (int s = 0; s < m; s++) {
             float mix = 0.f, busn[4];
             ext = have_ext && ei < l->ext_n ? 0.5f * (l->ext_l[ei] + l->ext_r[ei]) : 0.f;
-            l->fol += (fabs_(ext) - l->fol) * (fabs_(ext) > l->fol ? ka : kr);
+            fol += (fabs_(ext) - fol) * (fabs_(ext) > fol ? ka : kr);
+#pragma GCC unroll 4
             for (int v = 0; v < 4; v++) {
                 lira_voice *vo = &l->v[v];
-                float msrc = g0[v] * (l->bus[busa[v]] * gsa + l->bus[busb[v]] * gsb) +
-                             g2[v] * (l->total_fb * gfb + lfo_fm) + g3[v] * ext +
-                             (sidx[v] >= 0 ? l->bus[sidx[v]] : 0.f);
-                float mv = msrc * vmod[v], sh = vsh[v], y = 0.f, yb = 0.f;
+                if (!(vact[2 * v] | vact[2 * v + 1])) {          /* both oscillators closed: only their bleed is left */
+                    float yb = 0.f, y = 0.f;
+                    for (int k = 0; k < 2; k++) {
+                        int o = 2 * v + k;
+                        lira_gen *gn = &vo->g[k];
+                        gn->bph += vf[o] * isr;
+                        if (gn->bph >= 1.f)
+                            gn->bph -= 1.f;
+                        float tri = fabs_(gn->bph - 0.5f) * 4.f - 1.f;     /* (a triangle at the oscillator's pitch is enough for a signal at -66 dB) */
+                        if (sine)
+                            tri = sinsh(tri);
+                        float tr = vbl[o] * tri;
+                        y += tr * vlvl[o];
+                        yb += tr;
+                    }
+                    mix += y;
+                    busn[v] = hip(&vo->hp, yb, hp3c);
+                    continue;
+                }
+                float mv = wb[v][0] * bus[0] + wb[v][1] * bus[1] + wb[v][2] * bus[2] + wb[v][3] * bus[3] + wtf[v] * tfb_s + wtc[v] +
+                           wx[v] * ext, y = 0.f, yb = 0.f;
                 for (int k = 0; k < 2; k++) {
                     int o = 2 * v + k;
                     lira_gen *gn = &vo->g[k];
+                    if (!vact[o]) {                       /* a closed oscillator beside an open one: the same stand-in */
+                        gn->bph += vf[o] * isr;
+                        if (gn->bph >= 1.f)
+                            gn->bph -= 1.f;
+                        float tb = fabs_(gn->bph - 0.5f) * 4.f - 1.f;
+                        if (sine)
+                            tb = sinsh(tb);
+                        float tr = vbl[o] * tb;
+                        y += tr * vlvl[o];
+                        yb += tr;
+                        continue;
+                    }
                     float tri, sq;
-                    float cpl = COUPLE * 0.5f * (l->sq[(o + 1) & 7] + l->sq[(o + 7) & 7]);
-                    gen_tick(gn, fmax_(vf[o] * (1.f + mv), 0.f), cpl, isr, sine, &tri, &sq);
-                    l->sq[o] = gn->s ? 1.f : -1.f;
+                    float cpl = COUPLE * 0.5f * (sqv[(o + 1) & 7] + sqv[(o + 7) & 7]);
+                    gen_tick(gn, vx[o] * (1.f + mv), cpl, sine, &tri, &sq);
+                    sqv[o] = gn->s ? 1.f : -1.f;
                     if (sine)
                         tri = sinsh(tri);
-                    float wave = TRI_AMP * (1.f - sh) * tri + SQ_AMP * sh * sq;
-                    float ga = vgain[o];
-                    /* the envelope's transistor: gain, plus a bend that grows as it closes (waveshaper) */
-                    float cv = wave * ga + WSHAPE * (1.f - ga) * ga * wave * wave;
-                    float tr = (cv + wave * vleak[o]) * vtrim[o];
+                    float wave = vat[v] * tri + vas[v] * sq;
+                    float tr = wave * (vga[o] + vgb[o] * wave);
                     y += tr * vlvl[o];                    /* what is heard: the voice's level fader */
                     yb += tr;                             /* what the other voices hear (FM): the voice itself, so a quiet voice can still be a modulator */
                 }
@@ -619,7 +700,7 @@ __attribute__((optimize("O2"))) void lira_process(lira_t *l, float *out, int n)
                 busn[v] = hip(&vo->hp, yb, hp3c);
             }
             for (int v = 0; v < 4; v++)
-                l->bus[v] = busn[v];
+                bus[v] = busn[v];
 
             /* dual PT2399 delay with one shared feedback loop */
             float u = mix * 0.166667f;
@@ -632,8 +713,9 @@ __attribute__((optimize("O2"))) void lira_process(lira_t *l, float *out, int n)
                 wet += line_run(ln, lin, mv, k_ratio[i], d0[i], depth[i], dc);
             }
             wet *= nlines == 2 ? 0.5f : nlines == 1 ? 0.7f : 0.f;
-            lop(&l->loop_lp, ptanh(wet), lp3k);               /* op-amp / PT2399 overload and the loop's filter */
-            float dly = nlines ? u + dm * (ptanh(wet) - u) : u;
+            const float pw = ptanh(wet);
+            lop(&l->loop_lp, pw, lp3k);                       /* op-amp / PT2399 overload and the loop's filter */
+            float dly = nlines ? u + dm * (pw - u) : u;
 
             /* master: drive -> tanh (+ positive spike) -> mix with dry -> tanh -> tilt -> volume */
             float t = ptanh(hip(&l->hp1, dly * g, hp20c)), pw31 = 0.f;
@@ -643,11 +725,17 @@ __attribute__((optimize("O2"))) void lira_process(lira_t *l, float *out, int n)
             }
             float dist = hip(&l->hp2, t + pw31 * 0.25f, hp10c) * ig;
             float yv = ptanh(dly * (1.f - dstm) + (dly * 0.1f + dist) * dstm);
-            l->total_fb = hip(&l->hp3, yv, hp3c);
+            tfb_s = hip(&l->hp3, yv, hp3c);
             /* bass lifted a little, highs softer (manual) */
             float yt = ptanh(lop(&l->hf, yv + 0.41f * lop(&l->lf, yv, lp150), lp9k));
             *out++ = yt * vol;
         }
         n -= m;
     }
+    for (int v = 0; v < 4; v++)
+        l->bus[v] = bus[v];
+    for (int o = 0; o < 8; o++)
+        l->sq[o] = sqv[o];
+    l->total_fb = tfb_s;
+    l->fol = fol;
 }

@@ -106,6 +106,43 @@ for _ in range(900):
     block(0.5)
 check("... and all the way back to full quality", shed() == 0 and block(0.5) > 0.001, str(shed()))
 
+# the whole audio task (cpu.c's running block count and load sum): work after the synth that the mid-task value cannot see
+CPU = 0x2405FFD0
+e.uc.mem_write(CPU, struct.pack("<IIIHH", 0x43505532, 0, 0, 0, 0))
+wsum = [0, 0]
+
+
+def block_w(mid, whole):
+    wsum[0] = (wsum[0] + 1) % 188
+    wsum[1] = 0 if wsum[0] == 0 else wsum[1] + int(1000 * whole)
+    e.uc.mem_write(CPU + 8, struct.pack("<IH", wsum[1], wsum[0]))
+    return block(mid)
+
+
+for _ in range(300):
+    block_w(0.5, 0.7)
+check("whole task at 70 %, 50 % by the time the synth runs: no step", shed() == 0, str(shed()))
+seen = []
+for i in range(200):
+    block_w(0.5, 0.84)
+    if not seen or seen[-1] != shed():
+        seen.append(shed())
+check("whole task at 84 % (50 % before the synth): it steps down all the same", seen[-1] >= 2 and seen == sorted(seen), str(seen))
+for _ in range(500):
+    block_w(0.5, 0.75)
+check("whole task at 75 %: no step back (hysteresis)", shed() == seen[-1], str(shed()))
+for _ in range(2000):
+    block_w(0.5, 0.6)
+check("whole task at 60 %: back to full quality", shed() == 0, str(shed()))
+for _ in range(3):
+    block_w(0.5, 0.92)
+for _ in range(5):
+    block_w(0.5, 0.7)
+check("three blocks over 88 %: a step within a few blocks", shed() >= 1, str(shed()))
+for _ in range(1500):
+    block_w(0.5, 0.6)
+e.uc.mem_write(CPU, bytes(4))                                   # (the rest runs without the meter, as before)
+
 # ---- things the page does around the engine ----
 def rv(name, *args):
     e.call(name, *args)
@@ -178,11 +215,59 @@ for _ in range(400):
     if rv("lira_ui_chord_get", 158) == 3:
         break
 check("... and then it is a second layer (3 gestures)", rv("lira_ui_chord_get", 158) == 3 and rv("lira_ui_chord_get", 149) == 2 and rv("lira_ui_chord_get", 159) == 3, (rv("lira_ui_chord_get", 158), rv("lira_ui_chord_get", 149), rv("lira_ui_chord_get", 159)))
+# STOP / PLAY of the loop, and no repaint storm while it plays
+sig_loop = rv("lira_ui_sig")
+e.call("lira_ui_key", 5, 1)
+check("while a loop plays, a plate changing does not change the repaint signature", rv("lira_ui_sig") == sig_loop, (sig_loop, rv("lira_ui_sig")))
+e.call("lira_ui_key", 5, 0)
+e.call("lira_ui_set", 120, 700)
+e.call("lira_ui_action", 15)
+block(0.3)
+check("STOP pauses the loop (at the bar line; with no clock the next block)", rv("lira_ui_chord_get", 158) == 6, rv("lira_ui_chord_get", 158))
+for _ in range(400):
+    block(0.3)
+check("... and a paused loop replays nothing", rv("lira_ui_get", 120) == 700, rv("lira_ui_get", 120))
+e.call("lira_ui_action", 15)
+block(0.3)
+check("PLAY starts it again from the top", rv("lira_ui_chord_get", 158) == 3)
+e.call("lira_ui_action", 17)
+block(0.3)
+check("the PLAY button does nothing to a loop that is playing", rv("lira_ui_chord_get", 158) == 3)
+e.call("lira_ui_action", 16)
+block(0.3)
+check("the STOP button pauses it", rv("lira_ui_chord_get", 158) == 6)
+e.call("lira_ui_action", 16)
+block(0.3)
+check("... STOP again changes nothing", rv("lira_ui_chord_get", 158) == 6)
+e.call("lira_ui_action", 17)
+block(0.3)
+check("... PLAY starts it", rv("lira_ui_chord_get", 158) == 3)
+gn0 = rv("lira_ui_chord_get", 159)
+e.call("lira_ui_key", 3, 1)
+e.call("lira_ui_action", 7)
+for _ in range(3000):
+    block(0.3)
+    if rv("lira_ui_chord_get", 158) == 5:
+        break
+check("a plate held when an overdub layer starts is recorded into it", rv("lira_ui_chord_get", 158) == 5 and rv("lira_ui_chord_get", 159) > gn0, (rv("lira_ui_chord_get", 158), gn0, rv("lira_ui_chord_get", 159)))
+e.call("lira_ui_key", 3, 0)
+e.call("lira_ui_action", 7)
 e.call("lira_ui_action", 9)
 check("UNDO drops the last layer", rv("lira_ui_chord_get", 149) == 1 and rv("lira_ui_chord_get", 159) == 2, (rv("lira_ui_chord_get", 149), rv("lira_ui_chord_get", 159)))
 e.call("lira_ui_action", 14)
 check("CLEAR empties it", rv("lira_ui_chord_get", 158) == 0 and rv("lira_ui_chord_get", 159) == 0)
+e.call("lira_ui_action", 18)
+check("ENGINE off is on record", rv("lira_ui_chord_get", 194) == 1)
+for _ in range(20):
+    r_off = block(0.3)
+check("... the synth does not run: silence and no share of the audio task", r_off == 0.0 and rv("lira_ui_load", 0) == 0, (r_off, rv("lira_ui_load", 0)))
+e.call("lira_ui_action", 18)
+check("ENGINE on again", rv("lira_ui_chord_get", 194) == 0)
+e.uc.mem_write(0x2405FFE2, struct.pack("<HH", 523, 871))
+check("the CPU readouts are cpu.c's average and worst block", (rv("lira_ui_load", 3), rv("lira_ui_load", 4)) == (52, 87), (rv("lira_ui_load", 3), rv("lira_ui_load", 4)))
 check("the flight recorder in backup SRAM holds this run's peaks", e.r32(0x38800BC0) == 0x46524331 and e.r16(0x38800BC4) >= 840, str((hex(e.r32(0x38800BC0)), e.r16(0x38800BC4))))
+e.uc.mem_write(0x2405FFE4, struct.pack("<H", 953))
+block(0.3)
 e.call("lira_ui_prev", 4)
 check("... no run before it yet", e.uc.reg_read(UC_ARM_REG_R0) == 0)
 e.call("interp_register", 0x24060000, 0xF1, 0, 0, 2, 0)                  # the next boot
@@ -190,6 +275,9 @@ e.call("lira_ui_prev", 4)
 ok = e.uc.reg_read(UC_ARM_REG_R0)
 e.call("lira_ui_prev", 0)
 peak = e.uc.reg_read(UC_ARM_REG_R0)
+e.call("lira_ui_prev", 5)
+w = e.uc.reg_read(UC_ARM_REG_R0)
+check("... and the whole audio task's worst block (cpu.c)", w == 95, w)
 check("the next boot keeps them as the run before (peak load %)", ok == 1 and 84 <= peak <= 99, "valid %d peak %d" % (ok, peak))
 print("failures:", fails)
 raise SystemExit(1 if fails else 0)

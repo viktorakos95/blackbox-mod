@@ -409,3 +409,6 @@ takes three overdub layers.
 - DRONE-8 (lira.c): the same min / max helpers as builtins and lira_process at -O2: bit-identical (1, 3, 8 keys), but only 398k -> 395k per 256 frames. Its cost is the
   model itself (8 oscillators always run: the silent ones still drive the FM buses and the supply coupling), about 1500 instructions a frame. `tools/prof_lira.py`.
 - MAX screen: R = the worst block of the rest of the task after the looper stage (stock output, the master compressor, interrupts), from cpu.c's wait hook (`samplr_block_done`).
+- Merged after build 41: the DRONE-8 branch's 3.1.AA (engine ~30 % fewer instructions, per-sample state in locals, the same VMINNM / VMAXNM helpers; its governor also reads
+  the whole task's load from cpu.c and steps down over 80 % / blocks over 87-88 %). lira.c is theirs as is (their file-wide -O2 pragma keeps loop patterns from becoming libc
+  calls; the per-function -O2 of build 41 was dropped), `tools/prof_lira.py` is theirs. Order under load: SAMPLR and the looper's extras from 70 %, then DRONE-8 from 80 %.
