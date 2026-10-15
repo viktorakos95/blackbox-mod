@@ -267,7 +267,7 @@ def never(name, *a):
     uc.reg_write(UC_ARM_REG_LR, RET | 1)
     from unicorn.arm_const import UC_ARM_REG_R0 as R0
     t = {"cyc": 0}
-    uc.emu_start(b[name] | 1, RET, count=200_000)
+    uc.emu_start(b[name] | 1, RET, count=5_000_000)
     return uc.reg_read(R0)
 DWT = 0xE0001004
 cyc = {"v": 0}
@@ -332,7 +332,7 @@ check("... again only the FatFs window ever reached the card driver", all(t[3] =
 check("... and the temporary file is really gone", gui("bb_sd_stat", path("/BBSD.TMP"), ent) == 4)
 tile(3)
 rows = screen()
-check("B4: counters page: requests counted, the one deliberate timeout of the test above, its 10 s wait as the worst wait, the streamer gap lines present", rows[0].startswith("REQ") and rows[0].endswith("TMO  1") and rows[1].startswith("STREAMER GAP MS") and rows[2].startswith("GAPS OVER 100MS") and "10015" in rows[3], rows)
+check("B4: counters page: requests counted, the one deliberate timeout of the test above, its 30 s wait as the worst wait, the streamer gap lines present", rows[0].startswith("REQ") and rows[0].endswith("TMO  1") and rows[1].startswith("STREAMER GAP MS") and rows[2].startswith("GAPS OVER 100MS") and "30015" in rows[3], rows)
 tile(3)
 # a failing card: write errors reach the screen
 

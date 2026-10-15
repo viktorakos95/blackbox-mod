@@ -18,7 +18,7 @@ enum { SD_ATTR_DIR = 0x10 };
 #define SD_FILES 4
 #define SD_DIRS  2
 #define SD_NAME_MAX 256
-#define SD_TIMEOUT_MS 10000u
+#define SD_TIMEOUT_MS 30000u
 
 struct BbDirEnt {
     uint64_t size;

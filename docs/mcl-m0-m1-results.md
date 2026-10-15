@@ -365,3 +365,11 @@ the picture makes the UI task redraw the whole page (a few hundred box calls). T
 continuously. Fix: `bb_ui_sig` renders at most every 150 ms (an input event refreshes at once), `bb_ui_refresh()` for the tests; the SD test result lines were rearranged so they no longer overwrite each other.
 Design note for M8: the redraw check runs in the audio task, so it must only compare a frame counter; MCL's own drawing must run in the UI task (the page's paint) or its own context, never in that check.
 Also noted: the stock tasks are defaultTask (UI) and pcmStreamer at the same CMSIS priority (Normal) and audioTask at Realtime, so the streamer's busy loop and the UI task share the CPU in time slices.
+
+### M7 result, second run (user, SD test v3)
+- 12,035 requests, 0 timeouts; B2 / B3 read and write checks passed again (write 128 KB in 460 ms, read back 260 ms, verify OK, deleted). B1 and B4 are instant; B2 and B3 take as long as the work they do (not a screen problem).
+- **Streamer loop gap: 5323 ms, twice over 100 ms.** The stock streamer task is sometimes busy inside its own work (loading a project or samples) for seconds: a request posted then waits that long (the earlier 1872 ms wait was this).
+  When the streamer is idle the worst wait was 20 ms. MCL's file operations are user-initiated, so this is acceptable; the wait limit is now 30 s.
+- **Bug found by the test while raising the limit:** the wait loop measured elapsed time as a 32-bit cycle-counter difference, which wraps after 10.7 s at 399 MHz, so a limit above that could never fire. Elapsed time is now accumulated in 64 bits.
+- Display fix: the last counters line ran off the screen (`CALL US` had no room for its number).
+- M7 is done on the unit: MCL's SD layer reads and writes the real card through the stock FatFs without disturbing playback. M9 will still soak it (long runs, power-pull on a scratch card).

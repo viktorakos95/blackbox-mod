@@ -208,10 +208,11 @@ static void render(void)
         number(c, 1, (int32_t)bb_sd_stat_get(4), 5);
         c = text(0, 2, "GAPS OVER 100MS ");
         number(c, 2, (int32_t)bb_sd_stat_get(5), 5);
-        c = text(0, 3, "WAIT MS ");
+        c = text(0, 3, "W ");
         c = number(c, 3, (int32_t)bb_sd_stat_get(2), 5);
-        c = text(c, 3, " CALL US");
-        number(c, 3, (int32_t)bb_sd_stat_get(3) % 100000u, 6);
+        c = text(c, 3, "ms C");
+        c = number(c, 3, (int32_t)(bb_sd_stat_get(3) % 100000u), 5);
+        text(c, 3, "us");
     }
     return;
 #endif

@@ -205,18 +205,22 @@ static uint32_t submit(void)
         return SD_NOT_READY;
     stock(Q_RECEIVE, sem, 0, 0, 0);                              /* an unclaimed give from an abandoned request must not wake us early */
     st_requests++;
-    uint32_t t0 = DWT_CYCCNT;
+    uint32_t last = DWT_CYCCNT;
+    uint64_t cyc = 0;                                            /* elapsed cycles, accumulated: the counter is 32 bits and wraps after 10.7 s */
+    const uint32_t cps = (SYST_RVR + 1u) * 1000u;
     barrier();
     req.state = ST_POSTED;
-    uint32_t done = 0;
-    while (!done) {
-        if (req.state == ST_DONE)
-            break;
-        if ((uint32_t)((uint64_t)(DWT_CYCCNT - t0) * 1000u / ((SYST_RVR + 1u) * 1000u)) >= SD_TIMEOUT_MS)
+    while (req.state != ST_DONE) {
+        uint32_t now = DWT_CYCCNT;
+        cyc += now - last;
+        last = now;
+        if (cyc * 1000u / cps >= SD_TIMEOUT_MS)
             break;
         stock(Q_RECEIVE, sem, 0, 50, 0);                         /* sleeps until the streamer gives the semaphore, at most 50 ms (a lost wake-up costs that) */
     }
-    uint32_t ms = (uint32_t)((uint64_t)(DWT_CYCCNT - t0) * 1000u / ((SYST_RVR + 1u) * 1000u));
+    uint32_t now = DWT_CYCCNT;
+    cyc += now - last;
+    uint32_t ms = (uint32_t)(cyc * 1000u / cps);
     if (ms > st_wait_ms)
         st_wait_ms = ms;
     if (req.state != ST_DONE) {
