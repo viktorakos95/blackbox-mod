@@ -1183,6 +1183,11 @@ static void draw_sm_top(struct sm *s, const char *info)
             *q++ = lab[i];
             q = put_uint(q, (v[i] + 5u) / 10u);
         }
+        if (s->sc->prof == 2) {                                   /* R: the rest of the block after the looper stage (stock output, master compressor, interrupts) */
+            *q++ = ' ';
+            *q++ = 'R';
+            q = put_uint(q, (s->sc->shxr + 5u) / 10u);
+        }
     } else if (s->sc->prof) {                                     /* the next tap: inside SAMPLR (voices, grains, reading + interpolating inside both, mix + strips) */
         static const char lab[4] = {'R', 'G', 'B', 'M'};
         const uint16_t v4[4] = {s->sc->shr, s->sc->shg, s->sc->shb, s->sc->shm};

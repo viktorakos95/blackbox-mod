@@ -373,7 +373,7 @@ static float exp2_fast(float x)
 
 static inline int16_t sat16(float x)
 {
-    return (int16_t)(int)(x > 32767.f ? 32767.f : x < -32767.f ? -32767.f : x);
+    return (int16_t)(int)__builtin_fminf(__builtin_fmaxf(x, -32767.f), 32767.f);
 }
 
 static inline int opt_i(int o)
@@ -834,7 +834,7 @@ static float tan_approx(float x)
 static inline float soft(float x, float inv_t, float t)
 {
     float u = x * inv_t;
-    u = u > 1.5f ? 1.5f : u < -1.5f ? -1.5f : u;
+    u = __builtin_fminf(__builtin_fmaxf(u, -1.5f), 1.5f);       /* (one instruction each on this FPU; the ternaries were branches) */
     return t * u * (1.f - 0.148148f * u * u);
 }
 
@@ -1133,6 +1133,8 @@ struct mrs {
     float gw[2];                                  /* the grains' window now (it steps every 8 frames) */
     uint32_t gh[2];                               /* the half buffer each grain reads from, and where it is */
     int16_t *gb[2];
+    uint32_t didx;                                /* DROP's pattern: the step it was worked out for, and its gain */
+    float ddt;
 };
 
 static void mrs_get(const struct dsp *d, int t, struct mrs *s)
@@ -1164,6 +1166,8 @@ static void mrs_get(const struct dsp *d, int t, struct mrs *s)
         s->gh[v] = 0xffffffffu;
         s->gb[v] = 0;
     }
+    s->didx = 0xffffffffu;
+    s->ddt = 1.f;
 }
 
 static void mrs_put(struct dsp *d, int t, const struct mrs *s)
@@ -1355,13 +1359,17 @@ __attribute__((optimize("O2"))) static inline void mod_read(struct dsp *d, struc
             dt = s->dmute ? s->dtarget : 1.f;
         } else if (p->drop_mode == 2) {               /* a repeating pattern locked to the loop's position and the tempo */
             uint32_t idx = (uint32_t)(rpi / p->dstep);
-            uint32_t h = (idx + 1u) * 2654435761u;
-            h ^= h >> 15;
-            h *= 2246822519u;
-            uint32_t g = ((idx >> 2) + 7u) * 2654435761u;     /* and now and then a cut over four steps */
-            g ^= g >> 13;
-            g *= 3266489917u;
-            dt = (float)(h >> 24) < p->drop_p * 130.f || (float)(g >> 24) < p->drop_p * 45.f ? 0.f : 1.f;
+            if (idx != s->didx) {                     /* (once a step) */
+                uint32_t h = (idx + 1u) * 2654435761u;
+                h ^= h >> 15;
+                h *= 2246822519u;
+                uint32_t g = ((idx >> 2) + 7u) * 2654435761u;     /* and now and then a cut over four steps */
+                g ^= g >> 13;
+                g *= 3266489917u;
+                s->didx = idx;
+                s->ddt = (float)(h >> 24) < p->drop_p * 130.f || (float)(g >> 24) < p->drop_p * 45.f ? 0.f : 1.f;
+            }
+            dt = s->ddt;
         }
         if (p->drop_mode || s->dgn != 1.f) {
             s->dgn += (dt - s->dgn) * (p->drop_mode == 2 ? .01f : .006f);

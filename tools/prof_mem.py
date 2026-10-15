@@ -251,6 +251,14 @@ for t in range(4):
     if "speed" in scen: param(t, P_SPEED, 0.3)
     if "ptch" in scen: param(t, P_PTCH, 0.2)
     if "crunch" in scen: param(t, P_CRUNCH, 0.5)
+    if "stab" in scen: param(t, P_STAB, 0.5)
+    if "drop" in scen: param(t, P_DROP, 0.4)
+    if "stut" in scen: param(t, P_STUT, 0.3)
+    if "scrm" in scen: param(t, P_SCRM, 0.5)
+    if "all" in scen:
+        for q, v in ((P_FILT, -0.4), (P_RES, 0.7), (P_CRUNCH, 0.3), (P_DRIVE, 0.5), (P_SD, 0.3), (P_SR, 0.3), (P_STAB, 0.5),
+                     (P_SPEED, 0.3), (P_DROP, 0.3), (P_SCRM, 0.5), (P_PTCH, 0.2)):
+            param(t, q, v)
 blocks(30)
 print("modes", [mode(t) for t in range(4)], "len", [tu(t, T_LEN) for t in range(4)])
 h = e.uc.hook_add(UC_HOOK_CODE, hk)

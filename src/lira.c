@@ -42,10 +42,11 @@
 #define ADM_MIN       0.0006f    /* (assumed) adaptive delta codec step limits */
 #define ADM_MAX       0.25f
 
-static inline float fabs_(float x) { return x < 0.f ? -x : x; }
-static inline float fmin_(float a, float b) { return a < b ? a : b; }
-static inline float fmax_(float a, float b) { return a > b ? a : b; }
-static inline float clip_(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
+/* (min / max are one instruction each on this FPU, vminnm / vmaxnm; the compare-and-select versions were branches) */
+static inline float fabs_(float x) { return __builtin_fabsf(x); }
+static inline float fmin_(float a, float b) { return __builtin_fminf(a, b); }
+static inline float fmax_(float a, float b) { return __builtin_fmaxf(a, b); }
+static inline float clip_(float x, float lo, float hi) { return __builtin_fminf(__builtin_fmaxf(x, lo), hi); }
 static inline float floor_(float x) { int i = (int)x; return (float)(i - ((float)i > x)); }
 
 static float fexp2(float x)    /* 2^x, relative error < 3e-9 (envelopes apply it every 0.4 ms: it must be accurate near 0) */
@@ -226,7 +227,7 @@ static inline void gen_tick(lira_gen *g, float f, float cpl, float isr, int lin,
    harmonics stay below the delay's noise floor */
 static inline float sinsh(float x)
 {
-    x = x < -1.f ? -1.f : x > 1.f ? 1.f : x;
+    x = clip_(x, -1.f, 1.f);
     float x2 = x * x;
     return x * (1.57043715f + x2 * (-0.64270926f + x2 * 0.0724327f));
 }
@@ -474,7 +475,7 @@ static inline float line_run(lira_line *ln, float in, float mv, float k_ratio, f
     return y;
 }
 
-void lira_process(lira_t *l, float *out, int n)
+__attribute__((optimize("O2"))) void lira_process(lira_t *l, float *out, int n)
 {
     const float sr = l->sr, isr = 1.f / sr;
     const float hp3c = 1.f - 3.f * TWO_PI * isr, hp1c = 1.f - 1.f * TWO_PI * isr;

@@ -2658,6 +2658,21 @@ void samplr_stage_prof(uint32_t pre, uint32_t lira, uint32_t run_all)
     sc->xd = lira > sc->xd ? lira : sc->xd;
     sc->pl += lo;
     sc->xlp = lo > sc->xlp ? lo : sc->xlp;
+    sc->t_end = DWT_CYCCNT | 1u;
+}
+
+void samplr_block_done(uint32_t now)
+{
+    struct sm *s = trk_get(0, 0);
+    if (!s)
+        return;
+    struct smscr *sc = s->sc;
+    if (sc->t_end) {
+        uint32_t r = now - sc->t_end;
+        if (r < 100000000u && r > sc->xrest)
+            sc->xrest = r;
+        sc->t_end = 0;
+    }
 }
 
 int samplr_run(float *bl, float *br, int n, float **snd)
@@ -2758,8 +2773,9 @@ int samplr_run(float *bl, float *br, int n, float **snd)
                 sc->shxp = (uint16_t)(sc->xp / d1 > 9990u ? 9990u : sc->xp / d1);
                 sc->shxd = (uint16_t)(sc->xd / d1 > 9990u ? 9990u : sc->xd / d1);
                 sc->shxl = (uint16_t)(sc->xlp / d1 > 9990u ? 9990u : sc->xlp / d1);
+                sc->shxr = (uint16_t)(sc->xrest / d1 > 9990u ? 9990u : sc->xrest / d1);
                 sc->pr = sc->pg = sc->pb = sc->pm = sc->pp = sc->pd = sc->pl = 0;
-                sc->xp = sc->xd = sc->xlp = 0;
+                sc->xp = sc->xd = sc->xlp = sc->xrest = 0;
             }
             s->t_sum = s->t_psum = s->t_pmax = 0;
             s->t_n = 0;
@@ -2820,7 +2836,7 @@ uint32_t samplr_sig(void)
             h = h * 31u + (uint32_t)(v->g_centre / (s->len / 150 + 1)) + (uint32_t)v->g_size;
     }
     h = h * 31u + (uint32_t)s->sc->prof + ((uint32_t)s->sc->shr + s->sc->shg + s->sc->shb + s->sc->shm + s->sc->shp + s->sc->shd + s->sc->shl +
-                                                     s->sc->shxp + s->sc->shxd + s->sc->shxl + s->t_peak_shown) / 8u;
+                                                     s->sc->shxp + s->sc->shxd + s->sc->shxl + s->sc->shxr + s->t_peak_shown) / 8u;
     for (int q = 0; q < SM_TRACKS; q++)                           /* the track dots */
         h = h * 31u + (uint32_t)samplr_track_info(q) + (uint32_t)(s->tno == q) * 64u;
     return h;

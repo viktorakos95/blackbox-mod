@@ -399,3 +399,13 @@ takes three overdub layers.
   some blocks run over. (Facts from clock-findings.md that the numbers above did not use: core 399 MHz, 128-frame blocks; the emulator figures are per 256 frames = two blocks.)
 - The top bar now cycles V G -> P D L S (average) -> MAX P D L S (the worst single block of each stage in the last second, percent of one block period; S = SAMPLR's own peak)
   -> R G B M. The worst-block numbers say which stage spikes when it stutters.
+
+## Build 41 (clamps, DROP, the rest of the block)
+- Reports on build 40: four loops with everything on C 85 / 95, MAX P 38 D 1 L 51 S 1, a few more effects C 90 / 100, MAX P 40 L 56: no stutter, knobs smoother than before.
+  With a DRONE-8 note: C 79 / 100, MAX P 30 D 21 L 35 S 1, stutters. The worst blocks of the four stages add up to 87 only, so part of the peak is after the looper stage.
+- The soft clipper's clamp (looper filter limit, filter pre-drive, drive; the pad filter in filter.c and the pad overdrive in od.c) and the 16-bit saturation use the FPU's
+  vminnm / vmaxnm instead of compare-and-select branches. DROP's repeating pattern is worked out once a step, not every frame. Output bit-identical to build 40 (13 looper
+  scenarios incl. everything on, both DROP modes, stutter + scrambler). Emulator, 4 tracks everything on: 763k -> 707k instructions per 256 frames.
+- DRONE-8 (lira.c): the same min / max helpers as builtins and lira_process at -O2: bit-identical (1, 3, 8 keys), but only 398k -> 395k per 256 frames. Its cost is the
+  model itself (8 oscillators always run: the silent ones still drive the FM buses and the supply coupling), about 1500 instructions a frame. `tools/prof_lira.py`.
+- MAX screen: R = the worst block of the rest of the task after the looper stage (stock output, the master compressor, interrupts), from cpu.c's wait hook (`samplr_block_done`).
