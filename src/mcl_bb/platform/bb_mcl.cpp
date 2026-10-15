@@ -84,12 +84,16 @@ HOOK uint32_t bb_mcl_kern(int i)
     }
 }
 
+extern "C" void bb_heap_clean(void);
+
 /* Called every frame while the diagnostics show: is MCL's TCB still a TCB (owner word = itself), and when did that last / first not hold; the kernel's task count then (diagnostics) */
 HOOK void bb_mcl_guard(void)
 {
     uint32_t h = bb_dbg[13];
     if (!h)
         return;
+    if (((volatile uint32_t *)h)[4] == h)
+        bb_heap_clean();                                                /* (while it is fine: keep RAM current) */
     uint32_t now = ((uint32_t (*)(void))0x0807794du)(), n = *(volatile uint32_t *)0x2401f1a8u;
     if (!bb_dbg[25])
         bb_dbg[25] = now, bb_dbg[20] = n;                               /* creation: tick, task count */
@@ -409,6 +413,7 @@ HOOK uint32_t bb_mcl_start(uint32_t stack_words)
         mcl_stack = task_def.stack_words;
         bb_dbg[13] = h;
         bb_dbg[16] = ((volatile uint32_t *)h)[4] == h;
+        bb_heap_clean();
         bb_dbg[26] = ((volatile uint32_t *)h)[12];                  /* the TCB as the kernel built it: its stack base (+0x30) and saved top of stack (word 0) */
         bb_dbg[27] = ((volatile uint32_t *)h)[0];                                             /* the task handle = its TCB (diagnostics) */
     }

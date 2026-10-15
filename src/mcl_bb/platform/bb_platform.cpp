@@ -76,6 +76,14 @@ void delayMicroseconds(unsigned int us)
 }
 }
 
+/* Diagnostic experiment: write the stock kernel's heap (0x24016178 + 0x9000) back from the data cache (DCCMVAC), in case something throws dirty lines away */
+extern "C" void bb_heap_clean(void)
+{
+    for (uint32_t a = 0x24016160u; a < 0x2401f180u; a += 32u)
+        *(volatile uint32_t *)0xE000EF68u = a;
+    __asm volatile("dsb sy" ::: "memory");
+}
+
 /* A real sleep in a task: wait on a semaphore nobody gives, with a time-out (the stock FreeRTOS tick is 1 kHz). The stock functions are Thumb at fixed addresses (docs M7). */
 typedef uint32_t (*fn4)(uint32_t, uint32_t, uint32_t, uint32_t);
 static uint32_t sleep_sem;
@@ -106,6 +114,8 @@ extern "C" void bb_sleep_ms(uint32_t ms)
         uint32_t slice = left > 50 ? 50u : (left ? (uint32_t)left : 1u);
         bb_dbg[11] = 3;
         bb_dbg[12]++;
+        if (bb_dbg[12] == 1)
+            bb_heap_clean();
         if (bb_dbg[12] == 1) {                                    /* is the running task's TCB still a TCB (owner word = itself) just before the first wait */
             uint32_t *c = (uint32_t *)*(volatile uint32_t *)0x2401f2a8u;
             bb_dbg[19] = c[4] == (uint32_t)c;
