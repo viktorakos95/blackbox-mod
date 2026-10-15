@@ -128,6 +128,7 @@ static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> til
 #define DIAL      34             /* width of the pan dial's box */
 
 #define INFO_TIMEOUT 1875        /* audio blocks (10 s) */
+#define INFO_FLASH   80          /* audio blocks (0.4 s): the DRONE page's frame after an INFO press */
 #define INFO_HOLD    84          /* 0.45 s */
 
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
@@ -1122,7 +1123,7 @@ static void draw_footer(const struct lay *L)
     text_c(P->w - 58, L->foot_y + 4, 54, "STOCK FX", C_LIGHT, 1);
     if (looper_paused())
         text(x0, L->foot_y + 4, "PAUSE", C_RED, 1);
-    else if (P->info_on)
+    else if (P->info_on == 1)
         text(x0, L->foot_y + 4, "SHIFT", C_RED, 1);
 }
 
@@ -1649,7 +1650,7 @@ static void paint(uint8_t *view)
     }
     struct lay L;
     layout(0, &L);
-    int fc = P->info_on ? C_PINK : C_LIGHT;                       /* the frame goes pink while INFO is on */
+    int fc = P->info_on ? C_PINK : C_LIGHT;                       /* the frame goes pink while INFO is on (on the DRONE page: a flash per press) */
     frame(0, 0, P->w, P->hg, fc, 1);
     hline(1, TOPBAR + 1, P->w - 2, C_RAIL);
     hline(1, L.foot_y, P->w - 2, C_RAIL);
@@ -1702,7 +1703,7 @@ void looper_page_poke(uint8_t *view)
 {
     if (P->mode == M_LIRA && solo_looper_view() == view)      /* the mode flag outlives the page: only while it shows */
         lira_leds();                                          /* the buttons' LEDs follow the voices */
-    if (P->info_on && looper_ticks() - P->info_t > INFO_TIMEOUT) {
+    if (P->info_on && looper_ticks() - P->info_t > (P->info_on == 2 ? INFO_FLASH : INFO_TIMEOUT)) {
         P->info_on = 0;
         P->sig = 0;
     }
@@ -2210,6 +2211,13 @@ static int info_button(unsigned id, unsigned idx)
         P->sig = 0;
         return 1;
     }
+    if (P->mode == M_LIRA) {                                       /* the DRONE page has no SHIFT: INFO moves the encoders on (lira_shift) */
+        lira_shift();
+        P->info_on = 2;                                           /* 2: the frame flashes, nothing else changes */
+        P->info_t = looper_ticks();
+        P->sig = 0;
+        return 1;
+    }
     P->info_on = !P->info_on;
     P->info_down = looper_ticks();
     P->info_t = P->info_down;
@@ -2245,14 +2253,15 @@ void looper_app_msg(void *app, const uint16_t *msg)
             P->btn_id = (uint16_t)id;
             P->btn_index = (uint16_t)idx;
         }
-        if (P->mode == M_LIRA && id == MSG_BUTTON && idx <= 7 && !P->info_on && lira_ui_chord_get(165)) {   /* LIRA page: the eight buttons are the eight plates (unless BTN is off) */
+        /* LIRA page: the round buttons are the voice plates (unless BTN is off), except PAD (button 0), which always goes back to the pads */
+        if (P->mode == M_LIRA && id == MSG_BUTTON && idx >= 1 && idx <= 7 && P->info_on != 1 && lira_ui_chord_get(165)) {
             if (lira_ui_button((int)idx, looper_ticks(), 20)) {
                 P->sig = 0;
                 lira_leds();
             }
             return;
         }
-        if (P->mode == M_LIRA && id == MSG_RELEASE && idx <= 7 && !P->info_on && lira_ui_chord_get(165))
+        if (P->mode == M_LIRA && id == MSG_RELEASE && idx >= 1 && idx <= 7 && P->info_on != 1 && lira_ui_chord_get(165))
             return;
         int is_mix = id == MSG_BUTTON && idx == BTN_MIX;
         int is_info = id == P->info_id && (id != MSG_BUTTON || idx == P->info_idx);
