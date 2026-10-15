@@ -103,6 +103,13 @@ typedef struct {
     int shed;                     /* load shedding set by the caller: 0 both delay lines, 1 one line, 2 no delay */
     int wave_on;                  /* the WAVE the oscillators' triangles were last kept for (gen_sync) */
     float wd0, wd1, dgo;          /* the delay lines coming and going (shed): each line's weight in the wet sum minus its full value (0.5), and how much of the delay is out of the mix; all 0 = full */
+    float width, drift;           /* stereo width and slow pitch wander (0..1); width 0 runs the cheaper mono path */
+    float bodyc;                  /* the bass lift (a gain; 0.41, fixed) */
+    float harm;                   /* low-order harmonics of the bass (0..1; fixed at LIRA_HARM) */
+    float hb1, hb2, hbd, hbl;     /* their filters: the bass band (two poles), the rectifier's DC block, the harmonics' low-pass */
+    float *out_r;                 /* the right channel, set by the caller before lira_process (NULL: mono, as the pads use it) */
+    float dr[8];                  /* the oscillators' pitch wander, relative */
+    float side_lp;                /* the side signal's top-end filter */
 } lira_t;
 
 int lira_size(void);
@@ -126,5 +133,10 @@ void lira_key(lira_t *l, int sensor /* 0..7 */, int on);
 /* touch with a pressure/velocity: drive 0 = released, 0..1 = how far the envelope opens and how fast */
 void lira_touch(lira_t *l, int sensor, float drive);
 void lira_process(lira_t *l, float *out, int n);
+/* The page's tone: width = stereo spread of the pairs and the two delay lines (0 = mono, and the right channel is a copy: the cheap path);
+   drift = how far each oscillator wanders (up to ~6 cents, a few seconds a turn); harm = a quiet 2nd harmonic made from the bass band (below
+   ~160 Hz) by a rectifier, so low notes carry on small speakers and headphones (LIRA_HARM is what the sound has by default). */
+#define LIRA_HARM 0.2f
+void lira_tone(lira_t *l, float width, float drift, float harm);
 
 #endif

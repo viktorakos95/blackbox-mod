@@ -168,6 +168,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     struct slot s;
     int16_t row[NCTL];           /* its controls, as a pad's side[] row */
     int16_t mod[4], level;       /* FM depth per pair (0..1000), output level */
+    int16_t tone[2];             /* MIX tab, STATUS panel: stereo width, drift (0..1000) */
     int16_t ex[18];              /* the plugin's split controls: Hold 1234 / 5678, Pitch 1234 / 5678, Dly Mod 1 / 2, Sharp per pair, then the eight voice levels */
     uint8_t touch[4], src[4];    /* Touch and FM Source per pair (list indexes) */
     uint8_t want[8], keyed[8];   /* sensors held on the page; sensors the engine has been told */
@@ -380,6 +381,8 @@ void lira_register(void *table)
     g->btn_on = 1;
     g->tail = 0;
     g->level = 700;
+    g->tone[0] = 0;                                       /* (mono: the cheaper path until it is opened) */
+    g->tone[1] = 400;
     for (int i = 0; i < NCTL; i++)
         g->row[i] = ctls[i].def;
     for (int k = 0; k < 2; k++) {
@@ -724,6 +727,8 @@ int lira_ui_get(int c)
         return g->ex[6 + c - 130];
     if (c >= 170 && c < 178)
         return g->ex[10 + c - 170];
+    if (c >= 180 && c < 182)
+        return g->tone[c - 180];
     return c == 120 ? g->level : 0;
 }
 
@@ -751,6 +756,8 @@ void lira_ui_set(int c, int v)
         g->ex[6 + c - 130] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
     else if (c >= 170 && c < 178)
         g->ex[10 + c - 170] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
+    else if (c >= 180 && c < 182)
+        g->tone[c - 180] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
     grec(g, c, lira_ui_get(c));
 }
 
@@ -775,6 +782,8 @@ int lira_ui_default(int c)
         return ctls[C_SHARP].def;
     if (c >= 170 && c < 178)
         return 1000;
+    if (c >= 180 && c < 182)
+        return c == 180 ? 0 : 400;
     return 0;
 }
 
@@ -1069,6 +1078,7 @@ void lira_page_run(float *l, float *r, int n)
             lira_param(&s->l, LIRA_MOD12 + k, (float)g->mod[k] * (127.0f / 1000.0f));
             lira_param(&s->l, LIRA_SHARP12 + k, (float)g->ex[6 + k] * (127.0f / 1000.0f));
         }
+        lira_tone(&s->l, (float)g->tone[0] * 0.001f, (float)g->tone[1] * 0.001f, LIRA_HARM);
         lira_param(&s->l, LIRA_LFO_WAV, (float)g->lfo[0]);
         lira_param(&s->l, LIRA_ANDOR, (float)g->lfo[1]);
         lira_param(&s->l, LIRA_LINK, (float)g->lfo[2]);
@@ -1096,7 +1106,7 @@ void lira_page_run(float *l, float *r, int n)
         }
     }
     float gain = (float)g->level * (1.0f / 700.0f);
-    float tmp[128], exl[128], exr[128];
+    float tmp[128], tmr[128], exl[128], exr[128];
     for (int i0 = 0; i0 < n; i0 += 128) {
         int m = n - i0 < 128 ? n - i0 : 128;
         int have = 0;
@@ -1117,12 +1127,17 @@ void lira_page_run(float *l, float *r, int n)
         s->l.ext_n = have ? m : 0;
         s->l.ext_l = exl;
         s->l.ext_r = exr;
+        s->l.out_r = tmr;
         lira_process(&s->l, tmp, m);
         mute_ramp_part(g, tmp, m, i0, n);
+        if (s->l.out_r)
+            mute_ramp_part(g, tmr, m, i0, n);
+        s->l.out_r = 0;
         for (int i = 0; i < m; i++) {
             l[i0 + i] += tmp[i] * gain;
-            r[i0 + i] += tmp[i] * gain;
-            p->rec[0][0][i0 + i] = p->rec[0][1][i0 + i] = tmp[i] * gain;
+            r[i0 + i] += tmr[i] * gain;
+            p->rec[0][0][i0 + i] = tmp[i] * gain;
+            p->rec[0][1][i0 + i] = tmr[i] * gain;
         }
     }
     if (g->per)                                  /* this synth's own share of a block */
@@ -1699,7 +1714,14 @@ struct blob {
     uint8_t pad_[2];
     uint32_t crc;
 };
-_Static_assert(sizeof(struct blob) <= 1280, "the settings file must fit the pool's buffer");
+struct blob_tail {                                       /* after the blob: the TONE tab (older files end before it and keep the defaults) */
+    uint32_t magic;                                      /* "TON1" */
+    int16_t tone[4];
+    uint32_t crc;
+};
+#define TAIL_MAGIC 0x314e4f54u
+#define TAIL_SIZE2 12u                                   /* (3.1.AC / AD files had a second tail of 12 bytes after this one: ignored) */
+_Static_assert(sizeof(struct blob) + sizeof(struct blob_tail) + TAIL_SIZE2 <= 1280, "the settings file must fit the pool's buffer");
 
 static uint32_t blob_crc(const struct blob *b)
 {
@@ -1758,9 +1780,16 @@ void lira_save(void)
     b->crc = blob_crc(b);
     for (unsigned i = 0; i < sizeof p->fil / 4; i++)
         p->fil[i] = 0;
+    struct blob_tail *tl = (struct blob_tail *)(p->blob + sizeof *b);
+    tl->magic = TAIL_MAGIC;
+    for (int i = 0; i < 4; i++)
+        tl->tone[i] = i < 2 ? g->tone[i] : 0;                /* (the tail still has four slots: the ones 3.1.AC / AD files filled) */
+    tl->crc = TAIL_MAGIC ^ 0x9e3779b9u;
+    for (int i = 0; i < 4; i++)
+        tl->crc = (tl->crc ^ (uint16_t)tl->tone[i]) * 16777619u;
     unsigned bw = 0;
     if (FF_OPEN(p->fil, "bbmod.bin", 0x0au) == 0) {
-        FF_WRITE(p->fil, b, sizeof *b, &bw);
+        FF_WRITE(p->fil, b, sizeof *b + sizeof *tl, &bw);
         FF_CLOSE(p->fil);
     }
 }
@@ -1776,9 +1805,11 @@ void lira_load(void)
     unsigned br = 0;
     if (FF_OPEN(p->fil, "bbmod.bin", 1u) != 0)
         return;
-    int rc = FF_READ(p->fil, b, sizeof *b, &br);
+    int rc = FF_READ(p->fil, b, sizeof *b + sizeof(struct blob_tail) + TAIL_SIZE2, &br);
     FF_CLOSE(p->fil);
-    if (rc != 0 || br != sizeof *b || b->magic != BLOB_MAGIC || b->ver != 3 || b->nctl != NCTL || b->crc != blob_crc(b))
+    const struct blob_tail *tl = (const struct blob_tail *)(p->blob + sizeof *b);
+    int has_tail = br == sizeof *b + sizeof *tl || br == sizeof *b + sizeof *tl + TAIL_SIZE2;
+    if (rc != 0 || (br != sizeof *b && !has_tail) || b->magic != BLOB_MAGIC || b->ver != 3 || b->nctl != NCTL || b->crc != blob_crc(b))
         return;
     struct pg *g = &p->pg;
     for (int k = 0; k < NPADS; k++)
@@ -1794,6 +1825,14 @@ void lira_load(void)
     g->level = b->level;
     for (int i = 0; i < 18; i++)
         g->ex[i] = b->ex[i] < 0 ? 0 : b->ex[i] > 1000 ? 1000 : b->ex[i];
+    if (has_tail && tl->magic == TAIL_MAGIC) {
+        uint32_t h = TAIL_MAGIC ^ 0x9e3779b9u;
+        for (int i = 0; i < 4; i++)
+            h = (h ^ (uint16_t)tl->tone[i]) * 16777619u;
+        if (h == tl->crc)
+            for (int i = 0; i < 2; i++)
+                g->tone[i] = tl->tone[i] < 0 ? 0 : tl->tone[i] > 1000 ? 1000 : tl->tone[i];
+    }
     g->chord_on = b->misc[0] & 1;
     g->space = (uint8_t)(b->misc[1] < lira_space_count() ? b->misc[1] : 0);
     g->root = (uint8_t)(b->misc[2] % 12);

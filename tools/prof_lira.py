@@ -47,10 +47,10 @@ ARGS = (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3)
 
 def call(name, *args, fargs=()):
     """hard-float AAPCS: ints in r0-r3 then the stack, floats in s0.."""
-    from unicorn.arm_const import UC_ARM_REG_S0, UC_ARM_REG_S1
+    from unicorn.arm_const import UC_ARM_REG_S0, UC_ARM_REG_S1, UC_ARM_REG_S2, UC_ARM_REG_S3, UC_ARM_REG_S4
     for r, v in zip(ARGS, args):
         uc.reg_write(r, v & 0xFFFFFFFF)
-    for r, v in zip((UC_ARM_REG_S0, UC_ARM_REG_S1), fargs):
+    for r, v in zip((UC_ARM_REG_S0, UC_ARM_REG_S1, UC_ARM_REG_S2, UC_ARM_REG_S3, UC_ARM_REG_S4), fargs):
         uc.reg_write(r, struct.unpack("<I", struct.pack("<f", v))[0])
     sp = STACK - 4 * len(args[4:])
     for k, v in enumerate(args[4:]):
@@ -82,12 +82,23 @@ call("lira_init", L, D1, D2, DLEN, 0x6c697261, fargs=(SR,))
 scen = sys.argv[1] if len(sys.argv) > 1 else "full"
 setp = {"FEEDBACK": 70, "DEL_MIX": 80, "MOD12": 60, "MOD34": 60, "MOD56": 60, "MOD78": 60, "SHARP12": 40, "SHARP56": 40,
         "DST_MIX": 60, "MOD1": 40, "MOD2": 40}
+if scen.endswith("0"):                  # e.g. full0: SHARP at zero everywhere
+    scen = scen[:-1]
+    setp.update(SHARP12=0, SHARP34=0, SHARP56=0, SHARP78=0)
 if scen == "sine":
     setp["WAVE"] = 1
 if scen == "slowdelay":
     setp.update(TIME1=127, TIME2=120)
 for k, v in setp.items():
     call("lira_param", L, P[k], fargs=(float(v),))
+TONE = os.environ.get("TONE")             # "width,drift,harm": the page's tone, and the right channel on
+if TONE:
+    call("lira_tone", L, fargs=tuple(float(x) for x in TONE.split(",")))
+    import subprocess as _sp
+    src = '#include "src/lira.h"\nchar o_x[__builtin_offsetof(lira_t,out_r)];\n'
+    asm = _sp.run(["arm-none-eabi-gcc", "-I.", "-mthumb", "-S", "-x", "c", "-", "-o", "-"], input=src, capture_output=True, text=True, check=True, cwd=HERE).stdout.splitlines()
+    OFF_R = int([l.split()[1] for l in asm if l.strip().startswith(".space")][0])
+    uc.mem_write(L + OFF_R, struct.pack("<I", 0x24072000))
 keys = range(8) if scen != "idle" else ()
 for k in keys:
     call("lira_key", L, k, 1)
