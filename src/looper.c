@@ -256,6 +256,8 @@ struct dsp {
         float cpi;                               /* cycles per modelled instruction, average (only for a track not measured yet) */
         float est[LOOPER_TRACKS];                /* a track's cycles as set, average; and the model's figure when measured (to follow the knobs) */
         float estm[LOOPER_TRACKS];
+        uint8_t want_eng1;                       /* the leader held out by the guard, +1 (0 none): the engines below it give way, see looper_guard_want */
+        uint16_t want_share;
         float wema;                              /* the whole task's load, per mille, averaged over ~0.5 s (what the C readout shows, smoothed) */
         uint16_t cool;                           /* blocks before the next fade may start */
         uint16_t urec[LOOPER_TRACKS];            /* blocks since the player unmuted a track the guard had muted (it is the last to go again) */
@@ -1851,9 +1853,32 @@ static int below(int e)                            /* how many engines rank belo
     return n;
 }
 
+/* An engine that is the leader and is held out by the guard (DRONE-8 shed, SAMPLR tracks out) says how much it would add (per mille): the engines that
+ * rank below it have their marks lowered by that much, so that they give way and it can come back (otherwise the load stays under their marks and
+ * the leader waits for ever). Set every block by the engine itself; 0 = nothing wanted. */
+void looper_guard_want(int e, int share)
+{
+    if (S->magic != MAGIC || !S->ok)
+        return;
+    struct guard *g = &DSP()->gd;
+    if (share > 0) {
+        g->want_eng1 = (uint8_t)(e + 1);
+        g->want_share = (uint16_t)(share > 350 ? 350 : share);
+    } else if (g->want_eng1 == e + 1) {
+        g->want_eng1 = 0;
+    }
+}
+
 int looper_soft_threshold(int e)                   /* per mille of the averaged load that starts engine e's fade: the first to give way earliest */
 {
-    return GUARD_SOFT + 15 * below(e);
+    int m = GUARD_SOFT + 15 * below(e);
+    int we = (S->magic == MAGIC && S->ok) ? (int)DSP()->gd.want_eng1 - 1 : -1;
+    if (we >= 0 && we != e && prio(we) > prio(e)) {
+        m -= DSP()->gd.want_share;
+        if (m < 600)
+            m = 600;
+    }
+    return m;
 }
 
 unsigned looper_load_avg(void)                     /* the whole task's load (per mille), averaged over ~0.5 s */
@@ -2019,7 +2044,9 @@ void looper_block_done(uint32_t now)
     uint32_t used = now - WAKE;
     if (g->per > 0.f && (float)used < 4.f * g->per) {
         float w = (float)used * 1000.f / g->per;
-        g->wema += ((w > 1000.f ? 1000.f : w) - g->wema) * (1.f / 188.f);
+        if (w > 1000.f)
+            w = 1000.f;
+        g->wema += (w - g->wema) * (w > g->wema ? 1.f / 100.f : 1.f / 188.f);   /* (a load that is rising is seen in ~0.25 s, one that falls in ~0.5 s) */
     }
 }
 

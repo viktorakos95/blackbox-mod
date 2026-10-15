@@ -2685,10 +2685,10 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         struct smscr *sc = s->sc;
         int avg = (int)looper_load_avg(), mk = looper_soft_threshold(1);
         uint32_t since = s->tick - sc->shed_t;
-        if (avg >= mk - 20 && sc->shed < 5 && since > (avg >= mk + 25 ? 60u : 188u)) {   /* (well over the mark, as when stock pads pile on: quicker) */
+        if (avg >= mk - 60 && sc->shed < 5 && since > (avg >= mk + 25 ? 60u : 150u)) {   /* (well over the mark, as when stock pads pile on: quicker) */
             sc->shed++;
             sc->shed_t = s->tick;
-        } else if (avg < mk - 70 && sc->shed > 0 && since > 376) {
+        } else if (avg < mk - 110 && sc->shed > 0 && since > 376) {
             sc->shed--;
             sc->shed_t = s->tick;
         }
@@ -2739,6 +2739,18 @@ int samplr_run(float *bl, float *br, int n, float **snd)
             sc->gcalm = 0;
         }
         sc->gout = (uint8_t)outn;
+        {   /* the leader with tracks out: the engines below it give way for the track that has been out longest */
+            int share = 0;
+            if (outn && looper_page_leader() == 1)
+                for (int t = 0; t < SM_TRACKS; t++) {
+                    struct sm *q = t ? trk_get(t, 0) : s;
+                    if (q && q->gmu && s->t_per > 100000u) {
+                        int sh = (int)(q->gcost * 1000.f / (float)s->t_per);
+                        share = sh > share ? sh : share;
+                    }
+                }
+            looper_guard_want(1, share);
+        }
     }
     for (int t = 0; t < SM_TRACKS; t++) {                         /* every track that was ever used goes on playing (its loop, what it latched) */
         struct sm *q = t ? trk_get(t, 0) : s;

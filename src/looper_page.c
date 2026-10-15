@@ -108,6 +108,7 @@ struct font {
 #define C_PINK   0x20            /* the stock selection frame (the active knob bank in the pad config) */
 #define C_TAB    0x01            /* 56565a: the stock tab buttons, which are textured on the real screen */
 #define C_WAVE   0x1c            /* SAMPLR waveform (pale mint while the SAMPLR page draws) */
+#define C_LILAC  0x1e            /* SAMPLR: track 2's samples in lilac instead of yellow (set while the SAMPLR page draws) */
 #define C_CYAN   0x1b            /* the selected tab */
 static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /* cyan, yellow, aqua, purple */
 
@@ -1310,7 +1311,7 @@ static void draw_samplr(void)
             int slice = s->mode == SM_SLICER ? sl_c : -1, col = C_WAVE;
             for (int f = 0; f < SM_NV; f++)
                 if (slice >= 0 && (s->v[f].on || s->v[f].env > 0.f) && s->v[f].slice == slice && s->v[f].vmode == SM_SLICER)
-                    col = f < SM_VOICES ? track_colour[f] : f >= SM_LTBASE && f < SM_LTBASE + SM_LATV ? pool_colour[f - SM_LTBASE] : col;
+                    col = f < SM_VOICES ? (track_colour[f] == C_YELLOW ? C_LILAC : track_colour[f]) : f >= SM_LTBASE && f < SM_LTBASE + SM_LATV ? pool_colour[f - SM_LTBASE] : col;
             if (s->mode == SM_LOOP && (fpos < s->lp_a || fpos >= s->lp_b))
                 col = C_GREY;                                         /* outside the loop window */
             box(wx + 2 * c, cy - hi, 2, hi + lo + 1, s->ofill[c] ? col : C_DARK);
@@ -1719,7 +1720,7 @@ static const struct { uint8_t idx; uint32_t argb; } tint_looper[] = {
     {0x02, 0xff25272b}, {0x19, 0xff1b1c1f}, {0x10, 0xff4c4f56},
 };
 static const struct { uint8_t idx; uint32_t argb; } tint_samplr[] = {
-    {0x02, 0xff1d2130}, {0x19, 0xff161926}, {0x10, 0xff3d4562}, {0x1c, 0xffb4ead6},
+    {0x02, 0xff1d2130}, {0x19, 0xff161926}, {0x10, 0xff3d4562}, {0x1c, 0xffb4ead6}, {0x1e, 0xffc3aef0},
 };
 static int tint_set(uint32_t *save)
 {
@@ -2522,7 +2523,7 @@ int looper_page_leader(void)
 {
     if (P->magic != PMAGIC)
         return 3;
-    if (P->lead != P->lead_eff && looper_ticks() - P->lead_t > 1900u)    /* ~5 s: a page that is only passed through leads nothing, and priorities never swing at once */
+    if (P->lead != P->lead_eff && looper_ticks() - P->lead_t > 1000u)    /* ~2.6 s: a page that is only passed through leads nothing, and priorities never swing at once */
         P->lead_eff = P->lead;
     return P->lead_eff < 3 ? P->lead_eff : 3;
 }

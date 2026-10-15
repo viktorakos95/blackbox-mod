@@ -561,3 +561,11 @@ BACK (physical) = one step back: Looper FX/FX2/SETUP/MORE -> MAIN (on MAIN: undo
 ## Build 54
 
 The Looper's MORE tab is gone: SETUP now holds all nine option rows (MONITOR INPUT on K2, SPEED PITCH added; rows are 18 px) plus CLEAR ALL. The debug line of MORE is dropped. Tabs: MAIN FX FX2 SETUP.
+
+## Build 56
+
+- The leader waits no more: an engine that is the leader and held out (DRONE-8 shed, SAMPLR tracks out) publishes what it would add (`looper_guard_want`, in `struct guard`); the engines ranking below it have their marks lowered by that much (not below 60 %), so they give way and it comes back. Before, the load stayed under the lower engines' marks and the leader came back only when everything else was removed.
+- A page leads after ~2.6 s (was 5 s).
+- The averaged load rises with ~0.25 s (falls with ~0.5 s); SAMPLR's quality steps start 4 % earlier (mark - 6 %), so grains that are added quickly are thinned before the load reaches the fade mark.
+- SAMPLR: track 2's samples in lilac (palette 0x1e while the page draws), no yellow.
+- DRONE-8 3.1.AE merged. Profile (tools/prof_lira.py, full scenario): mono 16.5 %, WIDTH 0.8 17.0 %, DRIFT free: the stereo width costs 0.5 % of a block.

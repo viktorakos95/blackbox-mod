@@ -182,6 +182,7 @@ void samplr_block_done(uint32_t now);       /* from cpu.c: the audio task has fi
 unsigned looper_load_avg(void);             /* looper.c: the whole task's load (per mille) averaged over ~0.5 s */
 int looper_soft_threshold(int e);           /* looper.c: the per mille of the averaged load that starts engine e's fade (1 = SAMPLR) */
 int looper_over_cap(int e);                 /* looper.c: 1 if the time already used in this block leaves no room for engine e (the hard check for spikes; 1 = SAMPLR) */
+void looper_guard_want(int e, int share);   /* looper.c: the leader, held out by the guard, says what it would add (per mille): the engines below give way */
 int looper_page_leader(void);               /* looper_page.c: the engine whose page was opened last (0 looper, 1 SAMPLR, 2 DRONE-8, 3 none yet) */
 int looper_guard_level(void);               /* looper.c: the looper's guard level, worst in the last second (0 = everything) */   /* from looper_stage: cycles before it, in the LIRA page's synth, and in run() (SAMPLR's included) */
 int samplr_run(float *bl, float *br, int n, float **snd);   /* snd: the looper's four send buses (delay L R, reverb L R) or 0; returns 1 if a send was fed */

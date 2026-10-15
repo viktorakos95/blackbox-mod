@@ -387,6 +387,14 @@ run_at(0.10, 0.70, 600)
 e.call("looper_page_set_leader", 3)
 check("no page opened yet: the old order (SAMPLR above the looper: no time kept for the tracks, its cap 90 %)", over(1, 0.60) == 0 and over(1, 0.89) == 0 and over(1, 0.91) == 1, (over(1, 0.60), over(1, 0.89), over(1, 0.91)))
 e.call("looper_page_set_leader", 2)
+def thr(x):
+    e.call("looper_soft_threshold", x)
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+t0, t1 = thr(0), thr(1)
+e.call("looper_guard_want", 2, 200)
+check("the leader held out (DRONE-8, 20 %) lowers the marks of the engines below it, not its own", thr(0) == t0 - 200 and thr(1) == t1 - 200 and thr(2) >= t1, (t0, t1, thr(0), thr(1), thr(2)))
+e.call("looper_guard_want", 2, 0)
+check("... and nothing is lowered once it is back", thr(0) == t0 and thr(1) == t1, (thr(0), thr(1)))
 
 # --- a spike (a pad starting): the time already used leaves no room in this block
 unmute_all()

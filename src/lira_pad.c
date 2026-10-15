@@ -248,6 +248,8 @@ float looper_bpm(void);
 int looper_grid_exact(float beats, float sph, int n);
 float looper_beat_frames(void);
 double looper_clock_now(void);
+void looper_guard_want(int e, int share);
+int looper_page_leader(void);
 int looper_soft_threshold(int e);          /* looper.c: the mark on the averaged load where engine e (2 = this synth) starts to give way: the engine that gives way first the lowest, the one whose page was opened last the highest */
 
 static void grec(struct pg *g, int id, int val)
@@ -975,6 +977,7 @@ static uint32_t govern(struct pg *g)
             g->shed = 0;
             g->shed_blk = g->blk;
         }
+        looper_guard_want(2, g->shed >= 3 && looper_page_leader() == 2 ? (int)g->dhold : 0);   /* the leader out: the engines below give way for it */
     }
     return c0;
 }
