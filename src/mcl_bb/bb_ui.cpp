@@ -54,7 +54,13 @@ static int number(int col, int row, int32_t v, int width)  /* right-aligned in `
 }
 
 #ifdef SD_SPY
-static uint32_t spy_view;                                   /* 0: FatFs calls per task, 1: overlaps / worst times / card driver calls, 2: cache and MPU, 3: DMA buffer addresses (tile B4 cycles) */
+static void hex8(int col, int row, uint32_t v)
+{
+    for (int i = 0; i < 8; i++)
+        put(col + i, row, "0123456789ABCDEF"[v >> (28 - 4 * i) & 15u]);
+}
+
+static uint32_t spy_view;                                   /* 0: FatFs calls per task, 1: overlaps / worst times / card driver calls, 2: cache and MPU, 3: DMA buffer addresses (tile B4 cycles); 4: lowest / highest driver buffer addresses; 5..8: the MPU regions, four to a page */
 
 static int cap(uint32_t v) { return (int)(v > 999u ? 999u : v); }
 
@@ -123,6 +129,29 @@ static void render_spy(void)
         if (un) {
             text(17, 0, "UN");
             number(18, 2, cap(un), 3);
+        }
+    } else if (spy_view == 4) {                             /* the lowest and highest buffer address the card driver was given, hex */
+        static const char *const nm[4] = {"RD LO ", "RD HI ", "WR LO ", "WR HI "};
+        for (int i = 0; i < 4; i++) {
+            text(0, i, nm[i]);
+            hex8(6, i, bb_sdspy_bufaddr(i >> 1, i & 1));
+        }
+    } else if (spy_view >= 5) {                             /* MPU regions: number, base, log2 size, TEX C B, S, XN, AP; a disabled one shows "-" */
+        for (int i = 0; i < 4; i++) {
+            int n = (int)(spy_view - 5u) * 4 + i;
+            number(0, i, n, 2);
+            if (!bb_sdspy_region(n, 0)) {
+                text(3, i, "-");
+                continue;
+            }
+            hex8(3, i, bb_sdspy_region(n, 1));
+            number(12, i, (int32_t)bb_sdspy_region(n, 2), 2);
+            put(15, i, (char)('0' + bb_sdspy_region(n, 3)));
+            put(16, i, (char)('0' + bb_sdspy_region(n, 4)));
+            put(17, i, (char)('0' + bb_sdspy_region(n, 5)));
+            put(18, i, bb_sdspy_region(n, 6) ? 'S' : '.');
+            put(19, i, bb_sdspy_region(n, 7) ? 'X' : '.');
+            put(20, i, (char)('0' + bb_sdspy_region(n, 8)));
         }
     } else {
         uint32_t pf = bb_sdspy_pair(SPY_FAT);
@@ -239,7 +268,7 @@ HOOK void bb_ui_input(uint32_t kind, int32_t a, int32_t b)
         btn_mask |= 1u << a;
 #ifdef SD_SPY
         if (a == 3)
-            spy_view = (spy_view + 1u) & 3u;
+            spy_view = (spy_view + 1u) % 9u;
         return;                                             /* the recon image leaves the MIDI clock alone */
 #endif
         if (a == 0) {                                       /* B1: follow the MIDI clock on the jack */

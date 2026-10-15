@@ -224,8 +224,23 @@ rows = screen()
 check("view 3: reads AXI 3, SRAM 2 (one earlier, aligned, one now); writes SRAM 1 (earlier), SDRAM 2", rows[0].startswith("BUF") and rows[1].split()[:3] == ["AXI", "3", "0"] and rows[2].split()[:3] == ["SRAM", "2", "1"] and rows[3].split()[:3] == ["SDRAM", "0", "2"], rows)
 check("view 3: the DTCM buffer is flagged (OTH) and the unaligned one counted (UN)", "OTH" in rows[0] and "UN" in rows[0], rows[0])
 
-rg.call("bb_ui_input", 3, 3, 0)
-rg.call("bb_ui_input", 2, 3, 0)
+
+def next_view():
+    rg.call("bb_ui_input", 2, 3, 0)
+    rg.call("bb_ui_input", 3, 3, 0)
+
+
+next_view()                                                                   # view 3 -> 4
+rows = screen()
+check("view 4: exact values (reads 0x20000100 .. 0x30000004, writes 0x30000000 .. 0xC3000200)", rows == ["RD LO 20000100", "RD HI 30000004", "WR LO 30000000", "WR HI C3000200"], rows)
+next_view()                                                                   # view 5: regions 0..3
+rows = screen()
+check("view 5: region 0 = whole space 2^32 TEX0 C0 B0 AP3, region 2 = AXI SRAM 2^19 TEX1 C1 B1 AP3, region 3 = SRAM 2^18 TEX1 C0 B0 XN", rows[0] == " 0 00000000 32 000..3" and rows[2] == " 2 24000000 19 111..3" and rows[3] == " 3 30000000 18 100.X3", rows)
+check("view 5: a disabled region shows a dash", rows[1].strip().endswith("-"), rows[1])
+for _ in range(3):
+    next_view()                                                               # views 6, 7, 8
+check("view 8 shows regions 12..15", screen()[0].split()[0] == "12", screen()[0])
+next_view()
 check("B4 again: back to view 0", screen()[0].split()[0] == "OPN")
 
 print(f"\n{fails} failure(s)")

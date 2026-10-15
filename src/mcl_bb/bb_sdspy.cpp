@@ -13,13 +13,17 @@ static volatile uint32_t disk[SPY_TASKS][SPY_DISK_FUNCS];
 static volatile uint32_t depth[SPY_LAYERS][SPY_TASKS];
 static volatile uint32_t overlaps[SPY_LAYERS], first_pair[SPY_LAYERS] = {0xff, 0xff};
 static volatile uint32_t worst_cyc[SPY_LAYERS];
-static volatile uint32_t bufcls[2][5], unaligned[2];
+static volatile uint32_t bufcls[2][5], unaligned[2], bufmin[2] = {0xffffffffu, 0xffffffffu}, bufmax[2];
 
 static void note_buf(int rw, uint32_t buf)
 {
     uint32_t top = buf >> 24;
     int c = top == 0x20 ? 0 : top == 0x24 ? 1 : top == 0x30 ? 2 : top >= 0xc0 && top <= 0xc7 ? 3 : 4;
     bufcls[rw][c]++;
+    if (buf < bufmin[rw])
+        bufmin[rw] = buf;
+    if (buf > bufmax[rw])
+        bufmax[rw] = buf;
     if (buf & 31u)
         unaligned[rw]++;
 }
@@ -69,6 +73,30 @@ HOOK uint32_t bb_sdspy_unaligned(int rw) { return unaligned[rw]; }
 #define MPU_RNR      (*(volatile uint32_t *)0xe000ed98u)
 #define MPU_RBAR     (*(volatile uint32_t *)0xe000ed9cu)
 #define MPU_RASR     (*(volatile uint32_t *)0xe000eda0u)
+
+HOOK uint32_t bb_sdspy_bufaddr(int rw, int which) { return which ? bufmax[rw] : (bufmin[rw] == 0xffffffffu ? 0 : bufmin[rw]); }
+
+HOOK uint32_t bb_sdspy_region(int n, int field)
+{
+    uint32_t p = irq_off();
+    uint32_t keep = MPU_RNR;
+    MPU_RNR = (uint32_t)n;
+    uint32_t rasr = MPU_RASR, rbar = MPU_RBAR & ~0x1fu;
+    MPU_RNR = keep;
+    irq_restore(p);
+    switch (field) {
+    case 0: return rasr & 1u;
+    case 1: return rbar;
+    case 2: return ((rasr >> 1) & 31u) + 1u;
+    case 3: return rasr >> 19 & 7u;
+    case 4: return rasr >> 17 & 1u;
+    case 5: return rasr >> 16 & 1u;
+    case 6: return rasr >> 18 & 1u;
+    case 7: return rasr >> 28 & 1u;
+    case 8: return rasr >> 24 & 7u;
+    default: return rasr >> 8 & 255u;
+    }
+}
 
 HOOK uint32_t bb_sdspy_hw(int what) { return what == 0 ? SCB_CCR : what == 1 ? MPU_TYPE : MPU_CTRL; }
 
