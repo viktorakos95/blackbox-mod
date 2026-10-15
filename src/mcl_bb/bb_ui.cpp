@@ -2,6 +2,7 @@
 
 #include "bb_clock.h"
 #include "bb_midi.h"
+#include "bb_sdspy.h"
 #include "glcdfont.h"
 
 #define HOOK extern "C" __attribute__((section(".hook"), used))
@@ -52,10 +53,69 @@ static int number(int col, int row, int32_t v, int width)  /* right-aligned in `
     return col;
 }
 
+#ifdef SD_SPY
+static uint32_t spy_view;                                   /* 0: FatFs calls per task, 1: overlaps / worst times / card driver calls (tile B4 toggles) */
+
+static int cap(uint32_t v) { return (int)(v > 999u ? 999u : v); }
+
+static void render_spy(void)
+{
+    static const char tn[3] = {'D', 'A', 'P'};
+    if (spy_view == 0) {
+        text(1, 0, "OPN");
+        text(6, 0, "RD");
+        text(10, 0, "WR");
+        text(14, 0, "CL");
+        text(18, 0, "SK");
+        for (int t = 0; t < 3; t++) {
+            put(0, 1 + t, tn[t]);
+            number(1, 1 + t, cap(bb_sdspy_count(t, SPY_OPEN)), 3);
+            number(5, 1 + t, cap(bb_sdspy_count(t, SPY_READ)), 3);
+            number(9, 1 + t, cap(bb_sdspy_count(t, SPY_WRITE)), 3);
+            number(13, 1 + t, cap(bb_sdspy_count(t, SPY_CLOSE)), 3);
+            number(17, 1 + t, cap(bb_sdspy_count(t, SPY_SEEK)), 3);
+        }
+    } else {
+        uint32_t pf = bb_sdspy_pair(SPY_FAT);
+        if (pf == 0xff)
+            pf = bb_sdspy_pair(SPY_DISK);                   /* the first overlap seen, in either layer: entering task, task already inside */
+        int c = text(0, 0, "OVL F");
+        c = number(c, 0, cap(bb_sdspy_overlaps(SPY_FAT)), 3);
+        c = text(c, 0, " D");
+        c = number(c, 0, cap(bb_sdspy_overlaps(SPY_DISK)), 3);
+        c++;
+        if (pf != 0xff) {
+            put(c++, 0, tn[(pf >> 4) % 3]);
+            put(c++, 0, tn[(pf & 15) % 3]);
+        }
+        c = text(0, 1, "MS  F");
+        c = number(c, 1, cap(bb_sdspy_worst_us(SPY_FAT) / 1000u), 3);
+        c = text(c, 1, " D");
+        number(c, 1, cap(bb_sdspy_worst_us(SPY_DISK) / 1000u), 3);
+        text(0, 2, "DRD");
+        text(0, 3, "DWR");
+        for (int t = 0; t < 3; t++) {
+            put(4 + t * 6, 2, tn[t]);
+            number(5 + t * 6, 2, cap(bb_sdspy_disk(t, SPY_DISK_RD)), 4);
+            put(4 + t * 6, 3, tn[t]);
+            number(5 + t * 6, 3, cap(bb_sdspy_disk(t, SPY_DISK_WR)), 4);
+        }
+        uint32_t o = bb_sdspy_count(SPY_OTHER, SPY_OPEN) + bb_sdspy_count(SPY_OTHER, SPY_READ) + bb_sdspy_count(SPY_OTHER, SPY_WRITE) + bb_sdspy_count(SPY_OTHER, SPY_CLOSE);
+        if (o) {                                            /* FatFs calls from a task that is none of the three */
+            text(16, 0, "OTH");
+            number(18, 1, cap(o), 3);
+        }
+    }
+}
+#endif
 static void render(void)
 {
     for (unsigned i = 0; i < sizeof fb; i++)
         fb[i] = 0;
+#ifdef SD_SPY
+    render_spy();
+    return;
+#endif
     static const char *const mode_name[4] = {"IDLE", "FOLLOW", "INT", "BBOX"};
     static const char *const sy_name[5] = {"-", "LISTEN", "1 CLK", "LOCKED", "LOST"};
     int c = text(0, 0, "MCL BB ");
@@ -128,6 +188,11 @@ HOOK void bb_ui_input(uint32_t kind, int32_t a, int32_t b)
         }
     } else if (kind == 2 && a >= 0 && a < 5) {
         btn_mask |= 1u << a;
+#ifdef SD_SPY
+        if (a == 3)
+            spy_view ^= 1u;
+        return;                                             /* the recon image leaves the MIDI clock alone */
+#endif
         if (a == 0) {                                       /* B1: follow the MIDI clock on the jack */
             need_clock();
             if (clock_ok == 1) {

@@ -300,3 +300,20 @@ is what the note player is given, and the analog jack is polled once per audio b
 - First build: the tempo read-out wobbled by a few tenths of a BPM. Cause: the PLL's integral term re-estimated the tempo from single clocks and passed the stamps' jitter on.
   Fix: the fitted slope (now over 128 stamps, 340 ms) sets the PLL's period directly (smoothed 1/8 per call), the loop only corrects the phase; a locate renumbers the clocks from the new position at
   once (the old catch-up stalled the clock for up to 2 s). Emulator: tempo reads 119.9 .. 120.0 over 6 s at stamp jitter 115 us and 345 us (sd); largest gap after a locate 21 ms.
+
+## M7 step 1: who uses the SD card (static map, then a recon image)
+
+**Static findings** (`tools/mcl/callgraph.py`, `fnctx.py`, `lockscan.py`):
+- Three FreeRTOS tasks are created by `main()` (0x08044290..0x080442fc, attribute records at 0x080cfbb0): **defaultTask** (the UI loop, entry 0x08043dec, handle in 0x24002e78),
+  **audioTask** (0x08041470, handle 0x24002e74), **pcmStreamer** (0x080743b0 through the thunk 0x0804c30c, handle 0x24002e70). The current task is `pxCurrentTCB` at 0x2401f2a8.
+- **No lock around FatFs.** The only semaphores the firmware creates are 3-4 (audio / sample engine); the "failed to acquire mutex" strings are libstdc++'s `__cxa_guard` stubs. The card driver
+  (CubeMX-style, table at 0x080cfc1c: init, status, read 0x08045974, write 0x080459e8, ioctl 0x08045a5c) starts a DMA transfer and then waits **5 s on ONE shared message queue** for the completion
+  message, checking it is the read (1) or write (2) message: two tasks inside the driver at once would steal each other's message and fail with an error. So the stock firmware is correct only if it never
+  uses the card from two tasks at once, by how its tasks are arranged. Users of FatFs: the sample/wave readers and writers (0x080769f4, 0x08076af6), the MIDI-file reader (0x0806f948), the screenshot
+  saver (0x0808bf98), PresetMgr CopyFile (0x08091d88) and the preset loaders / savers (0x0809709c..); direct calls from the pcmStreamer task reach most of them, the rest go through virtual calls.
+- **Rule for MCL stays:** no FatFs call from an interrupt, none from the clock path; its file work must run in the task the stock firmware uses for it.
+
+**Recon image to settle it on the unit** (`patches/mclspy.py`, `src/mcl_bb/bb_sdspy.cpp`, `test_mcl_spy.py`): all 88 stock call sites of f_open / f_read / f_write / f_close / f_lseek / f_sync / f_mount and the
+driver's read / write / ioctl table slots go through counting wrappers (arguments and results unchanged). Per call: which task, whether another task is inside the same layer at that moment (an
+**overlap**), and the longest single call. The MCL page shows it (build `SDSPY=1 COMPACT=1 tools/mcl/build_blob.sh`, patch set `... cave mclblob mclspy`): view 0 = calls per task (D / A / P);
+view 1 (tile B4) = overlaps in FatFs (F) and in the driver (D) with the first pair (entering task, task already inside), worst call in ms, card reads / writes per task. Emulator-tested only.
