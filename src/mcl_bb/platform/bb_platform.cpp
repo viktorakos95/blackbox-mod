@@ -109,6 +109,9 @@ extern "C" void bb_sleep_ms(uint32_t ms)
         if (bb_dbg[12] == 1) {                                    /* is the running task's TCB still a TCB (owner word = itself) just before the first wait */
             uint32_t *c = (uint32_t *)*(volatile uint32_t *)0x2401f2a8u;
             bb_dbg[19] = c[4] == (uint32_t)c;
+            uint32_t sp;
+            __asm volatile("mov %0, sp" : "=r"(sp));
+            bb_dbg[29] = sp;
         }
         ((fn4)(0x08088756u | 1u))(sleep_sem, 0, slice, 0);       /* xQueueGenericReceive with a time-out */
         uint32_t now = DWT_CYCCNT;

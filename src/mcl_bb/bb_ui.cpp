@@ -238,6 +238,14 @@ static void render(void)
             c = number(c, 3, (int32_t)(bb_mcl_dbg(21) % 100000u), 5);
             c = text(c, 3, " B");
             number(c, 3, (int32_t)(bb_mcl_dbg(23) % 100000u), 5);
+            text(0, 4, "SB");                             /* the stack base and saved top of stack the kernel gave the task at creation */
+            hex8(2, 4, bb_mcl_dbg(26));
+            text(11, 4, " TP");
+            hex8(14, 4, bb_mcl_dbg(27));
+            text(0, 5, "A");                              /* the stack pointer in the task at its start and at its first wait */
+            hex8(1, 5, bb_mcl_dbg(28));
+            text(9, 5, " B");
+            hex8(11, 5, bb_mcl_dbg(29));
             return;
         }
         int c = text(0, 0, "S");

@@ -347,6 +347,9 @@ static void mcl_task(void *)
         uint32_t *c = (uint32_t *)*(volatile uint32_t *)0x2401f2a8u;     /* (diagnostics: the kernel's view of this task) */
         bb_dbg[17] = (uint32_t)c;
         bb_dbg[18] = c[4] == (uint32_t)c;
+        uint32_t sp;
+        __asm volatile("mov %0, sp" : "=r"(sp));
+        bb_dbg[28] = sp;
     }
     for (uint32_t i = 0; i < ISR_STACK; i++)
         isr_stack[i] = 0xa5;                                       /* (painted, to see how much the soft interrupts ever use) */
@@ -405,7 +408,9 @@ HOOK uint32_t bb_mcl_start(uint32_t stack_words)
     else {
         mcl_stack = task_def.stack_words;
         bb_dbg[13] = h;
-        bb_dbg[16] = ((volatile uint32_t *)h)[4] == h;                                             /* the task handle = its TCB (diagnostics) */
+        bb_dbg[16] = ((volatile uint32_t *)h)[4] == h;
+        bb_dbg[26] = ((volatile uint32_t *)h)[12];                  /* the TCB as the kernel built it: its stack base (+0x30) and saved top of stack (word 0) */
+        bb_dbg[27] = ((volatile uint32_t *)h)[0];                                             /* the task handle = its TCB (diagnostics) */
     }
     return h;
 }
