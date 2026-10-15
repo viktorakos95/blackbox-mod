@@ -204,7 +204,8 @@ extern "C" __attribute__((weak)) uint32_t bb_mcl_state(void);
 extern "C" __attribute__((weak)) uint32_t bb_mcl_stack_words(void);
 extern "C" __attribute__((weak)) uint32_t bb_mcl_frames(void);
 extern "C" __attribute__((weak)) uint32_t bb_mcl_dbg(int i);
-extern "C" __attribute__((weak)) uint32_t bb_mcl_kern(int i);       /* bb_mcl.cpp (builds with MCL): 3 = the kernel had no memory for MCL's task */
+extern "C" __attribute__((weak)) uint32_t bb_mcl_kern(int i);
+extern "C" __attribute__((weak)) void bb_mcl_guard(void);       /* bb_mcl.cpp (builds with MCL): 3 = the kernel had no memory for MCL's task */
 
 static void render(void)
 {
@@ -212,6 +213,8 @@ static void render(void)
         fb[i] = 0;
     if (bb_mcl_state && (bb_mcl_state() == 1 || bb_mcl_state() == 2) && bb_mcl_frames && bb_mcl_frames() == 0) {   /* MCL's task exists but has not drawn yet: where it is */
         if (!bb_mcl_dbg(3)) {                               /* still before setup_irqs (the task is stuck early): the sleep and the kernel's view of the task */
+            if (bb_mcl_guard)
+                bb_mcl_guard();
             int c = text(0, 0, "W");
             c = number(c, 0, (int32_t)(bb_mcl_dbg(12) % 100u), 2);
             c = text(c, 0, " P");
@@ -228,8 +231,13 @@ static void render(void)
             c = number(c, 2, (int32_t)bb_mcl_dbg(18), 1);
             c = number(c, 2, (int32_t)bb_mcl_dbg(19), 1);
             c = number(c, 2, bb_mcl_kern(14) == bb_mcl_kern(2) ? 1 : 0, 1);
-            hex8(9, 3, bb_mcl_kern(40));                    /* the zeroed run around MCL's TCB: its lowest address and the first non-zero word above */
-            hex8(0, 3, bb_mcl_kern(41));
+            c = text(0, 3, "N");                            /* kernel task count at the first frame / when the TCB first went bad / now; ms (after the first frame) of its last good and its first bad look */
+            c = number(c, 3, (int32_t)bb_mcl_dbg(20), 2);
+            c = number(c, 3, (int32_t)bb_mcl_dbg(24), 2);
+            c = text(c, 3, " G");
+            c = number(c, 3, (int32_t)(bb_mcl_dbg(21) % 100000u), 5);
+            c = text(c, 3, " B");
+            number(c, 3, (int32_t)(bb_mcl_dbg(23) % 100000u), 5);
             return;
         }
         int c = text(0, 0, "S");

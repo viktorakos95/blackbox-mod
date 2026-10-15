@@ -84,6 +84,21 @@ HOOK uint32_t bb_mcl_kern(int i)
     }
 }
 
+/* Called every frame while the diagnostics show: is MCL's TCB still a TCB (owner word = itself), and when did that last / first not hold; the kernel's task count then (diagnostics) */
+HOOK void bb_mcl_guard(void)
+{
+    uint32_t h = bb_dbg[13];
+    if (!h)
+        return;
+    uint32_t now = ((uint32_t (*)(void))0x0807794du)(), n = *(volatile uint32_t *)0x2401f1a8u;
+    if (!bb_dbg[25])
+        bb_dbg[25] = now, bb_dbg[20] = n;                               /* creation: tick, task count */
+    if (((volatile uint32_t *)h)[4] == h)
+        bb_dbg[21] = now - bb_dbg[25];                                  /* last time it was fine (ms after creation) */
+    else if (!bb_dbg[23])
+        bb_dbg[23] = now - bb_dbg[25] + 1u, bb_dbg[24] = n;             /* first time it was not (+1 so that 0 means "not yet"), the task count then */
+}
+
 /* ---- MIDI between MCL's MidiUart and bb_midi ---- */
 static volatile uint32_t st_rx_in, st_rx_clk, st_tx_out, st_tx_clk;     /* MIDI bytes: into MCL, clock / transport dropped from the jack, out to the jack, clock / transport dropped from MCL's output */
 static volatile uint8_t xq[8];                                    /* transport bytes (FA / FB / FC) from bb_clock on their way to MCL's receive ring */
