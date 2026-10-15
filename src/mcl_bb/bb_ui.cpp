@@ -191,6 +191,15 @@ static void render_spy(void)
     }
 }
 #endif
+static int hex8(int col, int row, uint32_t v)
+{
+    for (int i = 7; i >= 0; i--) {
+        uint32_t n = v >> (4 * i) & 15u;
+        put(col++, row, (char)(n < 10 ? '0' + n : 'a' + n - 10));
+    }
+    return col;
+}
+
 extern "C" __attribute__((weak)) uint32_t bb_mcl_state(void);
 extern "C" __attribute__((weak)) uint32_t bb_mcl_stack_words(void);
 extern "C" __attribute__((weak)) uint32_t bb_mcl_frames(void);
@@ -202,6 +211,23 @@ static void render(void)
     for (unsigned i = 0; i < sizeof fb; i++)
         fb[i] = 0;
     if (bb_mcl_state && (bb_mcl_state() == 1 || bb_mcl_state() == 2) && bb_mcl_frames && bb_mcl_frames() == 0) {   /* MCL's task exists but has not drawn yet: where it is */
+        if (!bb_mcl_dbg(3)) {                               /* still before setup_irqs (the task is stuck early): the sleep and the kernel's view of the task */
+            int c = text(0, 0, "W");
+            c = number(c, 0, (int32_t)(bb_mcl_dbg(12) % 100u), 2);
+            c = text(c, 0, " P");
+            c = number(c, 0, (int32_t)(bb_mcl_dbg(14) % 10000u), 4);
+            c = text(c, 0, " HT");
+            number(c, 0, (int32_t)(bb_mcl_kern(0) % 100000000u), 8);
+            c = text(0, 1, "KT");
+            c = number(c, 1, (int32_t)(bb_mcl_kern(1) % 100000000u), 8);
+            c = text(c, 1, " H");
+            hex8(c, 1, bb_mcl_kern(2));
+            hex8(0, 2, bb_mcl_kern(11));                    /* TCB words 1, 4 (owner), 5 (container), 2 */
+            hex8(9, 2, bb_mcl_kern(14));
+            hex8(0, 3, bb_mcl_kern(15));
+            hex8(9, 3, bb_mcl_kern(12));
+            return;
+        }
         int c = text(0, 0, "S");
         c = number(c, 0, (int32_t)bb_mcl_state(), 1);
         c = text(c, 0, " STK");
@@ -216,19 +242,6 @@ static void render(void)
         c = number(c, 1, (int32_t)bb_mcl_dbg(2), 5);
         c = text(c, 1, " W");
         number(c, 1, (int32_t)(bb_mcl_dbg(12) % 1000u), 3);
-        if (!bb_mcl_dbg(3)) {                               /* still before setup_irqs: the kernel's view of the task instead of the timers */
-            c = text(0, 2, "HT");
-            c = number(c, 2, (int32_t)(bb_mcl_kern(0) % 1000000000u), 9);
-            c = text(c, 2, " C");
-            c = number(c, 2, (int32_t)bb_mcl_kern(1), 1);
-            c = text(c, 2, " P");
-            number(c, 2, (int32_t)(bb_mcl_dbg(14) % 1000u), 3);
-            c = text(0, 3, "WK");
-            c = number(c, 3, (int32_t)(bb_mcl_kern(2) % 1000000000u), 9);
-            c = text(c, 3, " LST");
-            number(c, 3, (int32_t)bb_mcl_kern(3), 5);
-            return;
-        }
         c = text(0, 2, "IRQ");
         c = number(c, 2, (int32_t)bb_mcl_dbg(3), 2);
         c = text(c, 2, " K");

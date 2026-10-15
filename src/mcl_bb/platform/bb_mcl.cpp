@@ -50,15 +50,15 @@ HOOK uint32_t bb_mcl_frames(void) { return mcl_frames; }
 HOOK uint32_t bb_mcl_state(void) { return mcl_state; }
 HOOK uint32_t bb_mcl_stack_words(void) { return mcl_stack; }
 HOOK uint32_t bb_mcl_dbg(int i) { return i >= 0 && i < 16 ? bb_dbg[i] : 0; }
-/* the kernel's view of MCL's task (diagnostics): 0 HAL tick (ms), 1 the running task is MCL's, 2 its state list item's value (the tick it wakes at when delayed), 3 the list it is on (low 16 bits of the pointer) */
+/* the kernel's view of MCL's task (diagnostics): 0 HAL tick (ms), 1 the kernel's tick count (xTickCount, the getter at 0x08088d20), 2 MCL's task handle (= its TCB), 10 + n word n of that TCB */
 HOOK uint32_t bb_mcl_kern(int i)
 {
     uint32_t tcb = bb_dbg[13];
     switch (i) {
     case 0: return ((uint32_t (*)(void))0x0807794du)();
-    case 1: return tcb && *(volatile uint32_t *)0x2401f2a8u == tcb;
-    case 2: return tcb ? *(volatile uint32_t *)(tcb + 4) : 0;
-    default: return tcb ? *(volatile uint32_t *)(tcb + 20) & 0xffffu : 0;
+    case 1: return ((uint32_t (*)(void))0x08088d21u)();
+    case 2: return tcb;
+    default: return tcb && i >= 10 && i < 30 ? *(volatile uint32_t *)(tcb + 4u * (uint32_t)(i - 10)) : 0;
     }
 }
 
