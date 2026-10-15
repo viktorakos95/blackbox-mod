@@ -1162,12 +1162,14 @@ int lira_ui_button(int idx, uint32_t now, uint32_t gap)
     if (!p || idx < 0 || idx > 7)
         return 0;
     struct pg *g = &p->pg;
-    if (g->btn_t[idx] && now - g->btn_t[idx] <= gap)
+    uint32_t since = now - g->btn_t[idx];
+    if (g->btn_t[idx] && since <= gap)
         return 0;
-    g->btn_t[idx] = now ? now : 1;
-    g->want[idx] ^= 1;
+    int again = idx == 0 && g->btn_t[idx] && since <= 110;      /* PAD is voice 1's button too: pressed twice within ~0.6 s it goes back to the pads */
+    g->btn_t[idx] = again ? 0 : (now ? now : 1);
+    g->want[idx] ^= 1;                                          /* (the second press undoes the first: voice 1 is as it was) */
     grec(g, 300 + idx, g->want[idx]);
-    return 1;
+    return again ? 2 : 1;
 }
 
 int lira_ui_last(int id)
@@ -1561,7 +1563,7 @@ void lira_leds(void)
     struct pool *p = pool();
     if (!p || !p->pg.btn_on)
         return;
-    for (int i = 1; i < 8; i++) {                         /* (button 0 is PAD on the page: its LED stays the firmware's) */
+    for (int i = 0; i < 8; i++) {
         int led = i;
         ((void (*)(void *, int, int))FN(0x080436b0))((void *)0x240021bcu, led, p->pg.want[i]);
         *(volatile uint8_t *)(0x24009a2cu + 12u * (unsigned)led + 8u) = 2;
