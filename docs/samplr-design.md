@@ -592,3 +592,5 @@ The looper's spike cut (looper_over_cap -> guard_fit) is in two halves: the bloc
 ## Build 62
 
 Build 59-61 did not boot on the unit (58 did). The pad recorder's Rec Input list had grown to 7 entries (SAMPLR added); the stock registration is the prime suspect, so the list is back to 6 (L+R, Left, Right, Resam, DRONE, LOOPER = looper + SAMPLR) and the SAMPLR-alone source is gone. Open until confirmed on the unit.
+
+Confirmed on the unit: build 62 boots. The cause of the 59-61 boot loop was the seven-entry Rec Input list (the stock registration takes six at most). Do not add entries to that list; a SAMPLR-alone source would need another way in (e.g. a SAMPLR switch deciding whether LOOPER includes it).
