@@ -828,7 +828,8 @@ struct fr {
     uint32_t magic;
     uint16_t c_pk, d_pk, free_min;       /* peak audio-task load and this synth's share (permille), least free SDRAM (KB) */
     uint8_t shed, pad;
-    uint32_t blocks;
+    uint16_t w_pk;                       /* worst block of the whole audio task (cpu.c's peak, permille): the part after this synth runs counts too */
+    uint16_t pad2;
 };
 #define FR_CUR  ((volatile struct fr *)0x38800bc0u)
 #define FR_PREV ((volatile struct fr *)0x38800bd0u)
@@ -843,7 +844,7 @@ static void fr_boot(void)
         o->d_pk = c->d_pk;
         o->free_min = c->free_min;
         o->shed = c->shed;
-        o->blocks = c->blocks;
+        o->w_pk = c->w_pk;
     } else {
         o->magic = 0;
     }
@@ -851,7 +852,7 @@ static void fr_boot(void)
     c->c_pk = c->d_pk = 0;
     c->free_min = 0xffff;
     c->shed = 0;
-    c->blocks = 0;
+    c->w_pk = 0;
 }
 
 int lira_ui_prev(int which)                              /* the run before: 0 load peak %, 1 synth share %, 2 least free KB, 3 deepest shed, 4 valid */
@@ -859,7 +860,7 @@ int lira_ui_prev(int which)                              /* the run before: 0 lo
     volatile struct fr *o = FR_PREV;
     if (o->magic != FR_MAGIC)
         return which == 4 ? 0 : -1;
-    return which == 0 ? (o->c_pk + 5) / 10 : which == 1 ? (o->d_pk + 5) / 10 : which == 2 ? o->free_min : which == 3 ? o->shed : 1;
+    return which == 0 ? (o->c_pk + 5) / 10 : which == 1 ? (o->d_pk + 5) / 10 : which == 2 ? o->free_min : which == 3 ? o->shed : which == 5 ? (o->w_pk + 5) / 10 : 1;
 }
 
 static uint32_t govern(struct pg *g)
@@ -876,7 +877,11 @@ static uint32_t govern(struct pg *g)
         volatile struct fr *fr = FR_CUR;
         if (fr->magic == FR_MAGIC) {
             unsigned fk = lira_free_kb();
-            fr->blocks++;
+            {
+                uint16_t w = *(volatile uint16_t *)0x2405ffe4u;
+                if (w < 4000u && w > fr->w_pk)
+                    fr->w_pk = w;
+            }
             if (fk < fr->free_min)
                 fr->free_min = (uint16_t)(fk > 65535u ? 65535u : fk);
             if (g->shed > fr->shed)

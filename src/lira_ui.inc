@@ -446,15 +446,16 @@ static void draw_lira(void)
             *u = 0;
             text(x + 8, LU_PANEL + 42, t, C_WHITE, 1);
             if (lira_ui_prev(4)) {                                   /* the run before's peaks, right of the ENGINE button */
-                static const char lk[3] = {'C', 'D', 'F'};
-                for (int k = 0; k < 3; k++) {
+                static const char lk[4] = {'W', 'C', 'D', 'F'};
+                static const uint8_t lw[4] = {5, 0, 1, 2};
+                for (int k = 0; k < 4; k++) {
                     u = t;
                     *u++ = lk[k];
-                    u = put_uint(u, (unsigned)lira_ui_prev(k));
-                    if (k == 2)
+                    u = put_uint(u, (unsigned)lira_ui_prev(lw[k]));
+                    if (k == 3)
                         *u++ = 'K';
                     *u = 0;
-                    text(x + LU_COL + 2, LU_PANEL + 58 + 10 * k, t, LU_DIM, 1);
+                    text(x + LU_COL + 2, LU_PANEL + 54 + 9 * k, t, LU_DIM, 1);
                 }
             }
         }
