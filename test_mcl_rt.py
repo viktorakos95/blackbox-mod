@@ -36,6 +36,7 @@ def make(image_patch=None, top=0xC3F00000):
     e.uc.mem_map(0xE0000000, 0x100000)
     e.uc.mem_map(0x38800000, 0x1000)
     e.uc.mem_map(0x58024000, 0x1000)
+    e.uc.mem_map(0x40011000, 0x1000)                                # USART6 (bb_midi_init reads its speed set-up)
     e.uc.mem_map(RAM, RAM_END - RAM)
     e.uc.mem_write(RAM, b"\xa5" * (RAM_END - RAM))                  # SDRAM is garbage at power-up
     e.uc.mem_write(0x38800000, b"\x5a" * 0x1000)                    # so is backup SRAM (or stale from the last boot)
