@@ -84,16 +84,12 @@ HOOK uint32_t bb_mcl_kern(int i)
     }
 }
 
-extern "C" void bb_heap_clean(void);
-
 /* Called every frame while the diagnostics show: is MCL's TCB still a TCB (owner word = itself), and when did that last / first not hold; the kernel's task count then (diagnostics) */
 HOOK void bb_mcl_guard(void)
 {
     uint32_t h = bb_dbg[13];
     if (!h)
         return;
-    if (((volatile uint32_t *)h)[4] == h)
-        bb_heap_clean();                                                /* (while it is fine: keep RAM current) */
     uint32_t now = ((uint32_t (*)(void))0x0807794du)(), n = *(volatile uint32_t *)0x2401f1a8u;
     if (!bb_dbg[25])
         bb_dbg[25] = now, bb_dbg[20] = n;                               /* creation: tick, task count */
@@ -380,42 +376,51 @@ static void mcl_task(void *)
     }
 }
 
-typedef uint32_t (*fn4)(uint32_t, uint32_t, uint32_t, uint32_t);
-struct ThreadDef {                                                 /* CMSIS-RTOS v1 osThreadDef_t, as the stock firmware's main() uses it */
-    const char *name;
-    void (*func)(void *);
-    int32_t priority;
-    uint32_t instances;
-    uint32_t stack_words;
-};
-static ThreadDef task_def;
+/* MCL's task lives in our own SDRAM, not in the stock kernel's heap: that heap is 36 KB and the stock tasks' stacks already take about 34 KB of it,
+ * yet the kernel handed out 16 KB for MCL's stack and its TCB was wiped within a millisecond on the unit (docs/mcl-m0-m1-results.md, M8). */
+#define MCL_STACK_WORDS 4096u                                       /* 16 KB (MCL needs about 13 KB) */
+extern "C" {
+__attribute__((aligned(8))) uint32_t bb_mcl_tcb[0x60 / 4];          /* the stock kernel's TCB is 0x54 bytes (its xTaskCreate allocates that) */
+__attribute__((aligned(8))) uint32_t bb_mcl_stack[MCL_STACK_WORDS];
+}
 
-/* Creates the task (from the UI task, once, when the runtime is up). Returns the task handle (0 = the kernel had no memory for it, even for the smaller stack tried).
- * The stack comes from the kernel's heap, whose free size is not known here: ask for `stack_words` and, if that is refused, for less (7/8 of it; MCL needs about 13 KB). */
+/* The stock xTaskCreate (0x08088ad8) without its two pvPortMalloc calls: the same register set-up its prologue makes (r4 TCB, r5 stack bytes, r6 stack,
+ * r7 name, r8 function, r9 argument, r0 TCB), then on into its body at 0x08088b00, which fills the TCB, builds the first stack frame, adds the task to the
+ * ready list and returns pdPASS (1) through the pop of this push. Arguments as xTaskCreate's: (function, name, stack words, argument, priority, &handle). */
+__attribute__((naked, noinline)) static uint32_t create_in_place(void (*)(void *), const char *, uint32_t, void *, uint32_t, uint32_t *)
+{
+    __asm volatile(
+        "push.w {r4, r5, r6, r7, r8, r9, r10, lr}\n"
+        "mov r8, r0\n"
+        "mov r7, r1\n"
+        "mov r9, r3\n"
+        "lsls r5, r2, #2\n"
+        "ldr r6, =bb_mcl_stack\n"
+        "ldr r4, =bb_mcl_tcb\n"
+        "mov r0, r4\n"
+        "ldr r12, =0x08088b01\n"
+        "bx r12\n"
+        ".ltorg\n");
+}
+
+/* Creates the task (from the UI task, once, when the runtime is up), at osPriorityNormal (kernel priority 3) like the UI and the streamer tasks.
+ * Returns the task handle (its TCB), 0 if the kernel refused. */
 HOOK uint32_t bb_mcl_start(uint32_t stack_words)
 {
     if (mcl_state)
         return 1;
-    task_def.name = "MCL";
-    task_def.func = mcl_task;
-    task_def.priority = 0;                                          /* osPriorityNormal, as the UI and the streamer tasks (a higher priority did not change the stuck sleep seen on the unit) */
-    task_def.instances = 1;
+    if (stack_words > MCL_STACK_WORDS || !stack_words)
+        stack_words = MCL_STACK_WORDS;
     uint32_t h = 0;
     mcl_state = 1;                                                  /* (before the task exists: the caller must not get here twice) */
-    for (uint32_t i = 0; i < 2 && !h; i++) {
-        static const uint8_t num[2] = {8, 7};
-        task_def.stack_words = stack_words * num[i] / 8;
-        h = ((fn4)(0x08087a70u | 1u))((uint32_t)&task_def, 0, 0, 0);       /* osThreadCreate */
-    }
-    if (!h)
+    if (create_in_place(mcl_task, "MCL", stack_words, nullptr, 3u, &h) != 1u || !h)
         mcl_state = 3;
     else {
-        mcl_stack = task_def.stack_words;
-        bb_dbg[13] = h;
+        mcl_stack = stack_words;
+        bb_dbg[13] = h;                                             /* (diagnostics) */
         bb_dbg[16] = ((volatile uint32_t *)h)[4] == h;
-        bb_heap_clean();
-        bb_dbg[26] = ((volatile uint32_t *)h)[12];                  /* the TCB as the kernel built it: its stack base (+0x30) and saved top of stack (word 0) */
-        bb_dbg[27] = ((volatile uint32_t *)h)[0];                                             /* the task handle = its TCB (diagnostics) */
+        bb_dbg[26] = ((volatile uint32_t *)h)[12];                  /* the stack base (+0x30) and saved top of stack (word 0) as the kernel built them */
+        bb_dbg[27] = ((volatile uint32_t *)h)[0];
     }
     return h;
 }

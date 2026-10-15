@@ -73,18 +73,15 @@ e.stub(Q_CREATE, value=0x24050000)
 e.stub(Q_SEND, lambda: sends.__setitem__(0, sends[0] + 1), value=1)
 
 
-def q_receive():
-    ticks = e.arg(2)
-    if ticks == 50:                                              # the GUI side sleeping until the streamer is done
-        waits[0] += 1
-        blocked[0] = True
-        e.ret(1)
-        uc.emu_stop()
-    else:
-        e.ret(0)                                                 # the streamer's own non-blocking take: queue empty
+def sd_yield():                                                  # the GUI side giving the processor to the streamer until it is done
+    waits[0] += 1
+    blocked[0] = True
+    e.ret(0)
+    uc.emu_stop()
 
 
-e.stub(Q_RECEIVE, q_receive)
+e.stub(Q_RECEIVE, value=0)                                       # the streamer's own non-blocking take: queue empty
+e.stubs[b["bb_sd_yield"]] = lambda: sd_yield()
 REGS = [UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_R4, UC_ARM_REG_R5, UC_ARM_REG_R6, UC_ARM_REG_R7, UC_ARM_REG_R8, UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11,
         UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC]
 serviced = [0]
@@ -277,13 +274,11 @@ def dwt_read(u, a, addr, size, v, _):
     u.mem_write(DWT, struct.pack("<I", cyc["v"] & 0xFFFFFFFF))
 uc.hook_add(UC_HOOK_MEM_READ, dwt_read, begin=DWT, end=DWT + 3)
 uc.mem_write(0xE000E014, struct.pack("<I", 399_000 - 1))
-q_wait_stub = e.stubs[Q_RECEIVE]
-def q_receive_nowake():
-    e.ret(0 if e.arg(2) != 50 else 0)
-e.stubs[Q_RECEIVE] = q_receive_nowake
+q_wait_stub = e.stubs[b["bb_sd_yield"]]
+e.stubs[b["bb_sd_yield"]] = lambda: e.ret(0)                     # the streamer never gets to run
 r = never("bb_sd_mkdir", path("/Mcl/z"), 0, 0, 0)
 check("the streamer never runs: SD_TIMEOUT, counted, the request is marked abandoned", r == 101 and struct.unpack("<I", bytes(uc.mem_read(REQ + 4, 4)))[0] == 1, r)
-e.stubs[Q_RECEIVE] = q_wait_stub
+e.stubs[b["bb_sd_yield"]] = q_wait_stub
 service()
 check("a late completion of an abandoned request frees the mailbox", struct.unpack("<I", bytes(uc.mem_read(REQ, 4)))[0] == 0)
 check("... and the work was done (the directory exists)", gui("bb_sd_stat", path("/Mcl/z"), ent) == 0)

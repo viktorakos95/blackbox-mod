@@ -1,8 +1,8 @@
 """Rig for running MCL itself (the real core, M8) under Unicorn: the unit's image with the blob that links MCL (tools/mcl/build_mcl.sh), the stock FatFs on a FAT image
 behind the SD layer (sdharness.py), a GUI context and a streamer context that alternate when the GUI side blocks, a modelled timer / cycle counter, the MIDI jack as a plain list.
 
-MCL's task is run as the GUI context: `run(function, *args)` runs a blob function; whenever it sleeps or waits for the card (the blocking calls of the stock kernel that the blob makes) the
-streamer context runs one pass (mcl_sd_pump) and, for sleeps, the modelled time moves on. Interrupt handlers (base timer, soft interrupts) are called by `tick()` like the hardware would.
+MCL's task is run as the GUI context: `run(function, *args)` runs a blob function; whenever it waits for the card (bb_sd_yield) the streamer context runs one pass
+(mcl_sd_pump); whenever it sleeps (bb_yield) the modelled time moves on. Interrupt handlers (base timer, soft interrupts) are called by `tick()` like the hardware would.
 Needs MCL_DIR and MCL_GFX (checkouts) to build; tests skip themselves when the MCL build is not available."""
 import os
 import shutil
@@ -80,23 +80,22 @@ class Core:
         self.sleeps = []
         e.stub(Q_CREATE, value=0x24050000)
         e.stub(Q_SEND, value=1)
-        e.stub(Q_RECEIVE, self._q_receive)
+        e.stub(Q_RECEIVE, value=0)                               # (no blocking kernel call is left in the blob's waits)
+        e.stubs[self.b["bb_yield"]] = self._sleep_yield
+        e.stubs[self.b["bb_sd_yield"]] = self._sd_yield
         self.pump = 0
 
-    def _q_receive(self):
-        e = self.e
-        ticks = e.arg(2)
-        lr = self.uc.reg_read(UC_ARM_REG_LR) & ~1
-        sleeping = self.b["bb_sleep_ms"] <= lr < self.b["bb_sleep_ms"] + 0x200      # the platform's sleep (also 50-tick slices), not the SD layer's wait
-        if ticks == 50 and not sleeping:                         # the SD layer waiting for the streamer
-            self.blocked[0] = True
-            e.ret(1)
-            self.uc.emu_stop()
-        else:
-            if ticks:
-                self.sleeps.append(ticks)
-                self.st["dwt"] += ticks * (CORE // 1000)         # time passes while a task sleeps
-            e.ret(0)
+    def _sleep_yield(self):
+        """MCL's sleep gives the processor away: here the modelled time moves on a millisecond each time"""
+        self.sleeps.append(1)
+        self.st["dwt"] += CORE // 1000
+        self.e.ret(0)
+
+    def _sd_yield(self):
+        """the SD layer waiting for the streamer: stop, the streamer context runs a pass (run / step go on afterwards)"""
+        self.blocked[0] = True
+        self.e.ret(0)
+        self.uc.emu_stop()
 
     def service(self):
         uc = self.uc

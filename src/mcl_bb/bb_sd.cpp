@@ -20,8 +20,6 @@
 #define F_UNLINK    0x0808748Eu
 #define F_MKDIR     0x08087558u
 #define F_RENAME    0x080876C8u
-#define Q_CREATE    0x080883BEu          /* xQueueGenericCreate(length, item size, type) */
-#define Q_SEND      0x08088402u          /* xQueueGenericSend(queue, item, ticks, position) */
 #define Q_RECEIVE   0x08088756u          /* xQueueGenericReceive(queue, item, ticks, peek): also what the streamer's loop calls */
 
 typedef uint32_t (*fn4)(uint32_t, uint32_t, uint32_t, uint32_t);
@@ -58,7 +56,6 @@ static struct {
     char path[320], path2[320];
     char name_out[SD_NAME_MAX];
 } req;
-static uint32_t sem;                                              /* binary semaphore: the streamer gives it when a request is done */
 static uint32_t st_requests, st_timeouts, st_wait_ms, st_call_us;
 static uint32_t last_pump, worst_gap_cyc, gaps_100ms;           /* the streamer loop's own rhythm: time between two passes through the hook */
 
@@ -82,7 +79,6 @@ HOOK void bb_sd_init(void)
         fil_used[i] = 0;
     for (int i = 0; i < SD_DIRS; i++)
         dir_used[i] = 0;
-    sem = 0;
     last_pump = 0;
     barrier();
     ready = READY_MAGIC;                                         /* last: the streamer's hook looks at this */
@@ -169,8 +165,6 @@ HOOK void bb_sd_service(void)
         return;
     }
     req.state = ST_DONE;
-    if (sem)
-        stock(Q_SEND, sem, 0, 0, 0);
 }
 
 HOOK uint32_t mcl_sd_pump(uint32_t queue, uint32_t item, uint32_t ticks, uint32_t peek)
@@ -188,6 +182,14 @@ HOOK uint32_t mcl_sd_pump(uint32_t queue, uint32_t item, uint32_t ticks, uint32_
 }
 
 /* ---- the GUI side ---- */
+/* Gives the processor to the other ready tasks of the same priority (pends PendSV, the kernel's yield). The wait used to sleep on a semaphore; a yield needs no
+ * kernel object from the stock heap, which has nothing to spare (docs/mcl-m0-m1-results.md, M8). */
+extern "C" __attribute__((noinline)) void bb_sd_yield(void)
+{
+    *(volatile uint32_t *)0xE000ED04u = 0x10000000u;              /* ICSR.PENDSVSET */
+    __asm volatile("dsb sy\n isb sy" ::: "memory");
+}
+
 /* Posts the request filled in `req` and waits for the streamer. */
 static uint32_t submit(void)
 {
@@ -199,11 +201,6 @@ static uint32_t submit(void)
     }
     if (req.state != ST_IDLE)
         return SD_BUSY;
-    if (!sem)
-        sem = stock(Q_CREATE, 1, 0, 3);
-    if (!sem)
-        return SD_NOT_READY;
-    stock(Q_RECEIVE, sem, 0, 0, 0);                              /* an unclaimed give from an abandoned request must not wake us early */
     st_requests++;
     uint32_t last = DWT_CYCCNT;
     uint64_t cyc = 0;                                            /* elapsed cycles, accumulated: the counter is 32 bits and wraps after 10.7 s */
@@ -216,7 +213,7 @@ static uint32_t submit(void)
         last = now;
         if (cyc * 1000u / cps >= SD_TIMEOUT_MS)
             break;
-        stock(Q_RECEIVE, sem, 0, 50, 0);                         /* sleeps until the streamer gives the semaphore, at most 50 ms (a lost wake-up costs that) */
+        bb_sd_yield();                                           /* lets the streamer (same priority) run until it has done the request */
     }
     uint32_t now = DWT_CYCCNT;
     cyc += now - last;

@@ -278,8 +278,8 @@ static void render(void)
     }
     if (bb_mcl_state && bb_mcl_state() == 3) {
         text(0, 0, "MCL NOT STARTED");
-        text(0, 1, "NO MEMORY FOR ITS");
-        text(0, 2, "TASK (16 KB STACK)");
+        text(0, 1, "THE KERNEL REFUSED");
+        text(0, 2, "ITS TASK");
         return;
     }
 #ifdef SD_TEST

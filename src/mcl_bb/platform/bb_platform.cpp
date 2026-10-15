@@ -76,18 +76,15 @@ void delayMicroseconds(unsigned int us)
 }
 }
 
-/* Diagnostic experiment: write the stock kernel's heap (0x24016178 + 0x9000) back from the data cache (DCCMVAC), in case something throws dirty lines away */
-extern "C" void bb_heap_clean(void)
+/* Gives the processor to the other ready tasks of the same priority (pends PendSV, the kernel's yield). MCL's waits use this instead of the kernel's
+ * blocking calls: those need kernel objects from the stock heap, and the stock heap has nothing to spare (docs/mcl-m0-m1-results.md, M8). */
+extern "C" __attribute__((noinline)) void bb_yield(void)
 {
-    for (uint32_t a = 0x24016160u; a < 0x2401f180u; a += 32u)
-        *(volatile uint32_t *)0xE000EF68u = a;
-    __asm volatile("dsb sy" ::: "memory");
+    *(volatile uint32_t *)0xE000ED04u = 0x10000000u;              /* ICSR.PENDSVSET */
+    __asm volatile("dsb sy\n isb sy" ::: "memory");
 }
 
-/* A real sleep in a task: wait on a semaphore nobody gives, with a time-out (the stock FreeRTOS tick is 1 kHz). The stock functions are Thumb at fixed addresses (docs M7). */
-typedef uint32_t (*fn4)(uint32_t, uint32_t, uint32_t, uint32_t);
-static uint32_t sleep_sem;
-
+/* A sleep in a task: yield until the time is up (counted with the cycle counter; the firmware's tick is 1 kHz, SYST_RVR + 1 cycles a millisecond) */
 extern "C" void bb_sleep_ms(uint32_t ms)
 {
     bb_dbg[1]++;
@@ -96,40 +93,20 @@ extern "C" void bb_sleep_ms(uint32_t ms)
         delayMicroseconds(ms * 1000u);
         return;
     }
-    bb_dbg[11] = 1;
-    if (!sleep_sem)
-        sleep_sem = ((fn4)(0x080883beu | 1u))(1, 0, 3, 0);        /* xQueueGenericCreate: a binary semaphore */
-    /* Experiment: no semaphore, no kernel time-out: yield to the other tasks until the time is up (the total counted with the cycle counter) */
     uint32_t cpms = (SYST_RVR + 1u);
     uint64_t total = (uint64_t)ms * cpms, acc = 0;
     uint32_t last = DWT_CYCCNT;
     bb_dbg[12]++;
-    if (bb_dbg[12] == 1) {
-        bb_heap_clean();
+    if (bb_dbg[12] == 1) {                                        /* (diagnostics: is the running task's TCB intact before the first wait) */
         uint32_t *c = (uint32_t *)*(volatile uint32_t *)0x2401f2a8u;
         bb_dbg[19] = c[4] == (uint32_t)c;
-        uint32_t sp;
-        __asm volatile("mov %0, sp" : "=r"(sp));
-        bb_dbg[29] = sp;
     }
-    while (acc < total) {
-        bb_dbg[11] = 3;
-        *(volatile uint32_t *)0xE000ED04u = 0x10000000u;              /* pend PendSV: a yield */
-        __asm volatile("dsb sy\n isb sy" ::: "memory");
+    do {
+        bb_yield();
         uint32_t now = DWT_CYCCNT;
         acc += (uint32_t)(now - last);
         last = now;
-    }
-    bb_dbg[11] = 4;
-}
-
-/* Diagnostic experiment: a "give" on the sleep semaphore from outside wakes a sleeping MCL task early (its loop counts the elapsed time itself, so it just sleeps on). */
-extern "C" void bb_sleep_poke(void)
-{
-    if (sleep_sem) {
-        bb_dbg[14]++;
-        ((fn4)(0x08088402u | 1u))(sleep_sem, 0, 0, 0);            /* xQueueGenericSend, no waiting */
-    }
+    } while (acc < total);
 }
 
 extern "C" void delay(unsigned long ms) { bb_sleep_ms((uint32_t)ms); }
