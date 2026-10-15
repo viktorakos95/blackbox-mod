@@ -243,7 +243,7 @@ rg.e.uc.mem_write(0x24061000, bytes(40))
 end = rg.e.call(rg.b["mcl_status_text"], 0x24061000, 5)
 check("room limit is respected: 5 characters written, no more", rg.e.cstr(0x24061000) == "Mok L", rg.e.cstr(0x24061000))
 
-# --- the blocking driver itself (mcl_gui): runs the same state machine against the cycle counter; nothing connected here, and no interrupts
+# --- the blocking driver itself (bb_rt_gui): runs the same state machine against the cycle counter; nothing connected here, and no interrupts
 #     are modelled, so it must end by its own time-outs after about 300 ms of the 400 MHz clock (the TX ring just fills)
 from unicorn import UC_HOOK_MEM_READ
 rg = Rig(T)
@@ -257,16 +257,16 @@ def dwt_read(uc, t, a, sz, v, _):
 
 rg.e.uc.hook_add(UC_HOOK_MEM_READ, dwt_read, begin=0xE0001004, end=0xE0001007)
 rg.call("mcl_boot")
-rg.e.call(rg.b["mcl_gui"], count=20_000_000)
+rg.e.call(rg.b["bb_rt_gui"], count=20_000_000)
 res = bytes(rg.e.uc.mem_read(rg.call("bb_m3_result"), 4))
-check("mcl_gui: blocking test ends by itself, loop and MD report no answer", res[0] == 2 and res[1] == 2, res.hex())
+check("bb_rt_gui: blocking test ends by itself, loop and MD report no answer", res[0] == 2 and res[1] == 2, res.hex())
 check("... after about 1.9 s (300 ms time-outs + the note burst, ~750 M cycles)", 700_000_000 < dwt["c"] < 800_000_000, dwt["c"])
 rg.e.uc.mem_write(0x24061000, bytes(40))
 rg.e.call(rg.b["mcl_status_text"], 0x24061000, 26)
 check("label text after a test with nothing connected: 'Mok L- D- N'", rg.e.cstr(0x24061000) == "Mok L- D- N", rg.e.cstr(0x24061000))
 before = dwt["c"]
-rg.e.call(rg.b["mcl_gui"], count=20_000_000)
-check("mcl_gui runs only once per power-up", dwt["c"] == before)
+rg.e.call(rg.b["bb_rt_gui"], count=20_000_000)
+check("bb_rt_gui runs only once per power-up", dwt["c"] == before)
 
 build(False)                                                   # leave out/ in the normal state for the other tests
 print(f"\n{fails} failure(s)")

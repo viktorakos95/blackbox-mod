@@ -143,7 +143,7 @@ check("an F8 queued in the middle of a 1,000-byte message leaves at the next byt
 # --- M4 test image: loop-back frame first (cable check), then the clock for 250 ms; the label reports L, t and r
 r = rig(m4=True)
 r.e.uc.mem_write(0x24061000, bytes(40))
-r.e.call(r.b["mcl_gui"], count=80_000_000)
+r.e.call(r.b["bb_rt_gui"], count=80_000_000)
 r.e.call(r.b["mcl_status_text"], 0x24061000, 30)
 check("M4 image, nothing looped back and no timer interrupt modelled: label ' Mok L- t0 r0', clock running, port claimed",
       r.e.cstr(0x24061000) == "Mok L- t0 r0" and r.call("bb_clock_running") == 1 and r.call("bb_midi_owner") == 1, r.e.cstr(0x24061000))

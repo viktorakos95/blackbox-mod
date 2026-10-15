@@ -232,7 +232,7 @@ static uint32_t m4_t, m4_r, m4_l;                   /* loop-back frame result (1
 #endif
 
 /* Runs the blocking M3 hardware test once, from a label constructor (GUI task, never the audio task). No-op in normal images. */
-extern "C" void mcl_gui(void)
+extern "C" void bb_rt_gui(void)
 {
 #ifdef M3_TEST
     volatile uint32_t *s = BKP;
@@ -425,4 +425,4 @@ static void page_input(uint32_t kind, int32_t a, int32_t b)
 #else
 #define COMPACT 0u
 #endif
-extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 3, mcl_boot, mcl_status_text, mcl_gui, COMPACT, page_fb, page_sig, page_input};
+extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 3, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input};

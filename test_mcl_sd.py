@@ -296,12 +296,12 @@ FONT = [int(t, 16) for t in src[src.index("{") + 1:src.rindex("}")].replace("//"
 def screen():
     gui("bb_ui_refresh")
     gui("bb_ui_sig")
-    fb = bytes(uc.mem_read(gui("bb_ui_fb"), 512))
+    fb = bytes(uc.mem_read(gui("bb_ui_fb"), 1024))
     rows = []
     for row in range(4):
         t = ""
         for c in range(21):
-            cols = [sum((fb[c * 6 + i + 128 * ((row * 8 + j) >> 3)] >> ((row * 8 + j) & 7) & 1) << j for j in range(7)) for i in range(5)]
+            cols = [sum((fb[(row * 8 + j) * 16 + ((c * 6 + i) >> 3)] >> (7 - ((c * 6 + i) & 7)) & 1) << j for j in range(7)) for i in range(5)]
             t += next((chr(k) for k in range(32, 127) if [FONT[k * 5 + i] & 0x7f for i in range(5)] == cols), "?")
         rows.append(t.rstrip())
     return rows

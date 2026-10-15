@@ -161,14 +161,14 @@ check("worst call time measured: about 3000 us", 2900 <= call("bb_sdspy_worst_us
 def screen():
     rg.call("bb_ui_refresh")
     p = rg.call("bb_ui_sig")
-    fb = bytes(e.uc.mem_read(rg.call("bb_ui_fb"), 512))
+    fb = bytes(e.uc.mem_read(rg.call("bb_ui_fb"), 1024))
     src = open("src/mcl_bb/glcdfont.h").read()
     font = [int(t, 16) for t in src[src.index("{") + 1:src.rindex("}")].replace("//", " ").replace(",", " ").split() if t.startswith("0x")]
     rows = []
     for row in range(4):
         s = ""
         for c in range(21):
-            cols = [sum((fb[c * 6 + i + 128 * ((row * 8 + j) >> 3)] >> ((row * 8 + j) & 7) & 1) << j for j in range(7)) for i in range(5)]
+            cols = [sum((fb[(row * 8 + j) * 16 + ((c * 6 + i) >> 3)] >> (7 - ((c * 6 + i) & 7)) & 1) << j for j in range(7)) for i in range(5)]
             s += next((chr(k) for k in range(32, 127) if [font[k * 5 + i] & 0x7f for i in range(5)] == cols), "?")
         rows.append(s.rstrip())
     return rows

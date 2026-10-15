@@ -26,11 +26,11 @@ def check(label, cond, detail=""):
 
 def fb():
     p = r.call("bb_ui_fb")
-    return bytes(e.uc.mem_read(p, 512))
+    return bytes(e.uc.mem_read(p, 1024))
 
 
 def px(f, x, y):
-    return f[x + 128 * (y >> 3)] >> (y & 7) & 1
+    return f[y * 16 + (x >> 3)] >> (7 - (x & 7)) & 1
 
 
 def screen():
@@ -110,11 +110,11 @@ def draw():
 calls = draw()
 boxes = [c for c in calls if c[0] == "lp_box"]
 x0 = (W - 256) // 2
-runs = [c for c in boxes if c[4] == 2 and 20 <= c[2] < 84 and x0 <= c[1] < x0 + 256]          # (name, x, d, w, h)
+runs = [c for c in boxes if c[4] == 2 and 20 <= c[2] < 148 and x0 <= c[1] < x0 + 256]          # (name, x, d, w, h)
 check("the screen is blitted in runs 2 px high", len(runs) > 20, len(runs))
-check("runs stay inside the 256x64 area", all(c[1] + c[3] <= x0 + 256 for c in runs))
+check("runs stay inside the 256x128 area", all(c[1] + c[3] <= x0 + 256 for c in runs))
 f = fb()
-lit = sum(px(f, x, y) for x in range(128) for y in range(32))
+lit = sum(px(f, x, y) for x in range(128) for y in range(64))
 check("the runs cover exactly the lit pixels (2x)", sum(c[3] // 2 for c in runs) == lit, (sum(c[3] // 2 for c in runs), lit))
 check("tile frames are drawn (screen frame + 5 tiles)", len([c for c in calls if c[0] == "lp_frame"]) == 6)
 check("tile names and roles are drawn", len([c for c in calls if c[0] == "lp_text_c"]) == 10)
@@ -122,7 +122,7 @@ check("tile names and roles are drawn", len([c for c in calls if c[0] == "lp_tex
 sig_a = entry("mcl_page_sig")
 check("page signature depends on the picture", sig_a == entry("mcl_page_sig"))
 # a tile touch: x in tile 0, d in the tile row
-TILE_Y = 20 + 64 + 10
+TILE_Y = 20 + 128 + 10
 tw = (W - 8) // 5
 entry("mcl_page_down", 1, 4 + 2 * tw + 5, TILE_Y + 5, W, FOOT)    # touch id 1 on B3 (stop)
 check("a tile touch presses B3 (stop) and shows it pressed", screen()[3].endswith("B0010"), screen()[3])

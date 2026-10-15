@@ -82,7 +82,7 @@ struct mcl_entry {
     char *(*status)(char *, uint32_t);   /* "Mok" or "M<code>" (and test results) for the label, at most `room` characters */
     void (*gui)(void);                   /* slow work that must run in the GUI task (the M3 hardware test); a no-op otherwise */
     uint32_t compact;                    /* 1 (hardware test images): the label is just the status text */
-    const uint8_t *(*fb)(void);          /* abi 3, the MCL page: the 128x32 one-bit screen (SSD1306 layout), null while the runtime is down */
+    const uint8_t *(*fb)(void);          /* abi 3, the MCL page: the 128x64 one-bit screen (16 bytes a row, leftmost pixel in the top bit), null while the runtime is down */
     uint32_t (*sig)(void);               /* draws it; a hash of the picture (0 while the runtime is down) */
     void (*input)(uint32_t kind, int32_t a, int32_t b);    /* 1: encoder a turned b detents; 2 / 3: button a down / up */
 };
@@ -326,7 +326,7 @@ void lp_text_c(int x, int d, int w, const char *s, int color, int scale);
 
 #define MCL_SCALE   2
 #define MCL_TOP     20
-#define MCL_TILE_Y  (MCL_TOP + 32 * MCL_SCALE + 10)
+#define MCL_TILE_Y  (MCL_TOP + 64 * MCL_SCALE + 10)
 #define MCL_TILE_H  44
 #define MCL_TILES   5
 #define MCL_ENC_COUNTS 20       /* knob counts per detent (a guess, as the TRIG page's 40; tune on the unit) */
@@ -351,24 +351,25 @@ void mcl_page_draw(int w, int foot_y)
     int x0 = mcl_x0(w);
     bkp_enable();
     lp_box(1, 16, w - 2, foot_y - 16, 0x02);
-    lp_box(x0 - 2, MCL_TOP - 2, 128 * MCL_SCALE + 4, 32 * MCL_SCALE + 4, 0x0e);
+    lp_box(x0 - 2, MCL_TOP - 2, 128 * MCL_SCALE + 4, 64 * MCL_SCALE + 4, 0x0e);
     if (!fb) {
-        lp_text_c(x0, MCL_TOP + 26, 128 * MCL_SCALE, e ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", 0x0c, 1);
+        lp_text_c(x0, MCL_TOP + 58, 128 * MCL_SCALE, e ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", 0x0c, 1);
     } else {
-        for (int y = 0; y < 32; y++) {
+        for (int y = 0; y < 64; y++) {                        /* the screen: 16 bytes a row, leftmost pixel = the top bit; runs of lit pixels become boxes */
+            const uint8_t *row = fb + y * 16;
             int x = 0;
             while (x < 128) {
-                while (x < 128 && !(fb[x + 128 * (y >> 3)] >> (y & 7) & 1))
+                while (x < 128 && !(row[x >> 3] >> (7 - (x & 7)) & 1))
                     x++;
                 int s = x;
-                while (x < 128 && (fb[x + 128 * (y >> 3)] >> (y & 7) & 1))
+                while (x < 128 && (row[x >> 3] >> (7 - (x & 7)) & 1))
                     x++;
                 if (x > s)
                     lp_box(x0 + s * MCL_SCALE, MCL_TOP + y * MCL_SCALE, (x - s) * MCL_SCALE, MCL_SCALE, 0x0f);
             }
         }
     }
-    lp_frame(x0 - 3, MCL_TOP - 3, 128 * MCL_SCALE + 6, 32 * MCL_SCALE + 6, 0x10, 1);
+    lp_frame(x0 - 3, MCL_TOP - 3, 128 * MCL_SCALE + 6, 64 * MCL_SCALE + 6, 0x10, 1);
     int tw = mcl_tile_w(w);
     for (int i = 0; i < MCL_TILES; i++) {
         int on = UI->mask >> i & 1;

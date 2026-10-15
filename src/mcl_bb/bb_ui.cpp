@@ -9,7 +9,7 @@
 
 #define HOOK extern "C" __attribute__((section(".hook"), used))
 
-static uint8_t fb[BB_UI_W * BB_UI_H / 8];
+static uint8_t fb[BB_UI_STRIDE * BB_UI_H];
 #ifdef SD_TEST
 static uint32_t sdtest_view;                                /* 0: the three tests' result lines, 1: the SD layer's counters */
 #endif
@@ -22,7 +22,7 @@ static uint32_t clock_ok;                                   /* 1 = the timer is 
 static void px(int x, int y)
 {
     if ((unsigned)x < BB_UI_W && (unsigned)y < BB_UI_H)
-        fb[x + BB_UI_W * (y >> 3)] |= (uint8_t)(1u << (y & 7));
+        fb[y * BB_UI_STRIDE + (x >> 3)] |= (uint8_t)(0x80u >> (x & 7));
 }
 
 static void put(int col, int row, char c)                   /* a 6x8 cell: column 0..20, row 0..3 */

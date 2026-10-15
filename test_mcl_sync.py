@@ -231,7 +231,7 @@ check("bb_clock_stop ends it", s.r.call("bb_clock_running") == 0)
 # --- the M5 hardware test image: boot-time lock and measurement, result on the label
 r = clock_rig(core_hz=CORE, tim_hz=200_000_000, m5=True)
 r.e.uc.mem_write(0x24061000, bytes(40))
-r.e.call(r.b["mcl_gui"], count=120_000_000)
+r.e.call(r.b["bb_rt_gui"], count=120_000_000)
 r.e.call(r.b["mcl_status_text"], 0x24061000, 30)
 check("M5 image, no master on the jack: gui waits for the lock and reports it never locked, label ' Mok S1 0 e0'", r.e.cstr(0x24061000) == "Mok S1 0 e0" and r.call("bb_clock_sync_state") == 1, r.e.cstr(0x24061000))
 for name, v in (("_ZL4m5_s", 3), ("_ZL4m5_b", 1200), ("_ZL4m5_e", 9)):
