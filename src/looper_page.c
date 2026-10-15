@@ -1215,7 +1215,7 @@ static void draw_sm_top(struct sm *s, const char *info)
         *q++ = 'M';
     }
     {
-        int gl = looper_guard_level();                            /* the looper's tracks held back (1 one filter stage, no drive; 2 no grains; 3 no filter; 4 faded out) */
+        int gl = looper_guard_level();                            /* the looper: how many tracks are faded out for lack of time (3 first, then 2, 1, 4) */
         if (gl > 0) {
             *q++ = ' ';
             *q++ = 'L';

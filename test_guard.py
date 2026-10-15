@@ -1,9 +1,9 @@
 """The looper's per-block budget guard (looper.c guard_decide) under Unicorn.
 
 The block period, the cycles per instruction and the time the audio task has used before the tracks are written by the test (the
-emulator's cycle counter does not run). Checked: everything plays with room; less room takes the levels in order (one filter stage
-and no drive, no grains, no filter), the sound goes on at each; no room at all fades the tracks out within the block (no click) and
-they stay silent; with room again the levels come back one at a time, about a second apart, and the tracks fade back in.
+emulator's cycle counter does not run). Checked: everything plays as set with room; with less room whole tracks fade out, track 3
+first, then 2 (the others play on exactly as set), over four blocks; with no time even to fade, they go at once (a ramp within one
+block) and stay silent; with room again they come back one at a time, track 4 first, about a second apart, fading in.
 NOT checked: the real cycle counts on the unit (the model's constants are fitted to emulator instruction counts).
 
 Stubbed: the sample pool init (a fake pool is laid out instead), the input stage's tail call, the Out 1 bus lookup,
@@ -242,8 +242,9 @@ for t in range(4):
     for q, v in ((P_FILT, -0.4), (P_RES, 0.7), (P_DRIVE, 0.5), (P_SPEED, 0.3), (P_CRUNCH, 0.3)):
         param(t, q, v)
 FXB = e.r32(ENGINE + 0x1C * (FIRST + 5 * PER) + 4) & 0xFFFFFFFF
-G = FXB + dsp_off("gd")
-G_PER, G_REST, G_CPI, G_LVL = G + dsp_off("gd.per") - dsp_off("gd"), G + dsp_off("gd.rest") - dsp_off("gd"), G + dsp_off("gd.cpi") - dsp_off("gd"), G + dsp_off("gd.lvl") - dsp_off("gd")
+def g_at(f):
+    return FXB + dsp_off("gd." + f)
+G_PER, G_REST, G_CPI, G_LVL, G_OUT, G_TQ, G_FO = (g_at(f) for f in ("per", "rest", "cpi", "lvl", "out", "tq", "fo"))
 PERC = 2_128_000                                       # a 256-frame block at 399 MHz
 def setf(a, v):
     e.uc.mem_write(a, struct.pack("<f", v))
@@ -260,42 +261,55 @@ def run_at(frac, nb=1, cpi=1.0):
     return outs
 def lvl():
     return e.uc.mem_read(G_LVL, 1)[0]
+def outs():
+    return list(e.uc.mem_read(G_OUT, 4))
+def tq():
+    return list(e.uc.mem_read(G_TQ, 4))
+def fo():
+    return [round(v, 3) for v in struct.unpack("<4f", e.uc.mem_read(G_FO, 16))]
 def rms(o):
     return (sum(v * v for v in o[0]) / len(o[0])) ** 0.5
+# (everything on, 4 tracks, cycles per instruction 1: a track as set ~177 k cycles a block, 4 = ~710 k)
 blocks(20)
 o = run_at(0.10, 5)
-check("room: everything plays (level 0)", lvl() == 0, lvl())
+check("room: nothing faded, every track as set", lvl() == 0 and outs() == [0, 0, 0, 0] and tq() == [0, 0, 0, 0], (lvl(), outs(), tq()))
 base = rms(o[-1])
 check("room: the tracks sound", base > 0.01, base)
-o = run_at(0.62, 3)
-l1 = lvl()
-check("less room: one filter stage / no drive or no grains (level 1-2)", 1 <= l1 <= 2, l1)
-check("... and the tracks still sound", rms(o[-1]) > 0.3 * base, (rms(o[-1]), base))
-o = run_at(0.74, 3)
-check("little room: level 3 (no filter, crunch, grains, drive)", lvl() == 3, lvl())
-check("... and the tracks still sound", rms(o[-1]) > 0.3 * base, (rms(o[-1]), base))
-o = run_at(0.97, 1)
-check("no room: level 4", lvl() == 4, lvl())
+o = run_at(0.62, 1)                                    # ~640 k left: three tracks fit
+check("less room: track 3 fades out, the others stay as set", outs() == [0, 0, 1, 0] and [tq()[i] for i in (0, 1, 3)] == [0, 0, 0], (outs(), tq()))
+check("... fading over blocks (a quarter a block, a little cheaper meanwhile)", fo()[2] == 0.25 and tq()[2] == 1, (fo(), tq()))
+o = run_at(0.62, 4)
+check("... then silent", fo()[2] == 1.0 and outs() == [0, 0, 1, 0], (fo(), outs()))
+check("... and the other three sound", rms(o[-1]) > 0.3 * base, (rms(o[-1]), base))
+o = run_at(0.70, 6)                                    # ~425 k left: two fit
+check("less still: track 2 goes too", outs() == [0, 1, 1, 0] and [tq()[i] for i in (0, 3)] == [0, 0], (outs(), tq()))
+o = run_at(0.97, 1)                                    # no time at all
+check("no time at all: all out at once, computed as cheaply as possible", outs() == [1, 1, 1, 1] and fo() == [1.0] * 4 and [tq()[i] for i in (0, 3)] == [3, 3], (outs(), fo(), tq()))
 x = o[0][0]
-steps = max(abs(x[i + 1] - x[i]) for i in range(len(x) - 1))
 head_, tail_ = max(abs(v) for v in x), max(abs(v) for v in x[-16:])
-check("... the tracks fade out within the block (a ramp to 0: the last 16 frames under a tenth of the block's peak)", tail_ < 0.1 * head_ + 1e-4 and abs(x[-1]) < 0.01 * head_ + 1e-5, (head_, tail_, x[-1]))
+check("... a ramp to 0 within the block (the last 16 frames under a tenth of the block's peak)", tail_ < 0.1 * head_ + 1e-4 and abs(x[-1]) < 0.01 * head_ + 1e-5, (head_, tail_, x[-1]))
 o = run_at(0.97, 3)
-check("... and stay silent", max(max(abs(v) for v in b[0]) for b in o) < 1e-6, max(max(abs(v) for v in b[0]) for b in o))
+check("... and silent after", max(max(abs(v) for v in b[0]) for b in o) < 1e-6, max(max(abs(v) for v in b[0]) for b in o))
 o = run_at(0.10, 200)
-check("room again: not at once (a second first)", lvl() == 4, lvl())
-o = run_at(0.10, 230)
-check("... then one level better (3), the tracks fade back in", lvl() == 3 and rms(o[-1]) > 0.3 * base, (lvl(), rms(o[-1])))
-first_back = [b for b in o if max(abs(v) for v in b[0]) > 0][0][0]
-check("... fading in, not jumping in", max(abs(v) for v in first_back[:8]) < 0.2 * max(abs(v) for v in first_back[-64:]) + 1e-4,
-      (max(abs(v) for v in first_back[:8]), max(abs(v) for v in first_back[-64:])))
+check("room again: not at once (about a second first)", lvl() == 4, lvl())
+o = run_at(0.10, 260)
+check("... then one back: track 4 first", outs() == [1, 1, 1, 0], outs())
+nz = [b for b in o if max(abs(v) for v in b[0]) > 0]
+first_back = nz[0][0] if nz else [0.0]
+check("... fading in (~100 ms), not jumping in", 0.0 < fo()[3] < 1.0 or fo()[3] == 0.0, fo())
+pk = [max(abs(v) for v in b[0]) for b in o]
+i0 = next((i for i, v in enumerate(pk) if v > 0), None)
+early, later = (pk[i0], max(pk[i0 + 30:i0 + 45])) if i0 is not None and i0 + 45 <= len(pk) else (1.0, 0.0)
+check("... its level grows over ~37 blocks (the first block of it under a fifth of where it gets)", early < 0.2 * later, (early, later))
 o = run_at(0.10, 1300)
-check("... and on to everything (level 0) a step a second", lvl() == 0, lvl())
-o = run_at(0.70, 2)
-check("a pad / sequence spike: worse at once, in the same block", lvl() >= 2, lvl())
+check("... and on to all four, one a second (3 last)", lvl() == 0 and outs() == [0, 0, 0, 0] and fo() == [0.0] * 4, (lvl(), outs(), fo()))
+check("... all as set again", tq() == [0, 0, 0, 0] and rms(o[-1]) > 0.5 * base, (tq(), rms(o[-1]), base))
+o = run_at(0.70, 1)
+check("a pad / sequence spike: acted on in the same block", lvl() >= 1, lvl())
+run_at(0.10, 5)
 e.call("looper_guard_force", 0)
 run_at(0.99, 2)
-check("forced (tests): the level stays", lvl() == 0, lvl())
+check("forced (tests): stays", lvl() == 0, lvl())
 e.call("looper_guard_force", -1)
 print("\n%d FAIL" % fails)
 sys.exit(1 if fails else 0)

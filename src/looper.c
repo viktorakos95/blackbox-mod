@@ -258,9 +258,12 @@ struct dsp {
         float cpi;                               /* cycles per modelled instruction (track_model): recent worst */
         float fx;                                /* the looper's own work after the tracks: recent worst, cycles */
         uint32_t calm;                           /* blocks in a row with room for one level better */
-        uint8_t lvl, force, top, shown;          /* the level now; forced (+1, tests); the worst this report; the last report's */
+        uint8_t lvl, force, top, shown;          /* tracks faded out now; forced (+1, tests); the most this report; the last report's */
         uint16_t rep;
         uint8_t aud[LOOPER_TRACKS];              /* the track plays out this block (decided with the level) */
+        uint8_t out[LOOPER_TRACKS];              /* faded out (or fading) for lack of time */
+        uint8_t tq[LOOPER_TRACKS];               /* how it is computed this block: 0 as set; 1 one filter stage, no drive (while it fades out); 3 the cheapest (no time even for that) */
+        float fo[LOOPER_TRACKS];                 /* how far it is faded: 0 not at all (as set), 1 silent */
         uint16_t yield;                          /* SAMPLR and the looper's tracks in the last block, per mille of the period (they give way: DRONE-8's governor leaves them out) */
     } gd;
     int16_t ws[5120];                            /* WSOLA: the candidate region, mono */
@@ -809,8 +812,8 @@ static inline float quant(float x, float q, float qi)
 static void targets(vtrack *k, float *g1)
 {
     int mode = k->mode;
-    int audible = (mode == LOOPER_PLAY || mode == LOOPER_DUB) && !k->muted && !S->paused && DSP()->gd.lvl < 4;   /* (guard level 4: out of time) */
-    float pan = k->pan, master = 1.f + 3.f * S->opt[LOOPER_O_GAIN];
+    int audible = (mode == LOOPER_PLAY || mode == LOOPER_DUB) && !k->muted && !S->paused;
+    float pan = k->pan, master = (1.f + 3.f * S->opt[LOOPER_O_GAIN]) * (1.f - DSP()->gd.fo[k - &S->t[0]]);   /* (the guard's fade) */
     g1[0] = g1[1] = 0.f;
     if (audible) {
         g1[0] = master * k->level * (pan > 0.f ? 1.f - pan : 1.f);
@@ -1452,7 +1455,7 @@ __attribute__((optimize("O2"))) static void play_seg(struct dsp *d, int t, int i
         wlen >>= 1;
     if (wlen < 64)
         wlen = len < 64 ? len : 64;
-    const int lv = d->gd.lvl;                         /* the guard (guard_decide): 1 one filter stage and no drive, 2 no grains either, 3 no filter or crunch either */
+    const int lv = d->gd.tq[t];                       /* the guard (guard_decide), only while a track fades out: 1 one filter stage and no drive, 3 no filter, crunch or grains either */
     /* the settings are read through p (restrict: nothing here writes them, so they stay in registers or come from the caller's stack) */
     const int fon = lv < 3 && (p->fm0 != 0.f || p->dfm != 0.f);   /* the filter off and faded out is left out; its state starts from rest when it comes back */
     const int hp = p->filt == 2, two = lv < 1, drv = p->drive && lv < 1, sends = p->sd != 0.f || p->sr != 0.f, crunch = p->crunch && lv < 3;
@@ -1781,9 +1784,10 @@ static void apply(int t, int b)
  * Order in the block: stock voices and effects, DRONE-8, SAMPLR, then the looper's tracks, then the stock output. When the tracks
  * start, the time used so far is known exactly; what the tracks will take is predicted from what they have switched on
  * (track_model, instructions measured in the emulator) times the cycles per instruction the unit has shown lately; what comes after
- * is the recent worst. The best level that fits this block is used now; one level better again only after ~1 s with room to spare.
- * Levels (all tracks): 0 everything, 1 one filter stage and no drive, 2 no grains either (SPEED / PTCH play like tape), 3 no filter
- * or crunch either, 4 the tracks fade out (their play heads keep running, so they come back in time). */
+ * is the recent worst. Nothing about how a track sounds is changed: when the tracks do not fit, whole tracks fade out, track 3 first,
+ * then 2, 1, 4, as many as needed in this block (over ~11 ms, computed a little cheaper while they fade; with no time even for that,
+ * at once and as cheaply as possible). Their play heads keep running. With room again (~1 s with a quarter to spare) they come back
+ * one at a time, the other way round, fading in over ~100 ms. */
 #define GUARD_BUDGET .90f                         /* of the block period: the rest is the margin for what the prediction misses */
 #define WAKE (*(volatile uint32_t *)0x2405ffd4u) /* cpu.c: the cycle count when the audio task woke up for this block */
 #define CYC  (*(volatile uint32_t *)0xe0001004u)
@@ -1850,42 +1854,84 @@ int32_t looper_budget_left(void)
     return (int32_t)(GUARD_BUDGET * g->per - (float)used - g->rest - g->fx);
 }
 
-/* Before the tracks: the level for this block. */
+/* Before the tracks: which tracks fade out in this block. */
+#define FADE_OUT .25f                                     /* of the way a block: ~11 ms */
+#define FADE_IN  (1.f / 37.f)                             /* ~100 ms */
 static void guard_decide(struct dsp *d, int n)
 {
     struct guard *g = &d->gd;
-    float m[5] = {0.f, 0.f, 0.f, 0.f, 0.f};
-    for (int t = 0; t < LOOPER_TRACKS; t++) {
+    static const int8_t give[LOOPER_TRACKS] = {2, 1, 0, 3};   /* the order tracks give way: 3, 2, 1, then 4 (it comes back first) */
+    int ord[LOOPER_TRACKS], na = 0;                       /* the tracks that play out, in that order */
+    float full[LOOPER_TRACKS], fade[LOOPER_TRACKS], low[LOOPER_TRACKS];
+    for (int t = 0; t < LOOPER_TRACKS; t++)
+        g->aud[t] = (uint8_t)track_out(&S->t[t]);
+    for (int q = 0; q < LOOPER_TRACKS; q++) {
+        int t = give[q];
         vtrack *k = &S->t[t];
-        g->aud[t] = (uint8_t)track_out(k);
-        if (g->aud[t])
-            for (int lv = 0; lv < 4; lv++)
-                m[lv] += track_model(d, t, k, lv, n);
-    }
-    int32_t left = looper_budget_left();
-    int lv = 0;
-    if (g->force) {
-        lv = g->force - 1;
-    } else if (left != 0x7fffffff) {
-        float room = (float)left;
-        while (lv < 4 && m[lv] * g->cpi > room)
-            lv++;
-        if (lv >= g->lvl) {
-            g->calm = 0;                                                  /* worse (or the same) now: at once */
-        } else if (m[g->lvl - 1] * g->cpi < .75f * room && ++g->calm >= 400) {
-            lv = g->lvl - 1;                                              /* better: one level, after ~1 s with a quarter to spare */
-            g->calm = 0;
-        } else {
-            if (m[g->lvl - 1] * g->cpi >= .75f * room)
-                g->calm = 0;
-            lv = g->lvl;
+        if (g->aud[t]) {
+            int gone = g->fo[t] >= 1.f;                   /* faded out already: nothing to compute */
+            full[na] = track_model(d, t, k, 0, n) * g->cpi;
+            fade[na] = gone ? 0.f : track_model(d, t, k, 1, n) * g->cpi;   /* fading out: a little cheaper */
+            low[na] = gone ? 0.f : track_model(d, t, k, 3, n) * g->cpi;    /* going at once: the cheapest */
+            ord[na++] = t;
         }
     }
-    g->lvl = (uint8_t)lv;
-    g->top = lv > g->top ? (uint8_t)lv : g->top;
-    if (++g->rep >= 375) {                                                /* the readout: the worst level in the last second */
+    int cur = g->lvl > na ? na : g->lvl, k = cur, now = 0;
+    int32_t left = looper_budget_left();
+    if (g->force) {
+        k = g->force - 1 > na ? na : g->force - 1;
+    } else if (left != 0x7fffffff) {
+        /* j tracks out (the first j in the order): what the rest costs once they are silent, and in this block while they go */
+        float room = (float)left, rest[LOOPER_TRACKS + 1], gofade[LOOPER_TRACKS + 1], gonow[LOOPER_TRACKS + 1];
+        for (int j = 0; j <= na; j++) {
+            rest[j] = gofade[j] = gonow[j] = 0.f;
+            for (int i = 0; i < na; i++) {
+                rest[j] += i < j ? 0.f : full[i];
+                gofade[j] += i < j ? fade[i] : 0.f;
+                gonow[j] += i < j ? low[i] : 0.f;
+            }
+        }
+        int fit = 0;                                      /* the fewest tracks out that fit, once faded */
+        while (fit < na && rest[fit] > room)
+            fit++;
+        if (fit < cur && rest[cur - 1] < .75f * room) {   /* one back after ~1 s with a quarter to spare */
+            if (++g->calm >= 400) {
+                k = cur - 1;
+                g->calm = 0;
+            }
+        } else {
+            g->calm = 0;
+            if (fit > cur)
+                k = fit;                                  /* fewer tracks: at once */
+        }
+        /* this block: the ones going fade if that fits, else they go at once (cheaply); else one more goes */
+        while (k < na && rest[k] + gofade[k] > room && rest[k] + gonow[k] > room)
+            k++;
+        now = rest[k] + gofade[k] > room;
+    }
+    for (int t = 0; t < LOOPER_TRACKS; t++)
+        g->out[t] = 0;
+    for (int i = 0; i < k; i++)
+        g->out[ord[i]] = 1;
+    for (int t = 0; t < LOOPER_TRACKS; t++) {
+        g->tq[t] = 0;
+        if (g->out[t]) {
+            if (now) {
+                g->fo[t] = 1.f;
+                g->tq[t] = 3;
+            } else if (g->fo[t] < 1.f) {
+                g->fo[t] = g->fo[t] + FADE_OUT > 1.f ? 1.f : g->fo[t] + FADE_OUT;
+                g->tq[t] = 1;
+            }
+        } else if (g->fo[t] > 0.f) {
+            g->fo[t] = g->fo[t] - FADE_IN < 0.f ? 0.f : g->fo[t] - FADE_IN;
+        }
+    }
+    g->lvl = (uint8_t)k;
+    g->top = k > g->top ? (uint8_t)k : g->top;
+    if (++g->rep >= 375) {                                /* the readout: the most tracks out in the last second */
         g->shown = g->top;
-        g->top = (uint8_t)lv;
+        g->top = (uint8_t)k;
         g->rep = 0;
     }
 }
@@ -1895,9 +1941,9 @@ static void guard_track(struct dsp *d, int t, uint32_t cyc, int n)
 {
     struct guard *g = &d->gd;
     vtrack *k = &S->t[t];
-    if (!g->aud[t] || g->lvl >= 4 || g->force)
+    if (!g->aud[t] || g->out[t] || g->force)
         return;
-    float m = track_model(d, t, k, g->lvl, n);
+    float m = track_model(d, t, k, g->tq[t], n);
     if (m < 1000.f || cyc > 50000000u)
         return;
     float r = (float)cyc / m;

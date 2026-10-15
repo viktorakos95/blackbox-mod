@@ -435,3 +435,13 @@ takes three overdub layers.
 - Tests: test_guard.py (new: levels in order with less room, the sound goes on at each, the fade-out in one block, back one level a second with a fade-in, a spike
   acts in the same block); test_samplr.py's governor checks rewritten for the budget. NOT checked: the real cycle counts (the model's constants are emulator figures;
   the cycles per instruction are learned on the unit, starting at 2.5).
+
+## Build 44 (the looper gives way by fading whole tracks)
+- Report on build 43: "L!2 no grains (SPEED and PTCH act like tape) is musically weird; fade out and fade in makes more sense musically than the rest". The order asked
+  for: 3 first, then 2, then 1, then 4.
+- The looper's guard no longer changes how a track sounds. When the tracks do not fit, whole tracks fade out in the order 3, 2, 1, 4, as many as it takes once they are
+  silent (a fading track still costs ~85 %, so the count comes from the state after the fade, not during it). The fade takes four blocks (~11 ms), the track computed a
+  little cheaper meanwhile (one filter stage, no drive); with no time even for that, the ones going go at once (a ramp within the block, the cheapest computation).
+  Their play heads keep running. Back one at a time the other way round (4, 1, 2, 3), ~1 s apart with a quarter to spare, fading in over ~100 ms (37 blocks).
+- `L!n` on the SAMPLR bar: how many tracks were out in the last second. test_guard.py rewritten for this.
+- SAMPLR's own steps (linear interpolation, mono, fewer grains) are unchanged; it leaves blocks out (`!M`) only when it alone does not fit.
