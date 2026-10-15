@@ -114,6 +114,15 @@ extern "C" void bb_sleep_ms(uint32_t ms)
     bb_dbg[11] = 4;
 }
 
+/* Diagnostic experiment: a "give" on the sleep semaphore from outside wakes a sleeping MCL task early (its loop counts the elapsed time itself, so it just sleeps on). */
+extern "C" void bb_sleep_poke(void)
+{
+    if (sleep_sem) {
+        bb_dbg[14]++;
+        ((fn4)(0x08088402u | 1u))(sleep_sem, 0, 0, 0);            /* xQueueGenericSend, no waiting */
+    }
+}
+
 extern "C" void delay(unsigned long ms) { bb_sleep_ms((uint32_t)ms); }
 
 void platform_poll() {}

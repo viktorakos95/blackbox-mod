@@ -194,7 +194,8 @@ static void render_spy(void)
 extern "C" __attribute__((weak)) uint32_t bb_mcl_state(void);
 extern "C" __attribute__((weak)) uint32_t bb_mcl_stack_words(void);
 extern "C" __attribute__((weak)) uint32_t bb_mcl_frames(void);
-extern "C" __attribute__((weak)) uint32_t bb_mcl_dbg(int i);       /* bb_mcl.cpp (builds with MCL): 3 = the kernel had no memory for MCL's task */
+extern "C" __attribute__((weak)) uint32_t bb_mcl_dbg(int i);
+extern "C" __attribute__((weak)) uint32_t bb_mcl_kern(int i);       /* bb_mcl.cpp (builds with MCL): 3 = the kernel had no memory for MCL's task */
 
 static void render(void)
 {
@@ -215,6 +216,19 @@ static void render(void)
         c = number(c, 1, (int32_t)bb_mcl_dbg(2), 5);
         c = text(c, 1, " W");
         number(c, 1, (int32_t)(bb_mcl_dbg(12) % 1000u), 3);
+        if (!bb_mcl_dbg(3)) {                               /* still before setup_irqs: the kernel's view of the task instead of the timers */
+            c = text(0, 2, "HT");
+            c = number(c, 2, (int32_t)(bb_mcl_kern(0) % 1000000000u), 9);
+            c = text(c, 2, " C");
+            c = number(c, 2, (int32_t)bb_mcl_kern(1), 1);
+            c = text(c, 2, " P");
+            number(c, 2, (int32_t)(bb_mcl_dbg(14) % 1000u), 3);
+            c = text(0, 3, "WK");
+            c = number(c, 3, (int32_t)(bb_mcl_kern(2) % 1000000000u), 9);
+            c = text(c, 3, " LST");
+            number(c, 3, (int32_t)bb_mcl_kern(3), 5);
+            return;
+        }
         c = text(0, 2, "IRQ");
         c = number(c, 2, (int32_t)bb_mcl_dbg(3), 2);
         c = text(c, 2, " K");

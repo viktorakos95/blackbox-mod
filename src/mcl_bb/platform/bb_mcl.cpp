@@ -50,6 +50,17 @@ HOOK uint32_t bb_mcl_frames(void) { return mcl_frames; }
 HOOK uint32_t bb_mcl_state(void) { return mcl_state; }
 HOOK uint32_t bb_mcl_stack_words(void) { return mcl_stack; }
 HOOK uint32_t bb_mcl_dbg(int i) { return i >= 0 && i < 16 ? bb_dbg[i] : 0; }
+/* the kernel's view of MCL's task (diagnostics): 0 HAL tick (ms), 1 the running task is MCL's, 2 its state list item's value (the tick it wakes at when delayed), 3 the list it is on (low 16 bits of the pointer) */
+HOOK uint32_t bb_mcl_kern(int i)
+{
+    uint32_t tcb = bb_dbg[13];
+    switch (i) {
+    case 0: return ((uint32_t (*)(void))0x0807794du)();
+    case 1: return tcb && *(volatile uint32_t *)0x2401f2a8u == tcb;
+    case 2: return tcb ? *(volatile uint32_t *)(tcb + 4) : 0;
+    default: return tcb ? *(volatile uint32_t *)(tcb + 20) & 0xffffu : 0;
+    }
+}
 
 /* ---- MIDI between MCL's MidiUart and bb_midi ---- */
 static volatile uint32_t st_rx_in, st_rx_clk, st_tx_out, st_tx_clk;     /* MIDI bytes: into MCL, clock / transport dropped from the jack, out to the jack, clock / transport dropped from MCL's output */
@@ -338,7 +349,7 @@ HOOK uint32_t bb_mcl_start(uint32_t stack_words)
         return 1;
     task_def.name = "MCL";
     task_def.func = mcl_task;
-    task_def.priority = 1;                                          /* osPriorityAboveNormal: the stock UI and streamer tasks are Normal and the streamer never blocks; a task of the same priority that sleeps may never be given the CPU back (seen on the unit: a 50 ms wait that did not return). It blocks often (sleeps, SD waits), so the others still run; the audio task is Realtime, above it. */
+    task_def.priority = 0;                                          /* osPriorityNormal, as the UI and the streamer tasks (a higher priority did not change the stuck sleep seen on the unit) */
     task_def.instances = 1;
     uint32_t h = 0;
     mcl_state = 1;                                                  /* (before the task exists: the caller must not get here twice) */
@@ -349,8 +360,10 @@ HOOK uint32_t bb_mcl_start(uint32_t stack_words)
     }
     if (!h)
         mcl_state = 3;
-    else
+    else {
         mcl_stack = task_def.stack_words;
+        bb_dbg[13] = h;                                             /* the task handle = its TCB (diagnostics) */
+    }
     return h;
 }
 

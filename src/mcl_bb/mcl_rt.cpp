@@ -24,6 +24,7 @@ __attribute__((weak)) int bb_mcl_active(void) { return 0; }
 __attribute__((weak)) const uint8_t *bb_mcl_fb(void) { return 0; }
 __attribute__((weak)) uint32_t bb_mcl_frames(void) { return 0; }
 __attribute__((weak)) uint32_t bb_mcl_start(uint32_t) { return 1; }
+__attribute__((weak)) void bb_sleep_poke(void) {}
 __attribute__((weak)) void bb_mcl_page_input(uint32_t, int32_t, int32_t) {}
 }
 
@@ -433,7 +434,7 @@ static int ready(void)
 /* MCL's screen once it has drawn; until then (and if it never does) the bench's diagnostic view of where its task is */
 static int mcl_drawn(void) { return bb_mcl_active() && bb_mcl_frames() != 0; }
 static const uint8_t *page_fb(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_fb() : bb_ui_fb(); }
-static uint32_t page_sig(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_frames() * 2654435761u + 1u : bb_ui_sig(); }
+static uint32_t page_sig(void) { if (bb_mcl_active() && !mcl_drawn()) bb_sleep_poke(); return !ready() ? 0 : mcl_drawn() ? bb_mcl_frames() * 2654435761u + 1u : bb_ui_sig(); }
 static void page_input(uint32_t kind, int32_t a, int32_t b)
 {
     if (!ready())
