@@ -13,6 +13,16 @@ static volatile uint32_t disk[SPY_TASKS][SPY_DISK_FUNCS];
 static volatile uint32_t depth[SPY_LAYERS][SPY_TASKS];
 static volatile uint32_t overlaps[SPY_LAYERS], first_pair[SPY_LAYERS] = {0xff, 0xff};
 static volatile uint32_t worst_cyc[SPY_LAYERS];
+static volatile uint32_t bufcls[2][5], unaligned[2];
+
+static void note_buf(int rw, uint32_t buf)
+{
+    uint32_t top = buf >> 24;
+    int c = top == 0x20 ? 0 : top == 0x24 ? 1 : top == 0x30 ? 2 : top >= 0xc0 && top <= 0xc7 ? 3 : 4;
+    bufcls[rw][c]++;
+    if (buf & 31u)
+        unaligned[rw]++;
+}
 
 static inline uint32_t irq_off(void)
 {
@@ -48,6 +58,54 @@ HOOK void bb_sdspy_leave(int layer, int task)
     if (depth[layer][task])
         depth[layer][task]--;
     irq_restore(p);
+}
+
+HOOK uint32_t bb_sdspy_buf(int rw, int cls) { return bufcls[rw][cls]; }
+HOOK uint32_t bb_sdspy_unaligned(int rw) { return unaligned[rw]; }
+
+#define SCB_CCR      (*(volatile uint32_t *)0xe000ed14u)
+#define MPU_TYPE     (*(volatile uint32_t *)0xe000ed90u)
+#define MPU_CTRL     (*(volatile uint32_t *)0xe000ed94u)
+#define MPU_RNR      (*(volatile uint32_t *)0xe000ed98u)
+#define MPU_RBAR     (*(volatile uint32_t *)0xe000ed9cu)
+#define MPU_RASR     (*(volatile uint32_t *)0xe000eda0u)
+
+HOOK uint32_t bb_sdspy_hw(int what) { return what == 0 ? SCB_CCR : what == 1 ? MPU_TYPE : MPU_CTRL; }
+
+HOOK uint32_t bb_sdspy_mpu(uint32_t addr, int field)
+{
+    uint32_t regions = (MPU_TYPE >> 8) & 0xff, best = 0, best_n = 0xffff;
+    uint32_t p = irq_off();
+    uint32_t keep = MPU_RNR;
+    for (uint32_t n = 0; n < regions; n++) {
+        MPU_RNR = n;
+        uint32_t rasr = MPU_RASR, rbar = MPU_RBAR & ~0x1fu;
+        if (!(rasr & 1u))
+            continue;
+        uint32_t size = ((rasr >> 1) & 31u) + 1u;               /* region bytes = 2^size */
+        uint64_t len = 1ull << size;
+        if (addr < rbar || (uint64_t)addr >= (uint64_t)rbar + len)
+            continue;
+        if (size >= 8) {                                        /* subregions: eight equal parts, a set SRD bit disables a part */
+            uint32_t sub = (uint32_t)(((uint64_t)(addr - rbar) * 8u) / len);
+            if (rasr >> (8 + sub) & 1u)
+                continue;
+        }
+        best = rasr;
+        best_n = n;
+    }
+    MPU_RNR = keep;
+    irq_restore(p);
+    switch (field) {
+    case 0: return best_n != 0xffff;
+    case 1: return best >> 19 & 7u;
+    case 2: return best >> 17 & 1u;
+    case 3: return best >> 16 & 1u;
+    case 4: return best >> 18 & 1u;
+    case 5: return best >> 28 & 1u;
+    case 6: return best >> 24 & 7u;
+    default: return best_n;
+    }
 }
 
 HOOK uint32_t bb_sdspy_count(int task, int fn) { return calls[task][fn]; }
@@ -92,6 +150,8 @@ FAT(spy_f_mount, SPY_MOUNT, 0x080864e8u)
     {                                                                                                            \
         int t = bb_sdspy_task();                                                                                 \
         disk[t][fn]++;                                                                                           \
+        if (fn != SPY_DISK_IO)                                                                                   \
+            note_buf(fn == SPY_DISK_WR, b);                                                                      \
         return run(SPY_DISK, t, (fn4)(addr | 1u), a, b, c, d);                                                \
     }
 DISK(spy_disk_read, SPY_DISK_RD, 0x08045974u)

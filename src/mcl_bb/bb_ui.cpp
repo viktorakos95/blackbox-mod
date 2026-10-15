@@ -54,7 +54,7 @@ static int number(int col, int row, int32_t v, int width)  /* right-aligned in `
 }
 
 #ifdef SD_SPY
-static uint32_t spy_view;                                   /* 0: FatFs calls per task, 1: overlaps / worst times / card driver calls (tile B4 toggles) */
+static uint32_t spy_view;                                   /* 0: FatFs calls per task, 1: overlaps / worst times / card driver calls, 2: cache and MPU, 3: DMA buffer addresses (tile B4 cycles) */
 
 static int cap(uint32_t v) { return (int)(v > 999u ? 999u : v); }
 
@@ -74,6 +74,55 @@ static void render_spy(void)
             number(9, 1 + t, cap(bb_sdspy_count(t, SPY_WRITE)), 3);
             number(13, 1 + t, cap(bb_sdspy_count(t, SPY_CLOSE)), 3);
             number(17, 1 + t, cap(bb_sdspy_count(t, SPY_SEEK)), 3);
+        }
+    } else if (spy_view == 2) {                             /* what the CPU does with memory: data cache, and the MPU's attributes of the three RAMs */
+        uint32_t ccr = bb_sdspy_hw(0), ctrl = bb_sdspy_hw(2);
+        int c = text(0, 0, "DC");
+        put(c++, 0, (char)('0' + (ccr >> 16 & 1)));
+        c = text(c, 0, " IC");
+        put(c++, 0, (char)('0' + (ccr >> 17 & 1)));
+        c = text(c, 0, " MPU");
+        put(c++, 0, (char)('0' + (ctrl & 1)));
+        c = text(c, 0, " N");
+        number(c, 0, (int32_t)((bb_sdspy_hw(1) >> 8) & 255u), 2);
+        static const uint32_t at[3] = {0x24000000u, 0x30000000u, 0xc3f80000u};
+        static const char *const nm[3] = {"AXI", "SRAM", "SDRAM"};
+        for (int i = 0; i < 3; i++) {
+            text(0, 1 + i, nm[i]);
+            if (!bb_sdspy_mpu(at[i], 0)) {
+                text(6, 1 + i, "NO REGION");
+                continue;
+            }
+            put(6, 1 + i, 'T');
+            put(7, 1 + i, (char)('0' + bb_sdspy_mpu(at[i], 1)));
+            put(9, 1 + i, 'C');
+            put(10, 1 + i, (char)('0' + bb_sdspy_mpu(at[i], 2)));
+            put(12, 1 + i, 'B');
+            put(13, 1 + i, (char)('0' + bb_sdspy_mpu(at[i], 3)));
+            put(15, 1 + i, 'S');
+            put(16, 1 + i, (char)('0' + bb_sdspy_mpu(at[i], 4)));
+            put(18, 1 + i, 'X');
+            put(19, 1 + i, (char)('0' + bb_sdspy_mpu(at[i], 5)));
+        }
+    } else if (spy_view == 3) {                             /* where the card driver's buffers are (address class of the buffer of every read / write) */
+        text(0, 0, "BUF");
+        text(8, 0, "RD");
+        text(15, 0, "WR");
+        static const char *const nm[3] = {"AXI", "SRAM", "SDRAM"};
+        for (int i = 0; i < 3; i++) {
+            text(0, 1 + i, nm[i]);
+            number(5, 1 + i, cap(bb_sdspy_buf(0, i + 1)), 5);
+            number(12, 1 + i, cap(bb_sdspy_buf(1, i + 1)), 5);
+        }
+        uint32_t odd = bb_sdspy_buf(0, 0) + bb_sdspy_buf(1, 0) + bb_sdspy_buf(0, 4) + bb_sdspy_buf(1, 4);      /* DTCM or somewhere else entirely */
+        if (odd) {
+            text(4, 0, "OTH");
+            number(18, 1, cap(odd), 3);
+        }
+        uint32_t un = bb_sdspy_unaligned(0) + bb_sdspy_unaligned(1);
+        if (un) {
+            text(17, 0, "UN");
+            number(18, 2, cap(un), 3);
         }
     } else {
         uint32_t pf = bb_sdspy_pair(SPY_FAT);
@@ -190,7 +239,7 @@ HOOK void bb_ui_input(uint32_t kind, int32_t a, int32_t b)
         btn_mask |= 1u << a;
 #ifdef SD_SPY
         if (a == 3)
-            spy_view ^= 1u;
+            spy_view = (spy_view + 1u) & 3u;
         return;                                             /* the recon image leaves the MIDI clock alone */
 #endif
         if (a == 0) {                                       /* B1: follow the MIDI clock on the jack */

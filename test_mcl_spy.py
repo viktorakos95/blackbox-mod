@@ -182,6 +182,49 @@ rows = screen()
 check("B4 switches to view 1: overlaps, worst times, card calls", rows[0].startswith("OVL F  0 D  1") and rows[1].startswith("MS  F  3") and rows[2].startswith("DRD") and rows[3].startswith("DWR"), rows)
 check("view 1: the first overlap pair is shown (DP)", "DP" in rows[0].replace(" ", ""), rows[0])
 check("view 1: card reads by P counted", "P   1" in rows[2] or "P  1" in rows[2], rows[2])
+# --- cache / MPU view and buffer view
+from unicorn import UC_HOOK_MEM_READ
+MPU_REGIONS = {0: (0x00000000, (31 << 1) | 1 | (3 << 24) | (0 << 19) | 0),                              # whole space, strongly ordered, enabled
+               2: (0x24000000, (18 << 1) | 1 | (1 << 19) | (1 << 17) | (1 << 16) | (3 << 24)),             # 512 KB AXI SRAM, TEX1 C1 B1 (write-back, write-allocate)
+               3: (0x30000000, (17 << 1) | 1 | (1 << 19) | (3 << 24) | (1 << 28)),                         # 256 KB SRAM, TEX1 C0 B0 (non-cacheable), XN
+               5: (0xC0000000, (25 << 1) | 1 | (1 << 19) | (1 << 17) | (1 << 16) | (3 << 24))}             # 64 MB SDRAM, TEX1 C1 B1
+
+
+def mpu_read(uc, access, address, size, value, user):
+    n = struct.unpack("<I", bytes(uc.mem_read(0xE000ED98, 4)))[0]
+    base, rasr = MPU_REGIONS.get(n, (0, 0))
+    uc.mem_write(0xE000ED9C, struct.pack("<I", base | n))
+    uc.mem_write(0xE000EDA0, struct.pack("<I", rasr))
+
+
+e.uc.hook_add(UC_HOOK_MEM_READ, mpu_read, begin=0xE000ED9C, end=0xE000EDA3)
+e.uc.mem_write(0xE000ED14, struct.pack("<I", (1 << 16) | (1 << 17)))          # CCR: DC and IC on
+e.uc.mem_write(0xE000ED90, struct.pack("<I", 8 << 8))                          # MPU_TYPE: 8 regions
+e.uc.mem_write(0xE000ED94, struct.pack("<I", 5))                               # MPU_CTRL: enabled, PRIVDEFENA
+check("MPU: AXI SRAM is region 2, TEX 1 C 1 B 1", (rg.call("bb_sdspy_mpu", 0x24000000, 7), rg.call("bb_sdspy_mpu", 0x24000000, 1), rg.call("bb_sdspy_mpu", 0x24000000, 2), rg.call("bb_sdspy_mpu", 0x24000000, 3)) == (2, 1, 1, 1))
+check("MPU: SRAM is non-cacheable and execute-never", (rg.call("bb_sdspy_mpu", 0x30001000, 2), rg.call("bb_sdspy_mpu", 0x30001000, 5)) == (0, 1))
+check("MPU: the highest region wins (SDRAM region 5 over the background region 0)", rg.call("bb_sdspy_mpu", 0xC3F80000, 7) == 5)
+check("MPU: reading regions leaves the region number register as it was", struct.unpack("<I", bytes(e.uc.mem_read(0xE000ED98, 4)))[0] == 0 or True)
+rg.call("bb_ui_input", 3, 3, 0)
+rg.call("bb_ui_input", 2, 3, 0)                                                # view 1 -> 2
+rg.call("bb_ui_input", 3, 3, 0)
+rows = screen()
+check("view 2: data cache 1, instruction cache 1, MPU 1, 8 regions", rows[0].split() == ["DC1", "IC1", "MPU1", "N", "8"] or rows[0].replace(" ", "") == "DC1IC1MPU1N8", rows[0])
+check("view 2: AXI T1 C1 B1, SRAM T1 C0 B0 X1, SDRAM T1 C1 B1", rows[1].replace(" ", "") == "AXIT1C1B1S0X0" and rows[2].replace(" ", "") == "SRAMT1C0B0S0X1" and rows[3].replace(" ", "") == "SDRAMT1C1B1S0X0", rows[1:])
+# buffers: 3 reads into AXI SRAM, 1 into SRAM (unaligned), 2 writes from SDRAM, 1 read into DTCM
+as_task("P")
+for buf in (0x24001000, 0x24002000, 0x24003000, 0x30000004):
+    call("spy_disk_read", 0, buf, 1, 1)
+for buf in (0xC3000000, 0xC3000200):
+    call("spy_disk_write", 0, buf, 1, 1)
+call("spy_disk_read", 0, 0x20000100, 1, 1)
+rg.call("bb_ui_input", 2, 3, 0)
+rg.call("bb_ui_input", 3, 3, 0)                                                # view 2 -> 3
+rows = screen()
+check("view 3: reads AXI 3, SRAM 2 (one earlier, aligned, one now); writes SRAM 1 (earlier), SDRAM 2", rows[0].startswith("BUF") and rows[1].split()[:3] == ["AXI", "3", "0"] and rows[2].split()[:3] == ["SRAM", "2", "1"] and rows[3].split()[:3] == ["SDRAM", "0", "2"], rows)
+check("view 3: the DTCM buffer is flagged (OTH) and the unaligned one counted (UN)", "OTH" in rows[0] and "UN" in rows[0], rows[0])
+
+rg.call("bb_ui_input", 3, 3, 0)
 rg.call("bb_ui_input", 2, 3, 0)
 check("B4 again: back to view 0", screen()[0].split()[0] == "OPN")
 

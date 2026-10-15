@@ -17,5 +17,9 @@ uint32_t bb_sdspy_pair(int layer);                      /* the first overlap: (e
 uint32_t bb_sdspy_worst_us(int layer);                  /* longest single call, microseconds */
 void bb_sdspy_enter(int layer, int task);               /* exposed for the tests: what the wrappers do around the stock call */
 void bb_sdspy_leave(int layer, int task);
+uint32_t bb_sdspy_buf(int rw, int cls);                 /* card driver calls by buffer address class: rw 0 read / 1 write; cls 0 DTCM 0x20.., 1 AXI SRAM 0x24.., 2 SRAM1-3 0x30.., 3 SDRAM 0xC0.., 4 other */
+uint32_t bb_sdspy_unaligned(int rw);                    /* ... of which the buffer was not 32-byte aligned (a cache line) */
+uint32_t bb_sdspy_hw(int what);                         /* 0 SCB CCR, 1 MPU_TYPE, 2 MPU_CTRL */
+uint32_t bb_sdspy_mpu(uint32_t addr, int field);        /* attributes the MPU gives `addr` (highest enabled region covering it): 0 found, 1 TEX, 2 C, 3 B, 4 S, 5 XN, 6 AP, 7 region number */
 int bb_sdspy_task(void);                                /* the calling task: 0 defaultTask, 1 audioTask, 2 pcmStreamer, 3 other */
 }
