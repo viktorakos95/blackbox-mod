@@ -588,3 +588,7 @@ DRONE-8 (latest) merged. Tints stronger: Looper bg 30333a / lines 6a6e78, SAMPLR
 ## Build 60
 
 The looper's spike cut (looper_over_cap -> guard_fit) is in two halves: the block that has no room plays the track at the cheap level with a ramp to half level (fo = 0.5), the next block takes it from half to 0 (cheap, whatever the load: `cut2`), then the usual ~2.5 s fade-in. A cut that took 5 ms now takes ~10 ms with no extra rendering beyond one cheap block.
+
+## Build 62
+
+Build 59-61 did not boot on the unit (58 did). The pad recorder's Rec Input list had grown to 7 entries (SAMPLR added); the stock registration is the prime suspect, so the list is back to 6 (L+R, Left, Right, Resam, DRONE, LOOPER = looper + SAMPLR) and the SAMPLR-alone source is gone. Open until confirmed on the unit.

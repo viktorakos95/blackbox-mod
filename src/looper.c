@@ -1763,8 +1763,6 @@ static void apply(int t, int b)
 }
 
 int lira_send_add(float *l, float *r, int n);              /* lira_pad.c: the drone's reverb send */
-void lira_rec_sm_begin(const float *l, const float *r, int n);   /* lira_pad.c: SAMPLR alone, for the pad recorder */
-void lira_rec_sm_end(const float *l, const float *r, int n);
 /* One block of the whole looper: bl / br = the Out 1 bus (read as the "mix" source, then the loop is added to it). */
 /* --- the guard, so the audio task never runs out of time. Order in the block: stock voices and effects, DRONE-8, SAMPLR, the looper's
  * tracks, the stock output. Nothing about how a track sounds is ever changed; whole things fade out (and later in) instead, slowly. What
@@ -2204,10 +2202,8 @@ static int run(float *bl, float *br, int n)
         d->acc[0][i] = d->acc[1][i] = d->acc[2][i] = d->acc[3][i] = 0.f;
     }
     float *snd[4] = {d->acc[0], d->acc[1], d->acc[2], d->acc[3]};
-    lira_rec_sm_begin(bl, br, n);                    /* (SAMPLR alone, for the pad recorder) */
     int dsend = lira_send_add(d->acc[2], d->acc[3], n);
     int sends = samplr_run(bl, br, n, snd);          /* SAMPLR first: SOURCE MIX records it, and its sends join the looper's delay and reverb */
-    lira_rec_sm_end(bl, br, n);
     guard_decide(d);                                 /* the player's unmutes, the fades */
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
@@ -2341,11 +2337,8 @@ void looper_stage(uint8_t *obj, void *bufs)
         lira_page_run(l, r, n);                    /* the LIRA page's voices, before the looper so SOURCE MIX records them */
         lira_rec_begin(l, r, n);
         uint32_t c_l = *(volatile uint32_t *)0xe0001004u;
-        if (!run(l, r, n)) {
-            lira_rec_sm_begin(l, r, n);
+        if (!run(l, r, n))
             samplr_run(l, r, n, 0);
-            lira_rec_sm_end(l, r, n);
-        }
         uint32_t c_y = *(volatile uint32_t *)0xe0001004u - c_l;
         samplr_stage_prof(pre, c_l - c_in, c_y);
         lira_rec_end(l, r, n);                     /* what the looper added, for the pad recorder's LOOPER input */

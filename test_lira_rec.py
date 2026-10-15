@@ -128,17 +128,6 @@ e.call("lira_rec_copy_thunk", BUS, 0)
 l, r = getbus()
 check("LOOPER: the recorder's bus holds what the looper added (the new bus minus the one with the synth in it)",
       abs(l[10] - (0.35 - pre_l)) < 1e-5 and abs(r[10] - (0.2 - pre_r)) < 1e-5, "%.4f %.4f (want %.4f %.4f)" % (l[10], r[10], 0.35 - pre_l, 0.2 - pre_r))
-e.call("lira_rec_sm_begin", L, R, N)                                       # SAMPLR alone: the bus after minus the bus before
-e.uc.mem_write(L, struct.pack(f"<{N}f", *([0.45] * N)))
-e.uc.mem_write(R, struct.pack(f"<{N}f", *([0.3] * N)))
-e.call("lira_rec_sm_end", L, R, N)
-e.uc.reg_write(UC_ARM_REG_R4, NODE)
-e.call("lira_rec_store_thunk", 0, 0, 0, 6)                                # SAMPLR
-setbus(0.7, 0.8)
-e.call("lira_rec_copy_thunk", BUS, 0)
-l, r = getbus()
-check("SAMPLR: the recorder's bus holds what SAMPLR added (the bus after it minus before)",
-      abs(l[10] - (0.45 - 0.35)) < 1e-5 and abs(r[10] - (0.3 - 0.2)) < 1e-5, "%.4f %.4f" % (l[10], r[10]))
 e.uc.reg_write(UC_ARM_REG_R4, NODE)
 e.call("lira_rec_store_thunk", 0, 0, 0, 4)                                # DRONE
 setbus(0.7, 0.8)
