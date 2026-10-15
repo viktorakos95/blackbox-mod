@@ -369,13 +369,11 @@ void lira_key(lira_t *l, int s, int on) { lira_touch(l, s, on ? 1.f : 0.f); }
 
 int lira_size(void) { return (int)sizeof(lira_t); }
 
-void lira_tone(lira_t *l, float width, float drift, float detune, float body, float harm)
+void lira_tone(lira_t *l, float width, float drift, float harm)
 {
     l->harm = clip_(harm, 0.f, 1.f);
     l->width = clip_(width, 0.f, 1.f);
     l->drift = clip_(drift, 0.f, 1.f);
-    l->detune = clip_(detune, 0.f, 1.f);
-    l->bodyc = clip_(body, 0.f, 1.f);
 }
 
 void lira_reset(lira_t *l, float sr, int16_t *dl1, int16_t *dl2, int len, uint32_t seed)
@@ -384,7 +382,8 @@ void lira_reset(lira_t *l, float sr, int16_t *dl1, int16_t *dl2, int len, uint32
     for (unsigned i = 0; i < sizeof *l; i++)
         p[i] = 0;
     l->sr = sr;
-    l->bodyc = 0.41f;                                     /* (the bass lift of the original; width, drift and detune are off until a page asks) */
+    l->bodyc = 0.41f;                                     /* (the bass lift of the original; width and drift are off until a page asks) */
+    l->harm = LIRA_HARM;
     l->n23 = (int)(0.02322f * sr + 0.5f);
     l->rng = seed ? seed : 0x9e3779b9u;
     l->line[0].buf = dl1;
@@ -561,8 +560,7 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
         pgl[o] = wdt > 0.f ? 1.41421356f * fcos((pan + 1.f) * 0.125f) : 1.f;      /* (fcos is an approximation: unity must stay exactly unity) */
         pgr[o] = wdt > 0.f ? 1.41421356f * fcos((1.f - pan) * 0.125f) : 1.f;
     }
-    /* drift: each oscillator's pitch is low-passed noise (a few seconds a turn, up to ~6 cents at full); detune: the two of a pair apart (up to 12 cents in all) */
-    const float dtn = l->detune * l->detune * (12.f * 0.000578f * 0.5f);
+    /* drift: each oscillator's pitch is low-passed noise (a few seconds a turn, up to ~6 cents at full) */
     const float drifta = 1.f - (float)LIRA_CR * isr / 6.f;
     const float driftb = l->drift > 0.f ? l->drift * l->drift * 0.0035f * 1.732f * fexp2(0.5f * flog2(2.f * (float)LIRA_CR * isr / 6.f)) : 0.f;
     const float bodyc = l->bodyc, harm = l->harm * 1.2f;
@@ -638,7 +636,7 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
                 else if (gn->drive == 0.f)
                     gn->ve *= expm_small(dt / (vo->fast ? gn->t_fast : gn->t_slow));   /* gain = ve^2 */
                 float f0 = gn->tune.cur;
-                float wander = dtn * ((o & 1) ? 1.f : -1.f);
+                float wander = 0.f;
                 if (driftb > 0.f) {
                     l->dr[o] = l->dr[o] * drifta + rnd(l) * driftb;
                     wander += l->dr[o];
@@ -825,8 +823,12 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
 
 void lira_process(lira_t *l, float *out, int n)
 {
-    if (l->out_r)
+    if (l->out_r && l->width > 0.f) {
         process_(l, out, n, 1);
-    else
+    } else {                                              /* mono: the right channel is a copy */
         process_(l, out, n, 0);
+        if (l->out_r)
+            for (int i = 0; i < n; i++)
+                l->out_r[i] = out[i];
+    }
 }

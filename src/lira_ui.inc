@@ -4,12 +4,11 @@
  *
  * One 8 x 38 px grid carries everything. At the bottom, always: the eight voices in two groups of four (a small LEVEL knob and a TUNE knob each,
  * in its pair's colour, and a big plate below them: tap = on / off, the top-right switch makes the plates HOLD). The eight hardware
- * buttons are the same plates. Above them one of five tabs (footer), each a row of four panels of four controls:
+ * buttons are the same plates. Above them one of four tabs (footer), each a row of four panels of four controls:
  *   VOICES   one panel per voice pair: MOD, SHARP, FM source, TOUCH
  *   SOUND    DELAY (time 1, 2, feedback, mix), MOD (mod 1, 2, LFO A, B), PITCH (hold 1-4, 5-8, pitch 1-4, 5-8), LFO (shape, combine, link, delay source)
- *   MIX      LEVEL 1-4, LEVEL 5-8 (a fader per voice), OUTPUT (drive, dist, volume, ext in)
+ *   MIX      OUTPUT (drive, dist, volume, ext in), TEMPO SYNC, GESTURE, SPACE (WIDTH of the stereo image, DRIFT of the pitch, the ENGINE switch)
  *   CHORD    TONAL SPACE (space, root, register, span), VOICING (chord on, tuning, shuffle, rotate), the notes of the voices
- *   TONE     WIDTH (stereo spread of the pairs and the delay lines), DRIFT (slow pitch wander per oscillator), DETUNE (the two of a pair apart: slow beating), BODY (bass lift); LOW END: HARM (the bass band's own 2nd harmonic)
  * The four encoders turn the four controls of the active group (white frame): the strip's voices 1-4 or 5-8, or a panel. A touch on
  * a control makes its group the active one; BACK flips between voices 1-4 and 5-8; INFO moves on within the part of the page the
  * group is in (lira_shift: the next panel, or levels / tunes 1-4 <-> 5-8; the page has no SHIFT mode). PAD (round button 0) is never a
@@ -88,10 +87,9 @@ struct lu_spec {
 #define LP_SOUND  1
 #define LP_MIX    2
 #define LP_CHORD  3
-#define LP_TONE   4
-#define LU_TABS   5
-#define LU_TABW   50                                              /* the footer's tabs: 48 px wide every 50 */
-static const char *const lu_tabname[LU_TABS] = {"VOICES", "SOUND", "MIX", "CHORD", "TONE"};
+#define LU_TABS   4
+#define LU_TABW   62                                              /* the footer's tabs: 60 px wide every 62 */
+static const char *const lu_tabname[LU_TABS] = {"VOICES", "SOUND", "MIX", "CHORD"};
 static const char *const lu_div[12] = {"OFF", "4 BAR", "2 BAR", "1 BAR", "1/2", "1/4D", "1/4", "1/8D", "1/8", "1/16D", "1/16", "1/16T"};
 static const char *const lu_len[4] = {"1 BAR", "2 BAR", "4 BAR", "8 BAR"};
 static const char *const lu_gst[7] = {"", "ARMED", "REC", "LOOP", "ARMED", "OVR", "STOP"};
@@ -166,18 +164,14 @@ static int lu_specs(int sel, struct lu_spec *o)
             LU_SP(n, gid[i], x, d, LU_COL, 38, 4, lu_enc_cell[i], LK_BTN, LU_ACC1, 0, gn[i]);
             n++;
         }
-        lu_cell(3, 2, &x, &d);                                    /* the engine switch, under the STATUS text */
-        LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "ENGINE");
+        lu_cell(3, 0, &x, &d);                                    /* SPACE: the stereo width (0 = mono, the cheap path), the pitch drift, and the engine switch */
+        LU_SP(n, 180, x, d, LU_COL, 38, 5, lu_enc_cell[0], LK_KNOB, LU_ACC2, 11, "WIDTH");
         n++;
-    } else if (page == LP_TONE) {                                 /* WIDTH, DRIFT, DETUNE, BODY in the first panel */
-        static const char *const nm[4] = {"WIDTH", "DRIFT", "DETUNE", "BODY"};
-        for (int i = 0; i < 4; i++) {
-            lu_cell(0, i, &x, &d);
-            LU_SP(n, 180 + i, x, d, LU_COL, 38, 2, lu_enc_cell[i], LK_KNOB, LU_ACC2, 11, nm[i]);
-            n++;
-        }
-        lu_cell(1, 0, &x, &d);                                    /* LOW END: the bass band's own harmonics */
-        LU_SP(n, 184, x, d, LU_COL, 38, 3, lu_enc_cell[0], LK_KNOB, LU_ACC1, 11, "HARM");
+        lu_cell(3, 1, &x, &d);
+        LU_SP(n, 181, x, d, LU_COL, 38, 5, lu_enc_cell[1], LK_KNOB, LU_ACC2, 11, "DRIFT");
+        n++;
+        lu_cell(3, 2, &x, &d);
+        LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "ENGINE");
         n++;
     } else {
         static const char *const nm[8] = {"SPACE", "ROOT", "OCT", "SPAN", "CHORD", "TUNE", "SHUFL", "CYCLE"};
@@ -338,7 +332,7 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
         frame(s->x + 2, s->d + 2, s->w - 4, s->h - 4, on ? s->col : LU_LINE, 1);
         text_c(s->x, s->d + 8, s->w, s->name, hot ? LU_SEL : LU_DIM, 1);
         if (*st)
-            text_c(s->x, s->d + 21, s->w, st, on ? C_WHITE : C_GREY, 1);
+            text_c(s->x, s->d + 21, s->w, st, on ? C_WHITE : LU_DIM, 1);
     } else {                                                      /* a note of a voice */
         lu_pitch_text(s->id - 200, b);
         if (lira_ui_pitch(s->id - 200) % 100 || lira_ui_pitch(s->id - 200) < 1200)
@@ -368,9 +362,8 @@ static void draw_lira(void)
     char b[40], *q;
     static const char *const ptitle[LU_TABS][4] = {{"PAIR 1-2", "PAIR 3-4", "PAIR 5-6", "PAIR 7-8"},
                                                    {"DELAY", "MOD", "HOLD/PITCH", "LFO"},
-                                                   {"OUTPUT", "TEMPO SYNC", "GESTURE", "STATUS"},
-                                                   {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"},
-                                                   {"SPACE & TONE", "LOW END", "", ""}};
+                                                   {"OUTPUT", "TEMPO SYNC", "GESTURE", "SPACE"},
+                                                   {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"}};
     box(1, 1, P->w - 2, TOPBAR, C_BG);
     text(6, 4, "DRONE-8", C_WHITE, 1);
     int last = lira_ui_last(-1);
@@ -406,6 +399,15 @@ static void draw_lira(void)
         q = put_uint(q, (unsigned)lira_ui_load(2));
         *q = 0;
     }
+    if (!*b && page == LP_MIX) {                                  /* the MIX tab: the audio task's load, average / peak, and this synth's share */
+        q = put_uint(b, (unsigned)lira_ui_load(3));
+        *q++ = '/';
+        q = put_uint(q, (unsigned)lira_ui_load(4));
+        *q++ = ' ';
+        *q++ = 'D';
+        q = put_uint(q, (unsigned)lira_ui_load(0));
+        *q = 0;
+    }
     b[9] = 0;                                                     /* (it must stay clear of the switches) */
     text(54, 4, b, *b ? C_WHITE : C_GREY, 1);
     int mom = lira_ui_momentary(0), sine = lira_ui_chord_get(154), fr = lira_ui_chord_get(157), xs = lira_ui_chord_get(156), gm = lira_ui_chord_get(158);
@@ -434,8 +436,6 @@ static void draw_lira(void)
     box(1, TOPBAR + 2, P->w - 2, L.foot_y - TOPBAR - 3, C_BG);
 
     for (int p = 0; p < 4; p++) {                                 /* the four panels (OUTPUT is one wide panel) */
-        if (page == LP_TONE && p > 1)
-            continue;                                             /* (the TONE tab has two) */
         int x = LU_X0 + p * 2 * LU_COL, hot = bank == 2 + p, pw = 2 * LU_COL;
         frame(x + 1, LU_PANEL, pw - 2, LU_PANH, hot ? LU_SEL : LU_LINE, 1);
         text_c(x, LU_PANEL + 4, pw, ptitle[page][p], hot ? LU_SEL : LU_DIM, 1);
@@ -443,27 +443,7 @@ static void draw_lira(void)
             box(x + 6, LU_PANEL + 13, 2 * LU_COL - 12, 1, lu_pair_col[p]);
         if (page == LP_MIX && p == 3) {                           /* what the audio task is doing (and the run before's peaks) */
             char t[24];
-            char *u = t;
-            for (const char *w = "FREE "; *w;)
-                *u++ = *w++;
-            u = put_uint(u, lira_free_kb());
-            *u++ = 'K';
-            *u = 0;
-            text(x + 8, LU_PANEL + 18, t, C_WHITE, 1);
-            u = t;
-            for (const char *w = "CPU "; *w;)
-                *u++ = *w++;
-            u = put_uint(u, (unsigned)lira_ui_load(3));
-            *u++ = '/';
-            u = put_uint(u, (unsigned)lira_ui_load(4));
-            *u = 0;
-            text(x + 8, LU_PANEL + 30, t, C_WHITE, 1);
-            u = t;
-            for (const char *w = "DRONE "; *w;)
-                *u++ = *w++;
-            u = put_uint(u, (unsigned)lira_ui_load(0));
-            *u = 0;
-            text(x + 8, LU_PANEL + 42, t, C_WHITE, 1);
+            char *u;
             if (lira_ui_prev(4)) {                                   /* the run before's peaks, right of the ENGINE button */
                 static const char lk[4] = {'W', 'C', 'D', 'F'};
                 static const uint8_t lw[4] = {5, 0, 1, 2};
@@ -511,7 +491,7 @@ static void lira_footer(const struct lay *L)
     int page = lira_ui_sel(-1) & 15;
     for (int i = 0; i < LU_TABS; i++) {
         frame(LU_X0 + LU_TABW * i, L->foot_y + 2, LU_TABW - 2, FOOT - 3, page == i ? C_WHITE : LU_LINE, 1);
-        text_c(LU_X0 + LU_TABW * i, L->foot_y + 4, LU_TABW - 2, lu_tabname[i], page == i ? C_WHITE : C_GREY, 1);
+        text_c(LU_X0 + LU_TABW * i, L->foot_y + 4, LU_TABW - 2, lu_tabname[i], page == i ? C_WHITE : LU_DIM, 1);
     }
 }
 

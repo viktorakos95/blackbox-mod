@@ -91,7 +91,7 @@ if scen == "slowdelay":
     setp.update(TIME1=127, TIME2=120)
 for k, v in setp.items():
     call("lira_param", L, P[k], fargs=(float(v),))
-TONE = os.environ.get("TONE")             # "width,drift,detune,body,harm": the page's tone, and the right channel on
+TONE = os.environ.get("TONE")             # "width,drift,harm": the page's tone, and the right channel on
 if TONE:
     call("lira_tone", L, fargs=tuple(float(x) for x in TONE.split(",")))
     import subprocess as _sp

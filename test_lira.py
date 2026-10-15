@@ -400,13 +400,13 @@ check("... and the upper ones follow smoothly (the 5th rises with every step)", 
 rm = {k: math.sqrt(np.mean(v ** 2)) for k, v in sh_levels.items()}
 check("the level stays within 1.5 dB while it squares off", max(rm.values()) / min(rm.values()) < 1.19, str({k: round(v, 3) for k, v in rm.items()}))
 
-# ---- stereo, drift and detune (3.1.AC) ----
+# ---- stereo and drift (3.1.AC) ----
 import struct as _st
 _o = os.path.join(tmp, "off")
 open(_o + ".c", "w").write('#include "lira.h"\n#include <stddef.h>\n#include <stdio.h>\nint main(){printf("%d",(int)offsetof(lira_t,out_r));}')
 subprocess.check_call(["gcc", "-I" + os.path.join(HERE, "src"), "-o", _o, _o + ".c"])
 OUT_R = int(subprocess.check_output([_o]))
-lib.lira_tone.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 5
+lib.lira_tone.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 3
 
 
 def run_st(l, n, tone, stereo=True):
@@ -426,28 +426,28 @@ def full_drone():
 
 
 l = full_drone()
-run_st(l, SR, (0, 0, 0, 0.41, 0))
-a, b = run_st(l, SR, (0, 0, 0, 0.41, 0))
+run_st(l, SR, (0, 0, 0))
+a, b = run_st(l, SR, (0, 0, 0))
 check("width 0: left = right", np.array_equal(a, b) and np.std(a) > 0.01)
 l = full_drone()
-run_st(l, SR, (1, 0, 0, 0.41, 0))
-a, b = run_st(l, 2 * SR, (1, 0, 0, 0.41, 0))
+run_st(l, SR, (1, 0, 0))
+a, b = run_st(l, 2 * SR, (1, 0, 0))
 mid, side = (a + b) / 2, (a - b) / 2
 ratio = math.sqrt(np.mean(side ** 2) / np.mean(mid ** 2))
 check("width 1: a real stereo image (side %.2f of mid, correlation %.2f)" % (ratio, np.corrcoef(a, b)[0, 1]), 0.25 < ratio < 1.0 and np.corrcoef(a, b)[0, 1] < 0.85)
 check("... finite and bounded", np.all(np.isfinite(a)) and np.all(np.isfinite(b)) and max(abs(a).max(), abs(b).max()) < 1.5)
 l1, l2 = full_drone(), full_drone()
-run_st(l1, SR, (0.8, 0, 0, 0.41, 0))
-run_st(l2, SR, (0.8, 0, 0, 0.41, 0), stereo=False)
-a, _ = run_st(l1, 8192, (0.8, 0, 0, 0.41, 0))
-c, d = run_st(l2, 8192, (0.8, 0, 0, 0.41, 0), stereo=False)
+run_st(l1, SR, (0.8, 0, 0))
+run_st(l2, SR, (0.8, 0, 0), stereo=False)
+a, _ = run_st(l1, 8192, (0.8, 0, 0))
+c, d = run_st(l2, 8192, (0.8, 0, 0), stereo=False)
 check("with no right buffer the engine stays mono (a pad's instance: no crash, a signal, nothing written)", np.std(c) > 0.01 and np.all(d == 0))
 
 
-def pitch_track(drift, detune, sec=40):
+def pitch_track(drift, sec=40):
     l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0))
     l.key(0, 1)
-    x = np.concatenate([run_st(l, SR, (0, drift, detune, 0.41, 0), stereo=False)[0] for _ in range(sec)])
+    x = np.concatenate([run_st(l, SR, (0, drift, 0), stereo=False)[0] for _ in range(sec)])
     f = []
     for i in range(15, sec):                                        # after the envelope has settled
         seg = x[i * SR:(i + 1) * SR]
@@ -456,27 +456,18 @@ def pitch_track(drift, detune, sec=40):
     return np.array(f)
 
 
-f_off, f_half, f_full = (pitch_track(d, 0) for d in (0.0, 0.5, 1.0))
+f_off, f_half, f_full = (pitch_track(d) for d in (0.0, 0.5, 1.0))
 c_off, c_half, c_full = (1200 * math.log2(f.max() / f.min()) for f in (f_off, f_half, f_full))
 check("drift off: the pitch is steady (%.2f cents)" % c_off, c_off < 0.2)
 check("drift 0.5 wanders a few cents (%.1f), full more (%.1f), none beyond 25" % (c_half, c_full), 1.0 < c_half < c_full < 25.0)
-# detune: the two oscillators of a pair apart, beating
-l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0))
-l.set("TUNE2", 100)
-l.key(0, 1)
-l.key(1, 1)
-run_st(l, 20 * SR, (0, 0, 1.0, 0.41, 0), stereo=False)
-x = run_st(l, 4 * SR, (0, 0, 1.0, 0.41, 0), stereo=False)[0]
-env = np.abs(x[:len(x) // 441 * 441].reshape(-1, 441)).max(axis=1)
-check("detune 1.0: the pair beats slowly (envelope swings %.2f..%.2f)" % (env.min(), env.max()), env.max() > 1.5 * env.min())
 
 
 # ---- HARM: the bass band's 2nd harmonic (3.1.AC) ----
 def bass_voice(harm, tune=45, secs=3):
     l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0, TUNE1=tune))
     l.key(0, 1)
-    run_st(l, 20 * SR, (0, 0, 0, 0.41, harm), stereo=False)
-    return run_st(l, secs * SR, (0, 0, 0, 0.41, harm), stereo=False)[0]
+    run_st(l, 20 * SR, (0, 0, harm), stereo=False)
+    return run_st(l, secs * SR, (0, 0, harm), stereo=False)[0]
 
 
 b0, b2, b10 = bass_voice(0), bass_voice(0.2), bass_voice(1.0)
