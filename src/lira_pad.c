@@ -1162,14 +1162,12 @@ int lira_ui_button(int idx, uint32_t now, uint32_t gap)
     if (!p || idx < 0 || idx > 7)
         return 0;
     struct pg *g = &p->pg;
-    uint32_t since = now - g->btn_t[idx];
-    if (g->btn_t[idx] && since <= gap)
+    if (g->btn_t[idx] && now - g->btn_t[idx] <= gap)
         return 0;
-    int again = idx == 0 && g->btn_t[idx] && since <= 110;      /* PAD is voice 1's button too: pressed twice within ~0.6 s it goes back to the pads */
-    g->btn_t[idx] = again ? 0 : (now ? now : 1);
-    g->want[idx] ^= 1;                                          /* (the second press undoes the first: voice 1 is as it was) */
+    g->btn_t[idx] = now ? now : 1;
+    g->want[idx] ^= 1;
     grec(g, 300 + idx, g->want[idx]);
-    return again ? 2 : 1;
+    return 1;
 }
 
 int lira_ui_last(int id)
