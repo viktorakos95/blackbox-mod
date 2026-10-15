@@ -338,7 +338,7 @@ HOOK uint32_t bb_mcl_start(uint32_t stack_words)
         return 1;
     task_def.name = "MCL";
     task_def.func = mcl_task;
-    task_def.priority = 0;                                          /* osPriorityNormal: the same as the UI and the streamer (which never blocks: a lower priority would never run) */
+    task_def.priority = 1;                                          /* osPriorityAboveNormal: the stock UI and streamer tasks are Normal and the streamer never blocks; a task of the same priority that sleeps may never be given the CPU back (seen on the unit: a 50 ms wait that did not return). It blocks often (sleeps, SD waits), so the others still run; the audio task is Realtime, above it. */
     task_def.instances = 1;
     uint32_t h = 0;
     mcl_state = 1;                                                  /* (before the task exists: the caller must not get here twice) */
