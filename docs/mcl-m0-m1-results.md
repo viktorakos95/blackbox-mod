@@ -358,3 +358,10 @@ view 1 (tile B4) = overlaps in FatFs (F) and in the driver (D) with the first pa
 - Counters after all that: 10,211 requests, **0 timeouts**, worst streamer-side call **6.4 ms**, worst wait **1872 ms** (the time before the streamer loop reached the hook, since the call itself was short; to be
   explained with the new "streamer gap" counters). The page was slow to change while the tests ran: expected, the tests run in the UI task's touch handler and block it for 0.3 to 1 s.
 - Throughput note: 100-byte requests cost one mailbox round trip each; MCL's file access (small project / grid files) is far below what this image does.
+
+### The page felt slow and needed several presses (user, SD test image)
+Cause (found in the code, not measured): `looper_ui_poke` calls the page's redraw check (`mcl_page_sig` -> the blob's `bb_ui_sig`) about 19 times a second **from the audio task**; any change of
+the picture makes the UI task redraw the whole page (a few hundred box calls). The diagnostic pages show numbers that change all the time while the streamer works, so the UI task was redrawing
+continuously. Fix: `bb_ui_sig` renders at most every 150 ms (an input event refreshes at once), `bb_ui_refresh()` for the tests; the SD test result lines were rearranged so they no longer overwrite each other.
+Design note for M8: the redraw check runs in the audio task, so it must only compare a frame counter; MCL's own drawing must run in the UI task (the page's paint) or its own context, never in that check.
+Also noted: the stock tasks are defaultTask (UI) and pcmStreamer at the same CMSIS priority (Normal) and audioTask at Realtime, so the streamer's busy loop and the UI task share the CPU in time slices.

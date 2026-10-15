@@ -294,6 +294,7 @@ FONT = [int(t, 16) for t in src[src.index("{") + 1:src.rindex("}")].replace("//"
 
 
 def screen():
+    gui("bb_ui_refresh")
     gui("bb_ui_sig")
     fb = bytes(uc.mem_read(gui("bb_ui_fb"), 512))
     rows = []
@@ -318,15 +319,15 @@ gui("bb_sd_write", h, BUFA, len(sample))
 gui("bb_sd_close", h)
 tile(0)
 rows = screen()
-check("B1 list: the root holds 2 files (SAMPLE.WAV and the BBSD-less rest) and 1 folder; the biggest is shown with its size", rows[0].startswith("LS F") and rows[1] == "BIG 585K SAMPLE.WAV", rows)
+check("B1 list: the root holds 1 file and 1 folder; the biggest file size is shown", rows[0] == "LS F1 D1 BIG 585K", rows)
 tile(1)
 rows = screen()
-check("B2 read: 256K read twice (4 KB requests, then 100-byte requests), checksums equal", rows[1].startswith("RD 256K ") and rows[1].endswith(" OK") and rows[2].startswith("KB/S"), rows)
+check("B2 read: 256K read twice (4 KB requests, then 100-byte requests), checksums equal, speed shown", rows[1].startswith("RD 256K ") and rows[1].endswith("K/s") and "MISMATCH" not in rows[1], rows)
 n_before = len([t for t in card.log if t[0] == "w"])
 card.log.clear()
 tile(2)
 rows = screen()
-check("B3 write: 128K written, read back and verified, file deleted", rows[2].startswith("WR 128K ") and rows[3].startswith("VERIFY OK 0 DEL OK"), rows)
+check("B3 write: 128K written, read back and verified, file deleted; all four lines readable at once", rows[0] == "LS F1 D1 BIG 585K" and rows[1].startswith("RD 256K ") and rows[2].startswith("WR 128K ") and " w" in rows[2] and " r" in rows[2] and rows[3] == "VERIFY OK 0 DEL OK" and all(len(r) <= 21 for r in rows), rows)
 check("... again only the FatFs window ever reached the card driver", all(t[3] == card.FS + 0x3C for t in card.log) and len(card.log) > 500)
 check("... and the temporary file is really gone", gui("bb_sd_stat", path("/BBSD.TMP"), ent) == 4)
 tile(3)

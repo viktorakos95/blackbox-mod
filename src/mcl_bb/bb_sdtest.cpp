@@ -81,13 +81,13 @@ HOOK void bb_sdtest_list(void)
         }
     }
     bb_sd_closedir(d);
-    a.s("LS F").u(files).s(" D").u(dirs);
-    b.s("BIG ").u((uint32_t)(big_size >> 10)).s("K ").s(big_name);
+    (void)b;
+    a.s("LS F").u(files).s(" D").u(dirs).s(" BIG ").u((uint32_t)(big_size >> 10)).s("K");
 }
 
 HOOK void bb_sdtest_read(void)
 {
-    Line a(lines[1]), b(lines[2]);
+    Line a(lines[1]);
     if (!big_name[0]) {
         a.s("RD: LIST FIRST");
         return;
@@ -130,8 +130,10 @@ HOOK void bb_sdtest_read(void)
         left -= (uint32_t)n;
     }
     bb_sd_close(h);
-    a.s("RD ").u(want >> 10).s("K ").u(ms1).s("ms ").s(crc1 == crc2 ? "OK" : "CRC!");
-    b.s("KB/S ").u(ms1 ? (uint32_t)((uint64_t)want * 1000u / 1024u / ms1) : 0);
+    if (crc1 != crc2)
+        a.s("RD CRC MISMATCH");
+    else
+        a.s("RD ").u(want >> 10).s("K ").u(ms1).s("ms ").u(ms1 ? (uint32_t)((uint64_t)want * 1000u / 1024u / ms1) : 0).s("K/s");
 }
 
 HOOK void bb_sdtest_write(void)
@@ -194,6 +196,6 @@ HOOK void bb_sdtest_write(void)
     uint32_t rms = ms_since(t0);
     r = bb_sd_unlink("/BBSD.TMP");
     uint32_t gone = bb_sd_stat("/BBSD.TMP", &ent);
-    a.s("WR ").u(total >> 10).s("K ").u(wms).s("ms RB ").u(rms).s("ms");
+    a.s("WR ").u(total >> 10).s("K w").u(wms).s(" r").u(rms);
     b.s(bad ? "VERIFY FAIL AT " : "VERIFY OK ").u(bad).s(r == 0 && gone == SD_NO_FILE ? " DEL OK" : " DEL ERR");
 }

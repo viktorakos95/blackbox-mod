@@ -34,6 +34,7 @@ def px(f, x, y):
 
 
 def screen():
+    r.call("bb_ui_refresh")
     r.call("bb_ui_sig")
     f = fb()
     rows = []

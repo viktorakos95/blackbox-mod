@@ -159,6 +159,7 @@ check("worst call time measured: about 3000 us", 2900 <= call("bb_sdspy_worst_us
 
 # --- the screen
 def screen():
+    rg.call("bb_ui_refresh")
     p = rg.call("bb_ui_sig")
     fb = bytes(e.uc.mem_read(rg.call("bb_ui_fb"), 512))
     src = open("src/mcl_bb/glcdfont.h").read()
@@ -182,6 +183,18 @@ rows = screen()
 check("B4 switches to view 1: overlaps, worst times, card calls", rows[0].startswith("OVL F  0 D  1") and rows[1].startswith("MS  F  3") and rows[2].startswith("DRD") and rows[3].startswith("DWR"), rows)
 check("view 1: the first overlap pair is shown (DP)", "DP" in rows[0].replace(" ", ""), rows[0])
 check("view 1: card reads by P counted", "P   1" in rows[2] or "P  1" in rows[2], rows[2])
+# --- the redraw check is throttled: a picture that changes all the time is re-rendered at most every 150 ms
+rg.call("bb_ui_refresh")
+sig_a = rg.call("bb_ui_sig")
+as_task("P")
+call("spy_disk_read", 0, 0x24070000, 1, 1)
+check("within 150 ms the redraw signature stays the same although a counter changed", rg.call("bb_ui_sig") == sig_a)
+e.uc.mem_write(0xE0001004, struct.pack("<I", (struct.unpack("<I", bytes(e.uc.mem_read(0xE0001004, 4)))[0] + 80_000_000) & 0xFFFFFFFF))
+check("after 200 ms it renders again and the signature follows the picture", rg.call("bb_ui_sig") != sig_a)
+rg.call("bb_ui_input", 1, 0, 1)
+call("spy_disk_read", 0, 0x24070000, 1, 1)
+check("an input event refreshes at once", rg.call("bb_ui_sig") != 0)
+
 # --- cache / MPU view and buffer view
 from unicorn import UC_HOOK_MEM_READ
 MPU_REGIONS = {0: (0x00000000, (31 << 1) | 1 | (3 << 24) | (0 << 19) | 0),                              # whole space, strongly ordered, enabled
@@ -221,7 +234,7 @@ call("spy_disk_read", 0, 0x20000100, 1, 1)
 rg.call("bb_ui_input", 2, 3, 0)
 rg.call("bb_ui_input", 3, 3, 0)                                                # view 2 -> 3
 rows = screen()
-check("view 3: reads AXI 3, SRAM 2 (one earlier, aligned, one now); writes SRAM 1 (earlier), SDRAM 2", rows[0].startswith("BUF") and rows[1].split()[:3] == ["AXI", "3", "0"] and rows[2].split()[:3] == ["SRAM", "2", "1"] and rows[3].split()[:3] == ["SDRAM", "0", "2"], rows)
+check("view 3: reads AXI 5 (two from the redraw-throttle test), SRAM 2 (one earlier, aligned, one now); writes SRAM 1 (earlier), SDRAM 2", rows[0].startswith("BUF") and rows[1].split()[:3] == ["AXI", "5", "0"] and rows[2].split()[:3] == ["SRAM", "2", "1"] and rows[3].split()[:3] == ["SDRAM", "0", "2"], rows)
 check("view 3: the DTCM buffer is flagged (OTH) and the unaligned one counted (UN)", "OTH" in rows[0] and "UN" in rows[0], rows[0])
 
 

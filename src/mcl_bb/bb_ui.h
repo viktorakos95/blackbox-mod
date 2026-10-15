@@ -9,6 +9,7 @@
 
 extern "C" {
 const uint8_t *bb_ui_fb(void);                              /* the 512-byte frame buffer */
-uint32_t bb_ui_sig(void);                                   /* draws the screen now; a hash of the frame buffer (changes when the picture does) */
+void bb_ui_refresh(void);                                   /* the next bb_ui_sig() renders again whatever the time */
+uint32_t bb_ui_sig(void);                                   /* draws the screen (at most every 150 ms unless an input came); a hash of the frame buffer (changes when the picture does) */
 void bb_ui_input(uint32_t kind, int32_t a, int32_t b);      /* kind 1: encoder a turned by b detents; 2: button a down; 3: button a up (buttons 0..4: B1..B4, SHIFT) */
 }

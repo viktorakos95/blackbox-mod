@@ -270,17 +270,32 @@ static void need_clock(void)
 
 HOOK const uint8_t *bb_ui_fb(void) { return fb; }
 
+/* The page's redraw check (src/cpu.c mcl_page_sig, called about 19 times a second from the AUDIO task) must be cheap, and a picture that changes all the time (counters) must not make
+ * the UI task redraw the whole page at that rate (hundreds of box calls): the picture is re-rendered at most every UI_MIN_MS, an input event refreshes it at once. */
+#define UI_MIN_MS 150u
+#define DWT_CYCCNT (*(volatile uint32_t *)0xe0001004u)
+#define SYST_RVR   (*(volatile uint32_t *)0xe000e014u)
+static uint32_t sig_cache, sig_t;
+
+HOOK void bb_ui_refresh(void) { sig_cache = 0; }
+
 HOOK uint32_t bb_ui_sig(void)
 {
+    uint32_t now = DWT_CYCCNT;
+    if (sig_cache && now - sig_t < (SYST_RVR + 1u) * UI_MIN_MS)
+        return sig_cache;
     render();
     uint32_t h = 2166136261u;
     for (unsigned i = 0; i < sizeof fb; i++)
         h = (h ^ fb[i]) * 16777619u;
-    return h;
+    sig_cache = h ? h : 1u;
+    sig_t = now;
+    return sig_cache;
 }
 
 HOOK void bb_ui_input(uint32_t kind, int32_t a, int32_t b)
 {
+    sig_cache = 0;                                          /* the next check draws what this input changed */
     if (kind == 1 && a >= 0 && a < 4) {
         enc[a] += b;
         if (a == 0 && mode == 2) {                          /* encoder 1 is the tempo; B4 held = tenths */
