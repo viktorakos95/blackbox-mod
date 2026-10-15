@@ -406,7 +406,7 @@ _o = os.path.join(tmp, "off")
 open(_o + ".c", "w").write('#include "lira.h"\n#include <stddef.h>\n#include <stdio.h>\nint main(){printf("%d",(int)offsetof(lira_t,out_r));}')
 subprocess.check_call(["gcc", "-I" + os.path.join(HERE, "src"), "-o", _o, _o + ".c"])
 OUT_R = int(subprocess.check_output([_o]))
-lib.lira_tone.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 4
+lib.lira_tone.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 5
 
 
 def run_st(l, n, tone, stereo=True):
@@ -426,28 +426,28 @@ def full_drone():
 
 
 l = full_drone()
-run_st(l, SR, (0, 0, 0, 0.41))
-a, b = run_st(l, SR, (0, 0, 0, 0.41))
+run_st(l, SR, (0, 0, 0, 0.41, 0))
+a, b = run_st(l, SR, (0, 0, 0, 0.41, 0))
 check("width 0: left = right", np.array_equal(a, b) and np.std(a) > 0.01)
 l = full_drone()
-run_st(l, SR, (1, 0, 0, 0.41))
-a, b = run_st(l, 2 * SR, (1, 0, 0, 0.41))
+run_st(l, SR, (1, 0, 0, 0.41, 0))
+a, b = run_st(l, 2 * SR, (1, 0, 0, 0.41, 0))
 mid, side = (a + b) / 2, (a - b) / 2
 ratio = math.sqrt(np.mean(side ** 2) / np.mean(mid ** 2))
 check("width 1: a real stereo image (side %.2f of mid, correlation %.2f)" % (ratio, np.corrcoef(a, b)[0, 1]), 0.25 < ratio < 1.0 and np.corrcoef(a, b)[0, 1] < 0.85)
 check("... finite and bounded", np.all(np.isfinite(a)) and np.all(np.isfinite(b)) and max(abs(a).max(), abs(b).max()) < 1.5)
 l1, l2 = full_drone(), full_drone()
-run_st(l1, SR, (0.8, 0, 0, 0.41))
-run_st(l2, SR, (0.8, 0, 0, 0.41), stereo=False)
-a, _ = run_st(l1, 8192, (0.8, 0, 0, 0.41))
-c, d = run_st(l2, 8192, (0.8, 0, 0, 0.41), stereo=False)
+run_st(l1, SR, (0.8, 0, 0, 0.41, 0))
+run_st(l2, SR, (0.8, 0, 0, 0.41, 0), stereo=False)
+a, _ = run_st(l1, 8192, (0.8, 0, 0, 0.41, 0))
+c, d = run_st(l2, 8192, (0.8, 0, 0, 0.41, 0), stereo=False)
 check("with no right buffer the engine stays mono (a pad's instance: no crash, a signal, nothing written)", np.std(c) > 0.01 and np.all(d == 0))
 
 
 def pitch_track(drift, detune, sec=40):
     l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0))
     l.key(0, 1)
-    x = np.concatenate([run_st(l, SR, (0, drift, detune, 0.41), stereo=False)[0] for _ in range(sec)])
+    x = np.concatenate([run_st(l, SR, (0, drift, detune, 0.41, 0), stereo=False)[0] for _ in range(sec)])
     f = []
     for i in range(15, sec):                                        # after the envelope has settled
         seg = x[i * SR:(i + 1) * SR]
@@ -465,10 +465,33 @@ l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0))
 l.set("TUNE2", 100)
 l.key(0, 1)
 l.key(1, 1)
-run_st(l, 20 * SR, (0, 0, 1.0, 0.41), stereo=False)
-x = run_st(l, 4 * SR, (0, 0, 1.0, 0.41), stereo=False)[0]
+run_st(l, 20 * SR, (0, 0, 1.0, 0.41, 0), stereo=False)
+x = run_st(l, 4 * SR, (0, 0, 1.0, 0.41, 0), stereo=False)[0]
 env = np.abs(x[:len(x) // 441 * 441].reshape(-1, 441)).max(axis=1)
 check("detune 1.0: the pair beats slowly (envelope swings %.2f..%.2f)" % (env.min(), env.max()), env.max() > 1.5 * env.min())
+
+
+# ---- HARM: the bass band's 2nd harmonic (3.1.AC) ----
+def bass_voice(harm, tune=45, secs=3):
+    l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0, TUNE1=tune))
+    l.key(0, 1)
+    run_st(l, 20 * SR, (0, 0, 0, 0.41, harm), stereo=False)
+    return run_st(l, secs * SR, (0, 0, 0, 0.41, harm), stereo=False)[0]
+
+
+b0, b2, b10 = bass_voice(0), bass_voice(0.2), bass_voice(1.0)
+fb = peak_hz(b0, 20, 400)
+h2 = lambda x: db(level_at(x, 2 * fb) / level_at(x, fb))
+check("HARM off: no 2nd harmonic (%.0f dB at %.0f Hz)" % (h2(b0), fb), h2(b0) < -35)
+check("HARM 0.2 (the default): a quiet 2nd harmonic (%.0f dB)" % h2(b2), -30 < h2(b2) < -14)
+check("HARM 1: clearly there but under the fundamental (%.0f dB)" % h2(b10), -12 < h2(b10) < -3)
+check("... the fundamental itself is not changed (%.2f dB)" % db(level_at(b10, fb) / level_at(b0, fb)), abs(db(level_at(b10, fb) / level_at(b0, fb))) < 0.5)
+dc = abs(np.mean(b10))
+check("... and no DC offset appears (%.5f)" % dc, dc < 0.002)
+hi = bass_voice(1.0, tune=100)
+h_hi = bass_voice(0.0, tune=100)
+fh = peak_hz(hi, 400, 4000)
+check("a voice above the bass band gets next to nothing (2nd harmonic %.0f dB, it was %.0f)" % (db(level_at(hi, 2 * fh) / level_at(hi, fh)), db(level_at(h_hi, 2 * fh) / level_at(h_hi, fh))), db(level_at(hi, 2 * fh) / level_at(hi, fh)) < -38)
 
 
 # CPU

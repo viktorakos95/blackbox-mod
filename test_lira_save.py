@@ -117,14 +117,22 @@ e.call("lira_ui_set", 180, 111)
 e.call("lira_ui_set", 181, 222)
 e.call("lira_ui_set", 182, 333)
 e.call("lira_ui_set", 183, 444)
+e.call("lira_ui_set", 184, 555)
 e.call("lira_save")
 tone_file = disk["bbmod.bin"]
 for c in range(180, 184):
     e.call("lira_ui_set", c, 900)
 disk["bbmod.bin"] = tone_file
 e.call("lira_load")
-check("TONE: width / drift / detune / body come back", [get(c) for c in range(180, 184)] == [111, 222, 333, 444], str([get(c) for c in range(180, 184)]))
-old_file = tone_file[:-16]
+e.call("lira_ui_set", 184, 900)
+disk["bbmod.bin"] = tone_file
+e.call("lira_load")
+check("TONE: width / drift / detune / body / harm come back", [get(c) for c in range(180, 185)] == [111, 222, 333, 444, 555], str([get(c) for c in range(180, 185)]))
+e.call("lira_ui_set", 184, 900)
+disk["bbmod.bin"] = tone_file[:-12]                                # a file from 3.1.AC: no harm tail
+e.call("lira_load")
+check("a file with only the first TONE tail: the four come back, harm stays", [get(c) for c in range(180, 185)] == [111, 222, 333, 444, 900], str([get(c) for c in range(180, 185)]))
+old_file = tone_file[:-28]
 for c in range(180, 184):
     e.call("lira_ui_set", c, 900)
 disk["bbmod.bin"] = old_file
@@ -132,7 +140,7 @@ e.call("lira_ui_set", 16, 5)
 e.call("lira_load")
 check("a file from before the TONE tab still loads (the controls come back, the tone stays as it is)", get(16) == 321 and [get(c) for c in range(180, 184)] == [900] * 4, str((get(16), [get(c) for c in range(180, 184)])))
 bad_tail = bytearray(tone_file)
-bad_tail[-3] ^= 0xFF
+bad_tail[-20] ^= 0xFF
 disk["bbmod.bin"] = bytes(bad_tail)
 e.call("lira_load")
 check("a damaged tail is ignored (the rest still loads)", [get(c) for c in range(180, 184)] == [900] * 4)

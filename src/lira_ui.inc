@@ -9,7 +9,7 @@
  *   SOUND    DELAY (time 1, 2, feedback, mix), MOD (mod 1, 2, LFO A, B), PITCH (hold 1-4, 5-8, pitch 1-4, 5-8), LFO (shape, combine, link, delay source)
  *   MIX      LEVEL 1-4, LEVEL 5-8 (a fader per voice), OUTPUT (drive, dist, volume, ext in)
  *   CHORD    TONAL SPACE (space, root, register, span), VOICING (chord on, tuning, shuffle, rotate), the notes of the voices
- *   TONE     WIDTH (stereo spread of the pairs and the delay lines), DRIFT (slow pitch wander per oscillator), DETUNE (the two of a pair apart: slow beating), BODY (bass lift)
+ *   TONE     WIDTH (stereo spread of the pairs and the delay lines), DRIFT (slow pitch wander per oscillator), DETUNE (the two of a pair apart: slow beating), BODY (bass lift); LOW END: HARM (the bass band's own 2nd harmonic)
  * The four encoders turn the four controls of the active group (white frame): the strip's voices 1-4 or 5-8, or a panel. A touch on
  * a control makes its group the active one; BACK flips between voices 1-4 and 5-8; INFO moves on within the part of the page the
  * group is in (lira_shift: the next panel, or levels / tunes 1-4 <-> 5-8; the page has no SHIFT mode). PAD (round button 0) is never a
@@ -176,6 +176,9 @@ static int lu_specs(int sel, struct lu_spec *o)
             LU_SP(n, 180 + i, x, d, LU_COL, 38, 2, lu_enc_cell[i], LK_KNOB, LU_ACC2, 11, nm[i]);
             n++;
         }
+        lu_cell(1, 0, &x, &d);                                    /* LOW END: the bass band's own harmonics */
+        LU_SP(n, 184, x, d, LU_COL, 38, 3, lu_enc_cell[0], LK_KNOB, LU_ACC1, 11, "HARM");
+        n++;
     } else {
         static const char *const nm[8] = {"SPACE", "ROOT", "OCT", "SPAN", "CHORD", "TUNE", "SHUFL", "CYCLE"};
         static const uint16_t ids[8] = {140, 141, 142, 143, 150, 153, 151, 152};
@@ -367,7 +370,7 @@ static void draw_lira(void)
                                                    {"DELAY", "MOD", "HOLD/PITCH", "LFO"},
                                                    {"OUTPUT", "TEMPO SYNC", "GESTURE", "STATUS"},
                                                    {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"},
-                                                   {"SPACE & TONE", "", "", ""}};
+                                                   {"SPACE & TONE", "LOW END", "", ""}};
     box(1, 1, P->w - 2, TOPBAR, C_BG);
     text(6, 4, "DRONE-8", C_WHITE, 1);
     int last = lira_ui_last(-1);
@@ -431,8 +434,8 @@ static void draw_lira(void)
     box(1, TOPBAR + 2, P->w - 2, L.foot_y - TOPBAR - 3, C_BG);
 
     for (int p = 0; p < 4; p++) {                                 /* the four panels (OUTPUT is one wide panel) */
-        if (page == LP_TONE && p > 0)
-            continue;                                             /* (the TONE tab has the one) */
+        if (page == LP_TONE && p > 1)
+            continue;                                             /* (the TONE tab has two) */
         int x = LU_X0 + p * 2 * LU_COL, hot = bank == 2 + p, pw = 2 * LU_COL;
         frame(x + 1, LU_PANEL, pw - 2, LU_PANH, hot ? LU_SEL : LU_LINE, 1);
         text_c(x, LU_PANEL + 4, pw, ptitle[page][p], hot ? LU_SEL : LU_DIM, 1);

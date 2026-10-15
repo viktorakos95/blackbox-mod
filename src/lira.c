@@ -369,8 +369,9 @@ void lira_key(lira_t *l, int s, int on) { lira_touch(l, s, on ? 1.f : 0.f); }
 
 int lira_size(void) { return (int)sizeof(lira_t); }
 
-void lira_tone(lira_t *l, float width, float drift, float detune, float body)
+void lira_tone(lira_t *l, float width, float drift, float detune, float body, float harm)
 {
+    l->harm = clip_(harm, 0.f, 1.f);
     l->width = clip_(width, 0.f, 1.f);
     l->drift = clip_(drift, 0.f, 1.f);
     l->detune = clip_(detune, 0.f, 1.f);
@@ -564,7 +565,8 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
     const float dtn = l->detune * l->detune * (12.f * 0.000578f * 0.5f);
     const float drifta = 1.f - (float)LIRA_CR * isr / 6.f;
     const float driftb = l->drift > 0.f ? l->drift * l->drift * 0.0035f * 1.732f * fexp2(0.5f * flog2(2.f * (float)LIRA_CR * isr / 6.f)) : 0.f;
-    const float bodyc = l->bodyc;
+    const float bodyc = l->bodyc, harm = l->harm * 1.2f;
+    const float lp160 = clip_(160.f * TWO_PI * isr, 0.f, 1.f), lp350 = clip_(350.f * TWO_PI * isr, 0.f, 1.f);
     int ei = 0;
     const int have_ext = l->ext_l && l->ext_r && l->ext_n > 0;
     float ext = 0.f;
@@ -794,7 +796,12 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
             float yv = ptanh(dly * (1.f - dstm) + (dly * 0.1f + dist) * dstm);
             tfb_s = hip(&l->hp3, yv, hp3c);
             /* bass lifted a little, highs softer (manual) */
-            float yt = ptanh(lop(&l->hf, yv + bodyc * lop(&l->lf, yv, lp150), lp9k)) * vol;
+            float hh = 0.f;
+            if (harm > 0.f) {                                 /* the bass band, rectified: its 2nd harmonic (the rectifier is linear in level, so it follows the dynamics) */
+                float lb = lop(&l->hb2, lop(&l->hb1, yv, lp160), lp160);
+                hh = harm * lop(&l->hbl, hip(&l->hbd, fabs_(lb), hp20c), lp350);
+            }
+            float yt = ptanh(lop(&l->hf, yv + bodyc * lop(&l->lf, yv, lp150) + hh, lp9k)) * vol;
             if (out_r) {                                      /* the side: the voices' spread and the two delay lines one to each side, softened like the master's top */
                 float sd = (mixl - mixr) * 0.5f * 0.166667f;
                 if (nlines)
