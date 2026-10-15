@@ -7,7 +7,7 @@
  * buttons are the same plates. Above them one of four tabs (footer), each a row of four panels of four controls:
  *   VOICES   one panel per voice pair: MOD, SHARP, FM source, TOUCH
  *   SOUND    DELAY (time 1, 2, feedback, mix), MOD (mod 1, 2, LFO A, B), PITCH (hold 1-4, 5-8, pitch 1-4, 5-8), LFO (shape, combine, link, delay source)
- *   MIX      OUTPUT (drive, dist, volume, ext in), TEMPO SYNC, GESTURE, SPACE (WIDTH of the stereo image, DRIFT of the pitch, the ENGINE switch)
+ *   MIX      OUTPUT (drive, dist, volume, ext in), TEMPO SYNC, GESTURE, SPACE (PAN: how far the eight voices are spread left and right, DRIFT of the pitch, the ENGINE switch)
  *   CHORD    TONAL SPACE (space, root, register, span), VOICING (chord on, tuning, shuffle, rotate), the notes of the voices
  * The four encoders turn the four controls of the active group (white frame): the strip's voices 1-4 or 5-8, or a panel. A touch on
  * a control makes its group the active one; BACK flips between voices 1-4 and 5-8; INFO moves on within the part of the page the
@@ -165,7 +165,7 @@ static int lu_specs(int sel, struct lu_spec *o)
             n++;
         }
         lu_cell(3, 0, &x, &d);                                    /* SPACE: the stereo width (0 = mono, the cheap path), the pitch drift, and the engine switch */
-        LU_SP(n, 180, x, d, LU_COL, 38, 5, lu_enc_cell[0], LK_KNOB, LU_ACC2, 11, "WIDTH");
+        LU_SP(n, 180, x, d, LU_COL, 38, 5, lu_enc_cell[0], LK_KNOB, LU_ACC2, 11, "PAN");
         n++;
         lu_cell(3, 1, &x, &d);
         LU_SP(n, 181, x, d, LU_COL, 38, 5, lu_enc_cell[1], LK_KNOB, LU_ACC2, 11, "DRIFT");

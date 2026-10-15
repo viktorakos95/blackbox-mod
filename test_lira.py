@@ -435,6 +435,7 @@ a, b = run_st(l, 2 * SR, (1, 0, 0))
 mid, side = (a + b) / 2, (a - b) / 2
 ratio = math.sqrt(np.mean(side ** 2) / np.mean(mid ** 2))
 check("width 1: a real stereo image (side %.2f of mid, correlation %.2f)" % (ratio, np.corrcoef(a, b)[0, 1]), 0.25 < ratio < 1.0 and np.corrcoef(a, b)[0, 1] < 0.85)
+check("... and balanced: the voices are dealt out so neither side is crowded (L / R level %.2f)" % (np.sqrt(np.mean(a ** 2) / np.mean(b ** 2))), 0.8 < np.sqrt(np.mean(a ** 2) / np.mean(b ** 2)) < 1.25)
 check("... finite and bounded", np.all(np.isfinite(a)) and np.all(np.isfinite(b)) and max(abs(a).max(), abs(b).max()) < 1.5)
 l1, l2 = full_drone(), full_drone()
 run_st(l1, SR, (0.8, 0, 0))
