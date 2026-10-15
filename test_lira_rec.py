@@ -137,6 +137,24 @@ rms = (sum(x * x for x in l) / N) ** 0.5
 rms_r = (sum(x * x for x in r) / N) ** 0.5
 check("DRONE: the bus holds the synth alone (sound in both channels, none of the 0.7 left; WIDTH starts at 0: both the same)",
       rms > 0.002 and rms_r > 0.002 and l == r and max(abs(x) for x in l + r) < 0.5, "rms %.4f %.4f" % (rms, rms_r))
+# PAN: the page's own output channels. Under 3 % (a knob that reads 0 to 3) is exactly mono; opened, the voices spread
+def page_lr(pan, plates=(0, 3, 5, 7)):
+    e.call("lira_ui_set", 180, pan)
+    for k in plates:
+        e.call("lira_ui_key", k, 1)
+    for _ in range(80):
+        e.uc.mem_write(L, bytes(4 * N))
+        e.uc.mem_write(R, bytes(4 * N))
+        e.call("lira_page_run", L, R, N)
+    return (struct.unpack(f"<{N}f", bytes(e.uc.mem_read(L, 4 * N))), struct.unpack(f"<{N}f", bytes(e.uc.mem_read(R, 4 * N))))
+
+
+for pan in (0, 2, 29):
+    a, b = page_lr(pan)
+    check("PAN %d (under 3 %%): the page's left and right are identical, sample for sample" % pan, a == b and max(abs(x) for x in a) > 0.01)
+a, b = page_lr(600)
+check("PAN 600: left and right differ", a != b and max(abs(x - y) for x, y in zip(a, b)) > 0.005)
+e.call("lira_ui_set", 180, 0)
 e.call("lira_ui_key", 0, 0)
 e.uc.reg_write(UC_ARM_REG_R4, NODE)
 e.call("lira_rec_store_thunk", 0, 0, 0, 0)
