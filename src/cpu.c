@@ -110,6 +110,8 @@ static void start(void)
     bkp_enable();
     for (unsigned i = 0; i < sizeof(struct mcl_ui) / 4; i++)
         ((volatile uint32_t *)UI)[i] = 0;     /* the MCL page's state (backup SRAM is not cleared by a reset) */
+    for (unsigned i = 0; i < 5; i++)
+        ((volatile uint32_t *)0x38800940u)[i] = 0;   /* seqfix.c's stamps for MCL's tempo follower (stale cycle counts from the last run would look fresh) */
     const struct mcl_entry *e = mcl_blob();
     if (e) {
         bkp_enable();
@@ -343,7 +345,7 @@ uint32_t mcl_page_sig(void)
 void mcl_page_draw(int w, int foot_y)
 {
     static const char *const name[MCL_TILES] = {"B1", "B2", "B3", "B4", "SHIFT"};
-    static const char *const role[MCL_TILES] = {"FOLLOW", "INT", "STOP", "TENTHS", ""};   /* the test bench's meaning until MCL itself runs */
+    static const char *const role[MCL_TILES] = {"FOLLOW", "INT", "STOP", "TENTHS", "BBOX"};   /* the test bench's meaning until MCL itself runs */
     const struct mcl_entry *e = mcl_blob();
     const uint8_t *fb = e ? e->fb() : 0;
     int x0 = mcl_x0(w);

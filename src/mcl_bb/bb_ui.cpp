@@ -9,7 +9,7 @@
 static uint8_t fb[BB_UI_W * BB_UI_H / 8];
 static int32_t enc[4];
 static uint32_t btn_mask;
-static uint32_t mode;                                       /* 0 idle, 1 following the jack, 2 internal clock */
+static uint32_t mode;                                       /* 0 idle, 1 following the jack, 2 our own clock, 3 following the Blackbox's sequencer */
 static uint32_t bpm_x10 = 1200;
 static uint32_t clock_ok;                                   /* 1 = the timer is set up, 2 = the claim failed */
 
@@ -56,11 +56,11 @@ static void render(void)
 {
     for (unsigned i = 0; i < sizeof fb; i++)
         fb[i] = 0;
-    static const char *const mode_name[3] = {"IDLE", "FOLLOW", "INT"};
+    static const char *const mode_name[4] = {"IDLE", "FOLLOW", "INT", "BBOX"};
     static const char *const sy_name[5] = {"-", "LISTEN", "1 CLK", "LOCKED", "LOST"};
     int c = text(0, 0, "MCL BB ");
     c = text(c, 0, mode_name[mode]);
-    if (mode == 1)
+    if (mode == 1 || mode == 3)
         text(c + 1, 0, sy_name[bb_clock_sync_state() % 5]);
     if (clock_ok == 2)
         text(c + 1, 0, "NO CLAIM");
@@ -78,7 +78,13 @@ static void render(void)
     c = text(c, 2, "/");
     c = number(c, 2, (int32_t)bb_clock_err_us(0), 4);
     text(c, 2, " US");
-    number(15, 2, (int32_t)bb_clock_err_us(2), 6);
+    if (mode == 3) {                                        /* the sequencer's own stamps: seq running?, restarts of the fit, stamps used */
+        put(15, 2, bb_clock_seq_stat(2) ? 'R' : 'S');
+        number(16, 2, (int32_t)(bb_clock_seq_stat(1) % 100u), 2);
+        number(18, 2, (int32_t)(bb_clock_seq_stat(0) % 1000u), 3);
+    } else {
+        number(15, 2, (int32_t)bb_clock_err_us(2), 6);
+    }
     for (int i = 0; i < 4; i++)                             /* the four encoders' counts, then the buttons B1..B4 as bits */
         number(i * 4, 3, enc[i] % 1000, 3);
     put(16, 3, 'B');
@@ -135,6 +141,13 @@ HOOK void bb_ui_input(uint32_t kind, int32_t a, int32_t b)
                 bb_clock_stop(0);
                 bb_clock_start(bpm_x10, 1);
                 mode = 2;
+            }
+        } else if (a == 4) {                                /* SHIFT tile: follow the Blackbox's own transport (internal, MIDI or analog) */
+            need_clock();
+            if (clock_ok == 1) {
+                bb_clock_stop(0);
+                bb_clock_sync_seq();
+                mode = 3;
             }
         } else if (a == 2 && clock_ok == 1) {               /* B3: stop */
             bb_clock_stop(1);

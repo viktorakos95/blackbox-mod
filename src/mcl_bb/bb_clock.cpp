@@ -69,6 +69,21 @@ static int32_t pend_adj;                                        /* timer counts 
 static uint32_t lost_ticks;                                     /* ticks spent flywheeling */
 static uint32_t e_max_us, e_last_us, e_win_max, e_win_n, n_clocks;
 static uint32_t acq_now;                                         /* acquisition happened in this interrupt: it already programmed the first interval */
+
+/* Follow the Blackbox's own transport (M5b): seqfix.c stamps (cycle counter, sequencer time at 960 a beat) at every call of the stock note player; the interrupt fits a
+ * straight line through the last SQ_N stamps of one sequence and turns it into "virtual" input clocks for the same PLL: the instants the fitted line passes every 40th tick. */
+#define SQ_STAMP    ((volatile uint32_t *)0x38800940u)       /* {version, sequence, cycles, now_lo, now_hi} */
+#define SQ_N        64
+#define SQ_MIN      8                                           /* stamps before the line is trusted */
+static volatile uint32_t src_seq;                               /* the input is the stamps, not the jack */
+static uint32_t sq_ver, sq_prim, sq_prim_t;                    /* last version seen, the followed sequence, its last stamp's cycles */
+static uint32_t sq_cyc[SQ_N];
+static int64_t sq_now[SQ_N];
+static uint32_t sq_n, sq_wr;                                    /* stamps in the window, next slot */
+static int64_t sq_next_k;                                       /* next 24-PPQN clock (sequencer time / 40) to turn into a virtual input clock */
+static uint32_t sq_running, sq_announce, sq_from_zero;
+static uint32_t sq_restarts, sq_accepted;
+static int32_t sq_offset_cyc;                                   /* shifts the virtual clocks later (audio output delay), core cycles */
 #define POLL_COUNTS   1000u                                     /* listening: look at the stamp ring every ~1 ms */
 #define KP_SHIFT      2                                         /* proportional gain 1/4 */
 #define KI_SHIFT      6                                         /* integral gain 1/64: critically damped, natural frequency about 1 Hz at 120 BPM */
@@ -162,6 +177,7 @@ HOOK void bb_clock_start(uint32_t bpm_x10, int send_start)
 {
     if (!timer_hz)
         return;
+    src_seq = 0;
     T_CR1 = 0;
     T_DIER = 0;
     sync_state = SY_INTERNAL;
@@ -180,10 +196,48 @@ HOOK void bb_clock_start(uint32_t bpm_x10, int send_start)
     T_CR1 = 1;
 }
 
+static void sync_begin(void);
+static void sq_reset(void);
 HOOK void bb_clock_sync_midi(void)
 {
     if (!timer_hz)
         return;
+    src_seq = 0;
+    sync_begin();
+}
+
+/* follow the Blackbox's own sequencer: internal tempo, TRS MIDI or the analog jack, whatever drives it (seqfix.c's stamps) */
+HOOK void bb_clock_sync_seq(void)
+{
+    if (!timer_hz)
+        return;
+    T_CR1 = 0;
+    T_DIER = 0;
+    src_seq = 0;
+    sq_reset();
+    sq_ver = SQ_STAMP[0];
+    sq_prim = 0;
+    sq_running = sq_announce = 0;
+    sq_restarts = sq_accepted = 0;
+    sq_next_k = 0;
+    sync_begin();
+    src_seq = 1;
+}
+
+HOOK void bb_clock_seq_offset_us(int32_t us) { sq_offset_cyc = (int32_t)((int64_t)us * (int64_t)core_cps / 1000000); }
+
+HOOK uint32_t bb_clock_seq_stat(int which)
+{
+    switch (which) {
+    case 0: return sq_accepted;
+    case 1: return sq_restarts;
+    case 2: return sq_running;
+    default: return (uint32_t)sq_now[(sq_wr - 1u) & (SQ_N - 1)];
+    }
+}
+
+static void sync_begin(void)
+{
     T_CR1 = 0;
     T_DIER = 0;
     running = 0;
@@ -207,6 +261,7 @@ HOOK void bb_clock_sync_midi(void)
 
 HOOK void bb_clock_stop(int send_stop)
 {
+    src_seq = 0;
     T_DIER = 0;
     T_CR1 = 0;
     running = 0;
@@ -240,7 +295,7 @@ HOOK uint32_t bb_clock_err_us(int which)
 /* receive tap, interrupt context (priority 0): the arrival time of a real-time byte */
 HOOK void bb_clock_in_rt(uint8_t byte, uint32_t cycles)
 {
-    if (ready != READY_MAGIC || sync_state == SY_INTERNAL)
+    if (ready != READY_MAGIC || sync_state == SY_INTERNAL || src_seq)
         return;
     if (byte == 0xf8) {
         uint32_t w = in_wr;
@@ -331,6 +386,159 @@ static void pll_clock(uint32_t t, uint32_t now)
     period_from_cycles();
 }
 
+static void sq_reset(void)
+{
+    sq_n = sq_wr = 0;
+}
+
+static void sq_push_clock(uint32_t t)
+{
+    uint32_t w = in_wr;
+    if (w - in_rd < IN_N) {
+        in_t[w & (IN_N - 1)] = t;
+        in_wr = w + 1;
+    }
+}
+
+/* The fit of the window: sequencer time (ticks) against the cycle counter. x in units of 256 cycles since the oldest stamp, y in ticks since the oldest; the line
+ * is y = Sy/n + (Sxy/Sxx) (x - xm) with Sxy taken against x - xm, so no division loses a fraction of a tick. Returns 0 when there is no usable line. */
+struct sq_fit {
+    int64_t sy, sxy, sxx;
+    int32_t xm;
+    uint32_t n, cyc_o;
+    int64_t now_o;
+};
+
+static int sq_line(sq_fit *f)
+{
+    uint32_t n = sq_n, o = (sq_wr - n) & (SQ_N - 1);
+    if (n < SQ_MIN)
+        return 0;
+    f->n = n;
+    f->cyc_o = sq_cyc[o];
+    f->now_o = sq_now[o];
+    int64_t sx = 0, sy = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t k = (o + i) & (SQ_N - 1);
+        sx += (int32_t)((sq_cyc[k] - f->cyc_o) >> 8);
+        sy += (int32_t)(sq_now[k] - f->now_o);
+    }
+    f->xm = (int32_t)(sx / (int64_t)n);
+    f->sy = sy;
+    int64_t sxx = 0, sxy = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t k = (o + i) & (SQ_N - 1);
+        int32_t dx = (int32_t)((sq_cyc[k] - f->cyc_o) >> 8) - f->xm;
+        sxx += (int64_t)dx * dx;
+        sxy += (int64_t)dx * (int32_t)(sq_now[k] - f->now_o);
+    }
+    f->sxx = sxx;
+    f->sxy = sxy;
+    if (sxx <= 0 || sxy <= 0)
+        return 0;
+    /* 20 .. 300 BPM = 320 .. 4800 ticks a second = sxy / sxx * core_cps / 256 */
+    int64_t q = sxy * (int64_t)core_cps / 256;
+    return q > sxx * 320 && q < sxx * 4800;
+}
+
+/* The instant (cycle counter) the fitted line reaches sequencer time `target` (ticks, absolute). */
+static uint32_t sq_when(const sq_fit *f, int64_t target)
+{
+    int64_t num = (target - f->now_o) * (int64_t)f->n - f->sy;           /* ticks * n above the line's mean */
+    int64_t dx = num * f->sxx / ((int64_t)f->n * f->sxy);                /* x - xm */
+    return f->cyc_o + (uint32_t)(((int64_t)f->xm + dx) << 8);
+}
+
+static void sq_stopped(void)
+{
+    sq_reset();
+    if (!sq_running)
+        return;
+    sq_running = 0;
+    sq_announce = 0;
+    pending_start = pending_zero = 0;
+    bb_midi_tx_rt(0xfc);
+    in_rd = in_wr;
+    sync_state = SY_LISTEN;                                      /* the PLL starts over at the next start */
+    T_ARR = POLL_COUNTS - 1u;
+}
+
+/* Timer interrupt: read the player's stamp, keep the window, say start / stop, and hand the PLL the clocks that have fallen due. */
+static void seq_feed(uint32_t now)
+{
+    uint32_t v = SQ_STAMP[0];
+    if (!(v & 1u) && v != sq_ver) {
+        uint32_t seq = SQ_STAMP[1], cyc = SQ_STAMP[2], lo = SQ_STAMP[3], hi = SQ_STAMP[4];
+        if (SQ_STAMP[0] == v) {
+            sq_ver = v;
+            if (now - cyc <= core_cps / 10u) {                    /* a fresh stamp */
+                if (!sq_prim || now - sq_prim_t > core_cps / 10u) {
+                    sq_prim = seq;
+                    sq_reset();
+                }
+                if (seq == sq_prim) {
+                    sq_prim_t = cyc;
+                    int64_t y = (int64_t)hi << 32 | lo;
+                    uint32_t last = (sq_wr - 1u) & (SQ_N - 1);
+                    if (sq_n && cyc - sq_cyc[last] < core_cps / 800u) {
+                        /* two calls of one block: the second says nothing new */
+                    } else {
+                        sq_fit f;
+                        if (sq_n >= SQ_MIN && sq_line(&f)) {      /* a jump (locate, new sequence): start the window again, keep the PLL running */
+                            int64_t yp = f.now_o + (f.sy * f.sxx + (int64_t)((int32_t)((cyc - f.cyc_o) >> 8) - f.xm) * f.sxy * (int64_t)f.n) / ((int64_t)f.n * f.sxx);
+                            int64_t d = y - yp;
+                            if (d > 12 || d < -12) {
+                                sq_restarts++;
+                                sq_reset();
+                            }
+                        }
+                        sq_cyc[sq_wr & (SQ_N - 1)] = cyc;
+                        sq_now[sq_wr & (SQ_N - 1)] = y;
+                        sq_wr++;
+                        if (sq_n < SQ_N)
+                            sq_n++;
+                        sq_accepted++;
+                    }
+                }
+            }
+        }
+    }
+    /* stopped: no stamp for 50 ms, or the last four stamps say the same time */
+    bool still = now - sq_prim_t > core_cps / 20u;
+    if (!still && sq_n >= 4) {
+        uint32_t k = (sq_wr - 1u) & (SQ_N - 1);
+        still = sq_now[k] == sq_now[(k - 1u) & (SQ_N - 1)] && sq_now[k] == sq_now[(k - 2u) & (SQ_N - 1)] && sq_now[k] == sq_now[(k - 3u) & (SQ_N - 1)];
+    }
+    if (still) {
+        sq_stopped();
+        return;
+    }
+    sq_fit f;
+    if (!sq_line(&f))
+        return;
+    if (!sq_running) {                                           /* the transport has been running long enough to trust the line */
+        sq_running = 1;
+        sq_announce = 1;
+        sq_from_zero = f.now_o < 400;                            /* started from the top (the window opens within ~170 ms of the start) */
+        int64_t newest = sq_now[(sq_wr - 1u) & (SQ_N - 1)];
+        sq_next_k = newest >= 0 ? newest / 40 : -((-newest) / 40) - 1;
+        if (sq_next_k * 40 < newest - 40)
+            sq_next_k++;
+    }
+    for (int guard = 0; guard < 8; guard++) {
+        uint32_t t = sq_when(&f, sq_next_k * 40) + (uint32_t)sq_offset_cyc;
+        int32_t late = (int32_t)(now - t);
+        if (late < 0)
+            break;                                               /* not due yet */
+        if (late > (int32_t)core_cps / 2) {                      /* far behind (the line moved a lot): skip ahead instead of catching up */
+            sq_next_k++;
+            continue;
+        }
+        sq_push_clock(t);
+        sq_next_k++;
+    }
+}
+
 HOOK void mcl_tim6_isr(void)
 {
     uint32_t now = DWT_CYCCNT;
@@ -339,6 +547,8 @@ HOOK void mcl_tim6_isr(void)
     if (ready != READY_MAGIC)
         return;
     if (sync_state != SY_INTERNAL) {
+        if (src_seq)
+            seq_feed(now);                                       /* the Blackbox's own transport: the stamps become input clocks */
         /* MIDI-in sync: first the commands and clocks that arrived since the last interrupt */
         while (cmd_rd != cmd_wr) {
             uint8_t c = in_cmd[cmd_rd++ & (IN_N - 1)];
@@ -356,6 +566,11 @@ HOOK void mcl_tim6_isr(void)
         acq_now = 0;
         while (in_rd != in_wr)
             pll_clock(in_t[in_rd++ & (IN_N - 1)], now);
+        if (src_seq && sq_announce && sync_state == SY_LOCKED) {  /* the clock is up: FA with the next clock (from the top) or FB (continue) */
+            pending_start = sq_from_zero ? 1u : 2u;
+            pending_zero = sq_from_zero;
+            sq_announce = 0;
+        }
         if (acq_now)
             return;                                              /* the first interval is programmed: tick emission starts at the next interrupt */
         if (sync_state == SY_LISTEN || sync_state == SY_ONE) {

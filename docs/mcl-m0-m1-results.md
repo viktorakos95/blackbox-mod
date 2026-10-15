@@ -271,3 +271,24 @@ After the merge with the clock agent's branch (`seqfix_now()`, CLK sheet, analog
 - **Entry table abi 3:** `fb()`, `sig()`, `input(kind, a, b)` appended; `cpu.c` refuses any other abi.
 - **Tests:** `test_mcl_ui.py` (screen text decoded back from the frame buffer, buttons, encoder accumulation, tile mapping per touch id, blit coverage = lit pixels, state cleared at power-up).
   NOT checked: how it looks on the real screen, touch feel, knob counts per detent.
+
+## M5b: follow the Blackbox's own transport (internal tempo, TRS MIDI, analog jack)
+
+Built on the clock agent's finding (`docs/clock-api.md`, `docs/analog-sync-notes.md`): whatever drives the Blackbox, the stock sequencer's musical time (960 ticks a beat)
+is what the note player is given, and the analog jack is polled once per audio block. So one source covers all three.
+
+- **Stamps:** `seq_play` (src/seqfix.c) writes {version, sequence, cycle counter, sequencer time lo, hi} to backup SRAM 0x38800940 at every call of the stock player, under an odd/even
+  version word. Cleared at power-up in `cpu.c` start() (stale cycle counts would look fresh).
+- **Follower (`bb_clock_sync_seq`):** the TIM6 interrupt reads the stamp, keeps the last 64 stamps (one sequence: the first one seen, others ignored; stamps closer than 1.25 ms
+  are the same block), fits a straight line sequencer-time against cycle counter (integer least squares, x in 256-cycle units), and pushes the instants the line reaches
+  every 40th tick (24 PPQN) into the same input ring the MIDI-in PLL uses ("virtual F8"). So the PLL, the flywheel and the tick emission are the ones already tested.
+- **Transport:** stamps stop for 50 ms, or the last four stamps carry the same time: stopped -> FC, the PLL listens again. A window of valid stamps again: FA if the time is
+  under 400 ticks (a start from the top), otherwise FB (continue). A jump of more than 12 ticks from the line (locate) restarts the fit but keeps the clock running and sends nothing.
+- **Offset:** `bb_clock_seq_offset_us()` shifts our clocks later or earlier. The stamps are taken when the player runs, a little after the block's audio time (and the audio comes out
+  later still): the default is 0, to be set on the unit against the Machinedrum (needs the second correct cable, or a scope).
+- **UI:** the SHIFT tile (BBOX) starts it; the top line shows `MCL BB BBOX LOCKED`, row 3 right: `R` / `S` (sequencer running / stopped), restarts, stamps used.
+- **Tests:** `test_mcl_seq.py` (modelled sequencer with +-115 us stamp jitter): lock, FA/FB/FC, tempo change 120 -> 90, a locate, a second sequence ignored, stale stamp ignored,
+  offset, jack ignored. Result: our F8 within 100 us of the line (worst measured 66 us from the stamps' +-115 us jitter alone), interval sd 8.6 us.
+  `test_seqfix.py` checks the stamp.
+- **NOT checked (hardware only):** how big the stamps' real jitter is, what the stock sequencer does at stop / locate / loop (does `now` freeze, reset, or stop being called), whether the
+  fitted clock matches the audio the unit plays (the offset), the analog jack's own jitter on top.

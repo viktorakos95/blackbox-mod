@@ -13,6 +13,7 @@ from emu import Emu
 e = Emu("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+cave/BLACKBOX.bin", "out/cave.elf")
 e.uc.mem_map(0x38800000, 0x1000)
 e.uc.mem_map(0x58024000, 0x1000)
+e.uc.mem_map(0xE0000000, 0x100000)                 # the cycle counter (seq_play stamps it for MCL)
 SEQ, HANDLES, POOLOBJ, POOL, EVT, CLOCK = 0x24040000, 0x24044000, 0x24045000, 0x24046000, 0x24048000, 0x24049000
 PAT0 = SEQ + 0x320
 LIST = PAT0 + 0xC
@@ -165,6 +166,17 @@ build([0, 960], index=0)
 play_at(0)
 e.call("seq_set", SEQ, EVT, 0, 40)
 check("pattern number out of range: ignored, as stock", starts() == [0, 960])
+
+# --- the stamp MCL's tempo follower reads (src/mcl_bb/bb_clock.cpp): sequence, cycle counter, sequencer time, under a version word (odd = being written)
+e.uc.mem_write(0x38800940, bytes(20))
+e.uc.mem_write(0xE0001004, struct.pack("<I", 0x11223344))
+play_at(0x123456789)
+ver, sq, cyc, lo, hi = struct.unpack("<5I", bytes(e.uc.mem_read(0x38800940, 20)))
+check("seq_play stamps the sequence, the cycle counter and the sequencer time", (sq, cyc, lo, hi) == (SEQ, 0x11223344, 0x23456789, 1), (hex(sq), hex(cyc), hex(lo), hex(hi)))
+check("... under an even version word (not mid-write)", ver != 0 and ver % 2 == 0, ver)
+play_at(7)
+ver2 = struct.unpack("<I", bytes(e.uc.mem_read(0x38800940, 4)))[0]
+check("... which advances at every call", ver2 == ver + 2, (ver, ver2))
 
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

@@ -16,6 +16,12 @@ void bb_clock_tempo(uint32_t bpm_x10);         /* takes effect at the next tick;
 void bb_clock_sync_midi(void);
 void bb_clock_in_rt(uint8_t byte, uint32_t cycles);   /* from the receive tap (interrupt context): a real-time byte F8..FC and its arrival time */
 
+/* follow the Blackbox's own sequencer (M5b): its tempo and transport, whatever drives it (internal, TRS MIDI, analog jack). FA / FB / FC follow its start / continue / stop.
+ * seqfix.c stamps the cycle counter and the sequencer time at every call of the note player; a straight-line fit through them feeds the same PLL as the jack. */
+void bb_clock_sync_seq(void);
+void bb_clock_seq_offset_us(int32_t us);       /* later (+) or earlier (-) than the sequencer's time, to match the audio output delay */
+uint32_t bb_clock_seq_stat(int which);         /* 0 stamps used, 1 restarts of the fit (jumps), 2 transport running, 3 sequencer time of the newest stamp (ticks, 960 a beat) */
+
 int bb_clock_running(void);                    /* the clock is being sent (internal, or MIDI-in sync locked) */
 uint32_t bb_clock_ticks(void);                 /* 192-PPQN ticks since start (reset to 0 by a received FA in sync mode) */
 uint32_t bb_clock_timer_hz(void);              /* the measured TIM6 count rate (after its prescaler) */

@@ -92,6 +92,18 @@ void seq_play(uint8_t *seq, const void *clock, int32_t a, int32_t b, uint32_t e)
         CLK->slot[i].now = now;
     CLK->now_lo = (uint32_t)now;
     CLK->now_hi = (uint32_t)(now >> 32);
+    /* MCL follows the Blackbox's tempo and transport from these stamps (src/mcl_bb/bb_clock.cpp, bb_clock_sync_seq): which sequence, the cycle counter
+       and the sequencer time at this call. Versioned (odd while writing) so the timer interrupt, which preempts this task, never reads half of one. */
+    {
+        volatile uint32_t *st = (volatile uint32_t *)0x38800940u;
+        uint32_t v = st[0] | 1u;
+        st[0] = v;
+        st[1] = (uint32_t)seq;
+        st[2] = *(volatile uint32_t *)0xe0001004u;               /* DWT_CYCCNT */
+        st[3] = (uint32_t)now;
+        st[4] = (uint32_t)(now >> 32);
+        st[0] = v + 1u;
+    }
     t2m_seq(seq, (uint32_t)now, (int32_t)(now >> 32));    /* the clock monitor's transport readout (src/clkmon.c): this sequence's musical time */
     looper_clock((uint32_t)now, (int32_t)(now >> 32));   /* the looper follows the transport (restarts, grid lines, where the loops are) on the same musical time as SAMPLR and the readout; the raw clock t has another scale and origin, so its bar line was elsewhere */
     fw_player(seq, clock, a, b, e);
