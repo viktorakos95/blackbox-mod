@@ -202,6 +202,9 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint16_t dsp;                /* this synth's own share of a block (permille, smoothed) */
     uint32_t per;                /* the last sane block period in cycles */
     uint8_t shed;                /* 0 full, 1 one delay line, 2 no delay, 3 muted: steps taken when the audio task nears its deadline */
+    uint16_t wn;                 /* the whole audio task, from cpu.c: its block count and load sum when last read, */
+    uint32_t wsum;
+    float wl, wpk;               /* ... its smoothed load (permille) and near misses lately */
 };
 #define GEV_MAX 1024
 struct gev {                     /* one recorded gesture: when (frames from the bar line), what (a control id, or 300 + voice for a plate, 400 + voice a chord pitch, 500 + stepped id, 600 + action; the layer in bits 11..12) and its value */
@@ -820,8 +823,10 @@ unsigned lira_ui_sig(void)
 
 /* The load governor. How much of its block the audio task has used by the time this runs (the stock voices and effects) is the
    instantaneous version of the CPU meter (cpu.c keeps the wake-up's cycle count at 0x2405ffd4). The Blackbox switches itself off at
-   about 89 %, and the file and GUI tasks starve before that, so when the smoothed value passes 80 %, or blocks near 95 % keep coming,
-   this synth steps down: one delay line, no delay, then silence; a step back after ~2 s with room again. Returns the cycle count now. */
+   about 89 %, and the file and GUI tasks starve before that, so when the smoothed value passes 75 %, or blocks near 95 % keep coming,
+   this synth steps down: one delay line, no delay, then silence; a step back after ~2 s with room again. That value cannot see the stock
+   work after this synth, so the whole task's load of each block (cpu.c's running sum) counts too: smoothed over 80 %, blocks over 87 %
+   coming again, or one over 88 %. Returns the cycle count now. */
 /* A flight recorder in the backup SRAM (it survives a reset, maybe a power cut): this run's peaks, and the run before's, shown in the top bar
    so that a shut-down tells what it ran into. */
 struct fr {
@@ -892,6 +897,20 @@ static uint32_t govern(struct pg *g)
     }
     if (period > 100000u && period < 100000000u)
         g->per = period;
+    float whole = -1.0f;
+    {   /* The whole audio task's load of the block before, from cpu.c's running sum (its "n" goes up by one a block and back to 0 each
+           second): unlike `used` below it counts the stock work that runs after this synth, which is what the 89 % switch-off sees. */
+        uint16_t wn = *(volatile uint16_t *)0x2405ffdcu;
+        uint32_t ws = *(volatile uint32_t *)0x2405ffd8u;
+        unsigned d = (uint16_t)(wn - g->wn);
+        if (*(volatile uint32_t *)0x2405ffd0u == 0x43505532u && d >= 1u && d <= 4u && ws >= g->wsum && ws - g->wsum <= 9990u * d) {
+            whole = (float)(ws - g->wsum) / (float)d;
+            g->wl += (whole - g->wl) * 0.1f;
+            g->wpk = g->wpk * 0.98f + (whole > 870.0f ? 1.0f : 0.0f);
+        }
+        g->wn = wn;
+        g->wsum = ws;
+    }
     uint32_t used = c0 - *(volatile uint32_t *)0x2405ffd4u;
     if (period > 100000u && period < 100000000u && used < 2u * period) {
         float inst = (float)used * 1000.0f / (float)period + (float)g->dsp;   /* (this runs before the synth: add its last share) */
@@ -901,10 +920,11 @@ static uint32_t govern(struct pg *g)
         volatile struct fr *fr = FR_CUR;
         if (fr->magic == FR_MAGIC && inst < 4000.0f && (uint16_t)inst > fr->c_pk)
             fr->c_pk = (uint16_t)inst;
-        if ((g->ld > 750.0f || g->pk > 1.5f || inst > 900.0f) && g->shed < 3 && since > (inst > 900.0f ? 3u : 16u)) {
+        int hot = inst > 900.0f || whole > 880.0f;
+        if ((g->ld > 750.0f || g->pk > 1.5f || g->wl > 800.0f || g->wpk > 1.5f || hot) && g->shed < 3 && since > (hot ? 3u : 16u)) {
             g->shed++;
             g->shed_blk = g->blk;
-        } else if (g->ld < 650.0f && g->pk < 0.5f && g->shed > 0 && since > 400) {
+        } else if (g->ld < 650.0f && g->pk < 0.5f && g->wl < 720.0f && g->wpk < 0.5f && g->shed > 0 && since > 400) {
             g->shed--;
             g->shed_blk = g->blk;
         }

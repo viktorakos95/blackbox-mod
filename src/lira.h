@@ -101,6 +101,7 @@ typedef struct {
     float ext_g;
     float fol;                    /* envelope follower of the external input */
     int shed;                     /* load shedding set by the caller: 0 both delay lines, 1 one line, 2 no delay */
+    int wave_on;                  /* the WAVE the oscillators' triangles were last kept for (gen_sync) */
 } lira_t;
 
 int lira_size(void);

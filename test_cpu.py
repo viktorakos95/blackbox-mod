@@ -128,7 +128,7 @@ e.stub(0x080C89F4, lambda: e.calls.append(("fmt", e.arg(0))))
 c = e.call(0x0809AD74, APP, ADDR, INFO)
 check("global cell info (stock function, patched copy): name reads version + load", e.cstr(INFO) == V + " 50/50%" + MB, e.cstr(INFO))
 check("...and the stock code still formats its size field after it (at +0x40)", ("fmt", INFO + 0x40) in c, c)
-check("name text stays well inside its 64 bytes", len(e.cstr(INFO)) < 20)
+check("name text stays well inside its 64 bytes", len(e.cstr(INFO)) < 24, e.cstr(INFO))   # (two-character builds: 3.1.AA)
 
 e.uc.mem_write(STATE, b"\xa5" * 36)            # fresh boot
 e.w32(CYC, 777)

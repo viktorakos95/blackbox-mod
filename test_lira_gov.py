@@ -106,6 +106,43 @@ for _ in range(900):
     block(0.5)
 check("... and all the way back to full quality", shed() == 0 and block(0.5) > 0.001, str(shed()))
 
+# the whole audio task (cpu.c's running block count and load sum): work after the synth that the mid-task value cannot see
+CPU = 0x2405FFD0
+e.uc.mem_write(CPU, struct.pack("<IIIHH", 0x43505532, 0, 0, 0, 0))
+wsum = [0, 0]
+
+
+def block_w(mid, whole):
+    wsum[0] = (wsum[0] + 1) % 188
+    wsum[1] = 0 if wsum[0] == 0 else wsum[1] + int(1000 * whole)
+    e.uc.mem_write(CPU + 8, struct.pack("<IH", wsum[1], wsum[0]))
+    return block(mid)
+
+
+for _ in range(300):
+    block_w(0.5, 0.7)
+check("whole task at 70 %, 50 % by the time the synth runs: no step", shed() == 0, str(shed()))
+seen = []
+for i in range(200):
+    block_w(0.5, 0.84)
+    if not seen or seen[-1] != shed():
+        seen.append(shed())
+check("whole task at 84 % (50 % before the synth): it steps down all the same", seen[-1] >= 2 and seen == sorted(seen), str(seen))
+for _ in range(500):
+    block_w(0.5, 0.75)
+check("whole task at 75 %: no step back (hysteresis)", shed() == seen[-1], str(shed()))
+for _ in range(2000):
+    block_w(0.5, 0.6)
+check("whole task at 60 %: back to full quality", shed() == 0, str(shed()))
+for _ in range(3):
+    block_w(0.5, 0.92)
+for _ in range(5):
+    block_w(0.5, 0.7)
+check("three blocks over 88 %: a step within a few blocks", shed() >= 1, str(shed()))
+for _ in range(1500):
+    block_w(0.5, 0.6)
+e.uc.mem_write(CPU, bytes(4))                                   # (the rest runs without the meter, as before)
+
 # ---- things the page does around the engine ----
 def rv(name, *args):
     e.call(name, *args)
