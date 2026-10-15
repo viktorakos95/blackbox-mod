@@ -191,7 +191,7 @@ static void render_spy(void)
     }
 }
 #endif
-static int hex8(int col, int row, uint32_t v)
+static int hexw(int col, int row, uint32_t v)
 {
     for (int i = 7; i >= 0; i--) {
         uint32_t n = v >> (4 * i) & 15u;
@@ -224,8 +224,8 @@ static void render(void)
             c = text(0, 1, "KT");
             c = number(c, 1, (int32_t)(bb_mcl_kern(1) % 100000000u), 8);
             c = text(c, 1, " H");
-            hex8(c, 1, bb_mcl_kern(2));
-            hex8(0, 2, bb_mcl_dbg(17));                     /* MCL's task as it saw itself at its start, then 4 flags "owner word = the TCB": at creation, at its start, before its first wait, now */
+            hexw(c, 1, bb_mcl_kern(2));
+            hexw(0, 2, bb_mcl_dbg(17));                     /* MCL's task as it saw itself at its start, then 4 flags "owner word = the TCB": at creation, at its start, before its first wait, now */
             c = text(9, 2, "");
             c = number(c, 2, (int32_t)bb_mcl_dbg(16), 1);
             c = number(c, 2, (int32_t)bb_mcl_dbg(18), 1);
@@ -239,13 +239,13 @@ static void render(void)
             c = text(c, 3, " B");
             number(c, 3, (int32_t)(bb_mcl_dbg(23) % 100000u), 5);
             text(0, 4, "SB");                             /* the stack base and saved top of stack the kernel gave the task at creation */
-            hex8(2, 4, bb_mcl_dbg(26));
+            hexw(2, 4, bb_mcl_dbg(26));
             text(11, 4, " TP");
-            hex8(14, 4, bb_mcl_dbg(27));
+            hexw(14, 4, bb_mcl_dbg(27));
             text(0, 5, "A");                              /* the stack pointer in the task at its start and at its first wait */
-            hex8(1, 5, bb_mcl_dbg(28));
+            hexw(1, 5, bb_mcl_dbg(28));
             text(9, 5, " B");
-            hex8(11, 5, bb_mcl_dbg(29));
+            hexw(11, 5, bb_mcl_dbg(29));
             return;
         }
         int c = text(0, 0, "S");
