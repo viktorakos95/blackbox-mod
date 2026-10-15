@@ -222,10 +222,10 @@ static void render(void)
             c = number(c, 1, (int32_t)(bb_mcl_kern(1) % 100000000u), 8);
             c = text(c, 1, " H");
             hex8(c, 1, bb_mcl_kern(2));
-            hex8(0, 2, bb_mcl_kern(11));                    /* TCB words 1, 4 (owner), 5 (container), 2 */
-            hex8(9, 2, bb_mcl_kern(14));
-            hex8(0, 3, bb_mcl_kern(15));
-            hex8(9, 3, bb_mcl_kern(12));
+            hex8(0, 2, bb_mcl_kern(3));                     /* the running task's TCB and its owner word (equal in a TCB: checks the layout) */
+            hex8(9, 2, bb_mcl_kern(4));
+            hex8(0, 3, bb_mcl_kern(5));                     /* tasks, ready lists of priority 0..4 */
+            hex8(9, 3, bb_mcl_kern(10));                    /* MCL's TCB word 0 (its saved stack pointer) */
             return;
         }
         int c = text(0, 0, "S");

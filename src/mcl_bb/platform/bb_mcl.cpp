@@ -58,6 +58,14 @@ HOOK uint32_t bb_mcl_kern(int i)
     case 0: return ((uint32_t (*)(void))0x0807794du)();
     case 1: return ((uint32_t (*)(void))0x08088d21u)();
     case 2: return tcb;
+    case 3: return *(volatile uint32_t *)0x2401f2a8u;                 /* pxCurrentTCB */
+    case 4: { volatile uint32_t *c = (volatile uint32_t *)*(volatile uint32_t *)0x2401f2a8u; return c ? c[4] : 0; }   /* its owner word (= itself in a TCB) */
+    case 5: {                                                         /* number of tasks, ready list lengths of priorities 0..4 (nibbles) */
+        uint32_t v = (*(volatile uint32_t *)0x2401f1a8u & 15u) << 20;
+        for (uint32_t p = 0; p < 5; p++)
+            v |= (*(volatile uint32_t *)(0x2401f21cu + 0x14u * p) & 15u) << (16 - 4 * p);
+        return v;
+    }
     default: return tcb && i >= 10 && i < 30 ? *(volatile uint32_t *)(tcb + 4u * (uint32_t)(i - 10)) : 0;
     }
 }
