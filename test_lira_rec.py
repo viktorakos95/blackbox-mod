@@ -128,6 +128,17 @@ e.call("lira_rec_copy_thunk", BUS, 0)
 l, r = getbus()
 check("LOOPER: the recorder's bus holds what the looper added (the new bus minus the one with the synth in it)",
       abs(l[10] - (0.35 - pre_l)) < 1e-5 and abs(r[10] - (0.2 - pre_r)) < 1e-5, "%.4f %.4f (want %.4f %.4f)" % (l[10], r[10], 0.35 - pre_l, 0.2 - pre_r))
+e.call("lira_rec_sm_begin", L, R, N)                                       # SAMPLR alone: the bus after minus the bus before
+e.uc.mem_write(L, struct.pack(f"<{N}f", *([0.45] * N)))
+e.uc.mem_write(R, struct.pack(f"<{N}f", *([0.3] * N)))
+e.call("lira_rec_sm_end", L, R, N)
+e.uc.reg_write(UC_ARM_REG_R4, NODE)
+e.call("lira_rec_store_thunk", 0, 0, 0, 6)                                # SAMPLR
+setbus(0.7, 0.8)
+e.call("lira_rec_copy_thunk", BUS, 0)
+l, r = getbus()
+check("SAMPLR: the recorder's bus holds what SAMPLR added (the bus after it minus before)",
+      abs(l[10] - (0.45 - 0.35)) < 1e-5 and abs(r[10] - (0.3 - 0.2)) < 1e-5, "%.4f %.4f" % (l[10], r[10]))
 e.uc.reg_write(UC_ARM_REG_R4, NODE)
 e.call("lira_rec_store_thunk", 0, 0, 0, 4)                                # DRONE
 setbus(0.7, 0.8)
@@ -158,5 +169,28 @@ e.call("lira_ui_set", 180, 0)
 e.call("lira_ui_key", 0, 0)
 e.uc.reg_write(UC_ARM_REG_R4, NODE)
 e.call("lira_rec_store_thunk", 0, 0, 0, 0)
+# REVERB (SPACE panel, id 182): the drone's send to the stock reverb is its block times the knob; 0 sends nothing
+ACCL, ACCR = 0x24076000, 0x24077000
+for a in (ACCL, ACCR):
+    try:
+        e.uc.mem_read(a, 4)
+    except Exception:
+        e.uc.mem_map(a, 0x1000)
+def send_with(v):
+    e.call("lira_ui_set", 182, v)
+    e.uc.mem_write(L, bytes(4 * N)); e.uc.mem_write(R, bytes(4 * N))
+    e.call("lira_page_run", L, R, N)
+    e.uc.mem_write(ACCL, bytes(4 * N)); e.uc.mem_write(ACCR, bytes(4 * N))
+    e.call("lira_send_add", ACCL, ACCR, N)
+    got = e.uc.reg_read(UC_ARM_REG_R0)
+    out = struct.unpack(f"<{N}f", bytes(e.uc.mem_read(L, 4 * N)))
+    acc = struct.unpack(f"<{N}f", bytes(e.uc.mem_read(ACCL, 4 * N)))
+    return got, out, acc
+got0, out0, acc0 = send_with(0)
+check("REVERB 0: no send", got0 == 0 and max(abs(x) for x in acc0) == 0.0, str(got0))
+got5, out5, acc5 = send_with(500)
+ratio = [a / o for a, o in zip(acc5, out5) if abs(o) > 1e-3]
+check("REVERB 50 %: the send is half the drone's block", got5 == 1 and ratio and all(abs(r - 0.5) < 0.02 for r in ratio), str(ratio[:4]))
+e.call("lira_ui_set", 182, 0)
 print("failures:", fails)
 sys.exit(1 if fails else 0)

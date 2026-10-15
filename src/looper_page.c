@@ -764,7 +764,7 @@ static void fx_text(char *b, int param, float v)
             *p++ = 'F';
             *p++ = 'F';
         } else {
-            const char *o = param == 11 ? (v < 0.f ? "TRM " : "PAN ") : v < 0.f ? "RND " : "SEQ ";
+            const char *o = param == 11 ? (v < 0.f ? "SLOW " : "FAST ") : v < 0.f ? "RND " : "SEQ ";
             for (; *o; o++)
                 *p++ = *o;
             p = put_pct(p, a);
@@ -1135,7 +1135,7 @@ static void draw_footer(const struct lay *L)
     }
     frame(P->w - 58, L->foot_y + 2, 54, FOOT - 3, C_RAIL, 1);
     text_c(P->w - 58, L->foot_y + 4, 54, "STOCK FX", C_LIGHT, 1);
-    if (looper_paused())
+    if (looper_paused() && P->mode < M_SMPLR)             /* (the Looper's own state: not carried onto the other pages) */
         text(x0, L->foot_y + 4, "PAUSE", C_RED, 1);
     else if (P->info_on == 1)
         text(x0, L->foot_y + 4, "SHIFT", C_RED, 1);

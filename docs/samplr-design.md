@@ -577,3 +577,10 @@ DRONE-8 3.1.AF merged (PAN: each oscillator its own random place). BACK on the L
 ## Build 58
 
 DRONE-8 (latest) merged. Tints stronger: Looper bg 30333a / lines 6a6e78, SAMPLR bg 262c47 / lines 4b5580, and every yellow on the SAMPLR page (palette 0x14) is lilac. Verified in the emulator that the palette entries hold the tint at the moment of each fill.
+
+## Build 59
+
+- WOB is one auto-pan: the knob is its speed (left slow, 1 cycle in 4 beats; right fast, 2 a beat), the depth goes the other way (0.9 slow .. 0.35 fast); the phase runs on from block to block, so turning the knob changes only the speed; in step with the loop when it switches on.
+- Pad recorder: Rec Input gains SAMPLR (SAMPLR alone; LOOPER stays looper + SAMPLR). `lira_rec_sm_begin/end` around SAMPLR's run, `rec[3]`.
+- DRONE-8 page: REVERB knob in the SPACE panel (id 182, tone[2], saved in the settings tail): the drone's block times the knob joins the looper's reverb sends, which the stock reverb node takes (the FX page's type / size / return). The page opens with BTN off and gentler Feedback 30 %, Dly Mix 35 %, Drive 45 %.
+- The PAUSE label in the footer shows only on the Looper's pages.

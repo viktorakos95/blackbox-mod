@@ -857,16 +857,18 @@ check("WOB off: the level is the loop's own", max(off_l) > 0.05, max(off_l))
 param(0, P_DROP, -0.8)
 blocks(60)
 ls, rs = wob_levels(180)
-rt = [a / b if b > 1e-9 else 1.0 for a, b in zip(ls, off_l)]
-check("WOB left (tremolo): the level swings with the beat (down to under half, back to full), both channels together",
-      min(rt) < 0.5 and max(rt) > 0.9 and all(abs(a - b) < 0.03 * max(ls) + 1e-6 for a, b in zip(ls, rs)), (min(rt), max(rt)))
+rl = [a / b if b > 1e-9 else 1.0 for a, b in zip(ls, off_l)]
+rr = [a / b if b > 1e-9 else 1.0 for a, b in zip(rs, off_r)]
+slow_min = min(rl)
+check("WOB left (slow, wide auto-pan): left and right swing against each other",
+      min(rl) < 0.5 and min(rr) < 0.5 and max(rl) > 0.9 and any(a < 0.5 < 0.9 < b for a, b in zip(rl, rr)) and any(b < 0.5 < 0.9 < a for a, b in zip(rl, rr)), (min(rl), max(rl), min(rr), max(rr)))
 param(0, P_DROP, 0.8)
 blocks(60)
 ls, rs = wob_levels(180)
 rl = [a / b if b > 1e-9 else 1.0 for a, b in zip(ls, off_l)]
 rr = [a / b if b > 1e-9 else 1.0 for a, b in zip(rs, off_r)]
-check("WOB right (auto-pan): left and right swing against each other (one is down while the other is up)",
-      min(rl) < 0.5 and min(rr) < 0.5 and max(rl) > 0.9 and any(a < 0.5 < 0.9 < b for a, b in zip(rl, rr)) and any(b < 0.5 < 0.9 < a for a, b in zip(rl, rr)), (min(rl), max(rl), min(rr), max(rr)))
+check("WOB right (fast, narrow auto-pan): still swings against each other, but less deep than the slow one",
+      slow_min + 0.2 < min(rl) < 0.8 and max(rl) > 0.9 and any(a < b - 0.1 for a, b in zip(rl, rr)) and any(b < a - 0.1 for a, b in zip(rl, rr)), (slow_min, min(rl), max(rl), min(rr), max(rr)))
 param(0, P_DROP, 0.0)
 param(0, P_DROP, 0.0)
 blocks(60)

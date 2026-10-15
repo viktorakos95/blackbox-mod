@@ -246,6 +246,7 @@ struct dsp {
     int8_t gdir[LOOPER_TRACKS][2];
     float ph1[LOOPER_TRACKS], ph2[LOOPER_TRACKS];    /* wow and flutter phases */
     float wd[LOOPER_TRACKS];                     /* WOB depth, smoothed across blocks */
+    float wr[LOOPER_TRACKS], wp[LOOPER_TRACKS];  /* WOB rate (cycles a beat, smoothed) and the pan phase (runs on from block to block) */
     float lpst[LOOPER_TRACKS][2];                /* STAB dulling low pass */
     uint32_t rnd[LOOPER_TRACKS];
     int32_t xf[LOOPER_TRACKS];
@@ -805,7 +806,7 @@ struct pb {                                       /* one track, one block */
     int ptch_on;
     int stut_mode, scr_mode;             /* stutter 0 off 1 back 2 forward; scrambler 0 off 1 random 2 sequence */
     float wob;                                    /* WOB depth 0..1 (0 = off) */
-    int wob_pan;                                  /* left of centre: tremolo (0), right: auto-pan (1) */
+    float wrate;                                  /* WOB rate: pan cycles a beat */
 };
 
 static inline float quant(float x, float q, float qi)
@@ -964,9 +965,12 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
     int semi = (int)(k->ptch * 24.f + (k->ptch >= 0.f ? .5f : -.5f));       /* PTCH: whole semitones */
     p->ptch_on = semi != 0;
     p->pratio = exp2_fast((float)semi * (1.f / 12.f));
-    float wv = k->wob < 0.f ? -k->wob : k->wob;
-    p->wob = wv < .02f ? 0.f : wv;
-    p->wob_pan = k->wob > 0.f;
+    {   /* WOB: one auto-pan; the knob is its speed (left slow: a cycle in 4 beats, right fast: 2 a beat), the depth goes the other way (slow = wide, fast = narrow) */
+        float wt = (k->wob + 1.f) * .5f;
+        int woff = k->wob < .02f && k->wob > -.02f;
+        p->wob = woff ? 0.f : .9f - .55f * wt;
+        p->wrate = .25f * exp2_fast(3.f * wt);
+    }
     p->mod = (sp > .01f || sp < -.01f) || k->stab > .01f || tw > 0 || p->stut_mode || p->scr_mode || p->ptch_on || (p->keep && k->half);
 }
 
@@ -1411,12 +1415,18 @@ __attribute__((optimize("O2"))) static void play_seg(struct dsp *d, int t, int i
      * from the last block's to this one's, and the knob at centre costs nothing. */
     const float wd0 = d->wd[t], wd1 = lv < 3 ? p->wob : 0.f, wspan = 1.f / (float)(i1 > i0 ? i1 - i0 : 1);
     const int wobon = wd0 > 0.f || wd1 > 0.f;
-    float wph = 0.f, winc = 0.f;
+    const float wr0 = d->wr[t] > 0.f ? d->wr[t] : p->wrate;
+    float wph = 0.f, winc0 = 0.f, wdinc = 0.f;
     if (wobon) {
-        float ibf = 1.f / beat_frames();
-        float x = (float)pos * ibf;
-        wph = x - (float)(int)x;
-        winc = ibf * (half ? .5f : 1.f);
+        float ibf = (half ? .5f : 1.f) / beat_frames();
+        if (wd0 > 0.f) {
+            wph = d->wp[t];                                       /* running: on from the last block, so a turn of the knob only changes the speed */
+        } else {
+            float x = (float)pos * ibf * p->wrate;                /* just switched on: in step with the loop */
+            wph = x - (float)(int)x;
+        }
+        winc0 = ibf * wr0;
+        wdinc = ibf * (p->wrate - wr0) * wspan;
     }
     /* the state, in locals */
     float z[8];
@@ -1508,15 +1518,9 @@ __attribute__((optimize("O2"))) static void play_seg(struct dsp *d, int t, int i
             float u = wph < .5f ? 2.f * wph : 2.f - 2.f * wph;
             u = u * u * (3.f - 2.f * u);                          /* a smooth triangle 0..1 */
             float dep = wd0 + (wd1 - wd0) * (float)(i - i0 + 1) * wspan;
-            if (p->wob_pan) {
-                xl *= 1.f - dep * u;
-                xr *= 1.f - dep * (1.f - u);
-            } else {
-                float g = 1.f - dep * u;
-                xl *= g;
-                xr *= g;
-            }
-            wph += winc;
+            xl *= 1.f - dep * u;
+            xr *= 1.f - dep * (1.f - u);
+            wph += winc0 + wdinc * (float)(i - i0 + 1);
             if (wph >= 1.f)
                 wph -= 1.f;
         }
@@ -1542,6 +1546,8 @@ __attribute__((optimize("O2"))) static void play_seg(struct dsp *d, int t, int i
             pos = 0;
     }
     d->wd[t] = wd1;
+    d->wr[t] = p->wrate;
+    d->wp[t] = wph;
     if (mr)
         mrs_put(d, t, &ms);
     for (int q = 0; q < 8; q++)
@@ -1755,6 +1761,9 @@ static void apply(int t, int b)
     }
 }
 
+int lira_send_add(float *l, float *r, int n);              /* lira_pad.c: the drone's reverb send */
+void lira_rec_sm_begin(const float *l, const float *r, int n);   /* lira_pad.c: SAMPLR alone, for the pad recorder */
+void lira_rec_sm_end(const float *l, const float *r, int n);
 /* One block of the whole looper: bl / br = the Out 1 bus (read as the "mix" source, then the loop is added to it). */
 /* --- the guard, so the audio task never runs out of time. Order in the block: stock voices and effects, DRONE-8, SAMPLR, the looper's
  * tracks, the stock output. Nothing about how a track sounds is ever changed; whole things fade out (and later in) instead, slowly. What
@@ -2178,7 +2187,10 @@ static int run(float *bl, float *br, int n)
         d->acc[0][i] = d->acc[1][i] = d->acc[2][i] = d->acc[3][i] = 0.f;
     }
     float *snd[4] = {d->acc[0], d->acc[1], d->acc[2], d->acc[3]};
+    lira_rec_sm_begin(bl, br, n);                    /* (SAMPLR alone, for the pad recorder) */
+    int dsend = lira_send_add(d->acc[2], d->acc[3], n);
     int sends = samplr_run(bl, br, n, snd);          /* SAMPLR first: SOURCE MIX records it, and its sends join the looper's delay and reverb */
+    lira_rec_sm_end(bl, br, n);
     guard_decide(d);                                 /* the player's unmutes, the fades */
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
@@ -2209,7 +2221,7 @@ static int run(float *bl, float *br, int n)
             d->snd[w][1][i] = d->acc[2 * w + 1][i];
         }
         d->snd_tick[w] = S->ticks;
-        d->snd_nz[w] = (uint32_t)sends;
+        d->snd_nz[w] = (uint32_t)(sends | (w && dsend));
     }
     if (S->mlen) {
         if (S->mpos + (uint32_t)n >= S->mlen)
@@ -2312,8 +2324,11 @@ void looper_stage(uint8_t *obj, void *bufs)
         lira_page_run(l, r, n);                    /* the LIRA page's voices, before the looper so SOURCE MIX records them */
         lira_rec_begin(l, r, n);
         uint32_t c_l = *(volatile uint32_t *)0xe0001004u;
-        if (!run(l, r, n))
+        if (!run(l, r, n)) {
+            lira_rec_sm_begin(l, r, n);
             samplr_run(l, r, n, 0);
+            lira_rec_sm_end(l, r, n);
+        }
         uint32_t c_y = *(volatile uint32_t *)0xe0001004u - c_l;
         samplr_stage_prof(pre, c_l - c_in, c_y);
         lira_rec_end(l, r, n);                     /* what the looper added, for the pad recorder's LOOPER input */

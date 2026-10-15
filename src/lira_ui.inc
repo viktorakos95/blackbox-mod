@@ -173,6 +173,9 @@ static int lu_specs(int sel, struct lu_spec *o)
         lu_cell(3, 2, &x, &d);
         LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "ENGINE");
         n++;
+        lu_cell(3, 3, &x, &d);                                    /* and the send to the Blackbox's own reverb (FX page: type, size, return) */
+        LU_SP(n, 182, x, d, LU_COL, 38, 5, lu_enc_cell[3], LK_KNOB, LU_ACC2, 11, "REVERB");
+        n++;
     } else {
         static const char *const nm[8] = {"SPACE", "ROOT", "OCT", "SPAN", "CHORD", "TUNE", "SHUFL", "CYCLE"};
         static const uint16_t ids[8] = {140, 141, 142, 143, 150, 153, 151, 152};

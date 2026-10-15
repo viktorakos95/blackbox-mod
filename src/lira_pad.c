@@ -168,12 +168,12 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     struct slot s;
     int16_t row[NCTL];           /* its controls, as a pad's side[] row */
     int16_t mod[4], level;       /* FM depth per pair (0..1000), output level */
-    int16_t tone[2];             /* MIX tab, STATUS panel: stereo width, drift (0..1000) */
+    int16_t tone[3];             /* MIX tab, SPACE panel: stereo pan spread, drift, send to the stock reverb (0..1000) */
     int16_t ex[18];              /* the plugin's split controls: Hold 1234 / 5678, Pitch 1234 / 5678, Dly Mod 1 / 2, Sharp per pair, then the eight voice levels */
     uint8_t touch[4], src[4];    /* Touch and FM Source per pair (list indexes) */
     uint8_t want[8], keyed[8];   /* sensors held on the page; sensors the engine has been told */
     uint8_t init, momentary, sel, ticks;
-    uint8_t rec_src;             /* the pad recorder's Rec Input: 0 the stock choices, 1 DRONE (this synth alone), 2 LOOPER (looper + SAMPLR alone) */
+    uint8_t rec_src;             /* the pad recorder's Rec Input: 0 the stock choices, 1 DRONE (this synth alone), 2 LOOPER (looper + SAMPLR alone), 3 SAMPLR alone */
     uint8_t ext_src;             /* what Ext In listens to: 0 the audio input, 1 the Blackbox's mix (without this synth), 2 both */
     uint8_t chord_on, space, root, oct, range, just, wave, seed;   /* chord mode: tonal space, root 0..11, register 0..3, span 1..4 octaves, just tuning, waveform */
     int8_t notes[8];             /* the voices' MIDI notes in chord mode */
@@ -222,7 +222,8 @@ struct pool {
     struct pg pg;
     int16_t dl[LIRA_MAX][2][DLEN];
     int16_t pdl[2][DLEN];        /* the page instance's delay lines */
-    float rec[2][2][1024];       /* what the recorder can take instead of the input: [DRONE, LOOPER][left, right], the last block */
+    float rsend[2][1024];        /* this block's share for the stock reverb (the SPACE panel's REVERB), picked up by the looper's run */
+    float rec[3][2][1024];       /* what the recorder can take instead of the input: [DRONE, LOOPER, SAMPLR][left, right], the last block */
     float scr[2][1024];          /* the bus as it was before the looper added its audio */
     struct gev ev[GEV_MAX];      /* the recorded gestures */
     uint32_t fil[0xc0];          /* a FatFs FIL for bbmod.bin (0x300 bytes: FIL is about 0x250) */
@@ -360,7 +361,7 @@ void lira_register(void *table)
         for (int i = 0; i < NCTL; i++)
             p->side[k][i] = ctls[i].def;
     for (int i = 0; i < 1024; i++)                       /* the allocator's memory is not zeroed: the recorder reads these buffers before the first block fills them */
-        p->rec[0][0][i] = p->rec[0][1][i] = p->rec[1][0][i] = p->rec[1][1][i] = p->scr[0][i] = p->scr[1][i] = 0.0f;
+        p->rec[0][0][i] = p->rec[0][1][i] = p->rec[1][0][i] = p->rec[1][1][i] = p->rec[2][0][i] = p->rec[2][1][i] = p->scr[0][i] = p->scr[1][i] = 0.0f;
     struct pg *g = &p->pg;
     for (unsigned i = 0; i < sizeof *g; i++)             /* the allocator's memory is not zeroed: every field starts from 0 */
         ((volatile uint8_t *)g)[i] = 0;
@@ -380,13 +381,17 @@ void lira_register(void *table)
     g->seed = 1;
     lira_voicing(0, 0, 48, 36, 1, g->notes);
     g->free_enc = 0;
-    g->btn_on = 1;
+    g->btn_on = 0;                                        /* (the page starts with the stock buttons: BTN is switched on by the player) */
     g->tail = 0;
     g->level = 700;
     g->tone[0] = 0;                                       /* (mono: the cheaper path until it is opened) */
     g->tone[1] = 400;
+    g->tone[2] = 0;
     for (int i = 0; i < NCTL; i++)
         g->row[i] = ctls[i].def;
+    g->row[C_FEEDBACK] = PCT(30);                         /* the page opens gentler than a pad: less feedback, less delay, less drive (a double tap still goes to LIRA-8's) */
+    g->row[C_DELMIX] = PCT(35);
+    g->row[22] = PCT(45);
     for (int k = 0; k < 2; k++) {
         g->ex[k] = ctls[C_HOLD].def;
         g->ex[2 + k] = ctls[C_PITCH].def;
@@ -729,7 +734,7 @@ int lira_ui_get(int c)
         return g->ex[6 + c - 130];
     if (c >= 170 && c < 178)
         return g->ex[10 + c - 170];
-    if (c >= 180 && c < 182)
+    if (c >= 180 && c < 183)
         return g->tone[c - 180];
     return c == 120 ? g->level : 0;
 }
@@ -758,7 +763,7 @@ void lira_ui_set(int c, int v)
         g->ex[6 + c - 130] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
     else if (c >= 170 && c < 178)
         g->ex[10 + c - 170] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
-    else if (c >= 180 && c < 182)
+    else if (c >= 180 && c < 183)
         g->tone[c - 180] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
     grec(g, c, lira_ui_get(c));
 }
@@ -784,8 +789,8 @@ int lira_ui_default(int c)
         return ctls[C_SHARP].def;
     if (c >= 170 && c < 178)
         return 1000;
-    if (c >= 180 && c < 182)
-        return c == 180 ? 0 : 400;
+    if (c >= 180 && c < 183)
+        return c == 180 ? 0 : c == 181 ? 400 : 0;
     return 0;
 }
 
@@ -1132,6 +1137,7 @@ void lira_page_run(float *l, float *r, int n)
         s->l.ext_r = exr;
         s->l.out_r = tmr;
         lira_process(&s->l, tmp, m);
+        const float rvs = (float)g->tone[2] * 0.001f;
         mute_ramp_part(g, tmp, m, i0, n);
         if (s->l.out_r)
             mute_ramp_part(g, tmr, m, i0, n);
@@ -1141,6 +1147,8 @@ void lira_page_run(float *l, float *r, int n)
             r[i0 + i] += tmr[i] * gain;
             p->rec[0][0][i0 + i] = tmp[i] * gain;
             p->rec[0][1][i0 + i] = tmr[i] * gain;
+            p->rsend[0][i0 + i] = tmp[i] * gain * rvs;
+            p->rsend[1][i0 + i] = tmr[i] * gain * rvs;
         }
     }
     if (g->per)                                  /* this synth's own share of a block */
@@ -1630,13 +1638,13 @@ void lira_leds(void)
    The recorder node only knows 0..3, so a new choice is stored as 3 (Resam) with the choice remembered here, and where the recorder's
    Resam path copies the master bus over its input bus (0x08062784) the chosen source's last block is written over it instead. The
    recorder runs ahead of the Out 1 stage in a block, so it gets the block before: a constant 256-frame delay. ---- */
-static const char *const rec_names[6] = {"L+R", "Left", "Right", "Resam", "DRONE", "LOOPER"};
+static const char *const rec_names[7] = {"L+R", "Left", "Right", "Resam", "DRONE", "LOOPER", "SAMPLR"};
 
 void rec_input_register(void *table, int param, const char *label, const char *const *names, int count, const char *xml)
 {
     (void)names;
     (void)count;
-    fw_register_list(table, param, label, rec_names, 6, xml);
+    fw_register_list(table, param, label, rec_names, 7, xml);
 }
 
 int lira_rec_store(int v)                                  /* the stock node's value for a choice; remembers the new ones */
@@ -1650,7 +1658,7 @@ int lira_rec_store(int v)                                  /* the stock node's v
 void lira_rec_fill(void *bus)                              /* the recorder's input bus, just filled with the master copy */
 {
     struct pool *p = pool();
-    if (!p || !p->pg.rec_src || p->pg.rec_src > 2)
+    if (!p || !p->pg.rec_src || p->pg.rec_src > 3)
         return;
     float *l = 0, *r = 0;
     int n = fw_buf_frames(bus);
@@ -1680,6 +1688,46 @@ void lira_rec_begin(const float *l, const float *r, int n)  /* before the looper
     for (int i = 0; i < n; i++) {
         p->scr[0][i] = l[i];
         p->scr[1][i] = r[i];
+    }
+}
+
+int lira_send_add(float *l, float *r, int n)             /* the drone's reverb send for this block, added to the looper's reverb sends; non-zero when there is one */
+{
+    struct pool *p = pool();
+    if (!p || p->pg.tone[2] <= 0 || p->pg.off)
+        return 0;
+    if (n > 1024)
+        n = 1024;
+    for (int i = 0; i < n; i++) {
+        l[i] += p->rsend[0][i];
+        r[i] += p->rsend[1][i];
+    }
+    return 1;
+}
+
+void lira_rec_sm_begin(const float *l, const float *r, int n)   /* around SAMPLR's run: what it adds is the bus after minus the bus before */
+{
+    struct pool *p = pool();
+    if (!p)
+        return;
+    if (n > 1024)
+        n = 1024;
+    for (int i = 0; i < n; i++) {
+        p->rec[2][0][i] = -l[i];
+        p->rec[2][1][i] = -r[i];
+    }
+}
+
+void lira_rec_sm_end(const float *l, const float *r, int n)
+{
+    struct pool *p = pool();
+    if (!p)
+        return;
+    if (n > 1024)
+        n = 1024;
+    for (int i = 0; i < n; i++) {
+        p->rec[2][0][i] += l[i];
+        p->rec[2][1][i] += r[i];
     }
 }
 
@@ -1786,7 +1834,7 @@ void lira_save(void)
     struct blob_tail *tl = (struct blob_tail *)(p->blob + sizeof *b);
     tl->magic = TAIL_MAGIC;
     for (int i = 0; i < 4; i++)
-        tl->tone[i] = i < 2 ? g->tone[i] : 0;                /* (the tail still has four slots: the ones 3.1.AC / AD files filled) */
+        tl->tone[i] = i < 3 ? g->tone[i] : 0;                /* (the tail still has four slots: the ones 3.1.AC / AD files filled) */
     tl->crc = TAIL_MAGIC ^ 0x9e3779b9u;
     for (int i = 0; i < 4; i++)
         tl->crc = (tl->crc ^ (uint16_t)tl->tone[i]) * 16777619u;
@@ -1833,7 +1881,7 @@ void lira_load(void)
         for (int i = 0; i < 4; i++)
             h = (h ^ (uint16_t)tl->tone[i]) * 16777619u;
         if (h == tl->crc)
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < 3; i++)
                 g->tone[i] = tl->tone[i] < 0 ? 0 : tl->tone[i] > 1000 ? 1000 : tl->tone[i];
     }
     g->chord_on = b->misc[0] & 1;
@@ -1845,7 +1893,7 @@ void lira_load(void)
     g->wave = b->misc[6] & 1;
     g->ext_src = (uint8_t)(b->misc[7] % 3);
     g->seed = b->misc[8];
-    g->rec_src = b->misc[9] > 2 ? 0 : b->misc[9];
+    g->rec_src = b->misc[9] > 3 ? 0 : b->misc[9];
     g->lfo[0] = b->misc[10] & 1;
     g->lfo[1] = b->misc[11] & 1;
     g->lfo[2] = b->misc[12] & 1;
