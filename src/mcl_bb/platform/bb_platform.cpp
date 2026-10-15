@@ -99,31 +99,23 @@ extern "C" void bb_sleep_ms(uint32_t ms)
     bb_dbg[11] = 1;
     if (!sleep_sem)
         sleep_sem = ((fn4)(0x080883beu | 1u))(1, 0, 3, 0);        /* xQueueGenericCreate: a binary semaphore */
-    bb_dbg[11] = 2;
-    if (!sleep_sem) {
-        bb_dbg[10]++;
-        delayMicroseconds(ms * 1000u);
-        return;
-    }
-    /* In slices of at most 50 ms (what the SD layer's waits are, proven on the unit), the total counted with the cycle counter: one long time-out is not relied on. */
-    uint32_t cpms = (SYST_RVR + 1u);                              /* core cycles per millisecond: the firmware's 1 kHz tick */
+    /* Experiment: no semaphore, no kernel time-out: yield to the other tasks until the time is up (the total counted with the cycle counter) */
+    uint32_t cpms = (SYST_RVR + 1u);
     uint64_t total = (uint64_t)ms * cpms, acc = 0;
     uint32_t last = DWT_CYCCNT;
+    bb_dbg[12]++;
+    if (bb_dbg[12] == 1) {
+        bb_heap_clean();
+        uint32_t *c = (uint32_t *)*(volatile uint32_t *)0x2401f2a8u;
+        bb_dbg[19] = c[4] == (uint32_t)c;
+        uint32_t sp;
+        __asm volatile("mov %0, sp" : "=r"(sp));
+        bb_dbg[29] = sp;
+    }
     while (acc < total) {
-        uint64_t left = (total - acc) / cpms;
-        uint32_t slice = left > 50 ? 50u : (left ? (uint32_t)left : 1u);
         bb_dbg[11] = 3;
-        bb_dbg[12]++;
-        if (bb_dbg[12] == 1)
-            bb_heap_clean();
-        if (bb_dbg[12] == 1) {                                    /* is the running task's TCB still a TCB (owner word = itself) just before the first wait */
-            uint32_t *c = (uint32_t *)*(volatile uint32_t *)0x2401f2a8u;
-            bb_dbg[19] = c[4] == (uint32_t)c;
-            uint32_t sp;
-            __asm volatile("mov %0, sp" : "=r"(sp));
-            bb_dbg[29] = sp;
-        }
-        ((fn4)(0x08088756u | 1u))(sleep_sem, 0, slice, 0);       /* xQueueGenericReceive with a time-out */
+        *(volatile uint32_t *)0xE000ED04u = 0x10000000u;              /* pend PendSV: a yield */
+        __asm volatile("dsb sy\n isb sy" ::: "memory");
         uint32_t now = DWT_CYCCNT;
         acc += (uint32_t)(now - last);
         last = now;
