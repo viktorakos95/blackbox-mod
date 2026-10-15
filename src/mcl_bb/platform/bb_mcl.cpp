@@ -49,7 +49,7 @@ HOOK const uint8_t *bb_mcl_fb(void) { return front; }
 HOOK uint32_t bb_mcl_frames(void) { return mcl_frames; }
 HOOK uint32_t bb_mcl_state(void) { return mcl_state; }
 HOOK uint32_t bb_mcl_stack_words(void) { return mcl_stack; }
-HOOK uint32_t bb_mcl_dbg(int i) { return i >= 0 && i < 16 ? bb_dbg[i] : 0; }
+HOOK uint32_t bb_mcl_dbg(int i) { return i >= 0 && i < 32 ? bb_dbg[i] : 0; }
 /* the kernel's view of MCL's task (diagnostics): 0 HAL tick (ms), 1 the kernel's tick count (xTickCount, the getter at 0x08088d20), 2 MCL's task handle (= its TCB), 10 + n word n of that TCB */
 HOOK uint32_t bb_mcl_kern(int i)
 {
@@ -314,6 +314,11 @@ HOOK uint32_t bb_mcl_clk_stat(int which)
 /* ---- the task ---- */
 static void mcl_task(void *)
 {
+    {
+        uint32_t *c = (uint32_t *)*(volatile uint32_t *)0x2401f2a8u;     /* (diagnostics: the kernel's view of this task) */
+        bb_dbg[17] = (uint32_t)c;
+        bb_dbg[18] = c[4] == (uint32_t)c;
+    }
     for (uint32_t i = 0; i < ISR_STACK; i++)
         isr_stack[i] = 0xa5;                                       /* (painted, to see how much the soft interrupts ever use) */
     bb_dbg[0] = 1;
@@ -370,7 +375,8 @@ HOOK uint32_t bb_mcl_start(uint32_t stack_words)
         mcl_state = 3;
     else {
         mcl_stack = task_def.stack_words;
-        bb_dbg[13] = h;                                             /* the task handle = its TCB (diagnostics) */
+        bb_dbg[13] = h;
+        bb_dbg[16] = ((volatile uint32_t *)h)[4] == h;                                             /* the task handle = its TCB (diagnostics) */
     }
     return h;
 }

@@ -29,8 +29,8 @@ enum { IRQ_SW1 = 30, IRQ_SW2 = 44, IRQ_SW3 = 45, IRQ_TIM7 = 55 };      /* vector
 extern uint8_t SW_IRQ1, SW_IRQ2, SW_IRQ3;
 uint8_t SW_IRQ1 = IRQ_SW1, SW_IRQ2 = IRQ_SW2, SW_IRQ3 = IRQ_SW3;
 
-extern "C" volatile uint32_t bb_dbg[16];
-volatile uint32_t bb_dbg[16];
+extern "C" volatile uint32_t bb_dbg[32];
+volatile uint32_t bb_dbg[32];
 
 /* ---- time ---- */
 static volatile uint32_t ms_count;                               /* incremented by the base timer's 1 kHz part */
@@ -106,6 +106,10 @@ extern "C" void bb_sleep_ms(uint32_t ms)
         uint32_t slice = left > 50 ? 50u : (left ? (uint32_t)left : 1u);
         bb_dbg[11] = 3;
         bb_dbg[12]++;
+        if (bb_dbg[12] == 1) {                                    /* is the running task's TCB still a TCB (owner word = itself) just before the first wait */
+            uint32_t *c = (uint32_t *)*(volatile uint32_t *)0x2401f2a8u;
+            bb_dbg[19] = c[4] == (uint32_t)c;
+        }
         ((fn4)(0x08088756u | 1u))(sleep_sem, 0, slice, 0);       /* xQueueGenericReceive with a time-out */
         uint32_t now = DWT_CYCCNT;
         acc += (uint32_t)(now - last);

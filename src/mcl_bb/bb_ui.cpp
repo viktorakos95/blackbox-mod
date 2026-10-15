@@ -222,8 +222,12 @@ static void render(void)
             c = number(c, 1, (int32_t)(bb_mcl_kern(1) % 100000000u), 8);
             c = text(c, 1, " H");
             hex8(c, 1, bb_mcl_kern(2));
-            hex8(0, 2, bb_mcl_kern(3));                     /* the running task's TCB and its owner word (equal in a TCB: checks the layout) */
-            hex8(9, 2, bb_mcl_kern(4));
+            hex8(0, 2, bb_mcl_dbg(17));                     /* MCL's task as it saw itself at its start, then 4 flags "owner word = the TCB": at creation, at its start, before its first wait, now */
+            c = text(9, 2, "");
+            c = number(c, 2, (int32_t)bb_mcl_dbg(16), 1);
+            c = number(c, 2, (int32_t)bb_mcl_dbg(18), 1);
+            c = number(c, 2, (int32_t)bb_mcl_dbg(19), 1);
+            c = number(c, 2, bb_mcl_kern(14) == bb_mcl_kern(2) ? 1 : 0, 1);
             hex8(0, 3, bb_mcl_kern(5));                     /* tasks, ready lists of priority 0..4 */
             hex8(9, 3, bb_mcl_kern(10));                    /* MCL's TCB word 0 (its saved stack pointer) */
             return;

@@ -68,6 +68,11 @@ class Core:
 
         uc.hook_add(UC_HOOK_MEM_READ, dwt_read, begin=DWT, end=DWT + 3)
         uc.hook_add(UC_HOOK_MEM_READ, cnt_read, begin=TIM6 + 0x24, end=TIM6 + 0x27)
+        try:                                                    # the stock kernel's variables the diagnostics read (pxCurrentTCB = a TCB-sized block)
+            uc.mem_map(0x2401F000, 0x1000)
+        except Exception:
+            pass
+        e.w32(0x2401F2A8, 0x2401F400)
         emulate_primask(rg)
         rg.call("mcl_boot")
         self.card = H.Card(image, emu=e)
