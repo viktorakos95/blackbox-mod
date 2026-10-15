@@ -584,3 +584,7 @@ DRONE-8 (latest) merged. Tints stronger: Looper bg 30333a / lines 6a6e78, SAMPLR
 - Pad recorder: Rec Input gains SAMPLR (SAMPLR alone; LOOPER stays looper + SAMPLR). `lira_rec_sm_begin/end` around SAMPLR's run, `rec[3]`.
 - DRONE-8 page: REVERB knob in the SPACE panel (id 182, tone[2], saved in the settings tail): the drone's block times the knob joins the looper's reverb sends, which the stock reverb node takes (the FX page's type / size / return). The page opens with BTN off and gentler Feedback 30 %, Dly Mix 35 %, Drive 45 %.
 - The PAUSE label in the footer shows only on the Looper's pages.
+
+## Build 60
+
+The looper's spike cut (looper_over_cap -> guard_fit) is in two halves: the block that has no room plays the track at the cheap level with a ramp to half level (fo = 0.5), the next block takes it from half to 0 (cheap, whatever the load: `cut2`), then the usual ~2.5 s fade-in. A cut that took 5 ms now takes ~10 ms with no extra rendering beyond one cheap block.

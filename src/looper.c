@@ -257,6 +257,7 @@ struct dsp {
         float cpi;                               /* cycles per modelled instruction, average (only for a track not measured yet) */
         float est[LOOPER_TRACKS];                /* a track's cycles as set, average; and the model's figure when measured (to follow the knobs) */
         float estm[LOOPER_TRACKS];
+        uint8_t cut2[LOOPER_TRACKS];             /* a spike cut is in two halves: this block to half level, the next to 0 (a track that goes down over ~10 ms, not 5) */
         uint8_t want_eng1;                       /* the leader held out by the guard, +1 (0 none): the engines below it give way, see looper_guard_want */
         uint16_t want_share;
         float wema;                              /* the whole task's load, per mille, averaged over ~0.5 s (what the C readout shows, smoothed) */
@@ -2012,9 +2013,25 @@ static int guard_fit(struct dsp *d, int t, int n)
     struct guard *g = &d->gd;
     vtrack *k = &S->t[t];
     (void)n;
-    if (g->force || !track_out(k) || k->muted || !looper_over_cap(E_LOOPER))
+    if (g->force || !track_out(k) || k->muted) {
+        g->cut2[t] = 0;
         return 0;
-    g->fo[t] = 1.f;                                                       /* gain target 0 for this block, then fo runs down again: a fade in */
+    }
+    if (g->cut2[t]) {                                                     /* the second half of a cut: down to 0 (cheap, whatever the load) */
+        g->cut2[t] = 0;
+        g->fo[t] = 1.f;
+        g->fading[t] = 0;
+        g->tq[t] = 3;
+        return 1;
+    }
+    if (!looper_over_cap(E_LOOPER))
+        return 0;
+    if (g->fo[t] < .5f) {                                                 /* gain target half for this block, 0 for the next, then fo runs down again: a fade in */
+        g->fo[t] = .5f;
+        g->cut2[t] = 1;
+    } else {
+        g->fo[t] = 1.f;
+    }
     g->fading[t] = 0;
     g->cuts = 1;
     g->tq[t] = 3;
