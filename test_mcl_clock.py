@@ -52,6 +52,25 @@ for tim_hz in (200_000_000, 100_000_000, 199_500_000):
           ok == 1 and abs(hz - want) / want < 1e-3 and 900_000 < hz < 1_100_000, (ok, psc, hz))
     check("... TIM6 clock enabled in RCC, priority 1 (0x10) set, not yet enabled in the NVIC", u32(r, 0x580244E8) & 0x10 and r.e.r8(0xE000E400 + 54) == 0x10 and u32(r, 0xE000E104) == 0)
 
+# --- calibration from a task that loses the processor in the middle (a 1 ms time slice to another task: the 16-bit counter wraps in such a window)
+r = rig()
+reads = {"n": 0}
+
+
+def preempt(uc, t, a, sz, v, _):
+    reads["n"] += 1
+    if reads["n"] % 500 == 0:
+        r.st["dwt"] += 399_000                                       # the hook below adds this read's 900 too
+        uc.mem_write(0xE0001004, struct.pack("<I", r.st["dwt"] & 0xFFFFFFFF))
+
+
+r.e.uc.hook_add(UC_HOOK_MEM_READ, preempt, begin=0xE0001004, end=0xE0001007)
+ok = r.call("bb_clock_init")
+hz = r.call("bb_clock_timer_hz")
+psc = u32(r, TIM6 + 0x28) + 1
+want = 200_000_000 / psc
+check(f"calibration while switched out now and then: prescaler {psc}, rate {hz} counts/s (within 0.1% of {want:.0f})", ok == 1 and psc == 200 and abs(hz - want) / want < 1e-3, (ok, psc, hz))
+
 # --- run: 60 s at 120.0 BPM
 r = rig()
 r.call("bb_clock_init")

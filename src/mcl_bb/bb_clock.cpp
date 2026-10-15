@@ -129,17 +129,30 @@ HOOK int bb_clock_init(void)
     T_EGR = 1;                                                   /* load PSC / ARR */
     T_SR = 0;
     T_CR1 = 1;                                                   /* free running, to measure it */
-    uint64_t counts = 0, cycles = 0;
-    for (int i = 0; i < 16; i++) {
+    /* Windows of ~150 us; one the caller was interrupted or switched out in (a task loses the processor for a whole 1 ms slice) is thrown away: the 16-bit
+     * counter would have wrapped and the timer clock come out too low (MCL's 5 kHz base and the clock ran 11 % fast on the unit, measured from MCL's task). */
+    uint64_t counts = 0, cycles = 0, any_counts = 0, any_cycles = 0;
+    int valid = 0;
+    for (int i = 0; valid < 16 && i < 1000; i++) {
         uint32_t c0 = DWT_CYCCNT, t0 = T_CNT;
         uint32_t c1;
         do
             c1 = DWT_CYCCNT;
-        while (c1 - c0 < 60000u);                                // ~150 us: fewer counts than the 16-bit counter holds if the timer is not faster than the core
+        while (c1 - c0 < 60000u);                                // fewer counts than the 16-bit counter holds if the timer is not faster than the core
         uint32_t t1 = T_CNT;
+        uint32_t c2 = DWT_CYCCNT;
+        if (i < 16) {                                            // (the first 16 windows, kept whatever they are: used only if no window is clean)
+            any_counts += (t1 - t0) & 0xffffu;
+            any_cycles += c1 - c0;
+        }
+        if (c2 - c0 > 62000u)                                    // the window ran long: interrupted somewhere in it
+            continue;
         counts += (t1 - t0) & 0xffffu;
         cycles += c1 - c0;
+        valid++;
     }
+    if (!valid)
+        counts = any_counts, cycles = any_cycles;
     T_CR1 = 0;
     if (!counts || !cycles)
         return 0;
