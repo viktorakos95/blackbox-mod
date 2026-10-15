@@ -317,3 +317,14 @@ is what the note player is given, and the analog jack is polled once per audio b
 driver's read / write / ioctl table slots go through counting wrappers (arguments and results unchanged). Per call: which task, whether another task is inside the same layer at that moment (an
 **overlap**), and the longest single call. The MCL page shows it (build `SDSPY=1 COMPACT=1 tools/mcl/build_blob.sh`, patch set `... cave mclblob mclspy`): view 0 = calls per task (D / A / P);
 view 1 (tile B4) = overlaps in FatFs (F) and in the driver (D) with the first pair (entering task, task already inside), worst call in ms, card reads / writes per task. Emulator-tested only.
+
+### M7 step 1 result (user, on the unit, SD recon image)
+- **Every FatFs call and every card transfer comes from one task: pcmStreamer (P).** defaultTask (UI) and audioTask made none (rows D and A all 0; P at the display cap of 999 in every column
+  after normal use). So the stock firmware serialises the card by funnelling all file work into the streamer task; the UI asks it by messages.
+- **No overlaps** in FatFs or in the card driver (OVL F 0, D 0), as expected from the above.
+- Worst single FatFs call **229 ms**, worst card transfer **7 ms**; card writes by P went past 660. So the streamer can be busy for a few hundred ms at a time.
+- Consequence for MCL: **its file calls must run in pcmStreamer too.** Plan: a one-slot mailbox. MCL (GUI task) posts a request and waits (stock delay, so the low-priority streamer runs);
+  a hook in the streamer's loop executes it with the stock FatFs functions. The loop (0x080743b0) takes from its command queue with a zero timeout (it never blocks), so a hook at its queue
+  call (`bl 0x08088756` at 0x080743e8) is entered very often whenever the task gets the CPU.
+- Stock FatFs entry points found by FatFs source order and call counts (find_volume callers): f_opendir 0x080870f6, f_closedir 0x0808718c, f_readdir 0x080871a0, f_findnext 0x080871f0,
+  f_findfirst 0x0808722e, f_stat 0x0808724a, f_getfree 0x08087290, f_truncate 0x080873c8, f_unlink 0x0808748e, f_mkdir 0x08087558, f_rename 0x080876c8 [Likely; to be confirmed against a RAM disk in the emulator].
