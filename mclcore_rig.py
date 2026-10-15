@@ -12,7 +12,7 @@ import sys
 
 from unicorn import UC_HOOK_MEM_READ
 from unicorn.arm_const import (UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_R4, UC_ARM_REG_R5, UC_ARM_REG_R6, UC_ARM_REG_R7,
-                               UC_ARM_REG_R8, UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11, UC_ARM_REG_R12, UC_ARM_REG_SP)
+                               UC_ARM_REG_R8, UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11, UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_CPSR)
 
 import sdharness as H
 from emu import RET, STACK
@@ -21,8 +21,9 @@ from mcl_rig import MGR, Rig, emulate_primask, syms
 NAMES = "solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper clkmon cave mclblob mclsd".split()
 Q_CREATE, Q_SEND, Q_RECEIVE = 0x080883BE, 0x08088402, 0x08088756
 CORE = 399_000_000
+TASK_STACK = 0x2404F000
 REGS = [UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_R4, UC_ARM_REG_R5, UC_ARM_REG_R6, UC_ARM_REG_R7, UC_ARM_REG_R8, UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11,
-        UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC]
+        UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_CPSR]
 
 
 def available():
@@ -119,6 +120,57 @@ class Core:
             pc = uc.reg_read(UC_ARM_REG_PC) | 1
         raise AssertionError("did not finish")
 
+    def start(self, name):
+        """begin a blob function that does not return (MCL's setup waits in its menu); `step` runs it on"""
+        uc = self.uc
+        uc.reg_write(UC_ARM_REG_SP, TASK_STACK)                  # its own stack: the helpers (call / irq / side) use others
+        uc.reg_write(UC_ARM_REG_LR, RET | 1)
+        self.pc = self.b[name] | 1
+
+    def step(self, count=2_000_000):
+        """let the started function run for `count` instructions (the card is served when it waits for it); the state stays, `step` again goes on"""
+        uc = self.uc
+        sp, lr = None, None
+        for _ in range(10000):
+            self.blocked[0] = False
+            uc.emu_start(self.pc, RET, count=count)
+            self.pc = uc.reg_read(UC_ARM_REG_PC) | 1
+            if not self.blocked[0]:
+                return
+            self.service()
+        raise AssertionError("step did not finish")
+
+    def tick(self, ms=1):
+        """the base timer's interrupts for `ms` milliseconds: the panel poll (soft 3) every 5 ms, the MIDI side (soft 2) every ms"""
+        for i in range(ms):
+            self.st["dwt"] += CORE // 1000
+            if i % 5 == 0:
+                self.irq("bb_swirq3_isr")
+            self.irq("bb_swirq2_isr")
+
+    def call(self, name, *args, count=20_000_000):
+        """a short blob function called on the side (own stack, the interrupted context's registers kept); returns r0"""
+        uc = self.uc
+        saved = [uc.reg_read(r) for r in REGS]
+        for r, v in zip((UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3), args):
+            uc.reg_write(r, v & 0xFFFFFFFF)
+        uc.reg_write(UC_ARM_REG_SP, STACK - 0x20000)
+        uc.reg_write(UC_ARM_REG_LR, RET | 1)
+        uc.emu_start(self.b[name] | 1, RET, count=count)
+        r0 = uc.reg_read(UC_ARM_REG_R0)
+        for r, v in zip(REGS, saved):
+            uc.reg_write(r, v)
+        return r0
+
+    def side(self, fn, *args):
+        """run a Python-side helper that calls into the emulator (the Rig's USART pump, receive path) without disturbing the paused task's registers"""
+        uc = self.uc
+        saved = [uc.reg_read(r) for r in REGS]
+        r = fn(*args)
+        for r_, v in zip(REGS, saved):
+            uc.reg_write(r_, v)
+        return r
+
     def irq(self, name, count=20_000_000):
         """an interrupt handler of the blob, entered like the hardware would (own stack)"""
         uc = self.uc
@@ -131,6 +183,6 @@ class Core:
 
     def screen(self):
         """the MCL page's frame buffer as text rows (# = lit pixel), 64 rows of 128"""
-        fb = self.run("bb_mcl_fb")
+        fb = self.call("bb_mcl_fb")
         d = bytes(self.uc.mem_read(fb, 1024))
         return ["".join("#" if d[y * 16 + (x >> 3)] >> (7 - (x & 7)) & 1 else "." for x in range(128)) for y in range(64)]

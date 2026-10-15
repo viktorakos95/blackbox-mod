@@ -23,6 +23,9 @@ HOOK char *strcpy(char *d, const char *s)
 
 HOOK char *strncpy(char *d, const char *s, size_t n)
 {
+    static const char empty[1] = {0};
+    if (!s)                                                        /* MCL's text input page copies its title before it has one (a null pointer; harmless where address 0 reads) */
+        s = empty;
     size_t i = 0;
     for (; i < n && s[i]; i++)
         d[i] = s[i];

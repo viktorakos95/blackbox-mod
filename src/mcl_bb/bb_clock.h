@@ -27,6 +27,7 @@ uint32_t bb_clock_ticks(void);                 /* 192-PPQN ticks since start (re
 uint32_t bb_clock_prescaler(void);             /* TIM6's prescaler divisor (counts of the timer clock per timer count): TIM7 uses the same to run at the same rate */
 uint32_t bb_clock_timer_hz(void);              /* the measured TIM6 count rate (after its prescaler) */
 uint32_t bb_clock_isr_calls(void);             /* entries of the timer interrupt since boot, counted even when the clock is off */
+void bb_clock_set_transport_hook(void (*xport)(uint8_t byte));  /* called (timer interrupt, or the caller's context for stop / sync_begin) with 0xFA / 0xFB / 0xFC right after that byte was queued to the jack, in the same order */
 void bb_clock_set_hook(void (*tick)(uint32_t ticks192));   /* called from the timer interrupt on every 192-PPQN tick (MCL's sequencer trigger) */
 
 /* sync status */

@@ -52,6 +52,15 @@ static uint32_t cpc_q16;                                        /* core cycles p
 static volatile uint32_t period_hi, period_lo;                  /* 32.32 counts per 192-PPQN tick */
 static volatile uint32_t acc;                                   /* fractional part carried between ticks */
 static void (*volatile tick_hook)(uint32_t);
+static void (*volatile xport_hook)(uint8_t);                    /* told about every FA / FB / FC this module sends (MCL's transport) */
+static int tx_xport(uint8_t b)                                  /* a transport byte out, and to the hook (in the order they leave) */
+{
+    int ok = bb_midi_tx_rt(b);
+    void (*h)(uint8_t) = xport_hook;
+    if (h && ok)
+        h(b);
+    return ok;
+}
 
 /* --- MIDI-in sync state (written by the timer interrupt only, except the two rings' write ends) */
 enum { SY_INTERNAL = 0, SY_LISTEN = 1, SY_ONE = 2, SY_LOCKED = 3, SY_LOST = 4 };
@@ -268,13 +277,14 @@ HOOK void bb_clock_stop(int send_stop)
     running = 0;
     sync_state = SY_INTERNAL;
     if (send_stop)
-        for (uint32_t spin = 0; spin < 200000u && !bb_midi_tx_rt(0xfc); spin++) {}      /* the real-time FIFO drains at 31250 baud: wait for a slot (GUI task, ~ms) */
+        for (uint32_t spin = 0; spin < 200000u && !tx_xport(0xfc); spin++) {}      /* the real-time FIFO drains at 31250 baud: wait for a slot (GUI task, ~ms) */
 }
 
 HOOK int bb_clock_running(void) { return running || sync_state == SY_LOCKED || sync_state == SY_LOST; }
 HOOK uint32_t bb_clock_isr_calls(void) { return isr_calls; }
 HOOK uint32_t bb_clock_ticks(void) { return ticks; }
 HOOK void bb_clock_set_hook(void (*tick)(uint32_t)) { tick_hook = tick; }
+HOOK void bb_clock_set_transport_hook(void (*xport)(uint8_t)) { xport_hook = xport; }
 HOOK int bb_clock_sync_state(void) { return (int)sync_state; }
 
 HOOK uint32_t bb_clock_bpm_x10(void)
@@ -459,7 +469,7 @@ static void sq_stopped(void)
     sq_running = 0;
     sq_announce = 0;
     pending_start = pending_zero = 0;
-    bb_midi_tx_rt(0xfc);
+    tx_xport(0xfc);
     in_rd = in_wr;
     sync_state = SY_LISTEN;                                      /* the PLL starts over at the next start */
     T_ARR = POLL_COUNTS - 1u;
@@ -574,7 +584,7 @@ HOOK void mcl_tim6_isr(void)
                 } else if (c == 0xfb) {
                     pending_start = 2;                           /* continue */
                 } else {
-                    bb_midi_tx_rt(0xfc);
+                    tx_xport(0xfc);
                 }
             }
         }
@@ -617,7 +627,7 @@ HOOK void mcl_tim6_isr(void)
         n = 0x10000;
     T_ARR = (uint32_t)n - 1u;
     if (pending_start && (sub == 0 || sync_state == SY_INTERNAL)) {      /* a start received on the jack leaves together with the next clock */
-        bb_midi_tx_rt(pending_start == 2 ? 0xfb : 0xfa);
+        tx_xport(pending_start == 2 ? 0xfb : 0xfa);
         pending_start = 0;
     }
     if (sub == 0) {

@@ -43,7 +43,8 @@ def emulate_primask(rg):
             continue
         addr, mn = int(f[0].strip()[:-1], 16), f[1].strip()
         if mn == "mrs":
-            rn = int(f[2].split(",")[0].strip()[1:])
+            name = f[2].split(",")[0].strip()
+            rn = {"sl": 10, "fp": 11, "ip": 12, "sp": 13, "lr": 14}.get(name) or int(name[1:])
             rep = struct.pack("<HH", 0x2000 | (rn << 8), 0xBF00)              # movs rN, #0 ; nop
         elif mn == "msr":
             rep = b"\x00\xbf\x00\xbf"

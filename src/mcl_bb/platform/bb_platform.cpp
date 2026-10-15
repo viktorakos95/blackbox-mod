@@ -136,15 +136,22 @@ extern "C" void bb_mcl_input_encoder(uint32_t n, int detents)
 uint64_t mcl_platform_button_mask() { return (uint64_t)buttons_hi << 32 | buttons_lo; }
 uint32_t mcl_platform_encoder_button_mask() { return enc_buttons; }
 
+extern "C" int bb_mcl_enc_units(uint8_t n);                         /* raw counts MCL's current page wants for one step of encoder n (bb_mcl.cpp) */
+
+/* The panel gives whole steps (the page's knobs); MCL's encoders count raw quadrature units (rot_res * 9 + 1 of them make one step, and the page's own resolution
+ * differs), so one step is handed over as exactly that many units: the page moves by one and no remainder is left in its counters. At most 127 units a poll (int8). */
 int mcl_platform_encoder_delta(uint8_t n)
 {
     if (n >= 4)
         return 0;
+    int unit = bb_mcl_enc_units(n);
     uint32_t lk = bb_lock();
     int32_t v = enc_acc[n];
-    enc_acc[n] = 0;
+    int32_t raw = v * unit;
+    int32_t take = raw > 127 ? 127 / unit * unit : (raw < -127 ? -(127 / unit * unit) : raw);
+    enc_acc[n] = v - take / unit;
     bb_unlock(lk);
-    return (int)v;
+    return (int)take;
 }
 
 /* ---- the base timer and the soft interrupts: set up by MCL's setup() (setup_irqs) ---- */
