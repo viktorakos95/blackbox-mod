@@ -222,7 +222,6 @@ struct pool {
     struct pg pg;
     int16_t dl[LIRA_MAX][2][DLEN];
     int16_t pdl[2][DLEN];        /* the page instance's delay lines */
-    float rsend[2][1024];        /* this block's share for the stock reverb (the SPACE panel's REVERB), picked up by the looper's run */
     float rec[3][2][1024];       /* what the recorder can take instead of the input: [DRONE, LOOPER, SAMPLR][left, right], the last block */
     float scr[2][1024];          /* the bus as it was before the looper added its audio */
     struct gev ev[GEV_MAX];      /* the recorded gestures */
@@ -1137,7 +1136,6 @@ void lira_page_run(float *l, float *r, int n)
         s->l.ext_r = exr;
         s->l.out_r = tmr;
         lira_process(&s->l, tmp, m);
-        const float rvs = (float)g->tone[2] * 0.001f;
         mute_ramp_part(g, tmp, m, i0, n);
         if (s->l.out_r)
             mute_ramp_part(g, tmr, m, i0, n);
@@ -1147,8 +1145,6 @@ void lira_page_run(float *l, float *r, int n)
             r[i0 + i] += tmr[i] * gain;
             p->rec[0][0][i0 + i] = tmp[i] * gain;
             p->rec[0][1][i0 + i] = tmr[i] * gain;
-            p->rsend[0][i0 + i] = tmp[i] * gain * rvs;
-            p->rsend[1][i0 + i] = tmr[i] * gain * rvs;
         }
     }
     if (g->per)                                  /* this synth's own share of a block */
@@ -1698,9 +1694,10 @@ int lira_send_add(float *l, float *r, int n)             /* the drone's reverb s
         return 0;
     if (n > 1024)
         n = 1024;
+    const float rv = (float)p->pg.tone[2] * 0.001f;          /* (the block it made, rec[0], times the knob: no buffer of its own) */
     for (int i = 0; i < n; i++) {
-        l[i] += p->rsend[0][i];
-        r[i] += p->rsend[1][i];
+        l[i] += p->rec[0][0][i] * rv;
+        r[i] += p->rec[0][1][i] * rv;
     }
     return 1;
 }
