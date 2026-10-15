@@ -1304,16 +1304,17 @@ def busy(frac, sest=None):
     e.uc.mem_write(G_REST, struct.pack("<f", 0.0))
     if sest is not None:
         e.uc.mem_write(SEST, struct.pack("<f", float(sest)))
+        e.uc.mem_write(SMP + struct_offsets(["gcost"])["gcost"], struct.pack("<f", float(sest)))   # (the track's own: the hard limit is per track)
     dwt = struct.unpack("<I", e.uc.mem_read(0xE0001004, 4))[0]
     e.uc.mem_write(0x2405ffd4, struct.pack("<I", (dwt - int(frac * PB)) & 0xffffffff))
 touch(0, 0, 3 * 64 + 10, 100)
 play(4)
-busy(0.75, 400_000)                                   # 300 k left (90 % budget), SAMPLR's worst 400 k: it does not fit
+busy(0.80, 400_000)                                   # 340 k left (97 % limit), SAMPLR's worst 400 k: it does not fit
 o = play()
 check("budget: SAMPLR does not fit the time left: one step down at once", e.r8(SHED) >= 1, e.r8(SHED))
-check("budget: ... and this block is not played", e.r8(SMUTE) == 1 and max(abs(v) for v in o[0]) < 1e-6, (e.r8(SMUTE), max(abs(v) for v in o[0])))
+check("budget: ... and the track is left out of this block", e.r8(SMUTE) == 1 and max(abs(v) for v in o[0]) < 1e-6, (e.r8(SMUTE), max(abs(v) for v in o[0])))
 for _ in range(20):
-    busy(0.75, 400_000)
+    busy(0.80, 400_000)
     play()
 check("budget: still no room: down to the last step, still out", e.r8(SHED) == 5 and e.r8(SMUTE) == 1, (e.r8(SHED), e.r8(SMUTE)))
 busy(0.30, 400_000)                                   # 1.2 M left
@@ -1333,7 +1334,7 @@ busy(0.30, 50_000)
 play(3)
 busy(0.99, 50_000)                                    # a pad / sequence spike: no time left at all in this block
 o = play()
-check("budget: a block with no time left is not played", e.r8(SMUTE) == 1, e.r8(SMUTE))
+check("budget: a block with no time left: the track is left out", e.r8(SMUTE) == 1, e.r8(SMUTE))
 busy(0.30, 50_000)
 o = play()
 check("budget: ... the next one with room is", e.r8(SMUTE) == 0 and max(abs(v) for v in o[0]) > 1e-3, (e.r8(SMUTE), max(abs(v) for v in o[0])))

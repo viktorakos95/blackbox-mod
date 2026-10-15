@@ -1,9 +1,10 @@
-"""The looper's per-block budget guard (looper.c guard_decide) under Unicorn.
+"""The looper's guard (looper.c: guard_decide / guard_fit / looper_block_done) under Unicorn.
 
-The block period, the cycles per instruction and the time the audio task has used before the tracks are written by the test (the
-emulator's cycle counter does not run). Checked: everything plays as set with room; with less room whole tracks fade out, track 3
-first, then 2 (the others play on exactly as set), over four blocks; with no time even to fade, they go at once (a ramp within one
-block) and stay silent; with room again they come back one at a time, track 4 first, about a second apart, fading in.
+The emulator's cycle counter does not run: the test writes the block period, the time used before the tracks and the whole block's
+load at its end (as cpu.c reports it). Checked: with room nothing changes; a block near the limit makes one track fade out over
+~0.75 s (track 3 first, the others untouched) and then it is muted (shown muted); one at a time with a pause; it never comes back by
+itself; the player unmutes it and it plays, and it is the last to go again; no time left in a block cuts the tracks in that block (a
+ramp to 0, then muted).
 NOT checked: the real cycle counts on the unit (the model's constants are fitted to emulator instruction counts).
 
 Stubbed: the sample pool init (a fake pool is laid out instead), the input stage's tail call, the Out 1 bus lookup,
@@ -239,77 +240,99 @@ for t in range(4):
 blocks(10)
 check("setup: four tracks play", [mode(t) for t in range(4)] == [PLAY] * 4, [mode(t) for t in range(4)])
 for t in range(4):
-    for q, v in ((P_FILT, -0.4), (P_RES, 0.7), (P_DRIVE, 0.5), (P_SPEED, 0.3), (P_CRUNCH, 0.3)):
+    for q, v in ((P_FILT, -0.4), (P_RES, 0.7), (P_DRIVE, 0.5)):
         param(t, q, v)
 FXB = e.r32(ENGINE + 0x1C * (FIRST + 5 * PER) + 4) & 0xFFFFFFFF
 def g_at(f):
     return FXB + dsp_off("gd." + f)
-G_PER, G_REST, G_CPI, G_LVL, G_OUT, G_TQ, G_FO = (g_at(f) for f in ("per", "rest", "cpi", "lvl", "out", "tq", "fo"))
+G_PER, G_REST, G_FX, G_CPI, G_GM, G_FADING, G_FO, G_TQ = (g_at(f) for f in ("per", "rest", "fx", "cpi", "gm", "fading", "fo", "tq"))
 PERC = 2_128_000                                       # a 256-frame block at 399 MHz
+MUTED = 1                                              # struct track: mode, muted, ...
 def setf(a, v):
     e.uc.mem_write(a, struct.pack("<f", v))
-def run_at(frac, nb=1, cpi=1.0):
+def run_at(pre, whole, nb=1):
+    """nb blocks: pre = how full the block is before the tracks, whole = at its end (cpu.c's figure)"""
     outs = []
     for _ in range(nb):
         setf(G_PER, PERC)
         setf(G_REST, 0.0)
-        setf(G_CPI, cpi)
+        setf(G_FX, 0.0)
         dwt = e.r32(0xE0001004) & 0xFFFFFFFF
-        e.w32(0x2405FFD4, (dwt - int(frac * PERC)) & 0xFFFFFFFF)
+        wake = (dwt - int(pre * PERC)) & 0xFFFFFFFF
+        e.w32(0x2405FFD4, wake)
         _, o = block([0.0] * N)
         outs.append(o)
+        e.call("looper_block_done", (wake + int(whole * PERC)) & 0xFFFFFFFF)
     return outs
-def lvl():
-    return e.uc.mem_read(G_LVL, 1)[0]
-def outs():
-    return list(e.uc.mem_read(G_OUT, 4))
-def tq():
-    return list(e.uc.mem_read(G_TQ, 4))
+def muted():
+    return [tr(t, MUTED) for t in range(4)]
+def gm():
+    return list(e.uc.mem_read(G_GM, 4))
+def fading():
+    return list(e.uc.mem_read(G_FADING, 4))
 def fo():
     return [round(v, 3) for v in struct.unpack("<4f", e.uc.mem_read(G_FO, 16))]
+def tq():
+    return list(e.uc.mem_read(G_TQ, 4))
 def rms(o):
     return (sum(v * v for v in o[0]) / len(o[0])) ** 0.5
-# (everything on, 4 tracks, cycles per instruction 1: a track as set ~177 k cycles a block, 4 = ~710 k)
 blocks(20)
-o = run_at(0.10, 5)
-check("room: nothing faded, every track as set", lvl() == 0 and outs() == [0, 0, 0, 0] and tq() == [0, 0, 0, 0], (lvl(), outs(), tq()))
+o = run_at(0.10, 0.80, 400)
+check("room (whole block 80 %): nothing fades, nothing muted, every track as set", muted() == [0] * 4 and fading() == [0] * 4 and tq() == [0] * 4,
+      (muted(), fading(), tq()))
 base = rms(o[-1])
 check("room: the tracks sound", base > 0.01, base)
-o = run_at(0.62, 1)                                    # ~640 k left: three tracks fit
-check("less room: track 3 fades out, the others stay as set", outs() == [0, 0, 1, 0] and [tq()[i] for i in (0, 1, 3)] == [0, 0, 0], (outs(), tq()))
-check("... fading over blocks (a quarter a block, a little cheaper meanwhile)", fo()[2] == 0.25 and tq()[2] == 1, (fo(), tq()))
-o = run_at(0.62, 4)
-check("... then silent", fo()[2] == 1.0 and outs() == [0, 0, 1, 0], (fo(), outs()))
-check("... and the other three sound", rms(o[-1]) > 0.3 * base, (rms(o[-1]), base))
-o = run_at(0.70, 6)                                    # ~425 k left: two fit
-check("less still: track 2 goes too", outs() == [0, 1, 1, 0] and [tq()[i] for i in (0, 3)] == [0, 0], (outs(), tq()))
-o = run_at(0.97, 1)                                    # no time at all
-check("no time at all: all out at once, computed as cheaply as possible", outs() == [1, 1, 1, 1] and fo() == [1.0] * 4 and [tq()[i] for i in (0, 3)] == [3, 3], (outs(), fo(), tq()))
+o = run_at(0.10, 0.95, 190)                            # a half-second window with a block at 95 %
+check("near the limit: track 3 starts to fade out, the others stay as set", fading() == [0, 0, 1, 0] and tq() == [0] * 4 and muted() == [0] * 4,
+      (fading(), tq(), muted()))
+f0 = fo()[2]
+o = run_at(0.10, 0.95, 100)
+check("... slowly (~0.75 s)", 0.3 < fo()[2] - f0 < 0.45 and muted()[2] == 0, (f0, fo()[2], muted()))
+o = run_at(0.10, 0.95, 200)
+check("... then muted (the page shows it), and only that one", muted() == [0, 0, 1, 0] and gm() == [0, 0, 1, 0] and fading() == [0] * 4,
+      (muted(), gm(), fading()))
+check("... the other three sound", rms(o[-1]) > 0.3 * base, (rms(o[-1]), base))
+o = run_at(0.10, 0.95, 300)
+check("still near the limit: the next one (track 2) only after a pause", fading()[1] == 0 and muted()[1] == 0, (fading(), muted()))
+o = run_at(0.10, 0.95, 500)
+check("... then track 2", muted() == [0, 1, 1, 0], muted())
+for _ in range(800):                                   # the next one (track 1) starts to fade ...
+    run_at(0.10, 0.95, 1)
+    if fading()[0]:
+        break
+run_at(0.10, 0.95, 40)
+check("(track 1 fading)", fading()[0] == 1 and muted()[0] == 0, (fading(), fo()))
+o = run_at(0.10, 0.70, 700)                            # ... and the load goes down meanwhile
+check("the load goes down during a fade: it turns back and fades in again", fading()[0] == 0 and muted()[0] == 0 and fo()[0] == 0.0, (fading(), muted(), fo()))
+o = run_at(0.10, 0.70, 2000)
+check("room again: nothing muted comes back by itself", muted() == [0, 1, 1, 0], muted())
+ev(2, MUTE_DOWN)
+ev(2, MUTE_UP)
+o = run_at(0.10, 0.70, 60)
+check("the player unmutes track 3: it plays", muted() == [0, 1, 0, 0] and gm() == [0, 1, 0, 0] and rms(o[-1]) > 0.3 * base, (muted(), gm(), rms(o[-1])))
+o = run_at(0.10, 0.95, 1200)
+check("near the limit again: the one just unmuted goes last (track 1 goes first)", muted()[0] == 1 and muted()[2] == 0, muted())
+for t in range(4):                                     # all back on
+    if tr(t, MUTED):
+        ev(t, MUTE_DOWN)
+        ev(t, MUTE_UP)
+o = run_at(0.10, 0.70, 60)
+check("(all unmuted)", muted() == [0] * 4, muted())
+o = run_at(0.10, 0.70, 30)                             # the tracks' costs are measured (in the emulator: from the model)
+e.uc.mem_write(G_CPI, struct.pack("<f", 1.0))
+o = run_at(0.97, 0.99, 1)                              # a spike: no time left before the tracks
+check("no time left in a block: the tracks are cut in it, and muted", muted() == [1] * 4 and gm() == [1] * 4, (muted(), gm()))
 x = o[0][0]
-head_, tail_ = max(abs(v) for v in x), max(abs(v) for v in x[-16:])
-check("... a ramp to 0 within the block (the last 16 frames under a tenth of the block's peak)", tail_ < 0.1 * head_ + 1e-4 and abs(x[-1]) < 0.01 * head_ + 1e-5, (head_, tail_, x[-1]))
-o = run_at(0.97, 3)
+peak = max(abs(v) for v in x)
+check("... a ramp to 0 within the block, or nothing at all (no click from a cut mid-wave)", abs(x[-1]) < 0.01 * peak + 1e-5, (peak, x[-1]))
+o = run_at(0.10, 0.70, 5)
 check("... and silent after", max(max(abs(v) for v in b[0]) for b in o) < 1e-6, max(max(abs(v) for v in b[0]) for b in o))
-o = run_at(0.10, 200)
-check("room again: not at once (about a second first)", lvl() == 4, lvl())
-o = run_at(0.10, 260)
-check("... then one back: track 4 first", outs() == [1, 1, 1, 0], outs())
-nz = [b for b in o if max(abs(v) for v in b[0]) > 0]
-first_back = nz[0][0] if nz else [0.0]
-check("... fading in (~100 ms), not jumping in", 0.0 < fo()[3] < 1.0 or fo()[3] == 0.0, fo())
-pk = [max(abs(v) for v in b[0]) for b in o]
-i0 = next((i for i, v in enumerate(pk) if v > 0), None)
-early, later = (pk[i0], max(pk[i0 + 30:i0 + 45])) if i0 is not None and i0 + 45 <= len(pk) else (1.0, 0.0)
-check("... its level grows over ~37 blocks (the first block of it under a fifth of where it gets)", early < 0.2 * later, (early, later))
-o = run_at(0.10, 1300)
-check("... and on to all four, one a second (3 last)", lvl() == 0 and outs() == [0, 0, 0, 0] and fo() == [0.0] * 4, (lvl(), outs(), fo()))
-check("... all as set again", tq() == [0, 0, 0, 0] and rms(o[-1]) > 0.5 * base, (tq(), rms(o[-1]), base))
-o = run_at(0.70, 1)
-check("a pad / sequence spike: acted on in the same block", lvl() >= 1, lvl())
-run_at(0.10, 5)
+e.call("looper_guard_force", 1)
+for t in range(4):
+    ev(t, MUTE_DOWN)
+    ev(t, MUTE_UP)
+run_at(0.99, 0.99, 400)
+check("forced off (tests): it does nothing", muted() == [0] * 4, muted())
 e.call("looper_guard_force", 0)
-run_at(0.99, 2)
-check("forced (tests): stays", lvl() == 0, lvl())
-e.call("looper_guard_force", -1)
 print("\n%d FAIL" % fails)
 sys.exit(1 if fails else 0)

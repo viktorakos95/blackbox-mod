@@ -137,6 +137,7 @@ struct sm {
     uint8_t iq, _iq[3];                     /* interpolation: 0 the stock cubic (float), 1 the stock HighQ (double), 2 SAMPLR's own with a low-pass above 1x */
     struct smscr *sc;                       /* the scratch shared by the tracks */
     uint8_t tno, _tn[3];
+    float gcost;                            /* the hard limit (samplr_run): what a block of this track took lately, recent worst (cycles) */
 };
 
 /* Scratch every track uses in turn (the audio task renders one voice at a time; the transient search runs in the GUI task): the head of effect block 9. */
@@ -162,7 +163,7 @@ struct smscr {
     float sleft;                            /* the time left for it this block (cycles; < 0 unknown) */
     float lcost[6];                         /* what a block cost at each shed level when it last ran there (fading) */
     uint16_t scalm, _sc;                    /* blocks in a row in which one level better would have fitted */
-    uint8_t smute, mtop, mshown, _m;        /* out of time: this block not played; any such block this report; the last report's */
+    uint8_t smute, mtop, mshown, _m;        /* out of time: a track left out of this block; any such block this report; the last report's */
     uint16_t gnow, gacc;                    /* grains sounding across all the tracks (last block / this block so far) */
 };
 

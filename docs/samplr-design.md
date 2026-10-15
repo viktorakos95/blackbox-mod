@@ -445,3 +445,22 @@ takes three overdub layers.
   Their play heads keep running. Back one at a time the other way round (4, 1, 2, 3), ~1 s apart with a quarter to spare, fading in over ~100 ms (37 blocks).
 - `L!n` on the SAMPLR bar: how many tracks were out in the last second. test_guard.py rewritten for this.
 - SAMPLR's own steps (linear interpolation, mono, fewer grains) are unchanged; it leaves blocks out (`!M`) only when it alone does not fit.
+
+## Build 45 (fades to mute from the real load; a hard limit per track)
+- Reports on build 44: the looper alone with four tracks muted tracks (not fading: stopping), and never came back from L!4; a track only came back after most
+  of its knobs were set back; DRONE-8 + granular stuttered. Wishes: whatever is removed fades out; a removed track shows muted; the same on SAMPLR if possible.
+- Why: the guard learned the unit's speed only from tracks that played, as a recent worst that decayed slowly; spikes (interrupts during a track) made the
+  looper look far more expensive than it is, and with all tracks out nothing was measured again, so it never came back. The fade was ~11 ms: a stop.
+- Now (looper.c, the guard above run):
+  - Fades come from the real load: the whole task's worst block in each half second (looper_block_done, the same figure as C). At 94 % or more one track fades
+    out over ~0.75 s at full quality (3, then 2, 1, 4; a track the player unmuted in the last ~3 s goes last), then it is muted for real: the page shows it
+    muted and the player unmutes it when they want it (nothing comes back by itself; no knob has to move). One at a time, ~1 s apart. If the load drops while a
+    track fades (a worst-of-the-last-~50-blocks under 84 %), the fade turns back and it fades in again.
+  - The hard limit, in the block: before each track, what it took lately as set (per track, following the knobs through track_model) against the time left up
+    to 97 % of the block minus what comes after the looper. A track that does not fit is cut in that block (a ramp to 0, computed as cheaply as possible; with
+    no time even for that, not played) and muted. Only for spikes.
+  - `L!n` = tracks muted (or fading) by the guard, `c` after it if one had to be cut.
+- SAMPLR (samplr_run): the hard limit is per track now (each track's recent worst block, `gcost`): a track that does not fit is left out of that block (`!M`);
+  its quality steps (`!n`) and their recovery as in build 43. SAMPLR has no track mute yet, so its tracks are not faded / muted like the looper's.
+- Tests: test_guard.py rewritten (room: nothing; near the limit: track 3 fades over ~0.75 s, then muted, only that one; the next after a pause; turns back when
+  the load drops; nothing comes back by itself; the player unmutes; the one just unmuted goes last; a block with no time left cuts and mutes, ramp to 0).

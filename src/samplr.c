@@ -2685,24 +2685,21 @@ int samplr_run(float *bl, float *br, int n, float **snd)
     s->sc->gnow = s->sc->gacc;
     s->sc->gacc = 0;
     {   /* the budget (looper.c guard): the time left in this block, if the looper's tracks gave all theirs up. SAMPLR's recent worst
-         * block over 85 % of it: one step of shedding now (not after 16 blocks); over all of it: this block is not played (the sequencers
-         * and gestures keep their time) and it stays out until a fifth is to spare. The looper's tracks give way to what SAMPLR leaves. */
+         * block over 85 % of it: one step of shedding now (not after 16 blocks). The hard limit is per track, below. The looper's tracks
+         * give way to what SAMPLR leaves. */
         struct smscr *sc = s->sc;
         int32_t left = looper_budget_left();
-        int mute = 0;
         sc->sleft = -1.f;                                         /* (unknown: no limit) */
         if (left != 0x7fffffff) {
             float lf = left > 0 ? (float)left : 0.f;
             sc->sleft = lf;
-            mute = sc->sest > lf || (sc->smute && sc->sest > .8f * lf);
             if (sc->sest > .85f * lf && sc->shed < 5 && s->tick - sc->shed_t > 2) {
                 sc->shed++;
                 sc->shed_t = s->tick;
                 sc->scalm = 0;
             }
         }
-        sc->smute = (uint8_t)mute;
-        sc->mtop |= (uint8_t)mute;
+        sc->smute = 0;
     }
     for (int t = 0; t < SM_TRACKS; t++) {                         /* every track that was ever used goes on playing (its loop, what it latched) */
         struct sm *q = t ? trk_get(t, 0) : s;
@@ -2710,11 +2707,19 @@ int samplr_run(float *bl, float *br, int n, float **snd)
             continue;
         float *tl = s->sc->mixl, *tr = s->sc->mixr;               /* (not on the stack: the audio task's is small) */
         q->sph = s->sph;                                          /* one free-running grid for all the tracks */
+        uint32_t tq0 = DWT_CYCCNT;
         gest_run(q, n);
         sweep(q);
-        if (s->sc->smute) {                                       /* out of time (the budget above) */
-            q->tick++;
-            continue;
+        {   /* the hard limit: a track whose recent worst block does not fit the time left is left out of this block (its gestures and
+             * sequences keep their time). Only a spike gets here; the shedding above keeps it from being needed. */
+            int32_t left = looper_budget_left();
+            if (left != 0x7fffffff && q->gcost > (float)(left > 0 ? left : 0)) {
+                s->sc->smute = 1;
+                s->sc->mtop = 1;
+                q->gcost *= .999f;
+                q->tick++;
+                continue;
+            }
         }
         int busy = run_voices(q, tl, tr, n);
         uint32_t cm = DWT_CYCCNT;
@@ -2726,6 +2731,10 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         if (!busy) {
             q->peak *= .9f;
             q->tick++;
+            {
+                float c = (float)(DWT_CYCCNT - tq0);
+                q->gcost = c > q->gcost ? c : q->gcost * .99f;
+            }
             continue;
         }
         if (q->fx_f > 2 || q->fx_f < -2 || q->flt.mix > 0.f)      /* the track's strip: filter, then the sends to the looper's delay and reverb */
@@ -2764,6 +2773,10 @@ int samplr_run(float *bl, float *br, int n, float **snd)
         fed |= send;
         q->tick++;
         s->sc->pm += DWT_CYCCNT - cm;
+        {
+            float c = (float)(DWT_CYCCNT - tq0);
+            q->gcost = c > q->gcost ? c : q->gcost * .99f;       /* up at once, down over ~1 s */
+        }
     }
     s->sc->prev = looper_clock_now();                             /* (for the next block's grid lines) */
     s->sph += (float)n;                                           /* the free-running grid (used while the sequencer is stopped) */

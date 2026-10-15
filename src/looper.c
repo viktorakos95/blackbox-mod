@@ -251,18 +251,23 @@ struct dsp {
     int32_t dseg[LOOPER_TRACKS], xf[LOOPER_TRACKS];
     uint8_t mact[LOOPER_TRACKS], dmute[LOOPER_TRACKS];
     float dtarget[LOOPER_TRACKS];
-    struct guard {                               /* the per-block budget (see guard_decide) */
+    struct guard {                               /* the per-block budget (see the guard, above run) */
         uint32_t t_stage, t_end;                 /* cycle count at the last looper stage; at the end of it this block (0: not reached) */
         float per;                               /* the block period, cycles (smoothed) */
         float rest;                              /* the task after the looper stage (stock output, compressor, interrupts): recent worst, cycles */
-        float cpi;                               /* cycles per modelled instruction (track_model): recent worst */
         float fx;                                /* the looper's own work after the tracks: recent worst, cycles */
-        uint32_t calm;                           /* blocks in a row with room for one level better */
-        uint8_t lvl, force, top, shown;          /* tracks faded out now; forced (+1, tests); the most this report; the last report's */
+        float cpi;                               /* cycles per modelled instruction, average (only for a track not measured yet) */
+        float est[LOOPER_TRACKS];                /* a track's cycles as set, recent worst; and the model's figure when measured (to follow the knobs) */
+        float estm[LOOPER_TRACKS];
+        uint16_t wcur, wlast, wn;                /* the whole task's worst block (per mille): this window, the last one; blocks in this window */
+        float wdec;                              /* ... and a worst that fades over ~50 blocks (a fade turns back when that is low) */
+        uint16_t cool;                           /* blocks before the next fade may start */
+        uint16_t urec[LOOPER_TRACKS];            /* blocks since the player unmuted a track the guard had muted (it is the last to go again) */
+        uint8_t gm[LOOPER_TRACKS];               /* muted by the guard (the page shows it muted: the player unmutes it) */
+        uint8_t fading[LOOPER_TRACKS];           /* fading out, to be muted */
+        uint8_t tq[LOOPER_TRACKS];               /* how it is computed this block: 0 as set, 3 the cheapest (cut in this block: no time for it) */
+        uint8_t force, top, shown, cuts;         /* tests: no load decisions; tracks out this report (most), the last report's; cut in the last report */
         uint16_t rep;
-        uint8_t aud[LOOPER_TRACKS];              /* the track plays out this block (decided with the level) */
-        uint8_t out[LOOPER_TRACKS];              /* faded out (or fading) for lack of time */
-        uint8_t tq[LOOPER_TRACKS];               /* how it is computed this block: 0 as set; 1 one filter stage, no drive (while it fades out); 3 the cheapest (no time even for that) */
         float fo[LOOPER_TRACKS];                 /* how far it is faded: 0 not at all (as set), 1 silent */
         uint16_t yield;                          /* SAMPLR and the looper's tracks in the last block, per mille of the period (they give way: DRONE-8's governor leaves them out) */
     } gd;
@@ -1780,19 +1785,22 @@ static void apply(int t, int b)
 }
 
 /* One block of the whole looper: bl / br = the Out 1 bus (read as the "mix" source, then the loop is added to it). */
-/* --- the guard: a budget for every block, so the audio task never runs out of time.
- * Order in the block: stock voices and effects, DRONE-8, SAMPLR, then the looper's tracks, then the stock output. When the tracks
- * start, the time used so far is known exactly; what the tracks will take is predicted from what they have switched on
- * (track_model, instructions measured in the emulator) times the cycles per instruction the unit has shown lately; what comes after
- * is the recent worst. Nothing about how a track sounds is changed: when the tracks do not fit, whole tracks fade out, track 3 first,
- * then 2, 1, 4, as many as needed in this block (over ~11 ms, computed a little cheaper while they fade; with no time even for that,
- * at once and as cheaply as possible). Their play heads keep running. With room again (~1 s with a quarter to spare) they come back
- * one at a time, the other way round, fading in over ~100 ms. */
-#define GUARD_BUDGET .90f                         /* of the block period: the rest is the margin for what the prediction misses */
-#define WAKE (*(volatile uint32_t *)0x2405ffd4u) /* cpu.c: the cycle count when the audio task woke up for this block */
+/* --- the guard, so the audio task never runs out of time. Order in the block: stock voices and effects, DRONE-8, SAMPLR, the looper's
+ * tracks, the stock output. Nothing about how a track sounds is ever changed; tracks are faded out and muted instead.
+ * - Musically: when the whole task's worst block in the last half second reached GUARD_SOFT, a track fades out over ~0.75 s and is then
+ *   muted (the page shows it; the player unmutes it when they want it back). Order: track 3, 2, 1, then 4; a track the player unmuted in
+ *   the last ~3 s goes last. One at a time, with a second's look at the load in between.
+ * - In the block, the hard limit: before each track, its cost (what it took lately as set, following the knobs through the model) is
+ *   checked against the time left up to GUARD_HARD of the block minus what comes after the looper (recent worst). A track that does not
+ *   fit is cut in this block (a ramp to 0 within the block, computed as cheaply as possible; with no time even for that, at once) and
+ *   muted. That is for spikes (a pad / sequence starting); the fades above keep it from being needed. */
+#define GUARD_HARD .97f                           /* of the block period: the end of everything */
+#define GUARD_SOFT 940                            /* per mille: a block this full starts a fade */
+#define FADE_OUT   (1.f / 280.f)                  /* ~0.75 s */
+#define WAKE (*(volatile uint32_t *)0x2405ffd4u)  /* cpu.c: the cycle count when the audio task woke up for this block */
 #define CYC  (*(volatile uint32_t *)0xe0001004u)
 
-/* A track's work for one block of n frames at guard level lv, in instructions (emulator profile, tools/prof_mem.py). */
+/* A track's work for one block of n frames at guard level lv (0 as set, 3 the cheapest), in instructions (emulator, tools/prof_mem.py). */
 static float track_model(struct dsp *d, int t, vtrack *k, int lv, int n)
 {
     float f = k->filt, sp = k->speed;
@@ -1803,7 +1811,7 @@ static float track_model(struct dsp *d, int t, vtrack *k, int lv, int n)
     int grains = semi != 0 || (keep && (spd < .98f || spd > 1.02f));
     int mod = sp > .01f || sp < -.01f || k->stab > .01f || k->trim > .08f || k->drop > .02f || k->drop < -.02f || k->stut > .02f ||
               k->stut < -.02f || k->scrm > .02f || k->scrm < -.02f || semi != 0 || (keep && k->half);
-    float c = 110.f;                                                      /* read, gain, output (fitted to the levels of the everything-on case) */
+    float c = 110.f;                                                      /* read, gain, output (fitted to the everything-on case) */
     if (mod)
         c += 170.f + (k->stab > .01f ? 40.f : 0.f) + (k->drop > .02f || k->drop < -.02f ? 25.f : 0.f);
     if (grains && lv < 2)
@@ -1829,6 +1837,16 @@ static int track_out(vtrack *k)                    /* the track plays out (or is
     return k->len && (k->mode == LOOPER_PLAY || k->mode == LOOPER_DUB) && (!k->muted || k->gain_l > GAIN_EPS || k->gain_r > GAIN_EPS);
 }
 
+/* What track t will take in this block as set (cycles). */
+static float guard_est(struct dsp *d, int t, vtrack *k, int n)
+{
+    struct guard *g = &d->gd;
+    float m = track_model(d, t, k, 0, n);
+    if (g->est[t] > 0.f && g->estm[t] > 0.f)
+        return g->est[t] * m / g->estm[t];                                /* what it took lately, scaled by what the knobs changed since */
+    return m * g->cpi;
+}
+
 /* From looper_stage, before DRONE-8: the block period. */
 static void guard_stage(struct dsp *d, uint32_t now)
 {
@@ -1838,11 +1856,11 @@ static void guard_stage(struct dsp *d, uint32_t now)
     if (per > 200000u && per < 20000000u)
         g->per = g->per > 0.f ? g->per + ((float)per - g->per) * .02f : (float)per;
     if (g->cpi <= 0.f)
-        g->cpi = 2.5f;                                                    /* (until the unit has shown its own) */
+        g->cpi = 1.5f;                                                    /* (measured on the unit: L 51 % for 355 k instructions a block) */
 }
 
-/* The cycles left in this block for what still has to run before the looper's tracks, if the tracks and the rest came to nothing:
- * SAMPLR asks before it plays. Large when nothing is known yet. */
+/* The cycles left in this block before the hard limit, if the looper's tracks took nothing: SAMPLR asks before each track. Large when
+ * nothing is known yet. */
 int32_t looper_budget_left(void)
 {
     if (S->magic != MAGIC || !S->ok)
@@ -1851,109 +1869,122 @@ int32_t looper_budget_left(void)
     uint32_t used = CYC - WAKE;
     if (g->per <= 0.f || (float)used > 2.f * g->per)
         return 0x7fffffff;
-    return (int32_t)(GUARD_BUDGET * g->per - (float)used - g->rest - g->fx);
+    return (int32_t)(GUARD_HARD * g->per - (float)used - g->rest - g->fx);
 }
 
-/* Before the tracks: which tracks fade out in this block. */
-#define FADE_OUT .25f                                     /* of the way a block: ~11 ms */
-#define FADE_IN  (1.f / 37.f)                             /* ~100 ms */
-static void guard_decide(struct dsp *d, int n)
+/* Before the tracks: the player's unmutes, and the fades (one at a time, from the load the whole task has shown). */
+static void guard_decide(struct dsp *d)
 {
     struct guard *g = &d->gd;
-    static const int8_t give[LOOPER_TRACKS] = {2, 1, 0, 3};   /* the order tracks give way: 3, 2, 1, then 4 (it comes back first) */
-    int ord[LOOPER_TRACKS], na = 0;                       /* the tracks that play out, in that order */
-    float full[LOOPER_TRACKS], fade[LOOPER_TRACKS], low[LOOPER_TRACKS];
-    for (int t = 0; t < LOOPER_TRACKS; t++)
-        g->aud[t] = (uint8_t)track_out(&S->t[t]);
-    for (int q = 0; q < LOOPER_TRACKS; q++) {
-        int t = give[q];
+    int fading = 0;
+    for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
-        if (g->aud[t]) {
-            int gone = g->fo[t] >= 1.f;                   /* faded out already: nothing to compute */
-            full[na] = track_model(d, t, k, 0, n) * g->cpi;
-            fade[na] = gone ? 0.f : track_model(d, t, k, 1, n) * g->cpi;   /* fading out: a little cheaper */
-            low[na] = gone ? 0.f : track_model(d, t, k, 3, n) * g->cpi;    /* going at once: the cheapest */
-            ord[na++] = t;
+        if (g->gm[t] && !k->muted) {                                      /* the player unmuted it: it plays, and goes last next time */
+            g->gm[t] = 0;
+            g->urec[t] = 0;
+        }
+        if (g->urec[t] < 0xffffu)
+            g->urec[t]++;
+        if (g->fading[t]) {
+            if (k->muted || !track_out(k)) {                              /* the player muted it meanwhile, or it stopped */
+                g->fading[t] = 0;
+                g->fo[t] = 0.f;
+            } else if (g->wdec < (float)(GUARD_SOFT - 100)) {             /* the load went down meanwhile: it turns back */
+                g->fading[t] = 0;
+                g->cool = 188;
+            } else if ((g->fo[t] += FADE_OUT) >= 1.f) {                   /* faded: muted now (silent already, so nothing is heard) */
+                g->fading[t] = 0;
+                g->fo[t] = 0.f;
+                k->muted = 1;
+                k->gain_l = k->gain_r = 0.f;
+                g->gm[t] = 1;
+                g->cool = 2 * 188;                                        /* a full half second of the load without it before the next */
+            } else {
+                fading = 1;
+            }
+        } else if (!g->gm[t] && g->fo[t] > 0.f) {
+            g->fo[t] = g->fo[t] > 2.f * FADE_OUT ? g->fo[t] - 2.f * FADE_OUT : 0.f;   /* turned back: fading in again (~0.4 s) */
         }
     }
-    int cur = g->lvl > na ? na : g->lvl, k = cur, now = 0;
-    int32_t left = looper_budget_left();
-    if (g->force) {
-        k = g->force - 1 > na ? na : g->force - 1;
-    } else if (left != 0x7fffffff) {
-        /* j tracks out (the first j in the order): what the rest costs once they are silent, and in this block while they go */
-        float room = (float)left, rest[LOOPER_TRACKS + 1], gofade[LOOPER_TRACKS + 1], gonow[LOOPER_TRACKS + 1];
-        for (int j = 0; j <= na; j++) {
-            rest[j] = gofade[j] = gonow[j] = 0.f;
-            for (int i = 0; i < na; i++) {
-                rest[j] += i < j ? 0.f : full[i];
-                gofade[j] += i < j ? fade[i] : 0.f;
-                gonow[j] += i < j ? low[i] : 0.f;
+    if (g->cool)
+        g->cool--;
+    if (!fading && !g->cool && !g->force && g->wlast >= GUARD_SOFT && g->wn == 0) {   /* (once a window: a fresh look each time) */    /* the worst block lately was near the limit: one track goes */
+        static const int8_t give[LOOPER_TRACKS] = {2, 1, 0, 3};          /* 3, 2, 1, then 4 */
+        int pick = -1;
+        for (int pass = 0; pass < 2 && pick < 0; pass++)                  /* (one the player has just unmuted only if there is no other) */
+            for (int q = 0; q < LOOPER_TRACKS && pick < 0; q++) {
+                int t = give[q];
+                vtrack *k = &S->t[t];
+                if (track_out(k) && !k->muted && (pass || g->urec[t] > 1100))
+                    pick = t;
             }
+        if (pick >= 0) {
+            g->fading[pick] = 1;
+            g->fo[pick] = FADE_OUT;
         }
-        int fit = 0;                                      /* the fewest tracks out that fit, once faded */
-        while (fit < na && rest[fit] > room)
-            fit++;
-        if (fit < cur && rest[cur - 1] < .75f * room) {   /* one back after ~1 s with a quarter to spare */
-            if (++g->calm >= 400) {
-                k = cur - 1;
-                g->calm = 0;
-            }
-        } else {
-            g->calm = 0;
-            if (fit > cur)
-                k = fit;                                  /* fewer tracks: at once */
-        }
-        /* this block: the ones going fade if that fits, else they go at once (cheaply); else one more goes */
-        while (k < na && rest[k] + gofade[k] > room && rest[k] + gonow[k] > room)
-            k++;
-        now = rest[k] + gofade[k] > room;
     }
-    for (int t = 0; t < LOOPER_TRACKS; t++)
-        g->out[t] = 0;
-    for (int i = 0; i < k; i++)
-        g->out[ord[i]] = 1;
+    int nm = 0;
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         g->tq[t] = 0;
-        if (g->out[t]) {
-            if (now) {
-                g->fo[t] = 1.f;
-                g->tq[t] = 3;
-            } else if (g->fo[t] < 1.f) {
-                g->fo[t] = g->fo[t] + FADE_OUT > 1.f ? 1.f : g->fo[t] + FADE_OUT;
-                g->tq[t] = 1;
-            }
-        } else if (g->fo[t] > 0.f) {
-            g->fo[t] = g->fo[t] - FADE_IN < 0.f ? 0.f : g->fo[t] - FADE_IN;
-        }
+        nm += g->gm[t] || g->fading[t];
     }
-    g->lvl = (uint8_t)k;
-    g->top = k > g->top ? (uint8_t)k : g->top;
-    if (++g->rep >= 375) {                                /* the readout: the most tracks out in the last second */
-        g->shown = g->top;
-        g->top = (uint8_t)k;
+    g->top = nm > (g->top & 15) ? (uint8_t)((g->top & ~15) | nm) : g->top;
+    if (++g->rep >= 375) {                                                /* the readout, once a second: the most tracks out, and a cut */
+        g->shown = (uint8_t)((g->top & 15) | (g->cuts ? 16 : 0));
+        g->top = (uint8_t)nm;
+        g->cuts = 0;
         g->rep = 0;
     }
 }
 
-/* After a track: what it cost, against the model (the worst lately sets the cycles per instruction). */
+/* Before track t: does it fit the time left in this block? If not, it is cut here (and muted). Returns 0: play as set, 1: cut
+ * with a ramp (computed as cheaply as possible), 2: no time even for that: not played. */
+static int guard_fit(struct dsp *d, int t, int n)
+{
+    struct guard *g = &d->gd;
+    vtrack *k = &S->t[t];
+    if (g->force || !track_out(k) || k->muted)
+        return 0;
+    int32_t left = looper_budget_left();
+    if (left == 0x7fffffff || guard_est(d, t, k, n) <= (float)left)
+        return 0;
+    k->muted = 1;                                                         /* cut: shown muted, the player unmutes it */
+    g->gm[t] = 1;
+    g->fading[t] = 0;
+    g->fo[t] = 0.f;
+    g->cuts = 1;
+    g->cool = 2 * 188;
+    if (track_model(d, t, k, 3, n) * g->cpi <= (float)left) {
+        g->tq[t] = 3;
+        return 1;
+    }
+    k->gain_l = k->gain_r = 0.f;
+    return 2;
+}
+
+/* After a track played as set: what it cost (the hard limit's figure for it). */
 static void guard_track(struct dsp *d, int t, uint32_t cyc, int n)
 {
     struct guard *g = &d->gd;
     vtrack *k = &S->t[t];
-    if (!g->aud[t] || g->out[t] || g->force)
+    if (g->tq[t] || !track_out(k) || cyc > 50000000u)
         return;
-    float m = track_model(d, t, k, g->tq[t], n);
-    if (m < 1000.f || cyc > 50000000u)
+    float m = track_model(d, t, k, 0, n);
+    if (m < 1000.f)
         return;
+    float c = (float)cyc;
+    if (g->est[t] > 0.f && g->estm[t] > 0.f) {
+        float e = g->est[t] * m / g->estm[t];
+        c = c > e ? c : e + (c - e) * .02f;                               /* up at once, down over ~50 blocks */
+    }
+    g->est[t] = c;
+    g->estm[t] = m;
     float r = (float)cyc / m;
-    r = r > 8.f ? 8.f : r;
-    g->cpi = r > g->cpi ? r : g->cpi + (r - g->cpi) * .002f;              /* up at once, down slowly */
-    if (g->cpi < .6f)
-        g->cpi = .6f;
+    if (r > .3f && r < 6.f)
+        g->cpi += (r - g->cpi) * .01f;
 }
 
-/* From cpu.c when the audio task has finished its block: the rest after the looper stage. */
+/* From cpu.c when the audio task has finished its block: what came after the looper stage, and how full the whole block was. */
 void looper_block_done(uint32_t now)
 {
     if (S->magic != MAGIC || !S->ok)
@@ -1962,8 +1993,20 @@ void looper_block_done(uint32_t now)
     if (g->t_end) {
         uint32_t r = now - g->t_end;
         if (r < 20000000u)
-            g->rest = (float)r > g->rest ? (float)r : g->rest * .995f;
+            g->rest = (float)r > g->rest ? (float)r : g->rest * .97f;
         g->t_end = 0;
+    }
+    uint32_t used = now - WAKE;
+    if (g->per > 0.f && (float)used < 4.f * g->per) {
+        float w = (float)used * 1000.f / g->per;
+        uint16_t wi = (uint16_t)(w > 9990.f ? 9990.f : w);
+        g->wcur = wi > g->wcur ? wi : g->wcur;
+        g->wdec = w > g->wdec ? w : g->wdec * .98f;
+    }
+    if (++g->wn >= 188) {                                                 /* windows of half a second */
+        g->wlast = g->wcur;
+        g->wcur = 0;
+        g->wn = 0;
     }
 }
 
@@ -1972,15 +2015,15 @@ unsigned looper_yield_permille(void)               /* DRONE-8's governor: what o
     return S->magic == MAGIC && S->ok ? DSP()->gd.yield : 0u;
 }
 
-int looper_guard_level(void)                       /* the worst level in the last second (the readouts) */
+int looper_guard_level(void)                       /* the readout: tracks muted (or fading) by the guard, most in the last second; +16 if one had to be cut */
 {
     return S->magic == MAGIC && S->ok ? DSP()->gd.shown : 0;
 }
 
-void looper_guard_force(int lv)                    /* tests: -1 back to the budget, else that level */
+void looper_guard_force(int on)                    /* tests: 1 the guard makes no decisions, 0 back to normal */
 {
     if (S->magic == MAGIC && S->ok)
-        DSP()->gd.force = (uint8_t)(lv < 0 ? 0 : lv > 4 ? 5 : lv + 1);
+        DSP()->gd.force = (uint8_t)(on != 0);
 }
 
 static int run(float *bl, float *br, int n)
@@ -2101,9 +2144,14 @@ static int run(float *bl, float *br, int n)
     }
     float *snd[4] = {d->acc[0], d->acc[1], d->acc[2], d->acc[3]};
     int sends = samplr_run(bl, br, n, snd);          /* SAMPLR first: SOURCE MIX records it, and its sends join the looper's delay and reverb */
-    guard_decide(d, n);                              /* what the tracks can afford this block */
+    guard_decide(d);                                 /* the player's unmutes, the fades */
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
+        int fit = guard_fit(d, t, n);                /* the hard limit: a track that does not fit this block is cut (and muted) */
+        if (fit == 2) {
+            skip_seg(t, n);
+            continue;
+        }
         uint32_t tc0 = CYC;
         struct pb p;
         setup(d, t, &p, k, n);

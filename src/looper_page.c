@@ -1215,12 +1215,14 @@ static void draw_sm_top(struct sm *s, const char *info)
         *q++ = 'M';
     }
     {
-        int gl = looper_guard_level();                            /* the looper: how many tracks are faded out for lack of time (3 first, then 2, 1, 4) */
+        int gl = looper_guard_level();                            /* the looper: tracks it faded out and muted for lack of time (3 first, then 2, 1, 4); c: one had to be cut */
         if (gl > 0) {
             *q++ = ' ';
             *q++ = 'L';
             *q++ = '!';
-            *q++ = (char)('0' + gl);
+            *q++ = (char)('0' + (gl & 15));
+            if (gl & 16)
+                *q++ = 'c';
         }
     }
     *q = 0;
