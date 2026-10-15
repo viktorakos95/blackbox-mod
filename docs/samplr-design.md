@@ -573,3 +573,7 @@ The Looper's MORE tab is gone: SETUP now holds all nine option rows (MONITOR INP
 ## Build 57
 
 DRONE-8 3.1.AF merged (PAN: each oscillator its own random place). BACK on the Looper's MAIN tab now goes to the stock song screen (the undo is gone from the button); with the other pages: FX/FX2/SETUP -> MAIN, SAMPLR -> PLAY sheet -> Looper MAIN, TRIG -> sheet 1 -> SAMPLR, DRONE-8 -> TRIG. The round: SONG forward, BACK backward, both through the stock song screen.
+
+## Build 58
+
+DRONE-8 (latest) merged. Tints stronger: Looper bg 30333a / lines 6a6e78, SAMPLR bg 262c47 / lines 4b5580, and every yellow on the SAMPLR page (palette 0x14) is lilac. Verified in the emulator that the palette entries hold the tint at the moment of each fill.

@@ -1718,10 +1718,10 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
  * the Looper is brushed silver (the EHX 45000 it follows), SAMPLR a little lighter and bluer with a pale mint waveform (C_WAVE).
  * TRIG keeps the stock colours. */
 static const struct { uint8_t idx; uint32_t argb; } tint_looper[] = {
-    {0x02, 0xff25272b}, {0x19, 0xff1b1c1f}, {0x10, 0xff4c4f56},
+    {0x02, 0xff30333a}, {0x19, 0xff24262b}, {0x10, 0xff6a6e78},
 };
 static const struct { uint8_t idx; uint32_t argb; } tint_samplr[] = {
-    {0x02, 0xff1d2130}, {0x19, 0xff161926}, {0x10, 0xff3d4562}, {0x1c, 0xffb4ead6}, {0x1e, 0xffc3aef0},
+    {0x02, 0xff262c47}, {0x19, 0xff1d2238}, {0x10, 0xff4b5580}, {0x1c, 0xffb4ead6}, {0x1e, 0xffc3aef0}, {0x14, 0xffc3aef0},
 };
 static int tint_set(uint32_t *save)
 {
