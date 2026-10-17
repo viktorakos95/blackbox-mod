@@ -51,6 +51,7 @@
  *
  * State: the backup SRAM at 0x38800c00 (0x300 bytes; the page's own state follows at 0x38800f00), rebuilt every boot.
  */
+#include "crash.h"
 #include <stdint.h>
 
 #include "looper.h"
@@ -290,6 +291,7 @@ void looper_boot(void *engine)
 {
     fw_pool_init(engine);
     bkp_enable();
+    crash_boot();                                 /* why the last run ended (src/crash.c), before anything else of ours runs */
     t2m_boot();                                   /* Trigger2MIDI (src/t2m_bb.c): its memory, while nothing else allocates */
     S->magic = 0;
     S->engine = (uint8_t *)engine;
@@ -690,6 +692,7 @@ static void verify(void)
 /* Replaces the input stage's tail call (b.w @0x0804cb18): time keeping only; the audio is handled at the Out 1 stage. */
 void looper_in(void *obj, float **bufs, int frames)
 {
+    crash_bc(BC_AUDIO, BCA_IN);
     S->in_frames = 0;
     if (S->magic == MAGIC && S->ok && frames > 0) {
         S->ticks++;
@@ -767,6 +770,7 @@ void looper_in(void *obj, float **bufs, int frames)
     }
     if (frames > 0)
         t2m_audio(bufs[0], bufs[1], frames);      /* Trigger2MIDI on both inputs (src/t2m_bb.c) */
+    crash_bc(BC_AUDIO, 0);
     fw_in_tail(obj, bufs, frames);
 }
 
@@ -2203,7 +2207,9 @@ static int run(float *bl, float *br, int n)
     }
     float *snd[4] = {d->acc[0], d->acc[1], d->acc[2], d->acc[3]};
     int dsend = lira_send_add(d->acc[2], d->acc[3], n);
-    int sends = samplr_run(bl, br, n, snd);          /* SAMPLR first: SOURCE MIX records it, and its sends join the looper's delay and reverb */
+    crash_bc(BC_AUDIO, BCA_SAMPLR);
+    int sends = samplr_run(bl, br, n, snd);
+    crash_bc(BC_AUDIO, BCA_TRACKS);          /* SAMPLR first: SOURCE MIX records it, and its sends join the looper's delay and reverb */
     guard_decide(d);                                 /* the player's unmutes, the fades */
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
@@ -2333,15 +2339,22 @@ void looper_stage(uint8_t *obj, void *bufs)
     if (l && r && n > 0) {
         read_bpm(bufs);
         uint32_t c_in = *(volatile uint32_t *)0xe0001004u, pre = c_in - *(volatile uint32_t *)0x2405ffd4u;   /* (cycles since the wake-up: stock voices, effects, synths) */
+        crash_tick();
         guard_stage(DSP(), c_in, n);
+        crash_bc(BC_AUDIO, BCA_DRONE);
         lira_page_run(l, r, n);                    /* the LIRA page's voices, before the looper so SOURCE MIX records them */
+        crash_bc(BC_AUDIO, BCA_STAGE);
         lira_rec_begin(l, r, n);
         uint32_t c_l = *(volatile uint32_t *)0xe0001004u;
-        if (!run(l, r, n))
+        if (!run(l, r, n)) {
+            crash_bc(BC_AUDIO, BCA_SAMPLR);
             samplr_run(l, r, n, 0);
+        }
+        crash_bc(BC_AUDIO, BCA_STAGE);
         uint32_t c_y = *(volatile uint32_t *)0xe0001004u - c_l;
         samplr_stage_prof(pre, c_l - c_in, c_y);
         lira_rec_end(l, r, n);                     /* what the looper added, for the pad recorder's LOOPER input */
+        crash_bc(BC_AUDIO, 0);
     }
 }
 

@@ -674,6 +674,20 @@ touch("down", 84 + 60, row(8))
 touch("up", 84 + 60, row(8))
 check("SETUP: SPEED PITCH choice GRAIN (1)", optv(14) == 1.0)
 
+touch("down", 84 + 150, row(9))
+touch("up", 84 + 150, row(9))
+f = draw(0)
+check("SETUP: a tap on the right end of the last row shows the crash record instead of the options (no sliders), inside the screen",
+      not any(x[2] == 150 and x[3] == 1 for x in f) and len(pixels) > 100 and all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f), (len(pixels),))
+o9 = optv(9)
+touch("down", 84 + 30, row(5))
+touch("up", 84 + 30, row(5))
+check("... where the option rows were, a tap changes nothing", optv(9) == o9, (o9, optv(9)))
+touch("down", 84 + 150, row(9))
+touch("up", 84 + 150, row(9))
+f = draw(0)
+check("... and a second tap brings the options back", any(x[2] == 150 and x[3] == 1 for x in f))
+
 opt_sync_off = struct.pack("<f", 0.0)
 for off in (164, 168, 176, 164 + 40):
     e.uc.mem_write(STATE + off, opt_sync_off)

@@ -38,6 +38,7 @@
  *
  * State lives in the backup SRAM after the engine's (0x38800f00, 256 bytes). looper_boot calls page_boot().
  */
+#include "crash.h"
 #include <stdint.h>
 
 #include "looper.h"
@@ -135,7 +136,7 @@ static const uint8_t knob_slot[4] = {2, 0, 1, 3};                 /* knob -> til
 #define INFO_HOLD    84          /* 0.45 s */
 
 enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
-enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL };
+enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL, Z_DBG };
 enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, M_TRIG, M_LIRA, MODES };   /* M_TRIG: Trigger2MIDI (src/t2m_page.c), tab 6; M_LIRA: the LIRA-8 page (lira_ui.inc), tab 7 */
 #define SM_SHEETS 4
 #define SMS_REC 1
@@ -190,6 +191,7 @@ struct page {
 
 _Static_assert(sizeof(struct page) <= 0x100, "page state must fit its 256 bytes");
 
+#define DBG_VIEW (P->_le[0])     /* SETUP shows the crash record (src/crash.c) instead of its options */
 #define FB ((void *)P->fb)       /* the frame buffer (no .bss in the code cave: it lives with the page state) */
 
 /* ---- geometry */
@@ -407,9 +409,11 @@ int looper_page_hit(int x, int d, int *track, float *val)
             *track = 100 - ((r - OPT_ROWS) * 3 + b + 1);          /* 99 FX, 98 REC, 97 BACK, 96 STOP, 95 PLAY, 94 STOCK FX */
             return Z_OPTC;
         }
+        if (P->mode == M_SETUP && DBG_VIEW && r < OPT_ROWS)
+            return Z_NONE;                                        /* (the crash record's lines are not options) */
         if (r == OPT_ROWS) {
             if (P->mode == M_SETUP)
-                return x >= OPT_X && x < OPT_X + 110 ? Z_CLEAR : Z_NONE;
+                return x >= OPT_X && x < OPT_X + 110 ? Z_CLEAR : x >= OPT_X + 116 ? Z_DBG : Z_NONE;
 #ifdef BANK2
             if (P->mode == M_MORE) {
                 *track = 93;
@@ -1002,6 +1006,17 @@ static void draw_setup(const struct lay *L)
 {
     box(1, L->col_y, P->w - 2, L->col_h, C_BG);
     const struct optrow *rows = page_rows();
+    if (P->mode == M_SETUP && DBG_VIEW) {                         /* the crash record (src/crash.c): why the unit last restarted */
+        char b[64];
+        for (int i = 0; crash_line(i, b, sizeof b); i++)
+            text(6, row_d(L, 0) + 2 + 16 * i, b, i == 0 ? (crash_pending() ? C_RED : C_WHITE) : C_LIGHT, 1);
+        int d = row_d(L, OPT_ROWS);
+        frame(OPT_X, d, 110, ROW_H - 4, C_RAIL, 1);
+        text_c(OPT_X, d + 5, 110, "SEEN / CLEAR", C_LIGHT, 1);
+        frame(OPT_X + 116, d, 80, ROW_H - 4, C_CYAN, 1);
+        text_c(OPT_X + 116, d + 5, 80, "OPTIONS", C_CYAN, 1);
+        return;
+    }
     for (int r = 0; r < OPT_ROWS; r++) {
         const struct optrow *R = &rows[r];
         int d = row_d(L, r);
@@ -1048,6 +1063,7 @@ static void draw_setup(const struct lay *L)
             *p++ = *q;
         *p = 0;
         text(OPT_X + 120, d + 5, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
+        frame(OPT_X + 116, d - 1, P->w - OPT_X - 120, ROW_H - 2, crash_pending() ? C_RED : C_RAIL, 1);   /* tap: the crash record */
     } else {
         /* one diagnostic line: the last button message, the sequencer clock's position and rate, the screens visited */
         for (const char *q = "LAST "; *q; q++)
@@ -1135,7 +1151,9 @@ static void draw_footer(const struct lay *L)
     }
     frame(P->w - 58, L->foot_y + 2, 54, FOOT - 3, C_RAIL, 1);
     text_c(P->w - 58, L->foot_y + 4, 54, "STOCK FX", C_LIGHT, 1);
-    if (looper_paused() && P->mode < M_SMPLR)             /* (the Looper's own state: not carried onto the other pages) */
+    if (crash_pending() && P->mode < M_SMPLR && !looper_paused())
+        text(x0, L->foot_y + 4, "RESTART: SEE SETUP", C_RED, 1);
+    else if (looper_paused() && P->mode < M_SMPLR)             /* (the Looper's own state: not carried onto the other pages) */
         text(x0, L->foot_y + 4, "PAUSE", C_RED, 1);
     else if (P->info_on == 1)
         text(x0, L->foot_y + 4, "SHIFT", C_RED, 1);
@@ -1749,7 +1767,16 @@ static void tint_restore(const uint32_t *save, int n)
 }
 
 /* The whole page, into the frame buffer the last stock draw pass handed over. */
+static void paint_(uint8_t *view);
 static void paint(uint8_t *view)
+{
+    uint8_t was = CRASH_BC[BC_GUI];
+    crash_bc(BC_GUI, BCG_PAINT);
+    paint_(view);
+    crash_bc(BC_GUI, was);
+}
+
+static void paint_(uint8_t *view)
 {
     uint32_t pal_save[16];
     int tn = 0;
@@ -2082,7 +2109,7 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         return;
     P->track = (uint8_t)t;
     int was_sel = P->sel == t;
-    if (zone != Z_TAB && zone != Z_OPTC && zone != Z_SLIDER && zone != Z_CLEAR)
+    if (zone != Z_TAB && zone != Z_OPTC && zone != Z_SLIDER && zone != Z_CLEAR && zone != Z_DBG)
         P->sel = (uint8_t)t;                                      /* touching a track's column selects it */
     if (P->info_on)
         info_touch();
@@ -2122,6 +2149,10 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         looper_set_opt(t, v);
         P->drag_opt = (uint8_t)t;
         P->pressed = P_SLIDER;
+    } else if (zone == Z_DBG) {
+        DBG_VIEW = (uint8_t)!DBG_VIEW;
+    } else if (zone == Z_CLEAR && DBG_VIEW) {
+        crash_clear();                                            /* (in the crash record's view the button only marks it seen) */
     } else if (zone == Z_CLEAR) {
         if (P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) {
             P->clear_arm = 2;                                     /* asked twice within 3 s: CLEARED! for a while */
@@ -2351,7 +2382,15 @@ static int info_button(unsigned id, unsigned idx)
 }
 
 /* Replaces the app's message dispatch call (bl @0x080a23cc). */
+static void app_msg(void *app, const uint16_t *msg);
 void looper_app_msg(void *app, const uint16_t *msg)
+{
+    crash_bc(BC_GUI, BCG_MSG);
+    app_msg(app, msg);
+    crash_bc(BC_GUI, 0);
+}
+
+static void app_msg(void *app, const uint16_t *msg)
 {
     looper_note_app(app);
     if (P->magic == PMAGIC) {                                     /* screen history: the stock pages' ids, read later on MORE */

@@ -30,6 +30,7 @@
  * when all are taken, a new LIRA pad takes the one silent longest (over ~50 ms), which starts afresh. CPU: about 1400 instructions per sample per playing instance
  * (Unicorn count), nothing while silent.
  */
+#include "crash.h"
 #include <stdint.h>
 #include "lira.h"
 #include "lira_ui.h"
@@ -1651,7 +1652,16 @@ int lira_rec_store(int v)                                  /* the stock node's v
     return v >= 4 ? 3 : v;
 }
 
+static void rec_fill(void *bus);
 void lira_rec_fill(void *bus)                              /* the recorder's input bus, just filled with the master copy */
+{
+    uint8_t was = CRASH_BC[BC_AUDIO];
+    crash_bc(BC_AUDIO, BCA_RECFILL);
+    rec_fill(bus);
+    crash_bc(BC_AUDIO, was);
+}
+
+static void rec_fill(void *bus)
 {
     struct pool *p = pool();
     if (!p || !p->pg.rec_src || p->pg.rec_src > 2)
@@ -1754,7 +1764,15 @@ static uint32_t blob_crc(const struct blob *b)
     return h;
 }
 
+static void lira_save_(void);
 void lira_save(void)
+{
+    crash_bc(BC_FILE, BCF_SAVE);
+    lira_save_();
+    crash_bc(BC_FILE, 0);
+}
+
+static void lira_save_(void)
 {
     struct pool *p = pool();
     if (!p)
@@ -1816,7 +1834,15 @@ void lira_save(void)
     }
 }
 
+static void lira_load_(void);
 void lira_load(void)
+{
+    crash_bc(BC_FILE, BCF_LOAD);
+    lira_load_();
+    crash_bc(BC_FILE, 0);
+}
+
+static void lira_load_(void)
 {
     struct pool *p = pool();
     if (!p)

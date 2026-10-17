@@ -80,4 +80,4 @@ class Emu:
         self.uc.mem_write(a, struct.pack("<I", v & 0xFFFFFFFF))
 
     def cstr(self, a):
-        return bytes(self.uc.mem_read(a, 32)).split(b"\0")[0].decode()
+        return bytes(self.uc.mem_read(a, 64)).split(b"\0")[0].decode()

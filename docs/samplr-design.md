@@ -594,3 +594,13 @@ The looper's spike cut (looper_over_cap -> guard_fit) is in two halves: the bloc
 Build 59-61 did not boot on the unit (58 did). The pad recorder's Rec Input list had grown to 7 entries (SAMPLR added); the stock registration is the prime suspect, so the list is back to 6 (L+R, Left, Right, Resam, DRONE, LOOPER = looper + SAMPLR) and the SAMPLR-alone source is gone. Open until confirmed on the unit.
 
 Confirmed on the unit: build 62 boots. The cause of the 59-61 boot loop was the seven-entry Rec Input list (the stock registration takes six at most). Do not add entries to that list; a SAMPLR-alone source would need another way in (e.g. a SAMPLR switch deciding whether LOOPER includes it).
+
+## Build 63: the crash recorder (step 1 of the stability task)
+
+src/crash.c, src/crash_thunk.S, patches/crash.py (apply with `cave`; the full set is now `... looper clkmon lira lirarec lirasave crash cave`).
+- The four fault vectors (hard, memory, bus, usage) go to crash_fault: the exception frame (PC, LR, xPSR, r0, r12, four words above it), CFSR / HFSR / MMFAR / BFAR and the breadcrumbs go to backup SRAM 0x38800b38, then an immediate reset (the stock handlers spin until the watchdog).
+- The stock allocator's out-of-memory path (message call @0x08044452, then it halts) goes to crash_oom_thunk: the size asked for and the caller.
+- Every run keeps a live block at 0x38800b20: breadcrumbs per task (audio: stage / drone / SAMPLR / looper tracks / recorder fill / input; GUI: message / paint; file: save / load), audio blocks since boot, free SDRAM low point and last value, averaged load and its peak. A restart without a fault (watchdog, power) still leaves these.
+- crash_boot (from looper_boot) reads and clears RCC_RSR and puts the last run's record together.
+- Shown on the Looper's SETUP page: tap the box at the right end of the last row (BPM). The footer of the Looper pages says RESTART: SEE SETUP while a restart record has not been looked at; SEEN / CLEAR in the record's view marks it seen.
+- Resolve PC / LR / STK with `arm-none-eabi-addr2line -f -e cave.elf ADDR` for addresses in the cave (>= 0x080F1E78) against that build's cave.elf; stock addresses with disasm.py.
