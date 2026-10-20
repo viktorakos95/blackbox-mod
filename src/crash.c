@@ -69,6 +69,21 @@ struct asamp {
 #define AS ((volatile struct asamp *)0x38800390u)
 #define CUR_TCB (*(volatile uint32_t *)0x2401f2a8u)    /* FreeRTOS pxCurrentTCB (the PendSV handler's literal) */
 _Static_assert(0x38800390u + sizeof(struct asamp) <= 0x38800400u, "the loop-A samples must end before comp.c's state at 0x400");
+/* The SD card driver (stock sd_diskio, 0x08045974 read / 0x080459e8 write): it starts a DMA transfer and waits up to 5 s for
+ * the completion message; a transfer that fails sends none, so each failure costs 5 s and the loader's few failing reads
+ * add up to the watchdog's 20 s. Here (patches/crash.py): the wait is 500 ms, and a failed read or write is tried again
+ * (up to four times), each failure counted with the HAL's state and error and the SDMMC's status. Backup SRAM 0x38800940
+ * (after MCL's 0x920..0x930, before Trigger2MIDI's root at 0x980). */
+struct sdst {
+    uint32_t magic;
+    uint16_t fails, recov, gaveup, op;   /* failed tries, operations that worked again, operations that failed four times; the last failure (1 read, 2 write) */
+    uint32_t sector, err, sta, ctl;      /* the last failure: sector, HAL state << 24 | error code, SDMMC STA, DCTRL << 16 | IDMACTRL */
+    uint16_t r_fails, r_recov, r_gaveup, r_op;
+    uint32_t r_err, r_sta;
+};
+#define SD ((volatile struct sdst *)0x38800940u)
+#define SD_MAGIC 0x31534453u
+_Static_assert(0x38800940u + sizeof(struct sdst) <= 0x38800980u, "the SD block must end before Trigger2MIDI's root at 0x980");
 #define LIVE ((volatile struct live *)0x38800b20u)
 #define REC ((volatile struct rec *)0x38800b38u)
 #define LIVE_MAGIC 0x4556494cu
@@ -199,6 +214,19 @@ void crash_boot(void)
         w->cyc_au = w->cyc_gui = w->cyc_a = w->site_a = w->per = 0;
         w->lag_a = w->lag_b = 0;
     }
+    {
+        volatile struct sdst *q = SD;
+        int ok = q->magic == SD_MAGIC;
+        q->r_fails = ok ? q->fails : 0;
+        q->r_recov = ok ? q->recov : 0;
+        q->r_gaveup = ok ? q->gaveup : 0;
+        q->r_op = ok ? q->op : 0;
+        q->r_err = ok ? q->err : 0;
+        q->r_sta = ok ? q->sta : 0;
+        q->magic = SD_MAGIC;
+        q->fails = q->recov = q->gaveup = q->op = 0;
+        q->sector = q->err = q->sta = q->ctl = 0;
+    }
     r->state = 2;                                                 /* (not looked at yet) */
     r->rsr = rsr;
     r->boots++;
@@ -280,6 +308,67 @@ void crash_stamp_b(volatile uint32_t *obj)                        /* in place of
 {
     WD->cyc_gui = CYC;
     obj[1] = obj[2];
+}
+
+typedef int (*sd_fn)(uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count);
+
+/* Before a try: the HAL must be idle again, and a completion message that came after its wait gave up must not be taken
+ * for this try's (the data would be read before it is there). */
+static int sd_settle(void)
+{
+    typedef void (*get_fn)(uint32_t *ev, uint32_t queue, uint32_t ms);
+    uint32_t ev[3];
+    for (int i = 0; i < 8; i++) {                                 /* drain the driver's queue (osMessageGet, no wait) */
+        ((get_fn)0x08087be9u)(ev, *(volatile uint32_t *)0x24009bf8u, 0);
+        if (ev[0] != 0x10u)
+            break;
+    }
+    typedef uint32_t (*tick_fn)(void);
+    uint32_t t0 = ((tick_fn)0x08087a5du)();                       /* osKernelSysTick: ms */
+    while (*(volatile uint8_t *)(0x24009bfcu + 0x30) != 1) {      /* the HAL's state back to READY (1): up to 200 ms (this task is the lowest: */
+        if (((tick_fn)0x08087a5du)() - t0 > 200u)                 /*  everything else runs over the wait) */
+            return 0;
+    }
+    return 1;
+}
+
+static int sd_try(int op, sd_fn f, uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count)
+{
+    volatile struct sdst *q = SD;
+    for (int t = 0; t < 4; t++) {
+        if (t && !sd_settle())
+            break;
+        int r = f(lun, buf, sector, count);
+        if (r == 0) {
+            if (t && q->magic == SD_MAGIC && q->recov < 0xffffu)
+                q->recov++;
+            return 0;
+        }
+        if (q->magic == SD_MAGIC) {
+            volatile uint8_t *h = (volatile uint8_t *)0x24009bfcu;             /* the HAL's SD handle */
+            volatile uint32_t *m = (volatile uint32_t *)0x52007000u;          /* SDMMC1 */
+            if (q->fails < 0xffffu)
+                q->fails++;
+            q->op = (uint16_t)op;
+            q->sector = sector;
+            q->err = (uint32_t)h[0x30] << 24 | (*(volatile uint32_t *)(h + 0x34) & 0xffffffu);
+            q->sta = m[0x34 / 4];
+            q->ctl = m[0x2c / 4] << 16 | (m[0x50 / 4] & 0xffffu);
+        }
+    }
+    if (q->magic == SD_MAGIC && q->gaveup < 0xffffu)
+        q->gaveup++;
+    return 1;
+}
+
+int crash_sd_read(uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count)     /* in the driver table, for 0x08045975 */
+{
+    return sd_try(1, (sd_fn)0x08045975u, lun, buf, sector, count);
+}
+
+int crash_sd_write(uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count)    /* for 0x080459e9 */
+{
+    return sd_try(2, (sd_fn)0x080459e9u, lun, buf, sector, count);
 }
 
 int crash_pending(void)
@@ -516,6 +605,26 @@ int crash_line(int i, char *buf, int n)
             p = put_s(p, e, " ");
             p = put_x(p, e, a->chain[4]);
         }
+        break;
+    }
+    case 16: {
+        volatile struct sdst *q = SD;
+        p = put_s(p, e, "SD FAILS ");
+        p = put_u(p, e, q->r_fails);
+        p = put_s(p, e, " RETRIED OK ");
+        p = put_u(p, e, q->r_recov);
+        p = put_s(p, e, " GAVE UP ");
+        p = put_u(p, e, q->r_gaveup);
+        break;
+    }
+    case 17: {
+        volatile struct sdst *q = SD;
+        if (!q->r_fails)
+            return 0;
+        p = put_s(p, e, q->r_op == 2 ? "LAST WRITE ERR " : "LAST READ ERR ");
+        p = put_x(p, e, q->r_err);
+        p = put_s(p, e, " STA ");
+        p = put_x(p, e, q->r_sta);
         break;
     }
     default:

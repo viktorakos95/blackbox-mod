@@ -40,7 +40,7 @@ from unicorn.arm_const import UC_ARM_REG_R0
 
 def lines():
     out = []
-    for i in range(16):
+    for i in range(18):
         buf = 0x2407F000
         e.call("crash_line", i, buf, 64)
         out.append(e.cstr(buf) if e.uc.reg_read(UC_ARM_REG_R0) else "")
@@ -166,6 +166,41 @@ L = lines()
 check("loop A late: where it was (its saved PC and LR) and how many samples", any(l.startswith("A LATE AT PC 08088757 LR 0807ABC1 N 3") for l in L), L[11:])
 check("... the object it waits on (r4) and its callers (odd code addresses above the frame)", L[14] == "OBJ 2400BEEF CALLERS 08074123 080740F9" and L[15] == "08074407 0808A001 08099999", L[14:16])
 
+# the SD driver: a failed read is tried again (after the queue is drained and the HAL is idle), each failure counted
+e.uc.mem_map(0x52007000, 0x1000)
+e.w32(0x52007034, 0x00000020)                                     # SDMMC STA: RX overrun
+e.uc.mem_write(0x24009BFC + 0x30, bytes([1]))                     # HAL state READY
+e.w32(0x24009BFC + 0x34, 0x20)                                    # ErrorCode: RX overrun
+tries = []
+def sd_read():
+    tries.append(e.arg(2))
+    e.ret(1 if len(tries) <= res_fail else 0)
+e.stubs[0x08045974] = sd_read
+drained = []
+e.stub(0x08087BE8, lambda: (drained.append(1), e.w32(e.arg(0), 0)))   # osMessageGet: no message
+e.stub(0x08087A5C, value=1000)                                      # osKernelSysTick
+res_fail = 2
+e.call("crash_sd_read", 0, 0x24000000, 1234, 1)
+check("a read that fails twice is tried again and works (returns 0)", e.uc.reg_read(UC_ARM_REG_R0) == 0 and tries == [1234] * 3 and len(drained) >= 2, (e.uc.reg_read(UC_ARM_REG_R0), tries, len(drained)))
+tries.clear()
+res_fail = 9
+e.call("crash_sd_read", 0, 0x24000000, 77, 1)
+check("... one that keeps failing gives up after four tries (returns an error, no 20 s wait)", e.uc.reg_read(UC_ARM_REG_R0) == 1 and len(tries) == 4, (e.uc.reg_read(UC_ARM_REG_R0), tries))
+e.uc.mem_write(0x24009BFC + 0x30, bytes([3]))                     # HAL stuck BUSY
+tries.clear()
+ticks = [1000]
+def tick():
+    ticks[0] += 50
+    e.ret(ticks[0])
+e.stubs[0x08087A5C] = tick
+e.call("crash_sd_read", 0, 0x24000000, 78, 1)
+check("... and with the HAL stuck busy it stops after the first try (200 ms), not retrying into a busy driver", e.uc.reg_read(UC_ARM_REG_R0) == 1 and len(tries) == 1, (tries,))
+e.w32(RSR, 1 << 24)
+e.call("crash_boot")
+L = lines()
+check("the record counts them: 2 + 4 + 1 failures, 1 retried OK, 2 given up", L[16] == "SD FAILS 7 RETRIED OK 1 GAVE UP 2", L[16])
+check("... with the last failure's HAL state / error and the SDMMC status", L[17] == "LAST READ ERR 03000020 STA 00000020", L[17])
+
 # the patch: the four fault vectors and the allocator's call site
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+lira+lirarec+lirasave+crash+cave/BLACKBOX.bin", "rb").read()
 vec = struct.unpack("<4I", img[12:28])
@@ -174,6 +209,9 @@ sys.path.insert(0, "patches")
 from thumb import bl                                               # noqa: E402
 o = 0x08044452 - 0x08040000
 check("the allocator's halt message call goes to crash_oom_thunk", img[o:o + 4] == bl(0x08044452, e.sym["crash_oom_thunk"]))
+tab = struct.unpack("<2I", img[0x080CFC24 - 0x08040000:0x080CFC2C - 0x08040000])
+check("the SD driver table's read and write go to the retrying wrappers", tab == (e.sym["crash_sd_read"] | 1, e.sym["crash_sd_write"] | 1), [hex(t) for t in tab])
+check("the driver's waits are 500 ms", img[0x08045998 - 0x08040000:][:4] == bytes.fromhex("40f2f412") and img[0x08045A0E - 0x08040000:][:4] == bytes.fromhex("40f2f412"))
 
 print("failures:", fails)
 sys.exit(1 if fails else 0)
