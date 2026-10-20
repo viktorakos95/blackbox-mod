@@ -64,6 +64,7 @@ struct asamp {
     uint32_t tcb, n;               /* task A's TCB (seen when it stamps); samples taken this run */
     uint32_t pc[6], lr[6];
     uint32_t r_n, r_pc[3], r_lr[3];   /* at boot: the last run's three latest samples (newest first) */
+    uint32_t r4, chain[5];         /* the latest sample's r4 (the waiting function's object) and the first code addresses above its frame (the callers) */
 };
 #define AS ((volatile struct asamp *)0x38800390u)
 #define CUR_TCB (*(volatile uint32_t *)0x2401f2a8u)    /* FreeRTOS pxCurrentTCB (the PendSV handler's literal) */
@@ -252,6 +253,16 @@ void crash_wd(volatile uint32_t *obj)
             as->pc[k] = hw[6];
             as->lr[k] = hw[5];
             as->n++;
+            as->r4 = sp[0];
+            int m = 0;
+            const uint32_t *q = hw + ((exc & 0x10u) ? 8 : 26);
+            for (int i = 0; i < 96 && m < 5 && in_ram((uint32_t)(q + i)); i++) {
+                uint32_t v = q[i];
+                if ((v & 1u) && v >= 0x08040001u && v < 0x08140000u)  /* odd and in the code: a return address, likely */
+                    as->chain[m++] = v;
+            }
+            for (; m < 5; m++)
+                as->chain[m] = 0;
         }
     }
     ((void (*)(volatile uint32_t *))0x08046995u)(obj);
@@ -476,13 +487,34 @@ int crash_line(int i, char *buf, int n)
         }
         if ((uint32_t)k >= a->r_n || k > 2)
             return 0;
-        p = put_s(p, e, k == 0 ? "A LATE AT PC " : "   BEFORE PC ");
+        p = put_s(p, e, k == 0 ? "A LATE AT PC " : "BEFORE PC ");
         p = put_x(p, e, a->r_pc[k]);
         p = put_s(p, e, " LR ");
         p = put_x(p, e, a->r_lr[k]);
         if (k == 0) {
             p = put_s(p, e, " N ");
             p = put_u(p, e, a->r_n);
+        }
+        break;
+    }
+    case 14:
+    case 15: {
+        volatile struct asamp *a = AS;
+        if (!a->r_n)
+            return 0;
+        if (i == 14) {
+            p = put_s(p, e, "OBJ ");
+            p = put_x(p, e, a->r4);
+            p = put_s(p, e, " CALLERS ");
+            p = put_x(p, e, a->chain[0]);
+            p = put_s(p, e, " ");
+            p = put_x(p, e, a->chain[1]);
+        } else {
+            p = put_x(p, e, a->chain[2]);
+            p = put_s(p, e, " ");
+            p = put_x(p, e, a->chain[3]);
+            p = put_s(p, e, " ");
+            p = put_x(p, e, a->chain[4]);
         }
         break;
     }

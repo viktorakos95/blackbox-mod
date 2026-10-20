@@ -40,12 +40,10 @@ from unicorn.arm_const import UC_ARM_REG_R0
 
 def lines():
     out = []
-    for i in range(12):
+    for i in range(16):
         buf = 0x2407F000
         e.call("crash_line", i, buf, 64)
-        if not e.uc.reg_read(UC_ARM_REG_R0):
-            break
-        out.append(e.cstr(buf))
+        out.append(e.cstr(buf) if e.uc.reg_read(UC_ARM_REG_R0) else "")
     return out
 
 
@@ -151,8 +149,9 @@ check("... and the lags at the last check (A 300 blocks, B 100)", L[10].startswi
 TCB, STK = 0x24072000, 0x24072100
 e.w32(0x2401F2A8, TCB)                                            # pxCurrentTCB while loop A stamps
 e.w32(TCB, STK)                                                   # TCB: the saved stack pointer first
-ctx = [0] * 8 + [0xFFFFFFFD] + [0] * 5 + [0x0807ABC1, 0x08088757, 0x01000000]   # r4-r11, EXC_RETURN (no FPU), r0-r3 r12, lr, pc, xpsr
-e.uc.mem_write(STK, struct.pack("<17I", *ctx))
+ctx = [0x2400BEEF] + [0] * 7 + [0xFFFFFFFD] + [0] * 5 + [0x0807ABC1, 0x08088757, 0x01000000]   # r4-r11, EXC_RETURN (no FPU), r0-r3 r12, lr, pc, xpsr
+ctx += [0x24001234, 0x08074123, 0x00000000, 0x080740F9, 0x08074407, 0x0808A001, 0x08099999]  # the task's stack above: data and return addresses
+e.uc.mem_write(STK, struct.pack("<24I", *ctx))
 e.w32(OBJ, 0); e.w32(OBJ + 4, 0); e.w32(OBJ + 8, 0)
 e.call("crash_stamp_a", OBJ)
 for blk in range(1, 520):
@@ -165,6 +164,7 @@ e.w32(RSR, 1 << 28)
 e.call("crash_boot")
 L = lines()
 check("loop A late: where it was (its saved PC and LR) and how many samples", any(l.startswith("A LATE AT PC 08088757 LR 0807ABC1 N 3") for l in L), L[11:])
+check("... the object it waits on (r4) and its callers (odd code addresses above the frame)", L[14] == "OBJ 2400BEEF CALLERS 08074123 080740F9" and L[15] == "08074407 0808A001 08099999", L[14:16])
 
 # the patch: the four fault vectors and the allocator's call site
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+lira+lirarec+lirasave+crash+cave/BLACKBOX.bin", "rb").read()
