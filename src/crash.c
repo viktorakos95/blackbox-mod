@@ -57,6 +57,17 @@ struct wdog {
 #define WD ((volatile struct wdog *)0x38800b98u)
 #define CYC (*(volatile uint32_t *)0xe0001004u)
 _Static_assert(0x38800b98u + sizeof(struct wdog) <= 0x38800bc0u, "the watchdog block must end before the flight recorder at 0xbc0");
+/* While loop A is late (2 s and more), where it is: its saved PC and LR (FreeRTOS: the task's TCB starts with its saved
+ * stack pointer; the context there is r4-r11 and EXC_RETURN, then s16-s31 if it used the FPU, then the exception frame),
+ * a sample every 64 blocks into a ring of six. Backup SRAM 0x38800390..0x38800400 (after od.c's bank, before comp.c). */
+struct asamp {
+    uint32_t tcb, n;               /* task A's TCB (seen when it stamps); samples taken this run */
+    uint32_t pc[6], lr[6];
+    uint32_t r_n, r_pc[3], r_lr[3];   /* at boot: the last run's three latest samples (newest first) */
+};
+#define AS ((volatile struct asamp *)0x38800390u)
+#define CUR_TCB (*(volatile uint32_t *)0x2401f2a8u)    /* FreeRTOS pxCurrentTCB (the PendSV handler's literal) */
+_Static_assert(0x38800390u + sizeof(struct asamp) <= 0x38800400u, "the loop-A samples must end before comp.c's state at 0x400");
 #define LIVE ((volatile struct live *)0x38800b20u)
 #define REC ((volatile struct rec *)0x38800b38u)
 #define LIVE_MAGIC 0x4556494cu
@@ -174,6 +185,16 @@ void crash_boot(void)
         w->r_lag_a = ok ? w->lag_a : 0;
         w->r_lag_b = ok ? w->lag_b : 0;
         w->r_site = ok ? w->site_a : 0;
+        volatile struct asamp *as = AS;
+        uint32_t n = ok ? as->n : 0;
+        as->r_n = n;
+        for (int i = 0; i < 3; i++) {
+            int j = (int)((n - 1u - (uint32_t)i) % 6u);
+            as->r_pc[i] = (uint32_t)i < n ? as->pc[j] : 0;
+            as->r_lr[i] = (uint32_t)i < n ? as->lr[j] : 0;
+        }
+        as->n = 0;
+        as->tcb = 0;
         w->cyc_au = w->cyc_gui = w->cyc_a = w->site_a = w->per = 0;
         w->lag_a = w->lag_b = 0;
     }
@@ -221,6 +242,18 @@ void crash_wd(volatile uint32_t *obj)
     uint32_t c = obj[2];
     w->lag_a = (uint16_t)((c - obj[0]) > 0xffffu ? 0xffffu : c - obj[0]);
     w->lag_b = (uint16_t)((c - obj[1]) > 0xffffu ? 0xffffu : c - obj[1]);
+    volatile struct asamp *as = AS;
+    if (w->lag_a >= 375u && (w->lag_a & 63u) == 0 && in_ram(as->tcb)) {   /* loop A 2 s late: where is it? */
+        const uint32_t *sp = *(const uint32_t *const *)as->tcb;
+        if (in_ram((uint32_t)sp) && in_ram((uint32_t)(sp + 40))) {
+            uint32_t exc = sp[8];
+            const uint32_t *hw = sp + 9 + ((exc & 0x10u) ? 0 : 16);
+            uint32_t k = as->n % 6u;
+            as->pc[k] = hw[6];
+            as->lr[k] = hw[5];
+            as->n++;
+        }
+    }
     ((void (*)(volatile uint32_t *))0x08046995u)(obj);
 }
 
@@ -228,6 +261,7 @@ void __attribute__((noinline)) crash_stamp_a(volatile uint32_t *obj)    /* in pl
 {
     WD->cyc_a = CYC;
     WD->site_a = (uint32_t)__builtin_return_address(0) - 5u;      /* (the bl's address) */
+    AS->tcb = CUR_TCB;                                            /* (this runs in loop A's task) */
     obj[0] = obj[2];
 }
 
@@ -429,6 +463,27 @@ int crash_line(int i, char *buf, int n)
         p = put_u(p, e, w->r_lag_b);
         p = put_s(p, e, "  A AT ");
         p = put_x(p, e, w->r_site);
+        break;
+    }
+    case 11:
+    case 12:
+    case 13: {
+        volatile struct asamp *a = AS;
+        int k = i - 11;
+        if (k == 0 && !a->r_n) {
+            p = put_s(p, e, "LOOP A WAS NEVER LATE");
+            break;
+        }
+        if ((uint32_t)k >= a->r_n || k > 2)
+            return 0;
+        p = put_s(p, e, k == 0 ? "A LATE AT PC " : "   BEFORE PC ");
+        p = put_x(p, e, a->r_pc[k]);
+        p = put_s(p, e, " LR ");
+        p = put_x(p, e, a->r_lr[k]);
+        if (k == 0) {
+            p = put_s(p, e, " N ");
+            p = put_u(p, e, a->r_n);
+        }
         break;
     }
     default:

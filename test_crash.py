@@ -147,6 +147,25 @@ check("window watchdog restart: WINDOW WDG", L[0] == "LAST RESTART: WINDOW WDG /
 check("... the GUI went on ~341 ms after the last audio block, loop A ~53 ms", L[9] == "AFTER AUDIO: GUI +341MS  LOOP A +53MS", L[9])
 check("... and the lags at the last check (A 300 blocks, B 100)", L[10].startswith("LAG A 300 B 100  A AT "), L[10])
 
+# loop A late: its saved PC / LR sampled from its TCB
+TCB, STK = 0x24072000, 0x24072100
+e.w32(0x2401F2A8, TCB)                                            # pxCurrentTCB while loop A stamps
+e.w32(TCB, STK)                                                   # TCB: the saved stack pointer first
+ctx = [0] * 8 + [0xFFFFFFFD] + [0] * 5 + [0x0807ABC1, 0x08088757, 0x01000000]   # r4-r11, EXC_RETURN (no FPU), r0-r3 r12, lr, pc, xpsr
+e.uc.mem_write(STK, struct.pack("<17I", *ctx))
+e.w32(OBJ, 0); e.w32(OBJ + 4, 0); e.w32(OBJ + 8, 0)
+e.call("crash_stamp_a", OBJ)
+for blk in range(1, 520):
+    e.w32(OBJ + 4, blk)                                           # the GUI keeps stamping
+    e.w32(OBJ + 8, blk)
+    cyc += PER
+    e.w32(0xE0001004, cyc)
+    e.call("crash_wd", OBJ)
+e.w32(RSR, 1 << 28)
+e.call("crash_boot")
+L = lines()
+check("loop A late: where it was (its saved PC and LR) and how many samples", any(l.startswith("A LATE AT PC 08088757 LR 0807ABC1 N 3") for l in L), L[11:])
+
 # the patch: the four fault vectors and the allocator's call site
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+lira+lirarec+lirasave+crash+cave/BLACKBOX.bin", "rb").read()
 vec = struct.unpack("<4I", img[12:28])
