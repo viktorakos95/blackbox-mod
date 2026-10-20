@@ -83,7 +83,26 @@ struct sdst {
 };
 #define SD ((volatile struct sdst *)0x38800940u)
 #define SD_MAGIC 0x31534453u
-_Static_assert(0x38800940u + sizeof(struct sdst) <= 0x38800980u, "the SD block must end before Trigger2MIDI's root at 0x980");
+_Static_assert(0x38800940u + sizeof(struct sdst) <= 0x3880096cu, "the SD block must end before the scheduler figures at 0x96c");
+/* The RTOS clock: is the tick running, and is the scheduler suspended (then no task switches and no timeout expires)?
+ * Sampled every audio block: ticks a second, the longest run of blocks with the scheduler suspended this run, and then the
+ * running task's TCB and (when the audio code runs in an interrupt) the interrupted task's PC. Live 0x38800930 (after MCL's
+ * 0x920..0x930), the last run's figures at 0x3880096c (after the SD block). */
+struct sched {
+    uint32_t tick0;                /* the tick count at the last rate sample */
+    uint16_t rate, streak, max, ipsr;
+};
+struct sched_r {
+    uint16_t rate, max, streak, ipsr;
+    uint32_t pc, tcb;
+};
+#define XTICK (*(volatile uint32_t *)0x2401f1a4u)        /* FreeRTOS xTickCount */
+#define XSUSP (*(volatile uint32_t *)0x2401f180u)        /* uxSchedulerSuspended */
+#define SC ((volatile struct sched *)0x38800930u)
+#define SCR ((volatile struct sched_r *)0x3880096cu)
+#define SC_PC (*(volatile uint32_t *)0x38800384u)        /* (live: the interrupted PC and the TCB at the longest suspension) */
+#define SC_TCB (*(volatile uint32_t *)0x38800388u)
+_Static_assert(sizeof(struct sched) <= 16, "the scheduler block is 0x930..0x940");
 #define LIVE ((volatile struct live *)0x38800b20u)
 #define REC ((volatile struct rec *)0x38800b38u)
 #define LIVE_MAGIC 0x4556494cu
@@ -211,6 +230,17 @@ void crash_boot(void)
         }
         as->n = 0;
         as->tcb = 0;
+        volatile struct sched *sk = SC;
+        volatile struct sched_r *kr = SCR;
+        kr->rate = ok ? sk->rate : 0;
+        kr->max = ok ? sk->max : 0;
+        kr->streak = ok ? sk->streak : 0;
+        kr->ipsr = ok ? sk->ipsr : 0;
+        kr->pc = ok ? SC_PC : 0;
+        kr->tcb = ok ? SC_TCB : 0;
+        sk->tick0 = 0;
+        sk->rate = sk->streak = sk->max = sk->ipsr = 0;
+        SC_PC = SC_TCB = 0;
         w->cyc_au = w->cyc_gui = w->cyc_a = w->site_a = w->per = 0;
         w->lag_a = w->lag_b = 0;
     }
@@ -260,6 +290,20 @@ void crash_tick(void)
     }
 }
 
+uint32_t __attribute__((noipa)) crash_ipsr(void)                  /* (functions of their own: the tests stub them) */
+{
+    uint32_t v;
+    __asm volatile("mrs %0, ipsr" : "=r"(v));
+    return v;
+}
+
+uint32_t __attribute__((noipa)) crash_psp(void)
+{
+    uint32_t v;
+    __asm volatile("mrs %0, psp" : "=r"(v));
+    return v;
+}
+
 /* In place of the audio block's watchdog check (bl @0x0804cb36): obj = {stamp A, stamp B, blocks}. */
 void crash_wd(volatile uint32_t *obj)
 {
@@ -271,6 +315,28 @@ void crash_wd(volatile uint32_t *obj)
     uint32_t c = obj[2];
     w->lag_a = (uint16_t)((c - obj[0]) > 0xffffu ? 0xffffu : c - obj[0]);
     w->lag_b = (uint16_t)((c - obj[1]) > 0xffffu ? 0xffffu : c - obj[1]);
+    {
+        volatile struct sched *k = SC;
+        uint32_t ip = crash_ipsr();
+        k->ipsr = (uint16_t)(ip & 0x1ffu);
+        if ((c % 188u) == 0) {                                    /* about once a second: ticks since the last time */
+            uint32_t t = XTICK, dt = t - k->tick0;
+            k->rate = (uint16_t)(dt > 0xffffu ? 0xffffu : dt);
+            k->tick0 = t;
+        }
+        if (XSUSP) {
+            if (k->streak < 0xffffu)
+                k->streak++;
+            if (k->streak > k->max) {
+                k->max = k->streak;
+                uint32_t psp = crash_psp();
+                SC_PC = (ip & 0x1ffu) && in_ram(psp) ? ((const uint32_t *)psp)[6] : 0;
+                SC_TCB = CUR_TCB;
+            }
+        } else {
+            k->streak = 0;
+        }
+    }
     volatile struct asamp *as = AS;
     if (w->lag_a >= 375u && (w->lag_a & 63u) == 0 && in_ram(as->tcb)) {   /* loop A 2 s late: where is it? */
         const uint32_t *sp = *(const uint32_t *const *)as->tcb;
@@ -605,6 +671,28 @@ int crash_line(int i, char *buf, int n)
             p = put_s(p, e, " ");
             p = put_x(p, e, a->chain[4]);
         }
+        break;
+    }
+    case 18: {
+        volatile struct sched_r *kr = SCR;
+        p = put_s(p, e, "TICKS/S ");
+        p = put_u(p, e, kr->rate);
+        p = put_s(p, e, " SUSPENDED MAX ");
+        p = put_u(p, e, kr->max);
+        p = put_s(p, e, " NOW ");
+        p = put_u(p, e, kr->streak);
+        p = put_s(p, e, " IRQ ");
+        p = put_u(p, e, kr->ipsr);
+        break;
+    }
+    case 19: {
+        volatile struct sched_r *kr = SCR;
+        if (!kr->max)
+            return 0;
+        p = put_s(p, e, "SUSP AT PC ");
+        p = put_x(p, e, kr->pc);
+        p = put_s(p, e, " TCB ");
+        p = put_x(p, e, kr->tcb);
         break;
     }
     case 16: {

@@ -28,6 +28,8 @@ def check(name, ok, info=""):
 
 resets = []
 e.stub(e.sym["crash_reset"], lambda: resets.append(1))
+e.stub(e.sym["crash_ipsr"], value=0)                              # (Unicorn has no M-profile special registers)
+e.stub(e.sym["crash_psp"], value=0)
 e.w32(0x24000088, 0xC0100000)                                   # the allocator: 1 MB free
 e.w32(0x2400008C, 0xC0000000)
 RSR = 0x580244D0
@@ -40,7 +42,7 @@ from unicorn.arm_const import UC_ARM_REG_R0
 
 def lines():
     out = []
-    for i in range(18):
+    for i in range(20):
         buf = 0x2407F000
         e.call("crash_line", i, buf, 64)
         out.append(e.cstr(buf) if e.uc.reg_read(UC_ARM_REG_R0) else "")
@@ -200,6 +202,23 @@ e.call("crash_boot")
 L = lines()
 check("the record counts them: 2 + 4 + 1 failures, 1 retried OK, 2 given up", L[16] == "SD FAILS 7 RETRIED OK 1 GAVE UP 2", L[16])
 check("... with the last failure's HAL state / error and the SDMMC status", L[17] == "LAST READ ERR 03000020 STA 00000020", L[17])
+
+# the RTOS clock: ticks a second and the scheduler held suspended
+e.w32(OBJ, 0); e.w32(OBJ + 4, 0)
+tick = 5000
+for blk in range(1, 400):
+    e.w32(OBJ + 8, blk)
+    tick += 5 if blk < 200 else 0                                 # 5 ms a block, then the tick stops
+    e.w32(0x2401F1A4, tick)
+    e.w32(0x2401F180, 1 if blk >= 200 else 0)                     # and the scheduler is held suspended
+    cyc += PER
+    e.w32(0xE0001004, cyc)
+    e.call("crash_wd", OBJ)
+e.w32(RSR, 1 << 28)
+e.call("crash_boot")
+L = lines()
+check("the tick rate (here: stopped in the last second) and the longest run of blocks with the scheduler suspended", L[18].startswith("TICKS/S 55 SUSPENDED MAX 200 NOW 200"), L[18])
+check("... where (TCB of the running task at the longest one)", L[19].startswith("SUSP AT PC ") and L[19].endswith("TCB 24072000"), L[19])
 
 # the patch: the four fault vectors and the allocator's call site
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+lira+lirarec+lirasave+crash+cave/BLACKBOX.bin", "rb").read()

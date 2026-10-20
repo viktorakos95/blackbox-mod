@@ -1008,7 +1008,7 @@ static void draw_setup(const struct lay *L)
     const struct optrow *rows = page_rows();
     if (P->mode == M_SETUP && DBG_VIEW) {                         /* the crash record (src/crash.c): why the unit last restarted */
         char b[64];
-        for (int i = 0, y = 0; i < 18; i++)
+        for (int i = 0, y = 0; i < 20; i++)
             if (crash_line(i, b, sizeof b))
                 text(6, row_d(L, 0) + 1 + 9 * y++, b, i == 0 ? (crash_pending() ? C_RED : C_WHITE) : C_LIGHT, 1);
         int d = row_d(L, OPT_ROWS);
