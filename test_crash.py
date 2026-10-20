@@ -120,6 +120,33 @@ e.call("crash_boot")
 L = lines()
 check("a fault with a stack outside the RAM: recorded (MEMORY FAULT), the frame not read", L[0].endswith("MEMORY FAULT") and L[1] == "PC 00000000  LR 00000000", L[:2])
 
+# the watchdog: the audio block's check and the two loops' stamps
+OBJ = 0x24071000
+checks = []
+e.stub(0x08046994, lambda: checks.append(e.arg(0)))
+e.w32(OBJ, 100)                                                   # stamp A at block 100, B at 300, now block 400
+e.w32(OBJ + 4, 300)
+e.w32(OBJ + 8, 400)
+PER = 2560000                                                     # cycles a block (480 MHz, 256 frames at 48 kHz)
+cyc = 1000
+for i in range(40):
+    cyc += PER
+    e.w32(0xE0001004, cyc)
+    e.call("crash_wd", OBJ)
+check("the audio block's watchdog check still runs the stock one (the refresh)", len(checks) == 40 and checks[0] == OBJ, len(checks))
+e.w32(0xE0001004, cyc + 64 * PER)                                 # the audio blocks stop; 64 blocks later (~341 ms) the GUI still stamps
+e.call("crash_stamp_b", OBJ)
+check("the GUI stamp still does the stock's job (B = blocks)", e.r32(OBJ + 4) == 400, e.r32(OBJ + 4))
+e.w32(0xE0001004, cyc + 10 * PER)
+e.call("crash_stamp_a", OBJ)
+check("so does stamp A", e.r32(OBJ) == 400, e.r32(OBJ))
+e.w32(RSR, 1 << 28)
+e.call("crash_boot")
+L = lines()
+check("window watchdog restart: WINDOW WDG", L[0] == "LAST RESTART: WINDOW WDG / NO FAULT", L[0])
+check("... the GUI went on ~341 ms after the last audio block, loop A ~53 ms", L[9] == "AFTER AUDIO: GUI +341MS  LOOP A +53MS", L[9])
+check("... and the lags at the last check (A 300 blocks, B 100)", L[10].startswith("LAG A 300 B 100  A AT "), L[10])
+
 # the patch: the four fault vectors and the allocator's call site
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+lira+lirarec+lirasave+crash+cave/BLACKBOX.bin", "rb").read()
 vec = struct.unpack("<4I", img[12:28])

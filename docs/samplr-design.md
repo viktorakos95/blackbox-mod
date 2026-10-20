@@ -604,3 +604,9 @@ src/crash.c, src/crash_thunk.S, patches/crash.py (apply with `cave`; the full se
 - crash_boot (from looper_boot) reads and clears RCC_RSR and puts the last run's record together.
 - Shown on the Looper's SETUP page: tap the box at the right end of the last row (BPM). The footer of the Looper pages says RESTART: SEE SETUP while a restart record has not been looked at; SEEN / CLEAR in the record's view marks it seen.
 - Resolve PC / LR / STK with `arm-none-eabi-addr2line -f -e cave.elf ADDR` for addresses in the cave (>= 0x080F1E78) against that build's cave.elf; stock addresses with disasm.py.
+
+## Build 64: the watchdog, measured
+
+First records from the unit (two restarts, drone recording onto a pad + browsing): WINDOW WDG / NO FAULT, no breadcrumb (no task in our code), RAM MIN 874 KB (not out of memory), load 60-80 %, after 123-156 s.
+The stock firmware's watchdog: WWDG1 (prescaler 128, counter 0x7f: ~0.3 s), refreshed only from the audio block (0x0804cb1c -> check 0x08046994), and only while stamp A (0x080469c4, from eight places: 0x08072bde 0x08072c96 0x080740f4 0x080743f2 0x08074402 0x080744cc 0x08091dfe 0x08092b6a) and stamp B (0x080469ca, the GUI's update at 0x080a2258) are within 3749 blocks (20 s). So the restart is either the audio blocks stopping for ~0.3 s, or loop A / the GUI not running for 20 s.
+Build 64 hooks the check and both stamps (crash_wd, crash_stamp_a, crash_stamp_b): DWT time of each, the lags, A's call site. The next record says which side stopped: "AFTER AUDIO: GUI +n MS LOOP A +n MS" (how long the others went on after the last audio block) and "LAG A n B n".

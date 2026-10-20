@@ -42,12 +42,27 @@ struct rec {
     uint16_t kbmin, kbnow, load, peak;
     uint32_t oom;                  /* out of memory: the size asked for */
 };
+/* The stock watchdog: the audio block (0x0804cb1c) calls a check (0x08046994) that refreshes the window watchdog only while
+ * two other loops have checked in within 3749 blocks (20 s): stamp A (several places, 0x080469c4) and stamp B (the GUI's
+ * update, 0x080469ca). The window watchdog resets ~0.3 s after the last refresh. Those three calls come here first, so a
+ * watchdog restart says which side stopped: the audio blocks (then the GUI and the other loop went on a while after them),
+ * or one of the two loops (its lag grew towards 3749). */
+struct wdog {
+    uint32_t cyc_au, cyc_gui, cyc_a, site_a, per;  /* DWT cycle count at the last audio check / GUI stamp / A stamp; A's call site; cycles a block */
+    uint16_t lag_a, lag_b;                         /* blocks since stamp A / B, at the last check */
+    int16_t r_gui, r_a;                            /* at boot: ms the GUI / loop A went on after the last audio block */
+    uint16_t r_lag_a, r_lag_b;
+    uint32_t r_site;
+};
+#define WD ((volatile struct wdog *)0x38800b98u)
+#define CYC (*(volatile uint32_t *)0xe0001004u)
+_Static_assert(0x38800b98u + sizeof(struct wdog) <= 0x38800bc0u, "the watchdog block must end before the flight recorder at 0xbc0");
 #define LIVE ((volatile struct live *)0x38800b20u)
 #define REC ((volatile struct rec *)0x38800b38u)
 #define LIVE_MAGIC 0x4556494cu
 #define REC_MAGIC 0x31435243u
 _Static_assert(sizeof(struct live) <= 24, "the live block must end before the record at 0xb38");
-_Static_assert(0x38800b38u + sizeof(struct rec) <= 0x38800bc0u, "the record must end before the flight recorder at 0xbc0");
+_Static_assert(0x38800b38u + sizeof(struct rec) <= 0x38800b98u, "the record must end before the watchdog block at 0xb98");
 
 static int in_ram(uint32_t a)
 {
@@ -149,6 +164,19 @@ void crash_boot(void)
             r->stk[i] = 0;
         fill_common(r);
     }
+    {
+        volatile struct wdog *w = WD;
+        int ok = v->magic == LIVE_MAGIC && w->per > 100000u && w->per < 100000000u;
+        float k = ok ? (256000.f / 48000.f) / (float)w->per : 0.f;   /* ms a cycle */
+        float g = (float)(int32_t)(w->cyc_gui - w->cyc_au) * k, a = (float)(int32_t)(w->cyc_a - w->cyc_au) * k;
+        w->r_gui = (int16_t)(g > 32000.f ? 32000.f : g < -32000.f ? -32000.f : g);
+        w->r_a = (int16_t)(a > 32000.f ? 32000.f : a < -32000.f ? -32000.f : a);
+        w->r_lag_a = ok ? w->lag_a : 0;
+        w->r_lag_b = ok ? w->lag_b : 0;
+        w->r_site = ok ? w->site_a : 0;
+        w->cyc_au = w->cyc_gui = w->cyc_a = w->site_a = w->per = 0;
+        w->lag_a = w->lag_b = 0;
+    }
     r->state = 2;                                                 /* (not looked at yet) */
     r->rsr = rsr;
     r->boots++;
@@ -180,6 +208,33 @@ void crash_tick(void)
         if (ld > v->peak && b > 400)                              /* (not the start-up) */
             v->peak = (uint16_t)ld;
     }
+}
+
+/* In place of the audio block's watchdog check (bl @0x0804cb36): obj = {stamp A, stamp B, blocks}. */
+void crash_wd(volatile uint32_t *obj)
+{
+    volatile struct wdog *w = WD;
+    uint32_t now = CYC, d = now - w->cyc_au;
+    if (w->cyc_au && d > 100000u && d < 100000000u)
+        w->per = w->per ? w->per + (d - w->per) / 16u : d;
+    w->cyc_au = now;
+    uint32_t c = obj[2];
+    w->lag_a = (uint16_t)((c - obj[0]) > 0xffffu ? 0xffffu : c - obj[0]);
+    w->lag_b = (uint16_t)((c - obj[1]) > 0xffffu ? 0xffffu : c - obj[1]);
+    ((void (*)(volatile uint32_t *))0x08046995u)(obj);
+}
+
+void __attribute__((noinline)) crash_stamp_a(volatile uint32_t *obj)    /* in place of the A stamps (0x080469c4) */
+{
+    WD->cyc_a = CYC;
+    WD->site_a = (uint32_t)__builtin_return_address(0) - 5u;      /* (the bl's address) */
+    obj[0] = obj[2];
+}
+
+void crash_stamp_b(volatile uint32_t *obj)                        /* in place of the GUI's stamp (0x080469ca) */
+{
+    WD->cyc_gui = CYC;
+    obj[1] = obj[2];
 }
 
 int crash_pending(void)
@@ -225,6 +280,17 @@ static char *put_u(char *p, char *e, uint32_t v)
     while (n && p < e)
         *p++ = t[--n];
     return p;
+}
+
+static char *put_i(char *p, char *e, int v)
+{
+    if (v < 0 && p < e) {
+        *p++ = '-';
+        v = -v;
+    } else if (p < e) {
+        *p++ = '+';
+    }
+    return put_u(p, e, (uint32_t)v);
 }
 
 static const char *bc_name(int id)
@@ -346,6 +412,25 @@ int crash_line(int i, char *buf, int n)
         p = put_s(p, e, "  RSR ");
         p = put_x(p, e, r->rsr);
         break;
+    case 9: {
+        volatile struct wdog *w = WD;
+        p = put_s(p, e, "AFTER AUDIO: GUI ");
+        p = put_i(p, e, w->r_gui);
+        p = put_s(p, e, "MS  LOOP A ");
+        p = put_i(p, e, w->r_a);
+        p = put_s(p, e, "MS");
+        break;
+    }
+    case 10: {
+        volatile struct wdog *w = WD;
+        p = put_s(p, e, "LAG A ");
+        p = put_u(p, e, w->r_lag_a);
+        p = put_s(p, e, " B ");
+        p = put_u(p, e, w->r_lag_b);
+        p = put_s(p, e, "  A AT ");
+        p = put_x(p, e, w->r_site);
+        break;
+    }
     default:
         return 0;
     }
