@@ -87,6 +87,9 @@ struct sched_r {
 };
 #define XTICK (*(volatile uint32_t *)0x2401f1a4u)        /* FreeRTOS xTickCount */
 #define XSUSP (*(volatile uint32_t *)0x2401f180u)        /* uxSchedulerSuspended */
+#define XNEXT (*(volatile uint32_t *)0x2401f188u)        /* xNextTaskUnblockTime (prvResetNextTaskUnblockTime, 0x08088a18) */
+#define XDLY (*(volatile uint32_t *)0x2401f1f0u)         /* pxDelayedTaskList */
+#define XOVF (*(volatile uint32_t *)0x2401f1ecu)         /* pxOverflowDelayedTaskList */
 #define XTOP (*(volatile uint32_t *)0x2401f1a0u)         /* uxTopReadyPriority: one bit per priority with a ready task (vTaskSwitchContext's CLZ) */
 #define XREADY ((volatile uint32_t *)0x2401f21cu)        /* pxReadyTasksLists[7], 20 bytes (5 words) each, uxNumberOfItems first */
 #define SC ((volatile struct sched *)0x38800930u)
@@ -373,6 +376,23 @@ void crash_wd(volatile uint32_t *obj)
                     k->heal_p = (uint8_t)pr;
                 }
             }
+            {   /* The kernel wakes delayed tasks only once the tick reaches xNextTaskUnblockTime, which must be the earliest wake time on
+                   the current delayed list (sorted: its head). Later than that (damaged) and a waiting task's timeout never ends (the loader
+                   stuck in the SD driver's 500 ms / 5 s wait while the tick ran: build 73's record). Bring it back to the head (only earlier). */
+                volatile uint32_t *dl = (volatile uint32_t *)XDLY;
+                if (in_ram((uint32_t)dl) && dl[0]) {
+                    uint32_t it = dl[3];                          /* xListEnd.pxNext: the first item */
+                    if (in_ram(it) && it != (uint32_t)(dl + 2)) {
+                        uint32_t wake = ((volatile uint32_t *)it)[0];   /* its xItemValue */
+                        if (wake < XNEXT) {
+                            XNEXT = wake;
+                            if (k->heal < 0xffffu)
+                                k->heal++;
+                            k->heal_p = 9;                        /* (9: the wake time) */
+                        }
+                    }
+                }
+            }
             crash_irq_on(pm);
         }
         if (XSUSP) {
@@ -407,15 +427,11 @@ void crash_wd(volatile uint32_t *obj)
                 uint32_t cn = XREADY[5 * as->prio];
                 as->rcnt = (uint8_t)(cn > 255u ? 255u : cn);
             }
-            int m = 0;
-            const uint32_t *q = hw + ((exc & 0x10u) ? 8 : 26);
-            for (int i = 0; i < 96 && m < 5 && in_ram((uint32_t)(q + i)); i++) {
-                uint32_t v = q[i];
-                if ((v & 1u) && v >= 0x08040001u && v < 0x08140000u)  /* odd and in the code: a return address, likely */
-                    as->chain[m++] = v;
-            }
-            for (; m < 5; m++)
-                as->chain[m] = 0;
+            as->chain[0] = ((const uint32_t *)as->tcb)[1];          /* its wake time (xStateListItem.xItemValue) */
+            as->chain[1] = XNEXT;
+            as->chain[2] = XTICK;
+            as->chain[3] = XDLY;
+            as->chain[4] = XOVF;
         }
     }
     ((void (*)(volatile uint32_t *))0x08046995u)(obj);
@@ -692,17 +708,16 @@ int crash_line(int i, char *buf, int n)
         if (!a->r_n)
             return 0;
         if (i == 14) {
-            p = put_s(p, e, "OBJ ");
-            p = put_x(p, e, a->r4);
-            p = put_s(p, e, " CALLERS ");
+            p = put_s(p, e, "WAKE ");
             p = put_x(p, e, a->chain[0]);
-            p = put_s(p, e, " ");
+            p = put_s(p, e, " NEXT ");
             p = put_x(p, e, a->chain[1]);
-        } else {
+            p = put_s(p, e, " TICK ");
             p = put_x(p, e, a->chain[2]);
-            p = put_s(p, e, " ");
+        } else {
+            p = put_s(p, e, "DLY ");
             p = put_x(p, e, a->chain[3]);
-            p = put_s(p, e, " ");
+            p = put_s(p, e, " OVF ");
             p = put_x(p, e, a->chain[4]);
         }
         break;
@@ -759,7 +774,7 @@ int crash_line(int i, char *buf, int n)
         volatile struct asamp *a = AS;
         if (!a->r_n)
             return 0;
-        p = put_s(p, e, "LOADER PRIO ");
+        p = put_s(p, e, "LOADER P");
         p = put_u(p, e, a->prio);
         p = put_s(p, e, " ON ");
         p = put_x(p, e, a->cont);
