@@ -647,3 +647,11 @@ Build 70: the SysTick profile keeps the three busiest tasks of each half second 
 ## Build 71
 
 Build 70 showed the CPU shares of the current run (the window kept being refilled after the restart). Now crash_boot freezes the last run's last full window at 0x388003f0 (prof_r) and the view shows that. User note on 70: harder to make it restart; it took everything plus the Munchi delay.
+
+## Build 72: the cause, and a repair
+
+Build 71's record: CPU IDLE 42 %, audioTask 48 %, defaultTask 2 %, rest 6 %; LOADER PRIO 3 ON 0x2401F258 EV 0. vTaskSwitchContext (0x08088ff4) picks the highest set bit of uxTopReadyPriority (0x2401f1a0, CLZ) among pxReadyTasksLists (0x2401f21c, 7 lists of 20 bytes); 0x2401F258 is the priority-3 ready list. So the loader was READY (on its ready list, on no event list) while the CPU was 42 % idle and the tick ran: its priority's bit was missing from uxTopReadyPriority, so the scheduler never picked it again. That state is impossible in a healthy FreeRTOS (the bit is cleared only when the list empties); it is the classic damage from an interrupt that calls the RTOS (a FromISR call) at a priority more urgent than configMAX_SYSCALL_INTERRUPT_PRIORITY (0x50 here: the PendSV handler's BASEPRI) racing with the kernel. More load, more interrupts in flight: more often.
+Build 72:
+- Repair: every audio block (crash_wd), with interrupts off, any ready list with tasks and no bit gets its bit back (counted: SCHED REPAIRS NOW n (PRIO p)).
+- The debug view lists enabled interrupts with a priority more urgent than 0x50 (IRQ<5: n/prio ...), live: the likely culprit.
+- The SD retry wrappers of build 67 are gone again (they never fired; the SD card was not the cause) and the cave was full: the SD driver is the stock one.
