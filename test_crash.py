@@ -42,7 +42,7 @@ from unicorn.arm_const import UC_ARM_REG_R0
 
 def lines():
     out = []
-    for i in range(21):
+    for i in range(23):
         buf = 0x2407F000
         e.call("crash_line", i, buf, 64)
         out.append(e.cstr(buf) if e.uc.reg_read(UC_ARM_REG_R0) else "")
@@ -220,20 +220,17 @@ L = lines()
 check("the tick rate (here: stopped in the last second) and the longest run of blocks with the scheduler suspended", L[18].startswith("TICKS/S 55 SUSPENDED MAX 200 NOW 200"), L[18])
 check("... where (TCB of the running task at the longest one)", L[19].startswith("SUSP AT PC ") and L[19].endswith("TCB 24072000"), L[19])
 
-# who has the CPU: the SysTick counts the running task
-e.w32(0x2401F2A8, 0x24073000)                                     # the audio task runs crash_wd
-e.call("crash_wd", OBJ)
-e.w32(0x2401F2A8, 0x24073100)                                     # the GUI stamps
-e.call("crash_stamp_b", OBJ)
-e.w32(0x2401F2A8, TCB)                                            # the loader stamps
-e.call("crash_stamp_a", OBJ)
-for i, t in enumerate([0x24073000] * 740 + [0x24073100] * 250 + [0x24074000] * 10):
+# who has the CPU: the SysTick counts the running task; the three busiest of the last 250 ticks, named from their TCBs
+for t, nm in ((0x24073000, b"audio"), (0x24073100, b"gui"), (0x24073200, b"usbmidi")):
+    e.uc.mem_write(t + 0x34, nm + b"\0")
+for t in [0x24073000] * 100 + [0x24073100] * 25 + [0x24073200] * 120 + [0x24074000] * 5:
     e.w32(0x2401F2A8, t)
     e.call("crash_systick")
 e.w32(RSR, 1 << 28)
 e.call("crash_boot")
 L = lines()
-check("the CPU shares of the last full second: audio 74 %, GUI 25 %, loader 0 %, other 1 %", L[20] == "CPU AUDIO 74% GUI 25% LOADER 0% OTHER 1%", L[20])
+check("the CPU shares of the last half second, by task name: audio 40 %, gui 10 %, usbmidi 48 %, the rest 2 %",
+      L[20] == "CPU audio 40%  gui 10%  " and L[21] == "    usbmidi 48%  REST 2%", L[20:22])
 # the loader starved: our engines give way
 for lag, want in ((100, 0), (1300, 1), (2250, 2)):
     e.w32(OBJ, 0); e.w32(OBJ + 8, lag)

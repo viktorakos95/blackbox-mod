@@ -638,3 +638,8 @@ Build 68's record: TICKS/S 501 (the RTOS tick runs: 2 ms ticks), SUSPENDED MAX 0
 Build 69:
 - Measures who has the CPU: the SysTick vector (15) goes through crash_systick_thunk, which counts the running task (audio / GUI / loader / other) each tick; the shares of the last full 1000 ticks are shown (CPU AUDIO n% GUI n% LOADER n% OTHER n%). Backup SRAM 0x38800fe0..0x38801000 (the page state must now stay below 0xe0; it uses 196 bytes).
 - Guards against it: crash_starve() is 1 when the loader has not checked in for 7 s and 2 at 12 s (the watchdog acts at 20 s). At 1 every engine's mark drops by 25 % (they fade), the drone sheds, our pages stop repainting; at 2 looper_over_cap says no room for the looper's tracks and SAMPLR's (left out at once) until the loader checks in again.
+
+## Build 70: which task, and is the loader ready or waiting?
+
+Build 69's record (it restarted with one SAMPLR track added; one test with the same load and no SAMPLR survived): CPU AUDIO 37 % GUI 4 % LOADER 5 % OTHER 52 %, LOAD 46 % (peak 96 %), LAG A 3874, SD FAILS 0, TICKS/S 502, never suspended. So the loader is not simply starved by the audio task: something else (or the idle task) had half the CPU, and the loader's 500 ms wait still did not end. The loader got 5 %, so it did run; maybe a different task stamps loop A, or the wait is not the one we think.
+Build 70: the SysTick profile keeps the three busiest tasks of each half second by TCB and shows their FreeRTOS names (TCB+0x34) and shares; the loader's TCB is read for its priority and the lists its state item and event item are on (ready / delayed / suspended: +0x14, +0x28). The fault-register lines are left out of the view when there was no fault (room for these).

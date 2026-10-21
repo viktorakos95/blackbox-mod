@@ -62,9 +62,11 @@ _Static_assert(0x38800b98u + sizeof(struct wdog) <= 0x38800bc0u, "the watchdog b
  * a sample every 64 blocks into a ring of six. Backup SRAM 0x38800390..0x38800400 (after od.c's bank, before comp.c). */
 struct asamp {
     uint32_t tcb, n;               /* task A's TCB (seen when it stamps); samples taken this run */
-    uint32_t pc[6], lr[6];
+    uint32_t pc[3], lr[3];
     uint32_t r_n, r_pc[3], r_lr[3];   /* at boot: the last run's three latest samples (newest first) */
     uint32_t r4, chain[5];         /* the latest sample's r4 (the waiting function's object) and the first code addresses above its frame (the callers) */
+    uint32_t cont, evc;            /* the latest sample: the list its state item is on (ready / delayed / suspended), the list its event item is on */
+    uint8_t prio, _p[3];           /* its priority */
 };
 #define AS ((volatile struct asamp *)0x38800390u)
 #define CUR_TCB (*(volatile uint32_t *)0x2401f2a8u)    /* FreeRTOS pxCurrentTCB (the PendSV handler's literal) */
@@ -103,16 +105,18 @@ struct sched_r {
 #define SC_PC (*(volatile uint32_t *)0x38800384u)        /* (live: the interrupted PC and the TCB at the longest suspension) */
 #define SC_TCB (*(volatile uint32_t *)0x38800388u)
 _Static_assert(sizeof(struct sched) <= 16, "the scheduler block is 0x930..0x940");
-/* Who has the CPU: the SysTick interrupt (crash_systick_thunk, vector 15) looks at the running task each tick and counts it
- * as the audio task, the GUI, the loader or anything else (the idle task included); every 1000 ticks the shares (%) are
- * kept. Backup SRAM 0x38800fe0..0x38801000 (the top of the page state's 256 bytes; looper_page.c keeps below 0xe0). */
+/* Who has the CPU: the SysTick interrupt (crash_systick_thunk, vector 15) looks at the running task each tick and counts
+ * it; the three busiest tasks of each 250 ticks (0.5 s) are kept with their shares, the rest as "other". Backup SRAM
+ * 0x38800fdc..0x38801000 (the top of the page state's 256 bytes; looper_page.c keeps below 0xdc). The names are read from
+ * the TCBs when shown (after the restart the tasks are made again in the same places). */
 struct prof {
-    uint32_t t_au, t_gui;          /* the audio task's and the GUI's TCBs (seen in crash_wd / crash_stamp_b) */
-    uint16_t n, c[4];              /* this window: ticks, and ticks in audio / GUI / loader / other */
-    uint8_t w[4], r[4];            /* the last full window's shares (%); at boot, the last run's */
+    uint32_t t[3];                 /* this window's tasks */
+    uint8_t c[3], co, n, _p[3];    /* their ticks, the others', the window's ticks */
+    uint32_t rt[3];                /* the last full window (at boot: the last run's): tasks and shares (%) */
+    uint8_t rp[3], ro;
 };
-#define PROF ((volatile struct prof *)0x38800fe0u)
-_Static_assert(sizeof(struct prof) <= 32, "the CPU shares must fit 0xfe0..0x1000");
+#define PROF ((volatile struct prof *)0x38800fdcu)
+_Static_assert(0x38800fdcu + sizeof(struct prof) <= 0x38801000u, "the CPU shares must fit 0xfdc..0x1000");
 #define LIVE ((volatile struct live *)0x38800b20u)
 #define REC ((volatile struct rec *)0x38800b38u)
 #define LIVE_MAGIC 0x4556494cu
@@ -234,7 +238,7 @@ void crash_boot(void)
         uint32_t n = ok ? as->n : 0;
         as->r_n = n;
         for (int i = 0; i < 3; i++) {
-            int j = (int)((n - 1u - (uint32_t)i) % 6u);
+            int j = (int)((n - 1u - (uint32_t)i) % 3u);
             as->r_pc[i] = (uint32_t)i < n ? as->pc[j] : 0;
             as->r_lr[i] = (uint32_t)i < n ? as->lr[j] : 0;
         }
@@ -248,14 +252,12 @@ void crash_boot(void)
         kr->ipsr = ok ? sk->ipsr : 0;
         kr->pc = ok ? SC_PC : 0;
         kr->tcb = ok ? SC_TCB : 0;
-        volatile struct prof *f = PROF;
-        for (int i = 0; i < 4; i++) {
-            f->r[i] = f->w[i];
-            f->w[i] = 0;
+        volatile struct prof *f = PROF;                       /* (rt / rp / ro are kept: the last run's last full window) */
+        for (int i = 0; i < 3; i++) {
+            f->t[i] = 0;
             f->c[i] = 0;
         }
-        f->n = 0;
-        f->t_au = f->t_gui = 0;
+        f->co = f->n = 0;
         sk->tick0 = 0;
         sk->rate = sk->streak = sk->max = sk->ipsr = 0;
         SC_PC = SC_TCB = 0;
@@ -326,7 +328,6 @@ uint32_t __attribute__((noipa)) crash_psp(void)
 void crash_wd(volatile uint32_t *obj)
 {
     volatile struct wdog *w = WD;
-    PROF->t_au = CUR_TCB;
     uint32_t now = CYC, d = now - w->cyc_au;
     if (w->cyc_au && d > 100000u && d < 100000000u)
         w->per = w->per ? w->per + (d - w->per) / 16u : d;
@@ -362,11 +363,14 @@ void crash_wd(volatile uint32_t *obj)
         if (in_ram((uint32_t)sp) && in_ram((uint32_t)(sp + 40))) {
             uint32_t exc = sp[8];
             const uint32_t *hw = sp + 9 + ((exc & 0x10u) ? 0 : 16);
-            uint32_t k = as->n % 6u;
+            uint32_t k = as->n % 3u;
             as->pc[k] = hw[6];
             as->lr[k] = hw[5];
             as->n++;
             as->r4 = sp[0];
+            as->cont = ((const uint32_t *)as->tcb)[5];            /* (TCB: +0x14 xStateListItem.pvContainer, +0x28 xEventListItem.pvContainer, +0x2c uxPriority) */
+            as->evc = ((const uint32_t *)as->tcb)[10];
+            as->prio = (uint8_t)((const uint32_t *)as->tcb)[11];
             int m = 0;
             const uint32_t *q = hw + ((exc & 0x10u) ? 8 : 26);
             for (int i = 0; i < 96 && m < 5 && in_ram((uint32_t)(q + i)); i++) {
@@ -392,7 +396,6 @@ void __attribute__((noinline)) crash_stamp_a(volatile uint32_t *obj)    /* in pl
 void crash_stamp_b(volatile uint32_t *obj)                        /* in place of the GUI's stamp (0x080469ca) */
 {
     WD->cyc_gui = CYC;
-    PROF->t_gui = CUR_TCB;
     obj[1] = obj[2];
 }
 
@@ -461,13 +464,24 @@ void crash_systick(void)                                          /* from the Sy
 {
     volatile struct prof *f = PROF;
     uint32_t t = CUR_TCB;
-    int k = t == f->t_au ? 0 : t == f->t_gui ? 1 : t == AS->tcb ? 2 : 3;
-    f->c[k]++;
-    if (++f->n >= 1000u) {
-        for (int i = 0; i < 4; i++) {
-            f->w[i] = (uint8_t)(f->c[i] / 10u);
+    int k = 0;
+    while (k < 3 && f->t[k] && f->t[k] != t)
+        k++;
+    if (k < 3) {
+        f->t[k] = t;
+        f->c[k]++;
+    } else {
+        f->co++;
+    }
+    if (++f->n >= 250u) {
+        for (int i = 0; i < 3; i++) {
+            f->rt[i] = f->t[i];
+            f->rp[i] = (uint8_t)(f->c[i] * 2u / 5u);
+            f->t[i] = 0;
             f->c[i] = 0;
         }
+        f->ro = (uint8_t)(f->co * 2u / 5u);
+        f->co = 0;
         f->n = 0;
     }
 }
@@ -587,6 +601,8 @@ int crash_line(int i, char *buf, int n)
         return 1;
     }
     static const char *const kinds[6] = {"NO FAULT", "HARD FAULT", "MEMORY FAULT", "BUS FAULT", "USAGE FAULT", "OUT OF MEMORY"};
+    if (i >= 1 && i <= 4 && r->kind == 0)
+        return 0;                                                 /* (the fault's registers: only when there was one) */
     switch (i) {
     case 0:
         p = put_s(p, e, "LAST RESTART: ");
@@ -738,17 +754,42 @@ int crash_line(int i, char *buf, int n)
         p = put_x(p, e, kr->tcb);
         break;
     }
-    case 20: {
+    case 20:
+    case 21: {
         volatile struct prof *f = PROF;
-        p = put_s(p, e, "CPU AUDIO ");
-        p = put_u(p, e, f->r[0]);
-        p = put_s(p, e, "% GUI ");
-        p = put_u(p, e, f->r[1]);
-        p = put_s(p, e, "% LOADER ");
-        p = put_u(p, e, f->r[2]);
-        p = put_s(p, e, "% OTHER ");
-        p = put_u(p, e, f->r[3]);
-        p = put_s(p, e, "%");
+        p = put_s(p, e, i == 20 ? "CPU " : "    ");
+        for (int k = (i - 20) * 2; k < 3 && k < (i - 20) * 2 + 2; k++) {
+            uint32_t t = f->rt[k];
+            if (!t)
+                continue;
+            const volatile char *nm = (const volatile char *)(t + 0x34);       /* pcTaskName */
+            int ok = in_ram(t);
+            for (int c = 0; c < 8 && ok && nm[c] >= 0x20 && nm[c] < 0x7f; c++)
+                if (p < e)
+                    *p++ = nm[c];
+            if (!ok || !(nm[0] >= 0x20 && nm[0] < 0x7f))
+                p = put_x(p, e, t);
+            p = put_s(p, e, " ");
+            p = put_u(p, e, f->rp[k]);
+            p = put_s(p, e, "%  ");
+        }
+        if (i == 21) {
+            p = put_s(p, e, "REST ");
+            p = put_u(p, e, f->ro);
+            p = put_s(p, e, "%");
+        }
+        break;
+    }
+    case 22: {
+        volatile struct asamp *a = AS;
+        if (!a->r_n)
+            return 0;
+        p = put_s(p, e, "LOADER PRIO ");
+        p = put_u(p, e, a->prio);
+        p = put_s(p, e, " ON ");
+        p = put_x(p, e, a->cont);
+        p = put_s(p, e, " EV ");
+        p = put_x(p, e, a->evc);
         break;
     }
     case 16: {
