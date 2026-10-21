@@ -655,3 +655,8 @@ Build 72:
 - Repair: every audio block (crash_wd), with interrupts off, any ready list with tasks and no bit gets its bit back (counted: SCHED REPAIRS NOW n (PRIO p)).
 - The debug view lists enabled interrupts with a priority more urgent than 0x50 (IRQ<5: n/prio ...), live: the likely culprit.
 - The SD retry wrappers of build 67 are gone again (they never fired; the SD card was not the cause) and the cave was full: the SD driver is the stock one.
+
+## Build 73
+
+Build 72's records: (1) the loader hang again (LOADER PRIO 3 ON the priority-3 ready list, EV 0, CPU idle 43 %), with "REPAIRS NOW 0" (that was the new run's count: a display bug). Since the bit check did not save it, the ready list's item count is likely broken too (a count of 0 makes the kernel clear the bit, and then the bit-only check saw "empty"). (2) A different restart: the loader never late, the audio task inside our looper tracks at the end, CPU audioTask 62 % pcmStream 8 % idle 26 %; its lag / timing lines were all 0 because the boot copy required the block period to be measured (fixed: only the ms figures need it). IRQ<5: 28/0 52/0 71/0 (TIM2, UART4, USART6 at priority 0, more urgent than BASEPRI 0x50; their handlers are the stock HAL ones; a static search found no direct RTOS call from them, the HAL's callbacks go through pointers).
+Build 73: the repair walks each ready list's links (up to 16 items, RAM only, must end at its xListEnd) and sets the count to what the links say and the bit when there is a task; the loader's sample records its list's bit and count (BIT / N); the repairs of the run that ended are kept at boot (REPAIRS LAST n NOW m).

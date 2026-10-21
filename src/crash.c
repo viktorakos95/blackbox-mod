@@ -66,7 +66,7 @@ struct asamp {
     uint32_t r_n, r_pc[3], r_lr[3];   /* at boot: the last run's three latest samples (newest first) */
     uint32_t r4, chain[5];         /* the latest sample's r4 (the waiting function's object) and the first code addresses above its frame (the callers) */
     uint32_t cont, evc;            /* the latest sample: the list its state item is on (ready / delayed / suspended), the list its event item is on */
-    uint8_t prio, _p[3];           /* its priority */
+    uint8_t prio, rbit, rcnt, rheal;   /* its priority; that ready list's priority bit and item count (at the sample); at boot: the last run's repairs */
 };
 #define AS ((volatile struct asamp *)0x38800390u)
 #define CUR_TCB (*(volatile uint32_t *)0x2401f2a8u)    /* FreeRTOS pxCurrentTCB (the PendSV handler's literal) */
@@ -221,8 +221,9 @@ void crash_boot(void)
     }
     {
         volatile struct wdog *w = WD;
-        int ok = v->magic == LIVE_MAGIC && w->per > 100000u && w->per < 100000000u;
-        float k = ok ? (256000.f / 48000.f) / (float)w->per : 0.f;   /* ms a cycle */
+        int ok = v->magic == LIVE_MAGIC;
+        int okp = ok && w->per > 100000u && w->per < 100000000u;  /* (the block period measured: the ms figures make sense) */
+        float k = okp ? (256000.f / 48000.f) / (float)w->per : 0.f;   /* ms a cycle */
         float g = (float)(int32_t)(w->cyc_gui - w->cyc_au) * k, a = (float)(int32_t)(w->cyc_a - w->cyc_au) * k;
         w->r_gui = (int16_t)(g > 32000.f ? 32000.f : g < -32000.f ? -32000.f : g);
         w->r_a = (int16_t)(a > 32000.f ? 32000.f : a < -32000.f ? -32000.f : a);
@@ -247,6 +248,7 @@ void crash_boot(void)
         kr->ipsr = ok ? sk->ipsr : 0;
         kr->pc = ok ? SC_PC : 0;
         kr->tcb = ok ? SC_TCB : 0;
+        as->rheal = (uint8_t)(ok ? (sk->heal > 255u ? 255u : sk->heal) : 0);
         volatile struct prof *f = PROF;
         volatile struct prof_r *fr = PROFR;
         for (int i = 0; i < 3; i++) {
@@ -353,13 +355,24 @@ void crash_wd(volatile uint32_t *obj)
                the unit (records of builds 63-71). Every block: a ready list with tasks and no bit gets its bit back. */
             uint32_t pm = crash_irq_off();
             uint32_t top = XTOP;
-            for (int pr = 0; pr < 7; pr++)
-                if (XREADY[5 * pr] && !(top & (1u << pr))) {
-                    XTOP = top |= 1u << pr;
+            for (int pr = 0; pr < 7; pr++) {
+                volatile uint32_t *ls = XREADY + 5 * pr;          /* uxNumberOfItems, pxIndex, xListEnd {xItemValue, pxNext, pxPrevious} */
+                uint32_t end = (uint32_t)(ls + 2), it = ls[3], n = 0;
+                while (it != end && n < 16 && in_ram(it)) {       /* the tasks really linked on it */
+                    it = ((volatile uint32_t *)it)[1];            /* (a list item: xItemValue, pxNext, ...) */
+                    n++;
+                }
+                if (it != end)
+                    continue;                                     /* (not a clean list: leave it) */
+                if ((n && !(top & (1u << pr))) || ls[0] != n) {
+                    ls[0] = n;                                    /* the count the links say */
+                    if (n)
+                        XTOP = top |= 1u << pr;
                     if (k->heal < 0xffffu)
                         k->heal++;
                     k->heal_p = (uint8_t)pr;
                 }
+            }
             crash_irq_on(pm);
         }
         if (XSUSP) {
@@ -389,6 +402,11 @@ void crash_wd(volatile uint32_t *obj)
             as->cont = ((const uint32_t *)as->tcb)[5];            /* (TCB: +0x14 xStateListItem.pvContainer, +0x28 xEventListItem.pvContainer, +0x2c uxPriority) */
             as->evc = ((const uint32_t *)as->tcb)[10];
             as->prio = (uint8_t)((const uint32_t *)as->tcb)[11];
+            if (as->prio < 7) {
+                as->rbit = (uint8_t)((XTOP >> as->prio) & 1u);
+                uint32_t cn = XREADY[5 * as->prio];
+                as->rcnt = (uint8_t)(cn > 255u ? 255u : cn);
+            }
             int m = 0;
             const uint32_t *q = hw + ((exc & 0x10u) ? 8 : 26);
             for (int i = 0; i < 96 && m < 5 && in_ram((uint32_t)(q + i)); i++) {
@@ -747,11 +765,17 @@ int crash_line(int i, char *buf, int n)
         p = put_x(p, e, a->cont);
         p = put_s(p, e, " EV ");
         p = put_x(p, e, a->evc);
+        p = put_s(p, e, " BIT ");
+        p = put_u(p, e, a->rbit);
+        p = put_s(p, e, " N ");
+        p = put_u(p, e, a->rcnt);
         break;
     }
     case 23: {
         volatile struct sched *k = SC;
-        p = put_s(p, e, "SCHED REPAIRS NOW ");
+        p = put_s(p, e, "REPAIRS LAST ");
+        p = put_u(p, e, AS->rheal);
+        p = put_s(p, e, " NOW ");
         p = put_u(p, e, k->heal);
         if (k->heal) {
             p = put_s(p, e, " (PRIO ");

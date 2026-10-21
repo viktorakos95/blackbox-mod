@@ -212,19 +212,37 @@ for lag, want in ((100, 0), (1300, 1), (2250, 2)):
 e.w32(OBJ + 8, 0)
 e.call("crash_wd", OBJ)
 
-# the scheduler's bookkeeping: a ready list with tasks but no bit in uxTopReadyPriority gets its bit back
+# the scheduler's bookkeeping: a ready list whose task is linked on it but with no bit in uxTopReadyPriority (or a wrong
+# count) is put right
+RL = 0x2401F21C + 20 * 3                                          # pxReadyTasksLists[3]
+ITEM = 0x24072100 + 0x200                                         # the loader's state list item
+def ready3(count, linked):
+    end = RL + 8
+    e.w32(RL, count)
+    e.w32(RL + 4, end)
+    e.w32(RL + 8, 0xFFFFFFFF)
+    e.w32(RL + 12, ITEM if linked else end)                       # xListEnd.pxNext
+    e.w32(RL + 16, ITEM if linked else end)
+    e.w32(ITEM + 4, end)                                          # the item's pxNext: back to the end
 e.w32(0x2401F1A0, 1 << 0)                                         # only the idle priority's bit
-e.w32(0x2401F21C + 20 * 3, 1)                                     # but a task (the loader) on the priority-3 ready list
-e.w32(0x2401F21C + 20 * 6, 0)
-e.stub(0x2400FFF0)                                                # (nothing)
+ready3(1, True)
 e.call("crash_wd", OBJ)
-check("a ready list with a task and no priority bit: the bit is set (the task can run again)", e.r32(0x2401F1A0) & 0xFF == 0b1001, hex(e.r32(0x2401F1A0)))
+check("a task linked on the priority-3 ready list and no bit: the bit is set (the task can run again)", e.r32(0x2401F1A0) & 0xFF == 0b1001, hex(e.r32(0x2401F1A0)))
 L = lines()
-check("... and the repair is counted and shown", L[23].startswith("SCHED REPAIRS NOW 1 (PRIO 3)"), L[23])
+check("... the repair is counted", "NOW 1 (PRIO 3)" in L[23], L[23])
 e.call("crash_wd", OBJ)
-L = lines()
-check("... once (the bit stays)", L[23].startswith("SCHED REPAIRS NOW 1 (PRIO 3)"), L[23])
-
+check("... once (it stays right)", "NOW 1 (PRIO 3)" in lines()[23], lines()[23])
+e.w32(0x2401F1A0, 1 << 0)
+ready3(0, True)                                                   # the count says empty, the links say one
+e.call("crash_wd", OBJ)
+check("a linked task with the count at 0: count 1 and the bit back", e.r32(RL) == 1 and e.r32(0x2401F1A0) & 0xFF == 0b1001, (e.r32(RL), hex(e.r32(0x2401F1A0))))
+ready3(0, False)
+e.w32(0x2401F1A0, 1 << 0)
+e.call("crash_wd", OBJ)
+check("an empty list is left alone", e.r32(RL) == 0 and e.r32(0x2401F1A0) & 0xFF == 1)
+e.w32(RSR, 1 << 28)
+e.call("crash_boot")
+check("at boot the last run's repairs are kept (2) and the new run's start at 0", "REPAIRS LAST 2 NOW 0" in lines()[23], lines()[23])
 # the patch: the four fault vectors and the allocator's call site
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+lira+lirarec+lirasave+crash+cave/BLACKBOX.bin", "rb").read()
 vec = struct.unpack("<4I", img[12:28])
