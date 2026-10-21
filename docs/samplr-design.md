@@ -643,3 +643,7 @@ Build 69:
 
 Build 69's record (it restarted with one SAMPLR track added; one test with the same load and no SAMPLR survived): CPU AUDIO 37 % GUI 4 % LOADER 5 % OTHER 52 %, LOAD 46 % (peak 96 %), LAG A 3874, SD FAILS 0, TICKS/S 502, never suspended. So the loader is not simply starved by the audio task: something else (or the idle task) had half the CPU, and the loader's 500 ms wait still did not end. The loader got 5 %, so it did run; maybe a different task stamps loop A, or the wait is not the one we think.
 Build 70: the SysTick profile keeps the three busiest tasks of each half second by TCB and shows their FreeRTOS names (TCB+0x34) and shares; the loader's TCB is read for its priority and the lists its state item and event item are on (ready / delayed / suspended: +0x14, +0x28). The fault-register lines are left out of the view when there was no fault (room for these).
+
+## Build 71
+
+Build 70 showed the CPU shares of the current run (the window kept being refilled after the restart). Now crash_boot freezes the last run's last full window at 0x388003f0 (prof_r) and the view shows that. User note on 70: harder to make it restart; it took everything plus the Munchi delay.

@@ -231,6 +231,11 @@ e.call("crash_boot")
 L = lines()
 check("the CPU shares of the last half second, by task name: audio 40 %, gui 10 %, usbmidi 48 %, the rest 2 %",
       L[20] == "CPU audio 40%  gui 10%  " and L[21] == "    usbmidi 48%  REST 2%", L[20:22])
+for t in [0x24073100] * 250:                                      # the new run goes on: the record stays the last run's
+    e.w32(0x2401F2A8, t)
+    e.call("crash_systick")
+L = lines()
+check("... and they stay the last run's while the new run is measured", L[20] == "CPU audio 40%  gui 10%  ", L[20])
 # the loader starved: our engines give way
 for lag, want in ((100, 0), (1300, 1), (2250, 2)):
     e.w32(OBJ, 0); e.w32(OBJ + 8, lag)

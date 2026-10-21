@@ -116,6 +116,12 @@ struct prof {
     uint8_t rp[3], ro;
 };
 #define PROF ((volatile struct prof *)0x38800fdcu)
+struct prof_r {                    /* at boot: the last run's last full window, frozen (the live one goes on) */
+    uint32_t t[3];
+    uint8_t p[3], o;
+};
+#define PROFR ((volatile struct prof_r *)0x388003f0u)
+_Static_assert(0x388003f0u + sizeof(struct prof_r) <= 0x38800400u, "the frozen CPU shares must end before comp.c's state at 0x400");
 _Static_assert(0x38800fdcu + sizeof(struct prof) <= 0x38801000u, "the CPU shares must fit 0xfdc..0x1000");
 #define LIVE ((volatile struct live *)0x38800b20u)
 #define REC ((volatile struct rec *)0x38800b38u)
@@ -252,11 +258,18 @@ void crash_boot(void)
         kr->ipsr = ok ? sk->ipsr : 0;
         kr->pc = ok ? SC_PC : 0;
         kr->tcb = ok ? SC_TCB : 0;
-        volatile struct prof *f = PROF;                       /* (rt / rp / ro are kept: the last run's last full window) */
+        volatile struct prof *f = PROF;
+        volatile struct prof_r *fr = PROFR;
         for (int i = 0; i < 3; i++) {
+            fr->t[i] = f->rt[i];
+            fr->p[i] = f->rp[i];
+            f->rt[i] = 0;
+            f->rp[i] = 0;
             f->t[i] = 0;
             f->c[i] = 0;
         }
+        fr->o = f->ro;
+        f->ro = 0;
         f->co = f->n = 0;
         sk->tick0 = 0;
         sk->rate = sk->streak = sk->max = sk->ipsr = 0;
@@ -756,10 +769,10 @@ int crash_line(int i, char *buf, int n)
     }
     case 20:
     case 21: {
-        volatile struct prof *f = PROF;
+        volatile struct prof_r *f = PROFR;
         p = put_s(p, e, i == 20 ? "CPU " : "    ");
         for (int k = (i - 20) * 2; k < 3 && k < (i - 20) * 2 + 2; k++) {
-            uint32_t t = f->rt[k];
+            uint32_t t = f->t[k];
             if (!t)
                 continue;
             const volatile char *nm = (const volatile char *)(t + 0x34);       /* pcTaskName */
@@ -770,12 +783,12 @@ int crash_line(int i, char *buf, int n)
             if (!ok || !(nm[0] >= 0x20 && nm[0] < 0x7f))
                 p = put_x(p, e, t);
             p = put_s(p, e, " ");
-            p = put_u(p, e, f->rp[k]);
+            p = put_u(p, e, f->p[k]);
             p = put_s(p, e, "%  ");
         }
         if (i == 21) {
             p = put_s(p, e, "REST ");
-            p = put_u(p, e, f->ro);
+            p = put_u(p, e, f->o);
             p = put_s(p, e, "%");
         }
         break;
