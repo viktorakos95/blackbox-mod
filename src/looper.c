@@ -1883,7 +1883,7 @@ void looper_guard_want(int e, int share)
 
 int looper_soft_threshold(int e)                   /* per mille of the averaged load that starts engine e's fade: the first to give way earliest */
 {
-    int m = GUARD_SOFT + 15 * below(e);
+    int m = GUARD_SOFT + 15 * below(e) - (crash_starve() ? 250 : 0);   /* (the stock loader starved: everything gives way, see crash.c) */
     int we = (S->magic == MAGIC && S->ok) ? (int)DSP()->gd.want_eng1 - 1 : -1;
     if (we >= 0 && we != e && prio(we) > prio(e)) {
         m -= DSP()->gd.want_share;
@@ -1995,6 +1995,8 @@ int looper_over_cap(int e)
         return 0;
     struct dsp *d = DSP();
     struct guard *g = &d->gd;
+    if (crash_starve() >= 2 && !d->gd.force)
+        return 1;                                                 /* the stock loader starved for 12 s: nothing of ours runs until it has checked in */
     uint32_t used = CYC - WAKE;
     if (d->gd.force || g->per <= 0.f || (float)used > 2.f * g->per)
         return 0;

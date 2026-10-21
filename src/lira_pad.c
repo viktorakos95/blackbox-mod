@@ -973,12 +973,12 @@ static uint32_t govern(struct pg *g)
            taking nearly the whole block (before the looper) is the one quick case. */
         float mark = (float)looper_soft_threshold(2), load = g->wl > 0.0f ? g->wl : g->ld;
         if (g->shed < 3) {
-            if ((load >= mark && since > 300) || (inst > 960.0f && since > 40)) {
+            if ((load >= mark && since > 300) || (inst > 960.0f && since > 40) || crash_starve()) {
                 g->shed = 3;
                 g->shed_blk = g->blk;
                 g->dhold = (float)g->dsp;
             }
-        } else if (load + g->dhold < mark - 30.0f && inst < 800.0f && since > 800) {
+        } else if (load + g->dhold < mark - 30.0f && inst < 800.0f && since > 800 && !crash_starve()) {
             g->shed = 0;
             g->shed_blk = g->blk;
         }

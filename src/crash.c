@@ -103,6 +103,16 @@ struct sched_r {
 #define SC_PC (*(volatile uint32_t *)0x38800384u)        /* (live: the interrupted PC and the TCB at the longest suspension) */
 #define SC_TCB (*(volatile uint32_t *)0x38800388u)
 _Static_assert(sizeof(struct sched) <= 16, "the scheduler block is 0x930..0x940");
+/* Who has the CPU: the SysTick interrupt (crash_systick_thunk, vector 15) looks at the running task each tick and counts it
+ * as the audio task, the GUI, the loader or anything else (the idle task included); every 1000 ticks the shares (%) are
+ * kept. Backup SRAM 0x38800fe0..0x38801000 (the top of the page state's 256 bytes; looper_page.c keeps below 0xe0). */
+struct prof {
+    uint32_t t_au, t_gui;          /* the audio task's and the GUI's TCBs (seen in crash_wd / crash_stamp_b) */
+    uint16_t n, c[4];              /* this window: ticks, and ticks in audio / GUI / loader / other */
+    uint8_t w[4], r[4];            /* the last full window's shares (%); at boot, the last run's */
+};
+#define PROF ((volatile struct prof *)0x38800fe0u)
+_Static_assert(sizeof(struct prof) <= 32, "the CPU shares must fit 0xfe0..0x1000");
 #define LIVE ((volatile struct live *)0x38800b20u)
 #define REC ((volatile struct rec *)0x38800b38u)
 #define LIVE_MAGIC 0x4556494cu
@@ -238,6 +248,14 @@ void crash_boot(void)
         kr->ipsr = ok ? sk->ipsr : 0;
         kr->pc = ok ? SC_PC : 0;
         kr->tcb = ok ? SC_TCB : 0;
+        volatile struct prof *f = PROF;
+        for (int i = 0; i < 4; i++) {
+            f->r[i] = f->w[i];
+            f->w[i] = 0;
+            f->c[i] = 0;
+        }
+        f->n = 0;
+        f->t_au = f->t_gui = 0;
         sk->tick0 = 0;
         sk->rate = sk->streak = sk->max = sk->ipsr = 0;
         SC_PC = SC_TCB = 0;
@@ -308,6 +326,7 @@ uint32_t __attribute__((noipa)) crash_psp(void)
 void crash_wd(volatile uint32_t *obj)
 {
     volatile struct wdog *w = WD;
+    PROF->t_au = CUR_TCB;
     uint32_t now = CYC, d = now - w->cyc_au;
     if (w->cyc_au && d > 100000u && d < 100000000u)
         w->per = w->per ? w->per + (d - w->per) / 16u : d;
@@ -373,6 +392,7 @@ void __attribute__((noinline)) crash_stamp_a(volatile uint32_t *obj)    /* in pl
 void crash_stamp_b(volatile uint32_t *obj)                        /* in place of the GUI's stamp (0x080469ca) */
 {
     WD->cyc_gui = CYC;
+    PROF->t_gui = CUR_TCB;
     obj[1] = obj[2];
 }
 
@@ -435,6 +455,29 @@ int crash_sd_read(uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count)   
 int crash_sd_write(uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count)    /* for 0x080459e9 */
 {
     return sd_try(2, (sd_fn)0x080459e9u, lun, buf, sector, count);
+}
+
+void crash_systick(void)                                          /* from the SysTick handler, before the stock one */
+{
+    volatile struct prof *f = PROF;
+    uint32_t t = CUR_TCB;
+    int k = t == f->t_au ? 0 : t == f->t_gui ? 1 : t == AS->tcb ? 2 : 3;
+    f->c[k]++;
+    if (++f->n >= 1000u) {
+        for (int i = 0; i < 4; i++) {
+            f->w[i] = (uint8_t)(f->c[i] / 10u);
+            f->c[i] = 0;
+        }
+        f->n = 0;
+    }
+}
+
+/* The loader (loop A) starved: 1 when it has not checked in for 7 s, 2 for 12 s (the watchdog acts at 20 s). Our engines
+ * then give it CPU: the marks go down (1) and every track is left out (2), the drone fades out, the page stops repainting. */
+int crash_starve(void)
+{
+    uint16_t lag = WD->lag_a;
+    return lag >= 2250u ? 2 : lag >= 1300u ? 1 : 0;
 }
 
 int crash_pending(void)
@@ -693,6 +736,19 @@ int crash_line(int i, char *buf, int n)
         p = put_x(p, e, kr->pc);
         p = put_s(p, e, " TCB ");
         p = put_x(p, e, kr->tcb);
+        break;
+    }
+    case 20: {
+        volatile struct prof *f = PROF;
+        p = put_s(p, e, "CPU AUDIO ");
+        p = put_u(p, e, f->r[0]);
+        p = put_s(p, e, "% GUI ");
+        p = put_u(p, e, f->r[1]);
+        p = put_s(p, e, "% LOADER ");
+        p = put_u(p, e, f->r[2]);
+        p = put_s(p, e, "% OTHER ");
+        p = put_u(p, e, f->r[3]);
+        p = put_s(p, e, "%");
         break;
     }
     case 16: {

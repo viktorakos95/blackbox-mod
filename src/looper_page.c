@@ -189,7 +189,7 @@ struct page {
 #define P ((volatile struct page *)0x38800f00u)
 #define PMAGIC 0x50414732u
 
-_Static_assert(sizeof(struct page) <= 0x100, "page state must fit its 256 bytes");
+_Static_assert(sizeof(struct page) <= 0xe0, "page state must fit below 0x38800fe0 (the crash recorder's CPU shares, crash.c)");
 
 #define DBG_VIEW (P->_le[0])     /* SETUP shows the crash record (src/crash.c) instead of its options */
 #define FB ((void *)P->fb)       /* the frame buffer (no .bss in the code cave: it lives with the page state) */
@@ -1008,9 +1008,9 @@ static void draw_setup(const struct lay *L)
     const struct optrow *rows = page_rows();
     if (P->mode == M_SETUP && DBG_VIEW) {                         /* the crash record (src/crash.c): why the unit last restarted */
         char b[64];
-        for (int i = 0, y = 0; i < 20; i++)
+        for (int i = 0, y = 0; i < 21; i++)
             if (crash_line(i, b, sizeof b))
-                text(6, row_d(L, 0) + 1 + 9 * y++, b, i == 0 ? (crash_pending() ? C_RED : C_WHITE) : C_LIGHT, 1);
+                text(6, row_d(L, 0) + 1 + 8 * y++, b, i == 0 ? (crash_pending() ? C_RED : C_WHITE) : C_LIGHT, 1);
         int d = row_d(L, OPT_ROWS);
         frame(OPT_X, d, 110, ROW_H - 4, C_RAIL, 1);
         text_c(OPT_X, d + 5, 110, "SEEN / CLEAR", C_LIGHT, 1);
@@ -1771,6 +1771,8 @@ static void tint_restore(const uint32_t *save, int n)
 static void paint_(uint8_t *view);
 static void paint(uint8_t *view)
 {
+    if (crash_starve())
+        return;                                                   /* (the stock loader is starved: the GUI's time is better spent elsewhere) */
     uint8_t was = CRASH_BC[BC_GUI];
     crash_bc(BC_GUI, BCG_PAINT);
     paint_(view);

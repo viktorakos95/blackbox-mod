@@ -23,7 +23,9 @@ def vector(n):
     return (at, STOCK[4 * n:4 * n + 4], struct.pack("<I", sym["crash_fault"] | 1))
 
 
-PATCHES = [vector(3), vector(4), vector(5), vector(6)] + [   # hard, memory, bus, usage fault (stock: spin until the watchdog)
+PATCHES = [vector(3), vector(4), vector(5), vector(6),
+           (0x0804003C, STOCK[0x3C:0x40], struct.pack("<I", sym["crash_systick_thunk"] | 1))] + [   # SysTick: who has the CPU
+   # hard, memory, bus, usage fault (stock: spin until the watchdog)
     (0x08044452, bl(0x08044452, 0x08043DE4), bl(0x08044452, sym["crash_oom_thunk"])),   # the allocator's message before it halts
     (0x0804CB36, bl(0x0804CB36, 0x08046994), bl(0x0804CB36, sym["crash_wd"])),           # the audio block's watchdog check
     (0x080A2264, bl(0x080A2264, 0x080469CA), bl(0x080A2264, sym["crash_stamp_b"])),      # the GUI's stamp

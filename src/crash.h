@@ -22,5 +22,6 @@ void crash_tick(void);                          /* from the audio stage, once a 
 int crash_line(int i, char *buf, int n);        /* the debug view's line i (0..); 0 when there are no more */
 void crash_clear(void);
 int crash_pending(void);                        /* a record of a restart not looked at yet */
+int crash_starve(void);                         /* the stock loader starved of CPU: 0, 1 (7 s), 2 (12 s): our engines give way */
 
 #endif

@@ -41,3 +41,14 @@ crash_oom_thunk:
     ldr     r2, [sp, #4]
     mov     r1, r3
     b       crash_oom
+
+/* SysTick (vector 15): count the running task (crash_systick), then the stock handler. */
+    .global crash_systick_thunk
+    .thumb_func
+    .type crash_systick_thunk, %function
+crash_systick_thunk:
+    push    {r0, lr}
+    bl      crash_systick
+    pop     {r0, lr}
+    ldr     r12, =0x08046271
+    bx      r12

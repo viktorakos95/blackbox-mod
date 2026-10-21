@@ -42,7 +42,7 @@ from unicorn.arm_const import UC_ARM_REG_R0
 
 def lines():
     out = []
-    for i in range(20):
+    for i in range(21):
         buf = 0x2407F000
         e.call("crash_line", i, buf, 64)
         out.append(e.cstr(buf) if e.uc.reg_read(UC_ARM_REG_R0) else "")
@@ -220,6 +220,29 @@ L = lines()
 check("the tick rate (here: stopped in the last second) and the longest run of blocks with the scheduler suspended", L[18].startswith("TICKS/S 55 SUSPENDED MAX 200 NOW 200"), L[18])
 check("... where (TCB of the running task at the longest one)", L[19].startswith("SUSP AT PC ") and L[19].endswith("TCB 24072000"), L[19])
 
+# who has the CPU: the SysTick counts the running task
+e.w32(0x2401F2A8, 0x24073000)                                     # the audio task runs crash_wd
+e.call("crash_wd", OBJ)
+e.w32(0x2401F2A8, 0x24073100)                                     # the GUI stamps
+e.call("crash_stamp_b", OBJ)
+e.w32(0x2401F2A8, TCB)                                            # the loader stamps
+e.call("crash_stamp_a", OBJ)
+for i, t in enumerate([0x24073000] * 740 + [0x24073100] * 250 + [0x24074000] * 10):
+    e.w32(0x2401F2A8, t)
+    e.call("crash_systick")
+e.w32(RSR, 1 << 28)
+e.call("crash_boot")
+L = lines()
+check("the CPU shares of the last full second: audio 74 %, GUI 25 %, loader 0 %, other 1 %", L[20] == "CPU AUDIO 74% GUI 25% LOADER 0% OTHER 1%", L[20])
+# the loader starved: our engines give way
+for lag, want in ((100, 0), (1300, 1), (2250, 2)):
+    e.w32(OBJ, 0); e.w32(OBJ + 8, lag)
+    e.call("crash_wd", OBJ)
+    e.call("crash_starve")
+    check("loader %d blocks late -> starve level %d" % (lag, want), e.uc.reg_read(UC_ARM_REG_R0) == want, e.uc.reg_read(UC_ARM_REG_R0))
+e.w32(OBJ + 8, 0)
+e.call("crash_wd", OBJ)
+
 # the patch: the four fault vectors and the allocator's call site
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+lira+lirarec+lirasave+crash+cave/BLACKBOX.bin", "rb").read()
 vec = struct.unpack("<4I", img[12:28])
@@ -228,6 +251,7 @@ sys.path.insert(0, "patches")
 from thumb import bl                                               # noqa: E402
 o = 0x08044452 - 0x08040000
 check("the allocator's halt message call goes to crash_oom_thunk", img[o:o + 4] == bl(0x08044452, e.sym["crash_oom_thunk"]))
+check("SysTick (vector 15) goes through crash_systick_thunk", struct.unpack("<I", img[0x3C:0x40])[0] == (e.sym["crash_systick_thunk"] | 1))
 tab = struct.unpack("<2I", img[0x080CFC24 - 0x08040000:0x080CFC2C - 0x08040000])
 check("the SD driver table's read and write go to the retrying wrappers", tab == (e.sym["crash_sd_read"] | 1, e.sym["crash_sd_write"] | 1), [hex(t) for t in tab])
 check("the driver's waits are 500 ms", img[0x08045998 - 0x08040000:][:4] == bytes.fromhex("40f2f412") and img[0x08045A0E - 0x08040000:][:4] == bytes.fromhex("40f2f412"))
