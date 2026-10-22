@@ -62,15 +62,27 @@ _Static_assert(0x38800b98u + sizeof(struct wdog) <= 0x38800bc0u, "the watchdog b
  * a sample every 64 blocks into a ring of six. Backup SRAM 0x38800390..0x38800400 (after od.c's bank, before comp.c). */
 struct asamp {
     uint32_t tcb, n;               /* task A's TCB (seen when it stamps); samples taken this run */
-    uint32_t pc[3], lr[3];
-    uint32_t r_n, r_pc[3], r_lr[3];   /* at boot: the last run's three latest samples (newest first) */
-    uint32_t r4, chain[5];         /* the latest sample's r4 (the waiting function's object) and the first code addresses above its frame (the callers) */
+    uint32_t pc[1], lr[1];         /* the latest sample */
+    uint32_t r_n, r_pc[1], r_lr[1];   /* at boot: the last run's */
+    uint32_t r4, chain[5];         /* the latest sample's r4, its wake time, the kernel's next wake-up, the tick, the two delayed lists */
     uint32_t cont, evc;            /* the latest sample: the list its state item is on (ready / delayed / suspended), the list its event item is on */
     uint8_t prio, rbit, rcnt, rheal;   /* its priority; that ready list's priority bit and item count (at the sample); at boot: the last run's repairs */
+    uint32_t r_tk[7];              /* at boot: the last run's tick ring (oldest first) */
+    uint8_t r_back, _q[3];         /* and its count of backward tick jumps */
 };
 #define AS ((volatile struct asamp *)0x38800390u)
+/* The kernel tick over the last ~2.4 s: a reading every 64 audio blocks (~0.34 s) into a ring of 7, and how often it went
+ * backwards. Backup SRAM 0x38800940..0x3880096c (where the SD figures were). */
+struct tring {
+    uint32_t magic, last;
+    uint32_t t[7];
+    uint8_t i, back, _p[2];
+};
+#define TR ((volatile struct tring *)0x38800940u)
+#define TR_MAGIC 0x4b434954u
+_Static_assert(0x38800940u + sizeof(struct tring) <= 0x3880096cu, "the tick ring must end before the scheduler figures at 0x96c");
 #define CUR_TCB (*(volatile uint32_t *)0x2401f2a8u)    /* FreeRTOS pxCurrentTCB (the PendSV handler's literal) */
-_Static_assert(0x38800390u + sizeof(struct asamp) <= 0x38800400u, "the loop-A samples must end before comp.c's state at 0x400");
+_Static_assert(0x38800390u + sizeof(struct asamp) <= 0x388003f0u, "the loop-A samples must end before the frozen CPU shares at 0x3f0");
 /* The RTOS clock: is the tick running, and is the scheduler suspended (then no task switches and no timeout expires)?
  * Sampled every audio block: ticks a second, the longest run of blocks with the scheduler suspended this run, and then the
  * running task's TCB and (when the audio code runs in an interrupt) the interrupted task's PC. Live 0x38800930 (after MCL's
@@ -236,10 +248,19 @@ void crash_boot(void)
         volatile struct asamp *as = AS;
         uint32_t n = ok ? as->n : 0;
         as->r_n = n;
-        for (int i = 0; i < 3; i++) {
-            int j = (int)((n - 1u - (uint32_t)i) % 3u);
-            as->r_pc[i] = (uint32_t)i < n ? as->pc[j] : 0;
-            as->r_lr[i] = (uint32_t)i < n ? as->lr[j] : 0;
+        as->r_pc[0] = n ? as->pc[0] : 0;
+        as->r_lr[0] = n ? as->lr[0] : 0;
+        {
+            volatile struct tring *tr = TR;
+            int tok = tr->magic == TR_MAGIC;
+            for (int i = 0; i < 7; i++)
+                as->r_tk[i] = tok ? tr->t[(tr->i + i) % 7u] : 0;  /* (i is the next slot: the oldest) */
+            as->r_back = tok ? tr->back : 0;
+            tr->magic = TR_MAGIC;
+            tr->i = tr->back = 0;
+            tr->last = 0;
+            for (int i = 0; i < 7; i++)
+                tr->t[i] = 0;
         }
         as->n = 0;
         as->tcb = 0;
@@ -347,6 +368,19 @@ void crash_wd(volatile uint32_t *obj)
         volatile struct sched *k = SC;
         uint32_t ip = crash_ipsr();
         k->ipsr = (uint16_t)(ip & 0x1ffu);
+        {
+            volatile struct tring *tr = TR;
+            uint32_t t = XTICK;
+            if (tr->magic == TR_MAGIC) {
+                if (t < tr->last && tr->back < 255u)
+                    tr->back++;                                   /* the tick went backwards */
+                tr->last = t;
+                if ((c & 63u) == 0) {
+                    tr->t[tr->i] = t;
+                    tr->i = (uint8_t)((tr->i + 1u) % 7u);
+                }
+            }
+        }
         if ((c % 188u) == 0) {                                    /* about once a second: ticks since the last time */
             uint32_t t = XTICK, dt = t - k->tick0;
             k->rate = (uint16_t)(dt > 0xffffu ? 0xffffu : dt);
@@ -414,7 +448,7 @@ void crash_wd(volatile uint32_t *obj)
         if (in_ram((uint32_t)sp) && in_ram((uint32_t)(sp + 40))) {
             uint32_t exc = sp[8];
             const uint32_t *hw = sp + 9 + ((exc & 0x10u) ? 0 : 16);
-            uint32_t k = as->n % 3u;
+            uint32_t k = 0;
             as->pc[k] = hw[6];
             as->lr[k] = hw[5];
             as->n++;
@@ -681,24 +715,31 @@ int crash_line(int i, char *buf, int n)
         p = put_x(p, e, w->r_site);
         break;
     }
-    case 11:
-    case 12:
-    case 13: {
+    case 11: {
         volatile struct asamp *a = AS;
-        int k = i - 11;
-        if (k == 0 && !a->r_n) {
+        if (!a->r_n) {
             p = put_s(p, e, "LOOP A WAS NEVER LATE");
             break;
         }
-        if ((uint32_t)k >= a->r_n || k > 2)
-            return 0;
-        p = put_s(p, e, k == 0 ? "A LATE AT PC " : "BEFORE PC ");
-        p = put_x(p, e, a->r_pc[k]);
+        p = put_s(p, e, "A LATE AT PC ");
+        p = put_x(p, e, a->r_pc[0]);
         p = put_s(p, e, " LR ");
-        p = put_x(p, e, a->r_lr[k]);
-        if (k == 0) {
-            p = put_s(p, e, " N ");
-            p = put_u(p, e, a->r_n);
+        p = put_x(p, e, a->r_lr[0]);
+        p = put_s(p, e, " N ");
+        p = put_u(p, e, a->r_n);
+        break;
+    }
+    case 12:
+    case 13: {
+        volatile struct asamp *a = AS;
+        p = put_s(p, e, i == 12 ? "TICKS " : "      ");
+        for (int k = (i - 12) * 4; k < 7 && k < (i - 12) * 4 + 4; k++) {
+            p = put_x(p, e, a->r_tk[k]);
+            p = put_s(p, e, " ");
+        }
+        if (i == 13) {
+            p = put_s(p, e, "BACK ");
+            p = put_u(p, e, a->r_back);
         }
         break;
     }

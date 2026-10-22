@@ -258,6 +258,17 @@ check("an empty list is left alone", e.r32(RL) == 0 and e.r32(0x2401F1A0) & 0xFF
 e.w32(RSR, 1 << 28)
 e.call("crash_boot")
 check("at boot the last run's repairs are kept (2) and the new run's start at 0", "REPAIRS LAST 2 NOW 0" in lines()[23], lines()[23])
+# the kernel tick: a ring of readings every 64 blocks, and backward jumps counted
+e.w32(0x2401F1A4, 100)
+for blk in range(1, 64 * 8 + 1):
+    e.w32(OBJ + 8, blk)
+    e.w32(0x2401F1A4, 100 + blk if blk != 300 else 5)                # one reading goes backwards
+    e.call("crash_wd", OBJ)
+e.w32(RSR, 1 << 28)
+e.call("crash_boot")
+L = lines()
+check("the last run's tick readings (oldest first) and its backward jumps", L[12] == "TICKS 000000E4 00000124 00000164 000001A4 " and L[13].startswith("      000001E4 00000224 00000264 BACK 1"), L[12:14])
+
 # the patch: the four fault vectors and the allocator's call site
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+lira+lirarec+lirasave+crash+cave/BLACKBOX.bin", "rb").read()
 vec = struct.unpack("<4I", img[12:28])
