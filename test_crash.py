@@ -161,6 +161,7 @@ e.w32(0x2401F188, 0xFFFFFFFF)                                     # xNextTaskUnb
 e.w32(0x2401F1A4, 0x00011111)                                     # xTickCount
 e.w32(0x2401F1F0, 0x2401F208)                                     # pxDelayedTaskList
 e.w32(0x2401F1EC, 0x2401F1F4)                                     # pxOverflowDelayedTaskList
+e.w32(0x38800B28, 10000)                                          # (the live block's uptime: past the first 30 s)
 e.w32(OBJ, 0); e.w32(OBJ + 4, 0); e.w32(OBJ + 8, 0)
 e.call("crash_stamp_a", OBJ)
 for blk in range(1, 520):
@@ -173,7 +174,14 @@ e.w32(RSR, 1 << 28)
 e.call("crash_boot")
 L = lines()
 check("loop A late: where it was (its saved PC and LR) and how many samples", any(l.startswith("A LATE AT PC 08088757 LR 0807ABC1 N 3") for l in L), L[11:])
-check("... its wake time, the kernel's next wake-up, the tick and the delayed lists", L[14] == "WAKE 00012345 NEXT FFFFFFFF TICK 00011111" and L[15] == "DLY 2401F208 OVF 2401F1F4", L[14:16])
+check("... the object it waits on (r4) and its callers (odd code addresses above its frame)", L[14] == "OBJ 2400BEEF 08074123 080740F9 08074407" and L[15] == " 0808A001 08099999", L[14:16])
+# in the first 30 s after a boot the loader is not sampled (it is late while the unit starts; the last run's samples stay)
+e.w32(0x38800B28, 100)
+n0 = e.r32(0x38800394)
+e.w32(OBJ, 0); e.w32(OBJ + 8, 384)
+e.call("crash_wd", OBJ)
+check("no sample in the first 30 s after a boot", e.r32(0x38800394) == n0, (n0, e.r32(0x38800394)))
+
 # the next wake-up later than the current delayed list's first task: brought back to it
 DL = 0x2401F208
 e.w32(DL, 1); e.w32(DL + 12, ITEM2 := 0x24072600); e.w32(ITEM2, 0x00012345)

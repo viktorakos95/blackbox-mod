@@ -443,7 +443,8 @@ void crash_wd(volatile uint32_t *obj)
         }
     }
     volatile struct asamp *as = AS;
-    if (w->lag_a >= 375u && (w->lag_a & 63u) == 0 && in_ram(as->tcb)) {   /* loop A 2 s late: where is it? */
+    if (w->lag_a >= 375u && (w->lag_a & 63u) == 0 && in_ram(as->tcb) && LIVE->blocks > 5600u) {   /* loop A 2 s late: where is it? (not in the
+                                                                   first 30 s: it is late while the unit starts, and the last run's samples must stay) */
         const uint32_t *sp = *(const uint32_t *const *)as->tcb;
         if (in_ram((uint32_t)sp) && in_ram((uint32_t)(sp + 40))) {
             uint32_t exc = sp[8];
@@ -461,11 +462,13 @@ void crash_wd(volatile uint32_t *obj)
                 uint32_t cn = XREADY[5 * as->prio];
                 as->rcnt = (uint8_t)(cn > 255u ? 255u : cn);
             }
-            as->chain[0] = ((const uint32_t *)as->tcb)[1];          /* its wake time (xStateListItem.xItemValue) */
-            as->chain[1] = XNEXT;
-            as->chain[2] = XTICK;
-            as->chain[3] = XDLY;
-            as->chain[4] = XOVF;
+            int m = 0;                                            /* its callers: odd code addresses above its frame */
+            const uint32_t *q = hw + ((exc & 0x10u) ? 8 : 26);
+            for (int i = 0; i < 96 && m < 5 && in_ram((uint32_t)(q + i)); i++)
+                if ((q[i] & 1u) && q[i] >= 0x08040001u && q[i] < 0x08140000u)
+                    as->chain[m++] = q[i];
+            for (; m < 5; m++)
+                as->chain[m] = 0;
         }
     }
     ((void (*)(volatile uint32_t *))0x08046995u)(obj);
@@ -748,18 +751,12 @@ int crash_line(int i, char *buf, int n)
         volatile struct asamp *a = AS;
         if (!a->r_n)
             return 0;
-        if (i == 14) {
-            p = put_s(p, e, "WAKE ");
-            p = put_x(p, e, a->chain[0]);
-            p = put_s(p, e, " NEXT ");
-            p = put_x(p, e, a->chain[1]);
-            p = put_s(p, e, " TICK ");
-            p = put_x(p, e, a->chain[2]);
-        } else {
-            p = put_s(p, e, "DLY ");
-            p = put_x(p, e, a->chain[3]);
-            p = put_s(p, e, " OVF ");
-            p = put_x(p, e, a->chain[4]);
+        p = put_s(p, e, i == 14 ? "OBJ " : "");
+        if (i == 14)
+            p = put_x(p, e, a->r4);
+        for (int k = (i - 14) * 3; k < 5 && k < (i - 14) * 3 + 3; k++) {
+            p = put_s(p, e, " ");
+            p = put_x(p, e, a->chain[k]);
         }
         break;
     }
