@@ -479,6 +479,21 @@ check("LFO square on the delay clock: no clicks (peak / median of the 2nd-differ
       clicks(sq_part) < 12)
 
 
+# ---- FM Source OUT (8): the master output itself modulates the pair (3.1.AJ) ----
+def src_run(src, mod=60):
+    l = Lira(**dict(CLEAN, WAVE=0, DEL_MIX=0, DST_MIX=20, MOD12=mod, SOURCE12=src))
+    l.key(0, 1)
+    l.key(1, 1)
+    l.run(SR)
+    return l.run(2 * SR)
+
+
+x_off, x_out, x_lfo = src_run(1), src_run(8), src_run(2)
+check("FM Source OUT: finite, bounded, and not the same as Off or LFO (rms %.3f / %.3f / %.3f)" % (rms(x_out), rms(x_off), rms(x_lfo)),
+      np.all(np.isfinite(x_out)) and abs(x_out).max() < 1.5 and not np.allclose(x_out, x_off, atol=1e-4) and not np.allclose(x_out, x_lfo, atol=1e-4))
+check("... and with no depth it does nothing (the same as Off)", np.allclose(src_run(8, 0), src_run(1, 0), atol=1e-6))
+
+
 # CPU
 l = Lira()
 for i in range(8):

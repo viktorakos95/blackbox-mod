@@ -544,7 +544,7 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
     const float andor = l->params[LIRA_ANDOR];
     const float link = l->params[LIRA_LINK] > 0.5f ? 1.f : 0.f;
     const int delmod = (int)l->params[LIRA_DEL_MOD], lfowav = (int)l->params[LIRA_LFO_WAV];
-    float g0[4], g2[4], g3[4];
+    float g0[4], g2[4], g3[4], g8[4];
     int sidx[4];                                     /* FM Source P1..P4: the pair whose output modulates this one */
     const float ka = clip_(1.f / (0.003f * sr), 0.f, 1.f), kr = 1.f / (0.12f * sr);
     for (int v = 0; v < 4; v++) {
@@ -552,6 +552,7 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
         g0[v] = 0.999f * (src == 0) + 0.001f;
         g2[v] = 0.999f * (src == 2) + 0.001f;
         g3[v] = (src == 3) ? 1.f : 0.f;
+        g8[v] = (src == 8) ? 1.f : 0.f;                  /* 8: the master output itself (total feedback) */
         sidx[v] = src >= 4 && src <= 7 ? src - 4 : -1;
     }
 
@@ -686,7 +687,7 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
                 wb[v][sidx[v]] += 1.f;
             for (int j = 0; j < 4; j++)
                 wb[v][j] *= vmod[v];
-            wtf[v] = g2[v] * gfb * vmod[v];
+            wtf[v] = (g2[v] * gfb + g8[v]) * vmod[v];
             wtc[v] = g2[v] * lfo_fm * vmod[v];
             wx[v] = g3[v] * vmod[v];
         }

@@ -98,6 +98,7 @@ float park_rate(const uint8_t *pad);                   /* filter.c: rate of the 
 #define C_SHARP  9
 #define C_HOLD   10
 #define C_DLYMOD 20
+#define C_VIBRATO 13
 #define IDLE_CYCLES  25000000u                         /* ~50 ms without a voice: the instance may go to another pad */
 
 /* ---- the 25 controls ---- */
@@ -110,7 +111,7 @@ struct ctl {
     const char *const *names;
     uint8_t names_n;
 };
-static const char *const source_names[8] = {"Self", "Off", "LFO", "Ext", "Pair1", "Pair2", "Pair3", "Pair4"};
+static const char *const source_names[9] = {"Self", "Off", "LFO", "Ext", "Pair1", "Pair2", "Pair3", "Pair4", "Out"};
 static const char *const touch_names[3] = {"Slow", "Fast", "Ext"};
 #define PCT(x) ((int16_t)((x) * 1000.0f / 127.0f + 0.5f))
 #define P0 0x1db
@@ -128,7 +129,7 @@ static const struct ctl ctls[] = {
     {P0 + 10, K_PCT, 2, {LIRA_HOLD1234, LIRA_HOLD5678}, PCT(0), "Hold:", "lirahold", 0, 0},
     {P0 + 11, K_PCT, 4, {LIRA_MOD12, LIRA_MOD34, LIRA_MOD56, LIRA_MOD78}, PCT(0), "FM Depth:", "liramod", 0, 0},
     {P0 + 12, K_LIST, 4, {LIRA_SOURCE12, LIRA_SOURCE34, LIRA_SOURCE56, LIRA_SOURCE78}, 0, "FM Source:", "lirasource",
-     source_names, 8},
+     source_names, 9},
     {P0 + 13, K_PCT, 1, {LIRA_VIBRATO}, PCT(1), "Vibrato:", "liravibrato", 0, 0},
     {P0 + 14, K_PCT, 1, {LIRA_F_A}, PCT(42), "LFO A:", "liralfoa", 0, 0},
     {P0 + 15, K_PCT, 1, {LIRA_F_B}, PCT(64), "LFO B:", "liralfob", 0, 0},
@@ -714,7 +715,7 @@ void lira_ui_set(int c, int v)
     else if (c >= 100 && c < 104)
         g->touch[c - 100] = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
     else if (c >= 104 && c < 108)
-        g->src[c - 104] = (uint8_t)(v < 0 ? 0 : v > 7 ? 7 : v);
+        g->src[c - 104] = (uint8_t)(v < 0 ? 0 : v > 8 ? 8 : v);
     else if (c >= 108 && c < 112)
         g->mod[c - 108] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
     else if (c == 120)
@@ -1233,6 +1234,8 @@ int lira_ui_chord_get(int id)                              /* the index behind a
         return g->btn_on;
     if (id == 194)
         return g->off;
+    if (id == 195)
+        return g->row[C_VIBRATO] >= 4;                     /* (the engine's switch is on from 0.5 of 127: the default 8 / 1000 is on) */
     if (id == 167)
         return g->pend;
     if (id == 166)                                         /* the loop's position, 0..8 */
@@ -1391,6 +1394,8 @@ void lira_ui_action(int a)
         g->glayers = 0;
     } else if (a == 8) {
         g->btn_on ^= 1;
+    } else if (a == 19) {                                 /* VIBRATO on / off (its default is on) */
+        g->row[C_VIBRATO] = g->row[C_VIBRATO] >= 4 ? 0 : ctls[C_VIBRATO].def;
     } else if (a == 18) {                                 /* ENGINE on / off: off stops the synth, its tail and its modulation, and the next start is fresh */
         g->off ^= 1;
         if (g->off) {
@@ -1778,7 +1783,7 @@ void lira_load(void)
     for (int i = 0; i < 4; i++) {
         g->mod[i] = b->mod[i];
         g->touch[i] = (uint8_t)(b->touch[i] > 2 ? 1 : b->touch[i]);
-        g->src[i] = (uint8_t)(b->src[i] & 7);
+        g->src[i] = (uint8_t)(b->src[i] < 9 ? b->src[i] : 0);
     }
     g->level = b->level;
     for (int i = 0; i < 18; i++)

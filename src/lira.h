@@ -19,7 +19,7 @@ enum {
     LIRA_FAST12, LIRA_FAST34, LIRA_FAST56, LIRA_FAST78,   /* 0/1: touch envelope 100/100 ms (1) or 200 ms / 8 s (0) */
     LIRA_SHARP12, LIRA_SHARP34, LIRA_SHARP56, LIRA_SHARP78,   /* triangle <-> square */
     LIRA_MOD12, LIRA_MOD34, LIRA_MOD56, LIRA_MOD78,   /* FM depth */
-    LIRA_SOURCE12, LIRA_SOURCE34, LIRA_SOURCE56, LIRA_SOURCE78,   /* FM source: 0 self (neighbour voices), 1 off, 2 LFO/feedback */
+    LIRA_SOURCE12, LIRA_SOURCE34, LIRA_SOURCE56, LIRA_SOURCE78,   /* FM source: 0 self (neighbour voices), 1 off, 2 LFO/feedback, 3 ext, 4..7 a pair, 8 the master output */
     LIRA_PITCH1234, LIRA_PITCH5678,   /* global pitch of each half */
     LIRA_HOLD1234, LIRA_HOLD5678,     /* drone level with no touch */
     LIRA_SWITCH,      /* 0/1: which neighbour voice drives the FM in "self" */
