@@ -160,9 +160,12 @@ struct smscr {
     uint16_t shr, shg, shb, shm;            /* the last report of those, per mille of the audio block period */
     uint32_t pp, pd, pl, last_sdur;             /* cycles this report: the audio task before the looper stage (stock voices, effects, the synths), the looper's run without SAMPLR, SAMPLR's last call */
     uint16_t shp, shd, shl;                      /* their last report (per mille of the block period) */
-    uint8_t prof, _pf[3];                   /* the top bar: 0 V G, 1 P D L S (before the stage / the LIRA synth / looper / SAMPLR), 2 the same, worst block, 3 R G B M (inside SAMPLR); tap it */
+    uint8_t prof, _pf[3];                   /* the top bar: 0 V G, 1 P D L S (before the stage / the LIRA synth / looper / SAMPLR), 2 the same, worst of each, 3 R G B M (inside SAMPLR), 4 the worst whole block and its parts; tap it */
     uint32_t xp, xd, xlp, xrest;            /* the worst block this report of pp, pd, pl and of the rest (after the looper stage to the end of the block) (cycles) */
     uint16_t shxp, shxd, shxl, shxr;        /* their last report (per mille of the block period) */
+    uint32_t cp, cd, cl, cs;                /* this block's parts: before the stage, the LIRA synth, the looper, SAMPLR (cycles) */
+    uint32_t wt, wp, wd, wl, ws, wr;        /* the worst whole block this report (cycles): its total and its parts (wr: the rest after the stage) */
+    uint16_t shw[6];                        /* their last report (per mille): total, P, D, L, S, R */
     uint32_t t_end;                         /* the cycle count at the end of the looper stage this block (0: not reached) */
     uint16_t gcool, gcalm;                  /* the guard's track fades: blocks before the next may start; blocks in a row with room for one to return */
     uint8_t gout, _go[3];                   /* tracks out (fading or out) */

@@ -1504,4 +1504,16 @@ check("transients: four bursts give five slices", ns == 5, (ns, cuts))
 check("transients: each slice point sits just before its burst, never inside it", all(b_ - 200 < c <= b_ for c, b_ in zip(cuts[1:5], (2000, 6000, 10000, 14000))), cuts)
 check("transients: first point 0, last point the end", cuts[0] == 0 and cuts[ns] == LENF, cuts)
 
+# the worst whole block: samplr_stage_prof gives this block's parts, samplr_block_done its rest; the block with the biggest total keeps its parts
+def u32(a):
+    return struct.unpack("<I", e.uc.mem_read(a, 4))[0]
+e.uc.mem_write(SC + scr_off("wt"), bytes(4))
+for pre, lira, run_all, sdur, rest in ((1000, 200, 900, 300, 100), (3000, 500, 1500, 700, 400), (2000, 100, 600, 200, 50)):
+    e.uc.mem_write(SC + scr_off("last_sdur"), struct.pack("<I", sdur))
+    e.call("samplr_stage_prof", pre, lira, run_all)
+    t_end = u32(SC + scr_off("t_end"))
+    e.call("samplr_block_done", (t_end + rest) & 0xffffffff)
+W = [u32(SC + scr_off(n)) for n in ("wt", "wp", "wd", "wl", "ws", "wr")]
+check("the worst whole block is kept with its own parts (stock before, drone, looper, SAMPLR, the rest)", W == [3000 + 500 + 800 + 700 + 400, 3000, 500, 800, 700, 400], W)
+
 print(f"\n{fails} failure(s)")

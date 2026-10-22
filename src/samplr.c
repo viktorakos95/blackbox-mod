@@ -2652,6 +2652,10 @@ void samplr_stage_prof(uint32_t pre, uint32_t lira, uint32_t run_all)
     sc->xd = lira > sc->xd ? lira : sc->xd;
     sc->pl += lo;
     sc->xlp = lo > sc->xlp ? lo : sc->xlp;
+    sc->cp = pre < 100000000u ? pre : 0u;
+    sc->cd = lira;
+    sc->cl = lo;
+    sc->cs = sc->last_sdur;
     sc->t_end = DWT_CYCCNT | 1u;
 }
 
@@ -2665,6 +2669,15 @@ void samplr_block_done(uint32_t now)
         uint32_t r = now - sc->t_end;
         if (r < 100000000u && r > sc->xrest)
             sc->xrest = r;
+        uint32_t t = sc->cp + sc->cd + sc->cl + sc->cs + (r < 100000000u ? r : 0u);
+        if (t > sc->wt) {                                         /* the worst whole block: which parts made it */
+            sc->wt = t;
+            sc->wp = sc->cp;
+            sc->wd = sc->cd;
+            sc->wl = sc->cl;
+            sc->ws = sc->cs;
+            sc->wr = r < 100000000u ? r : 0u;
+        }
         sc->t_end = 0;
     }
 }
@@ -2908,6 +2921,12 @@ int samplr_run(float *bl, float *br, int n, float **snd)
                 sc->shxr = (uint16_t)(sc->xrest / d1 > 9990u ? 9990u : sc->xrest / d1);
                 sc->pr = sc->pg = sc->pb = sc->pm = sc->pp = sc->pd = sc->pl = 0;
                 sc->xp = sc->xd = sc->xlp = sc->xrest = 0;
+                {
+                    const uint32_t w6[6] = {sc->wt, sc->wp, sc->wd, sc->wl, sc->ws, sc->wr};
+                    for (int i = 0; i < 6; i++)
+                        sc->shw[i] = (uint16_t)(w6[i] / d1 > 9990u ? 9990u : w6[i] / d1);
+                    sc->wt = 0;
+                }
                 sc->mshown = sc->mtop;
                 sc->mtop = 0;
             }

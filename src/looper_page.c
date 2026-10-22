@@ -1222,6 +1222,13 @@ static void draw_sm_top(struct sm *s, const char *info)
             *q++ = 'R';
             q = put_uint(q, (s->sc->shxr + 5u) / 10u);
         }
+    } else if (s->sc->prof == 4) {                                /* the next tap: the worst whole block of the last second (W, percent of the block) and its parts */
+        static const char lab[6] = {'W', 'P', 'D', 'L', 'S', 'R'};
+        for (int i = 0; i < 6; i++) {
+            *q++ = ' ';
+            *q++ = lab[i];
+            q = put_uint(q, (s->sc->shw[i] + 5u) / 10u);
+        }
     } else if (s->sc->prof) {                                     /* the next tap: inside SAMPLR (voices, grains, reading + interpolating inside both, mix + strips) */
         static const char lab[4] = {'R', 'G', 'B', 'M'};
         const uint16_t v4[4] = {s->sc->shr, s->sc->shg, s->sc->shb, s->sc->shm};
@@ -1589,7 +1596,7 @@ static int sm_touch(int kind, int id, int x, int d)
     }
     if (d < ty - 2) {                                             /* the top bar: tap = V G / where the time goes */
         if (kind == 0 && s)
-            s->sc->prof = (uint8_t)((s->sc->prof + 1) % 4);
+            s->sc->prof = (uint8_t)((s->sc->prof + 1) % 5);
         P->sig = 0;
         return 1;
     }

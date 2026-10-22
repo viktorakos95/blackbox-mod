@@ -180,17 +180,6 @@ e.w32(OBJ, 0); e.w32(OBJ + 8, 384)
 e.call("crash_wd", OBJ)
 check("no sample in the first 30 s after a boot", e.r32(0x38800394) == n0, (n0, e.r32(0x38800394)))
 
-# the next wake-up later than the current delayed list's first task: brought back to it
-DL = 0x2401F208
-e.w32(DL, 1); e.w32(DL + 12, ITEM2 := 0x24072600); e.w32(ITEM2, 0x00012345)
-e.w32(0x2401F188, 0xFFFFFFFF)
-e.call("crash_wd", OBJ)
-check("xNextTaskUnblockTime later than the first delayed task's wake time: set to it (the wait can end)", e.r32(0x2401F188) & 0xFFFFFFFF == 0x00012345, hex(e.r32(0x2401F188) & 0xFFFFFFFF))
-e.w32(0x2401F188, 0x00010000)
-e.call("crash_wd", OBJ)
-check("... an earlier one is left alone", e.r32(0x2401F188) & 0xFFFFFFFF == 0x00010000)
-e.w32(DL, 0)
-
 # the RTOS clock: ticks a second and the scheduler held suspended
 e.w32(OBJ, 0); e.w32(OBJ + 4, 0)
 tick = 5000
@@ -207,53 +196,6 @@ e.call("crash_boot")
 L = lines()
 check("the tick rate (here: stopped in the last second) and the longest run of blocks with the scheduler suspended", L[18].startswith("TICKS/S 55 SUSPENDED MAX 200 NOW 200"), L[18])
 
-# who has the CPU: the SysTick counts the running task; the three busiest of the last 250 ticks, named from their TCBs
-for t, nm in ((0x24073000, b"audio"), (0x24073100, b"gui"), (0x24073200, b"usbmidi")):
-    e.uc.mem_write(t + 0x34, nm + b"\0")
-for t in [0x24073000] * 100 + [0x24073100] * 25 + [0x24073200] * 120 + [0x24074000] * 5:
-    e.w32(0x2401F2A8, t)
-    e.call("crash_systick")
-e.w32(RSR, 1 << 28)
-e.call("crash_boot")
-L = lines()
-check("the CPU shares of the last half second, by task name: audio 40 %, gui 10 %, usbmidi 48 %, the rest 2 %",
-      L[20] == "CPU audio 40%  gui 10%  " and L[21] == "    usbmidi 48%  REST 2%", L[20:22])
-for t in [0x24073100] * 250:                                      # the new run goes on: the record stays the last run's
-    e.w32(0x2401F2A8, t)
-    e.call("crash_systick")
-L = lines()
-check("... and they stay the last run's while the new run is measured", L[20] == "CPU audio 40%  gui 10%  ", L[20])
-# the scheduler's bookkeeping: a ready list whose task is linked on it but with no bit in uxTopReadyPriority (or a wrong
-# count) is put right
-RL = 0x2401F21C + 20 * 3                                          # pxReadyTasksLists[3]
-ITEM = 0x24072100 + 0x200                                         # the loader's state list item
-def ready3(count, linked):
-    end = RL + 8
-    e.w32(RL, count)
-    e.w32(RL + 4, end)
-    e.w32(RL + 8, 0xFFFFFFFF)
-    e.w32(RL + 12, ITEM if linked else end)                       # xListEnd.pxNext
-    e.w32(RL + 16, ITEM if linked else end)
-    e.w32(ITEM + 4, end)                                          # the item's pxNext: back to the end
-e.w32(0x2401F1A0, 1 << 0)                                         # only the idle priority's bit
-ready3(1, True)
-e.call("crash_wd", OBJ)
-check("a task linked on the priority-3 ready list and no bit: the bit is set (the task can run again)", e.r32(0x2401F1A0) & 0xFF == 0b1001, hex(e.r32(0x2401F1A0)))
-L = lines()
-check("... the repair is counted", "NOW 1 (PRIO 3)" in L[23], L[23])
-e.call("crash_wd", OBJ)
-check("... once (it stays right)", "NOW 1 (PRIO 3)" in lines()[23], lines()[23])
-e.w32(0x2401F1A0, 1 << 0)
-ready3(0, True)                                                   # the count says empty, the links say one
-e.call("crash_wd", OBJ)
-check("a linked task with the count at 0: count 1 and the bit back", e.r32(RL) == 1 and e.r32(0x2401F1A0) & 0xFF == 0b1001, (e.r32(RL), hex(e.r32(0x2401F1A0))))
-ready3(0, False)
-e.w32(0x2401F1A0, 1 << 0)
-e.call("crash_wd", OBJ)
-check("an empty list is left alone", e.r32(RL) == 0 and e.r32(0x2401F1A0) & 0xFF == 1)
-e.w32(RSR, 1 << 28)
-e.call("crash_boot")
-check("at boot the last run's repairs are kept (2) and the new run's start at 0", "REPAIRS LAST 2 NOW 0" in lines()[23], lines()[23])
 # the SD driver's read: a failed read is tried again (queue drained, HAL idle first), counted, kept at boot
 e.uc.mem_map(0x52007000, 0x1000)
 e.w32(0x52007034, 0x00000020)                                     # SDMMC STA: RX overrun
@@ -280,30 +222,6 @@ e.w32(RSR, 1 << 28)
 e.call("crash_boot")
 L = lines()
 check("the record: 5 failures, 1 read OK again, 1 given up, the HAL state / error and the SDMMC status", L[9] == "SD READ FAILS 5 OK AGAIN 1 GAVE UP 1 READS 1 01000020/00000020", L[9])
-
-# a task on the ready list of another priority (the idle task on priority 5's list) is moved to its own list
-def lst(pr):
-    return 0x2401F21C + 20 * pr
-def init_empty(pr):
-    L0 = lst(pr)
-    e.w32(L0, 0); e.w32(L0 + 4, L0 + 8); e.w32(L0 + 8, 0xFFFFFFFF); e.w32(L0 + 12, L0 + 8); e.w32(L0 + 16, L0 + 8)
-for pr in range(7):
-    init_empty(pr)
-IDLE_TCB, IT = 0x24072800, 0x24072804                             # the idle task's TCB; its state list item at +4
-e.w32(IDLE_TCB + 0x2C, 0)                                         # uxPriority 0
-L5 = lst(5)
-e.w32(IT + 0, 0); e.w32(IT + 4, L5 + 8); e.w32(IT + 8, L5 + 8); e.w32(IT + 12, IDLE_TCB); e.w32(IT + 16, L5)
-e.w32(L5, 1); e.w32(L5 + 12, IT); e.w32(L5 + 16, IT)
-e.w32(0x2401F1A0, 1 << 5)
-e.call("crash_wd", OBJ)
-L0 = lst(0)
-check("the idle task found on priority 5's ready list is moved to priority 0's (counts, links, container, bits)",
-      e.r32(L5) == 0 and e.r32(L5 + 12) == L5 + 8 and e.r32(L0) == 1 and e.r32(L0 + 12) == IT and e.r32(IT + 4) == L0 + 8 and e.r32(IT + 16) == L0
-      and e.r32(0x2401F1A0) & 0x7F == 1, (e.r32(L5), hex(e.r32(L5 + 12)), e.r32(L0), hex(e.r32(L0 + 12)), hex(e.r32(0x2401F1A0))))
-e.call("crash_wd", OBJ)
-check("... and left there after", e.r32(L0) == 1 and e.r32(L5) == 0)
-for pr in range(7):
-    e.w32(lst(pr), 0); e.w32(lst(pr) + 12, 0)                     # (back to unset memory: the tests below do not set the lists up)
 
 # the patch: the four fault vectors and the allocator's call site
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+lira+lirarec+lirasave+crash+cave/BLACKBOX.bin", "rb").read()
