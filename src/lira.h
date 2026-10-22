@@ -73,6 +73,7 @@ typedef struct {
     int16_t *buf;                         /* the memory, 16-bit (half the RAM of floats; the PT2399 is a ~12-bit part): value * DL_SCALE */
     int len, w;
     float acc, est, stp;
+    float dpos;                           /* the tap's delay in samples as it is now (gliding to the clock's value) */
     int pbit;
     float hp_x, in1, in2, out1, out2, self_lp;
     lira_ramp time, mod;                  /* seconds at the clock set by the knob; relative clock modulation depth */
@@ -104,8 +105,6 @@ typedef struct {
     int wave_on;                  /* the WAVE the oscillators' triangles were last kept for (gen_sync) */
     float width, drift;           /* stereo width and slow pitch wander (0..1); width 0 runs the cheaper mono path */
     float bodyc;                  /* the bass lift (a gain; 0.41, fixed) */
-    float harm;                   /* low-order harmonics of the bass (0..1; fixed at LIRA_HARM) */
-    float hb1, hb2, hbd, hbl;     /* their filters: the bass band (two poles), the rectifier's DC block, the harmonics' low-pass */
     float pan[8];                 /* each oscillator's place in the stereo image (-1..1, random per unit, scaled by width) */
     float *out_r;                 /* the right channel, set by the caller before lira_process (NULL: mono, as the pads use it) */
     float dr[8];                  /* the oscillators' pitch wander, relative */
@@ -134,9 +133,7 @@ void lira_key(lira_t *l, int sensor /* 0..7 */, int on);
 void lira_touch(lira_t *l, int sensor, float drive);
 void lira_process(lira_t *l, float *out, int n);
 /* The page's tone: width = stereo spread of the pairs and the two delay lines (0 = mono, and the right channel is a copy: the cheap path);
-   drift = how far each oscillator wanders (up to ~6 cents, a few seconds a turn); harm = a quiet 2nd harmonic made from the bass band (below
-   ~160 Hz) by a rectifier, so low notes carry on small speakers and headphones (LIRA_HARM is what the sound has by default). */
-#define LIRA_HARM 0.2f
-void lira_tone(lira_t *l, float width, float drift, float harm);
+   drift = how far each oscillator wanders (up to ~6 cents, a few seconds a turn). */
+void lira_tone(lira_t *l, float width, float drift);
 
 #endif

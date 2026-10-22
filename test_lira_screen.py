@@ -330,8 +330,8 @@ drag(5 + 19, 140, 120)
 check("voice 1's tune knob: +250", 740 < get(0) < 760, get(0))
 tap(5 + 19, 140)
 check("a plain tap on a knob changes nothing", 740 < get(0) < 760, get(0))
-# the four encoders sit two left, two right: the left two turn voices 1 and 2, the right two voices 3 and 4
-for raw, voice in ((1, 0), (0, 1), (2, 2), (3, 3)):
+# the four encoders: voices 1 2 3 4 are the bottom left, bottom right, top left and top right ones
+for raw, voice in ((1, 0), (3, 1), (0, 2), (2, 3)):             # voices 1 2 3 4: bottom left, bottom right, top left, top right
     before = [get(v) for v in range(8)]
     knob(raw, 80)
     after = [get(v) for v in range(8)]

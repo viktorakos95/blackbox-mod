@@ -1039,7 +1039,7 @@ void lira_page_run(float *l, float *r, int n)
             lira_param(&s->l, LIRA_MOD12 + k, (float)g->mod[k] * (127.0f / 1000.0f));
             lira_param(&s->l, LIRA_SHARP12 + k, (float)g->ex[6 + k] * (127.0f / 1000.0f));
         }
-        lira_tone(&s->l, g->tone[0] < 30 ? 0.0f : (float)g->tone[0] * 0.001f, (float)g->tone[1] * 0.001f, LIRA_HARM);   /* (under 3 % the knob reads 0 to 3: that is mono, exactly) */
+        lira_tone(&s->l, g->tone[0] < 30 ? 0.0f : (float)g->tone[0] * 0.001f, (float)g->tone[1] * 0.001f);   /* (under 3 % the knob reads 0 to 3: that is mono, exactly) */
         lira_param(&s->l, LIRA_LFO_WAV, (float)g->lfo[0]);
         lira_param(&s->l, LIRA_ANDOR, (float)g->lfo[1]);
         lira_param(&s->l, LIRA_LINK, (float)g->lfo[2]);

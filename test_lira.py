@@ -223,15 +223,12 @@ check("hold, slow voice: silent at 0.4, droning at 0.6 (12 o'clock threshold), f
 check("hold, FAST voice: silent at 0.6, droning at 0.8 (2 o'clock threshold), fully open at the top", h_fast[0] < -45 and h_fast[1] > -30 and abs(h_fast[2]) < 1.5,
       "%s dB" % ["%.0f" % v for v in h_fast])
 
-# ---------------------------------------------------------------- bleed (no output VCA)
-bleed = rms(Lira(DEL_MIX=0, DST_MIX=0, FAST12=1).run(SR))
-check("nothing touched: a low-level bleed remains (-75 .. -40 dB re one open voice)", -75 < db(bleed / full) < -40,
-      "%.0f dB" % db(bleed / full))
+# ---------------------------------------------------------------- closed voices are silent (3.1.AI: the bleed of the hardware is gone)
+quiet = rms(Lira(DEL_MIX=0, DST_MIX=0, FAST12=1).run(SR))
+check("nothing touched: silence (the bleed of a closed voice is gone): rms %.1e" % quiet, quiet < 1e-6)
 hi_t = {f"TUNE{i}": 120 for i in range(1, 9)}
-lo_t = {f"TUNE{i}": 20 for i in range(1, 9)}
 b_hi = rms(Lira(DEL_MIX=0, DST_MIX=0, **hi_t).run(SR))
-b_lo = rms(Lira(DEL_MIX=0, DST_MIX=0, **lo_t).run(SR))
-check("bleed rises with tuning (capacitive coupling)", b_hi > 1.5 * b_lo, "%.0f dB vs %.0f dB" % (db(b_hi), db(b_lo)))
+check("... whatever the tuning (turning a pitch knob with the voices off makes no sound): rms %.1e" % b_hi, b_hi < 1e-6)
 
 # ---------------------------------------------------------------- vibrato
 def jitter(vib, seed=1):
@@ -406,7 +403,7 @@ _o = os.path.join(tmp, "off")
 open(_o + ".c", "w").write('#include "lira.h"\n#include <stddef.h>\n#include <stdio.h>\nint main(){printf("%d",(int)offsetof(lira_t,out_r));}')
 subprocess.check_call(["gcc", "-I" + os.path.join(HERE, "src"), "-o", _o, _o + ".c"])
 OUT_R = int(subprocess.check_output([_o]))
-lib.lira_tone.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 3
+lib.lira_tone.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 2
 
 
 def run_st(l, n, tone, stereo=True):
@@ -426,29 +423,29 @@ def full_drone():
 
 
 l = full_drone()
-run_st(l, SR, (0, 0, 0))
-a, b = run_st(l, SR, (0, 0, 0))
+run_st(l, SR, (0, 0))
+a, b = run_st(l, SR, (0, 0))
 check("width 0: left = right", np.array_equal(a, b) and np.std(a) > 0.01)
 l = full_drone()
-run_st(l, SR, (1, 0, 0))
-a, b = run_st(l, 2 * SR, (1, 0, 0))
+run_st(l, SR, (1, 0))
+a, b = run_st(l, 2 * SR, (1, 0))
 mid, side = (a + b) / 2, (a - b) / 2
 ratio = math.sqrt(np.mean(side ** 2) / np.mean(mid ** 2))
 check("width 1: a real stereo image (side %.2f of mid, correlation %.2f)" % (ratio, np.corrcoef(a, b)[0, 1]), 0.25 < ratio < 1.0 and np.corrcoef(a, b)[0, 1] < 0.85)
 check("... and balanced: the voices are dealt out so neither side is crowded (L / R level %.2f)" % (np.sqrt(np.mean(a ** 2) / np.mean(b ** 2))), 0.8 < np.sqrt(np.mean(a ** 2) / np.mean(b ** 2)) < 1.25)
 check("... finite and bounded", np.all(np.isfinite(a)) and np.all(np.isfinite(b)) and max(abs(a).max(), abs(b).max()) < 1.5)
 l1, l2 = full_drone(), full_drone()
-run_st(l1, SR, (0.8, 0, 0))
-run_st(l2, SR, (0.8, 0, 0), stereo=False)
-a, _ = run_st(l1, 8192, (0.8, 0, 0))
-c, d = run_st(l2, 8192, (0.8, 0, 0), stereo=False)
+run_st(l1, SR, (0.8, 0))
+run_st(l2, SR, (0.8, 0), stereo=False)
+a, _ = run_st(l1, 8192, (0.8, 0))
+c, d = run_st(l2, 8192, (0.8, 0), stereo=False)
 check("with no right buffer the engine stays mono (a pad's instance: no crash, a signal, nothing written)", np.std(c) > 0.01 and np.all(d == 0))
 
 
 def pitch_track(drift, sec=40):
     l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0))
     l.key(0, 1)
-    x = np.concatenate([run_st(l, SR, (0, drift, 0), stereo=False)[0] for _ in range(sec)])
+    x = np.concatenate([run_st(l, SR, (0, drift), stereo=False)[0] for _ in range(sec)])
     f = []
     for i in range(15, sec):                                        # after the envelope has settled
         seg = x[i * SR:(i + 1) * SR]
@@ -463,27 +460,23 @@ check("drift off: the pitch is steady (%.2f cents)" % c_off, c_off < 0.2)
 check("drift 0.5 wanders a few cents (%.1f), full more (%.1f), none beyond 25" % (c_half, c_full), 1.0 < c_half < c_full < 25.0)
 
 
-# ---- HARM: the bass band's 2nd harmonic (3.1.AC) ----
-def bass_voice(harm, tune=45, secs=3):
-    l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0, TUNE1=tune))
-    l.key(0, 1)
-    run_st(l, 20 * SR, (0, 0, harm), stereo=False)
-    return run_st(l, secs * SR, (0, 0, harm), stereo=False)[0]
+# ---- the delay's clock moves the pitch of the echoes, it does not move the read pointer (3.1.AI: no tick at a square LFO's edges) ----
+def clicks(x):
+    h = np.diff(x, 2)
+    n = int(SR * 0.002)
+    e = np.array([np.sqrt(np.mean(h[i:i + n] ** 2)) for i in range(0, len(h) - n, n)])
+    return e.max() / np.median(e)
 
 
-b0, b2, b10 = bass_voice(0), bass_voice(0.2), bass_voice(1.0)
-fb = peak_hz(b0, 20, 400)
-h2 = lambda x: db(level_at(x, 2 * fb) / level_at(x, fb))
-check("HARM off: no 2nd harmonic (%.0f dB at %.0f Hz)" % (h2(b0), fb), h2(b0) < -35)
-check("HARM 0.2 (the default): a quiet 2nd harmonic (%.0f dB)" % h2(b2), -30 < h2(b2) < -14)
-check("HARM 1: clearly there but under the fundamental (%.0f dB)" % h2(b10), -12 < h2(b10) < -3)
-check("... the fundamental itself is not changed (%.2f dB)" % db(level_at(b10, fb) / level_at(b0, fb)), abs(db(level_at(b10, fb) / level_at(b0, fb))) < 0.5)
-dc = abs(np.mean(b10))
-check("... and no DC offset appears (%.5f)" % dc, dc < 0.002)
-hi = bass_voice(1.0, tune=100)
-h_hi = bass_voice(0.0, tune=100)
-fh = peak_hz(hi, 400, 4000)
-check("a voice above the bass band gets next to nothing (2nd harmonic %.0f dB, it was %.0f)" % (db(level_at(hi, 2 * fh) / level_at(hi, fh)), db(level_at(h_hi, 2 * fh) / level_at(h_hi, fh))), db(level_at(hi, 2 * fh) / level_at(hi, fh)) < -38)
+l = Lira(DEL_MIX=90, FEEDBACK=60, DST_MIX=0, VIBRATO=0, DEL_MOD=2, LFO_WAV=0, MOD1=127, MOD2=127, F_A=70, F_B=70, TIME1=40, TIME2=50)
+for i in range(4):
+    l.key(i, 1)
+l.run(6 * SR)
+tri_part = l.run(SR // 2)
+l.set("LFO_WAV", 1)
+sq_part = l.run(SR // 2)
+check("LFO square on the delay clock: no clicks (peak / median of the 2nd-difference energy %.1f, was 44; the triangle's %.1f)" % (clicks(sq_part), clicks(tri_part)),
+      clicks(sq_part) < 12)
 
 
 # CPU
