@@ -124,9 +124,9 @@ _Static_assert(0x38800fdcu + sizeof(struct prof) <= 0x38801000u, "the CPU shares
  * HAL's state / error and the SDMMC's status at the last failure. Backup SRAM 0x38800940 (frozen copy at boot). */
 struct sdst {
     uint32_t magic;
-    uint16_t fails, recov, gaveup, _p;
+    uint16_t fails, recov, gaveup, reads;   /* (reads: the loader's reads that worked, this run) */
     uint32_t err, sta;
-    uint16_t r_fails, r_recov, r_gaveup, _q;
+    uint16_t r_fails, r_recov, r_gaveup, r_reads;
     uint32_t r_err, r_sta;
 };
 #define SD ((volatile struct sdst *)0x38800940u)
@@ -285,10 +285,11 @@ void crash_boot(void)
         q->r_fails = ok ? q->fails : 0;
         q->r_recov = ok ? q->recov : 0;
         q->r_gaveup = ok ? q->gaveup : 0;
+        q->r_reads = ok ? q->reads : 0;
         q->r_err = ok ? q->err : 0;
         q->r_sta = ok ? q->sta : 0;
         q->magic = SD_MAGIC;
-        q->fails = q->recov = q->gaveup = 0;
+        q->fails = q->recov = q->gaveup = q->reads = 0;
         q->err = q->sta = 0;
     }
     r->state = 2;                                                 /* (not looked at yet) */
@@ -523,13 +524,6 @@ void crash_systick(void)                                          /* from the Sy
     }
 }
 
-/* The loader (loop A) starved: 1 when it has not checked in for 7 s, 2 for 12 s (the watchdog acts at 20 s). Our engines
- * then give it CPU: the marks go down (1) and every track is left out (2), the drone fades out, the page stops repainting. */
-int crash_starve(void)
-{
-    uint16_t lag = WD->lag_a;
-    return lag >= 2250u ? 2 : lag >= 1300u ? 1 : 0;
-}
 
 static int sd_settle(void)
 {
@@ -557,6 +551,16 @@ int crash_sd_read(uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count)   
         if (((int (*)(uint8_t, uint8_t *, uint32_t, uint32_t))0x08045975u)(lun, buf, sector, count) == 0) {
             if (t && q->recov < 0xffffu)
                 q->recov++;
+            if (CUR_TCB == AS->tcb) {                             /* the loader: a read that worked is progress. Its check-in with the stock
+                                                                     watchdog (stamp A) comes only between jobs, and the first folder scan is one
+                                                                     job of many reads: under load (and with a pad recording to the card) it
+                                                                     takes over 20 s and the watchdog restarts the unit (build 78's record: the
+                                                                     loader alternately waiting on the SD queue and ready, no read failing). */
+                volatile uint32_t *wd = (volatile uint32_t *)0x2400a584u;   /* {stamp A, stamp B, blocks} */
+                wd[0] = wd[2];
+                if (q->reads < 0xffffu)
+                    q->reads++;
+            }
             return 0;
         }
         if (q->fails < 0xffffu)
@@ -794,6 +798,8 @@ int crash_line(int i, char *buf, int n)
         p = put_u(p, e, q->r_recov);
         p = put_s(p, e, " GAVE UP ");
         p = put_u(p, e, q->r_gaveup);
+        p = put_s(p, e, " READS ");
+        p = put_u(p, e, q->r_reads);
         if (q->r_fails) {
             p = put_s(p, e, " ");
             p = put_x(p, e, q->r_err);

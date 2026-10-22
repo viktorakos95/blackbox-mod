@@ -223,15 +223,6 @@ for t in [0x24073100] * 250:                                      # the new run 
     e.call("crash_systick")
 L = lines()
 check("... and they stay the last run's while the new run is measured", L[20] == "CPU audio 40%  gui 10%  ", L[20])
-# the loader starved: our engines give way
-for lag, want in ((100, 0), (1300, 1), (2250, 2)):
-    e.w32(OBJ, 0); e.w32(OBJ + 8, lag)
-    e.call("crash_wd", OBJ)
-    e.call("crash_starve")
-    check("loader %d blocks late -> starve level %d" % (lag, want), e.uc.reg_read(UC_ARM_REG_R0) == want, e.uc.reg_read(UC_ARM_REG_R0))
-e.w32(OBJ + 8, 0)
-e.call("crash_wd", OBJ)
-
 # the scheduler's bookkeeping: a ready list whose task is linked on it but with no bit in uxTopReadyPriority (or a wrong
 # count) is put right
 RL = 0x2401F21C + 20 * 3                                          # pxReadyTasksLists[3]
@@ -277,15 +268,18 @@ e.stubs[0x08045974] = sd_read
 drained = []
 e.stub(0x08087BE8, lambda: (drained.append(1), e.w32(e.arg(0), 0)))
 e.stub(0x08087A5C, value=1000)
+e.w32(0x2401F2A8, e.r32(0x38800390) & 0xFFFFFFFF)                # running in the loader's task (its TCB as seen at its stamps)
+e.w32(0x2400A584, 10); e.w32(0x2400A58C, 5000)                    # the stock watchdog's {stamp A, stamp B, blocks}
 e.call("crash_sd_read", 0, 0x24000000, 1234, 1)
 check("a read that fails twice is tried again and works", e.uc.reg_read(UC_ARM_REG_R0) == 0 and tries == [1234] * 3 and len(drained) >= 2, (e.uc.reg_read(UC_ARM_REG_R0), tries))
+check("... and a read that worked in the loader's task checks in for it with the stock watchdog (stamp A = now)", e.r32(0x2400A584) == 5000, e.r32(0x2400A584))
 tries.clear(); res_fail[0] = 9
 e.call("crash_sd_read", 0, 0x24000000, 77, 1)
 check("... one that keeps failing gives up after three tries (an error, not a hang)", e.uc.reg_read(UC_ARM_REG_R0) == 1 and len(tries) == 3, tries)
 e.w32(RSR, 1 << 28)
 e.call("crash_boot")
 L = lines()
-check("the record: 5 failures, 1 read OK again, 1 given up, the HAL state / error and the SDMMC status", L[9] == "SD READ FAILS 5 OK AGAIN 1 GAVE UP 1 01000020/00000020", L[9])
+check("the record: 5 failures, 1 read OK again, 1 given up, the HAL state / error and the SDMMC status", L[9] == "SD READ FAILS 5 OK AGAIN 1 GAVE UP 1 READS 1 01000020/00000020", L[9])
 
 # a task on the ready list of another priority (the idle task on priority 5's list) is moved to its own list
 def lst(pr):

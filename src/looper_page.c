@@ -1771,8 +1771,6 @@ static void tint_restore(const uint32_t *save, int n)
 static void paint_(uint8_t *view);
 static void paint(uint8_t *view)
 {
-    if (crash_starve())
-        return;                                                   /* (the stock loader is starved: the GUI's time is better spent elsewhere) */
     uint8_t was = CRASH_BC[BC_GUI];
     crash_bc(BC_GUI, BCG_PAINT);
     paint_(view);
