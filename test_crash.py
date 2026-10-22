@@ -287,6 +287,30 @@ e.call("crash_boot")
 L = lines()
 check("the record: 5 failures, 1 read OK again, 1 given up, the HAL state / error and the SDMMC status", L[9] == "SD READ FAILS 5 OK AGAIN 1 GAVE UP 1 01000020/00000020", L[9])
 
+# a task on the ready list of another priority (the idle task on priority 5's list) is moved to its own list
+def lst(pr):
+    return 0x2401F21C + 20 * pr
+def init_empty(pr):
+    L0 = lst(pr)
+    e.w32(L0, 0); e.w32(L0 + 4, L0 + 8); e.w32(L0 + 8, 0xFFFFFFFF); e.w32(L0 + 12, L0 + 8); e.w32(L0 + 16, L0 + 8)
+for pr in range(7):
+    init_empty(pr)
+IDLE_TCB, IT = 0x24072800, 0x24072804                             # the idle task's TCB; its state list item at +4
+e.w32(IDLE_TCB + 0x2C, 0)                                         # uxPriority 0
+L5 = lst(5)
+e.w32(IT + 0, 0); e.w32(IT + 4, L5 + 8); e.w32(IT + 8, L5 + 8); e.w32(IT + 12, IDLE_TCB); e.w32(IT + 16, L5)
+e.w32(L5, 1); e.w32(L5 + 12, IT); e.w32(L5 + 16, IT)
+e.w32(0x2401F1A0, 1 << 5)
+e.call("crash_wd", OBJ)
+L0 = lst(0)
+check("the idle task found on priority 5's ready list is moved to priority 0's (counts, links, container, bits)",
+      e.r32(L5) == 0 and e.r32(L5 + 12) == L5 + 8 and e.r32(L0) == 1 and e.r32(L0 + 12) == IT and e.r32(IT + 4) == L0 + 8 and e.r32(IT + 16) == L0
+      and e.r32(0x2401F1A0) & 0x7F == 1, (e.r32(L5), hex(e.r32(L5 + 12)), e.r32(L0), hex(e.r32(L0 + 12)), hex(e.r32(0x2401F1A0))))
+e.call("crash_wd", OBJ)
+check("... and left there after", e.r32(L0) == 1 and e.r32(L5) == 0)
+for pr in range(7):
+    e.w32(lst(pr), 0); e.w32(lst(pr) + 12, 0)                     # (back to unset memory: the tests below do not set the lists up)
+
 # the patch: the four fault vectors and the allocator's call site
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+lira+lirarec+lirasave+crash+cave/BLACKBOX.bin", "rb").read()
 vec = struct.unpack("<4I", img[12:28])

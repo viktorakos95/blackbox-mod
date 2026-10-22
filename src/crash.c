@@ -67,6 +67,7 @@ struct asamp {
     uint32_t r4, chain[5];         /* the latest sample's r4, its wake time, the kernel's next wake-up, the tick, the two delayed lists */
     uint32_t cont, evc;            /* the latest sample: the list its state item is on (ready / delayed / suspended), the list its event item is on */
     uint8_t prio, rbit, rcnt, rheal;   /* its priority; that ready list's priority bit and item count (at the sample); at boot: the last run's repairs */
+    uint32_t rsum;                 /* the ready lists at the sample: with tasks (bits 0-6), with a task of another priority (8-14), uxTopReadyPriority (16-22) */
 };
 #define AS ((volatile struct asamp *)0x38800390u)
 #define CUR_TCB (*(volatile uint32_t *)0x2401f2a8u)    /* FreeRTOS pxCurrentTCB (the PendSV handler's literal) */
@@ -346,6 +347,7 @@ void __attribute__((noipa)) crash_irq_on(uint32_t v)
 /* In place of the audio block's watchdog check (bl @0x0804cb36): obj = {stamp A, stamp B, blocks}. */
 void crash_wd(volatile uint32_t *obj)
 {
+    uint32_t rne = 0, rwr = 0;                                    /* (this block: the ready lists with tasks, those with a task of another priority) */
     volatile struct wdog *w = WD;
     uint32_t now = CYC, d = now - w->cyc_au;
     if (w->cyc_au && d > 100000u && d < 100000000u)
@@ -369,6 +371,7 @@ void crash_wd(volatile uint32_t *obj)
                the unit (records of builds 63-71). Every block: a ready list with tasks and no bit gets its bit back. */
             uint32_t pm = crash_irq_off();
             uint32_t top = XTOP;
+            rne = rwr = 0;
             for (int pr = 0; pr < 7; pr++) {
                 volatile uint32_t *ls = XREADY + 5 * pr;          /* uxNumberOfItems, pxIndex, xListEnd {xItemValue, pxNext, pxPrevious} */
                 uint32_t end = (uint32_t)(ls + 2), it = ls[3], n = 0;
@@ -385,6 +388,38 @@ void crash_wd(volatile uint32_t *obj)
                     if (k->heal < 0xffffu)
                         k->heal++;
                     k->heal_p = (uint8_t)pr;
+                }
+                if (n)
+                    rne |= 1u << pr;
+                /* A task on the ready list of a priority that is not its own (the idle task on a higher list: the scheduler "runs that
+                   priority" and gets the idle task, and a ready task of a priority in between never runs while the CPU idles): moved to
+                   the end of its own priority's list, as vListInsertEnd would. */
+                for (it = ls[3]; it != end;) {
+                    volatile uint32_t *li = (volatile uint32_t *)it;   /* xItemValue, pxNext, pxPrevious, pvOwner, pvContainer */
+                    uint32_t nx = li[1], own = li[3];
+                    uint32_t op = in_ram(own) ? ((volatile uint32_t *)own)[11] : (uint32_t)pr;   /* (TCB +0x2c: uxPriority) */
+                    if (op != (uint32_t)pr && op < 7u) {
+                        rwr |= 1u << pr;
+                        volatile uint32_t *pv = (volatile uint32_t *)li[2], *nn = (volatile uint32_t *)nx;
+                        pv[1] = nx;                               /* out of this list */
+                        nn[2] = (uint32_t)pv;
+                        if (ls[1] == it)
+                            ls[1] = (uint32_t)pv;
+                        if (--ls[0] == 0)
+                            XTOP = top &= ~(1u << pr);
+                        volatile uint32_t *ol = XREADY + 5 * op, *ix = (volatile uint32_t *)ol[1];
+                        li[1] = (uint32_t)ix;                     /* into its own, before pxIndex (vListInsertEnd) */
+                        li[2] = ix[2];
+                        ((volatile uint32_t *)ix[2])[1] = it;
+                        ix[2] = it;
+                        li[4] = (uint32_t)ol;
+                        ol[0]++;
+                        XTOP = top |= 1u << op;
+                        if (k->heal < 0xffffu)
+                            k->heal++;
+                        k->heal_p = (uint8_t)(10u + op);          /* (10 + p: a task moved to its own list) */
+                    }
+                    it = nx;
                 }
             }
             {   /* The kernel wakes delayed tasks only once the tick reaches xNextTaskUnblockTime, which must be the earliest wake time on
@@ -430,6 +465,7 @@ void crash_wd(volatile uint32_t *obj)
             as->cont = ((const uint32_t *)as->tcb)[5];            /* (TCB: +0x14 xStateListItem.pvContainer, +0x28 xEventListItem.pvContainer, +0x2c uxPriority) */
             as->evc = ((const uint32_t *)as->tcb)[10];
             as->prio = (uint8_t)((const uint32_t *)as->tcb)[11];
+            as->rsum = rne | rwr << 8 | (XTOP & 0x7fu) << 16;
             if (as->prio < 7) {
                 as->rbit = (uint8_t)((XTOP >> as->prio) & 1u);
                 uint32_t cn = XREADY[5 * as->prio];
@@ -806,6 +842,8 @@ int crash_line(int i, char *buf, int n)
         p = put_u(p, e, a->rbit);
         p = put_s(p, e, " N ");
         p = put_u(p, e, a->rcnt);
+        p = put_s(p, e, " RL ");
+        p = put_x(p, e, a->rsum);
         break;
     }
     case 23: {
