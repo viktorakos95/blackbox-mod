@@ -184,6 +184,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t gmode, rp;           /* gesture recorder: 0 idle, 1 armed for the next bar line, 2 recording the first take, 3 looping, 4 armed to overdub at the loop start, 5 overdubbing; rp = replaying (events are not recorded again) */
     uint8_t glen_i, glayers;     /* take length (1 2 4 8 bars), layers in the loop (up to 3) */
     uint8_t pend;                /* a STOP (16) or PLAY (17) of the loop waiting for the next bar line */
+    uint8_t quant;               /* QUANT: the voices sound the nearest real note (not in chord mode) */
     uint8_t off;                 /* the engine switch: the synth does not run at all (no modulation, no tail, no delay lines) */
     uint8_t btn_on;              /* the eight round buttons are the voice plates (else they are the stock buttons) */
     uint16_t gn, gi;             /* events recorded, the next to play */
@@ -828,7 +829,7 @@ unsigned lira_ui_sig(void)
         for (int k = 0; k < 8; k++)
             h = h << 1 | g->want[k];
     unsigned prog = g->gmode >= 2 && g->gmode != 6 && g->gtot > 1.0f ? (unsigned)(g->gt * 8.0f / g->gtot) : 0;
-    return h | (unsigned)g->momentary << 8 | (unsigned)g->sel << 9 | prog << 20 | (unsigned)g->gmode << 24 | (unsigned)g->off << 28 | (unsigned)g->pend << 29;
+    return h | (unsigned)g->momentary << 8 | (unsigned)g->sel << 9 | prog << 20 | (unsigned)g->gmode << 24 | (unsigned)g->quant << 27 | (unsigned)g->off << 28 | (unsigned)g->pend << 29;
 }
 
 /* The load governor. How much of its block the audio task has used by the time this runs (the stock voices and effects) is the
@@ -1041,6 +1042,7 @@ void lira_page_run(float *l, float *r, int n)
             lira_param(&s->l, LIRA_SHARP12 + k, (float)g->ex[6 + k] * (127.0f / 1000.0f));
         }
         lira_tone(&s->l, g->tone[0] < 30 ? 0.0f : (float)g->tone[0] * 0.001f, (float)g->tone[1] * 0.001f);   /* (under 3 % the knob reads 0 to 3: that is mono, exactly) */
+        lira_param(&s->l, LIRA_QUANTIZE, g->quant && !g->chord_on ? 1.0f : 0.0f);      /* (chord mode keeps its cents and its just tuning) */
         lira_param(&s->l, LIRA_LFO_WAV, (float)g->lfo[0]);
         lira_param(&s->l, LIRA_ANDOR, (float)g->lfo[1]);
         lira_param(&s->l, LIRA_LINK, (float)g->lfo[2]);
@@ -1234,6 +1236,8 @@ int lira_ui_chord_get(int id)                              /* the index behind a
         return g->btn_on;
     if (id == 194)
         return g->off;
+    if (id == 196)
+        return g->quant;
     if (id == 195)
         return g->row[C_VIBRATO] >= 4;                     /* (the engine's switch is on from 0.5 of 127: the default 8 / 1000 is on) */
     if (id == 167)
@@ -1394,6 +1398,8 @@ void lira_ui_action(int a)
         g->glayers = 0;
     } else if (a == 8) {
         g->btn_on ^= 1;
+    } else if (a == 20) {                                 /* QUANT */
+        g->quant ^= 1;
     } else if (a == 19) {                                 /* VIBRATO on / off (its default is on) */
         g->row[C_VIBRATO] = g->row[C_VIBRATO] >= 4 ? 0 : ctls[C_VIBRATO].def;
     } else if (a == 18) {                                 /* ENGINE on / off: off stops the synth, its tail and its modulation, and the next start is fresh */
@@ -1533,6 +1539,17 @@ void lira_ui_note_set(int v, int note)
     if (p && v >= 0 && v < 8) {
         lira_ui_pitch_set(v, (note < 33 ? 33 : note > 93 ? 93 : note) * 100);
     }
+}
+
+/* the real note (MIDI) the voice's TUNE and PITCH knobs are on or nearest to (for the QUANT display) */
+int lira_ui_qnote(int v)
+{
+    struct pool *p = pool();
+    if (!p || v < 0 || v > 7)
+        return 0;
+    float m = lira_midi_of(v, (float)p->pg.row[v] * 0.001f, (float)p->pg.ex[2 + (v >> 2)] * 0.001f);
+    int n = (int)(m + 100.5f) - 100;
+    return n < 0 ? 0 : n > 127 ? 127 : n;
 }
 
 /* a voice's pitch in hundredths of a semitone (note * 100 + cents) */
@@ -1739,7 +1756,8 @@ void lira_save(void)
         b->fine[i] = g->fine[i];
         b->notes[i] = g->notes[i];
     }
-    b->pad_[0] = b->pad_[1] = 0;
+    b->pad_[0] = g->quant;
+    b->pad_[1] = 0;
     b->crc = blob_crc(b);
     for (unsigned i = 0; i < sizeof p->fil / 4; i++)
         p->fil[i] = 0;
@@ -1814,6 +1832,8 @@ void lira_load(void)
     for (int i = 0; i < 4; i++)
         g->sync[i] = (uint8_t)(b->misc[15 + i] < 12 ? b->misc[15 + i] : 0);
     g->btn_on = b->misc[19] & 1;
+    g->quant = b->pad_[0] & 1;                               /* (files from before have 0 here) */
+    g->ex[0] = g->ex[1] = 0;                                 /* Hold is gone from the screen: a saved value would drone with no way to stop it */
     g->glen_i = (uint8_t)(b->misc[20] & 3);
     revoice(g);
     int ok = 1;

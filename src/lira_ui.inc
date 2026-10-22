@@ -139,12 +139,12 @@ static int lu_specs(int sel, struct lu_spec *o)
             n++;
         }
     } else if (page == LP_SOUND) {
-        static const uint16_t ids[16] = {16, 17, 18, 19, 125, 126, 14, 15, 121, 122, 123, 124, 160, 161, 162, 163};
+        static const uint16_t ids[16] = {16, 17, 18, 19, 125, 126, 14, 15, 181, 195, 123, 124, 160, 161, 162, 163};
         static const char *const nm[16] = {"TIME1", "TIME2", "FDBK", "MIX", "MOD1", "MOD2", "LFO A", "LFO B",
-                                           "H 1-4", "H 5-8", "P 1-4", "P 5-8", "SHAPE", "COMB", "LINK", "D.SRC"};
+                                           "DRIFT", "VIB", "P 1-4", "P 5-8", "SHAPE", "COMB", "LINK", "D.SRC"};
         for (int i = 0; i < 16; i++) {
             lu_cell(i >> 2, i & 3, &x, &d);
-            LU_SP(n, ids[i], x, d, LU_COL, 38, 2 + (i >> 2), lu_enc_cell[i & 3], i >= 12 ? LK_BTN : LK_KNOB, LU_ACC1, 11, nm[i]);
+            LU_SP(n, ids[i], x, d, LU_COL, 38, 2 + (i >> 2), lu_enc_cell[i & 3], i >= 12 || ids[i] == 195 ? LK_BTN : LK_KNOB, LU_ACC1, 11, nm[i]);
             n++;
         }
     } else if (page == LP_MIX) {                                  /* OUTPUT (knobs), SYNC and GESTURE (buttons), STATUS (text) */
@@ -164,17 +164,14 @@ static int lu_specs(int sel, struct lu_spec *o)
             LU_SP(n, gid[i], x, d, LU_COL, 38, 4, lu_enc_cell[i], LK_BTN, LU_ACC1, 0, gn[i]);
             n++;
         }
-        lu_cell(3, 0, &x, &d);                                    /* SPACE: the stereo width (0 = mono, the cheap path), the pitch drift, and the engine switch */
+        lu_cell(3, 0, &x, &d);                                    /* SPACE: the stereo pan (0 = mono, the cheap path), the engine switch and QUANT; the previous run's peaks fill the last cell */
         LU_SP(n, 180, x, d, LU_COL, 38, 5, lu_enc_cell[0], LK_KNOB, LU_ACC2, 11, "PAN");
         n++;
         lu_cell(3, 1, &x, &d);
-        LU_SP(n, 181, x, d, LU_COL, 38, 5, lu_enc_cell[1], LK_KNOB, LU_ACC2, 11, "DRIFT");
+        LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[1], LK_BTN, LU_ACC2, 0, "ENGINE");
         n++;
-        lu_cell(3, 2, &x, &d);
-        LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "ENGINE");
-        n++;
-        lu_cell(3, 3, &x, &d);                                    /* the vibrato switch (on by default), where the previous run's peaks were */
-        LU_SP(n, 195, x, d, LU_COL, 38, 5, lu_enc_cell[3], LK_BTN, LU_ACC2, 0, "VIB");
+        lu_cell(3, 2, &x, &d);                                    /* QUANT: the voices sound the nearest real note */
+        LU_SP(n, 196, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "QUANT");
         n++;
     } else {
         static const char *const nm[8] = {"SPACE", "ROOT", "OCT", "SPAN", "CHORD", "TUNE", "SHUFL", "CYCLE"};
@@ -276,6 +273,9 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
         if (s->id < 8 && chord) {                                 /* chord mode: the voice's note */
             lu_pitch_text(s->id, b);
             text_c(s->x, cy + s->r + 3, s->w, b, C_WHITE, 1);
+        } else if (s->id < 8 && lira_ui_chord_get(196)) {         /* QUANT: the real note the knob is on, as it passes through them */
+            lira_note_name(lira_ui_qnote(s->id), lira_ui_flats(), b);
+            text_c(s->x, cy + s->r + 3, s->w, b, C_WHITE, 1);
         } else if (s->id < 8) {
             q = put_uint(b, (unsigned)(s->id + 1));
             *q = 0;
@@ -320,6 +320,8 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             st = lira_ui_chord_get(194) ? "OFF" : "ON", on = !lira_ui_chord_get(194);
         else if (s->id == 195)
             st = lira_ui_chord_get(195) ? "ON" : "OFF", on = lira_ui_chord_get(195);
+        else if (s->id == 196)
+            st = lira_ui_chord_get(196) ? "ON" : "OFF", on = lira_ui_chord_get(196);
         else if (s->id == 193)
             st = lira_ui_chord_get(167) ? "NEXT" : lira_ui_chord_get(158) == 6 ? "PLAY" : "STOP", on = lira_ui_chord_get(158) == 6;
         else if (s->id >= 160 && s->id < 164) {
@@ -366,7 +368,7 @@ static void draw_lira(void)
     int n = lu_specs(sel, sp);
     char b[40], *q;
     static const char *const ptitle[LU_TABS][4] = {{"PAIR 1-2", "PAIR 3-4", "PAIR 5-6", "PAIR 7-8"},
-                                                   {"DELAY", "MOD", "HOLD/PITCH", "LFO"},
+                                                   {"DELAY", "MOD", "PITCH", "LFO"},
                                                    {"OUTPUT", "TEMPO SYNC", "GESTURE", "SPACE"},
                                                    {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"}};
     box(1, 1, P->w - 2, TOPBAR, C_BG);
@@ -443,24 +445,22 @@ static void draw_lira(void)
     for (int p = 0; p < 4; p++) {                                 /* the four panels (OUTPUT is one wide panel) */
         int x = LU_X0 + p * 2 * LU_COL, hot = bank == 2 + p, pw = 2 * LU_COL;
         frame(x + 1, LU_PANEL, pw - 2, LU_PANH, hot ? LU_SEL : LU_LINE, 1);
-        const char *title = ptitle[page][p];
-        char pt[24];
-        if (page == LP_MIX && p == 3 && lira_ui_prev(4)) {        /* after a shutdown the panel's title is the run before's peaks: W the audio task's worst block, C the load when this ran, D this synth's share (%) */
-            static const char lk[3] = {'W', 'C', 'D'};
-            static const uint8_t lw[3] = {5, 0, 1};
-            char *u = pt;
-            for (int k = 0; k < 3; k++) {
-                if (k)
-                    *u++ = ' ';
-                *u++ = lk[k];
-                u = put_uint(u, (unsigned)lira_ui_prev(lw[k]));
-            }
-            *u = 0;
-            title = pt;
-        }
-        text_c(x, LU_PANEL + 4, pw, title, hot ? LU_SEL : LU_DIM, 1);
+        text_c(x, LU_PANEL + 4, pw, ptitle[page][p], hot ? LU_SEL : LU_DIM, 1);
         if (page == LP_VOICES)
             box(x + 6, LU_PANEL + 13, 2 * LU_COL - 12, 1, lu_pair_col[p]);
+        if (page == LP_MIX && p == 3 && lira_ui_prev(4)) {        /* after a shutdown: the run before's peaks in the last cell: W the audio task's worst block, C the load when this ran, D this synth's share (%), F the least free memory (K) */
+            static const char lk[4] = {'W', 'C', 'D', 'F'};
+            static const uint8_t lw[4] = {5, 0, 1, 2};
+            for (int k = 0; k < 4; k++) {
+                char t[12], *u = t;
+                *u++ = lk[k];
+                u = put_uint(u, (unsigned)lira_ui_prev(lw[k]));
+                if (k == 3)
+                    *u++ = 'K';
+                *u = 0;
+                text(x + LU_COL + 2, LU_PANEL + 54 + 9 * k, t, LU_DIM, 1);
+            }
+        }
     }
     for (int g = 0; g < 2; g++) {                                 /* the voice groups: level row, tune row (the colour bars first, so the encoders' frame lies over them) */
         int x = LU_X0 + g * 4 * LU_COL;
@@ -603,6 +603,8 @@ static void lu_press(const struct lu_spec *s, int dir)
         lira_ui_action(18);
     else if (id == 195)
         lira_ui_action(19);
+    else if (id == 196)
+        lira_ui_action(20);
     else if (id == 150)
         lira_ui_action(0);
     else if (id == 151)

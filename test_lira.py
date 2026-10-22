@@ -494,6 +494,22 @@ check("FM Source OUT: finite, bounded, and not the same as Off or LFO (rms %.3f 
 check("... and with no depth it does nothing (the same as Off)", np.allclose(src_run(8, 0), src_run(1, 0), atol=1e-6))
 
 
+# ---- QUANTIZE: every voice sounds an exact equal-tempered note ----
+def quant_cents(tune, quant):
+    l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0, TUNE1=tune, QUANTIZE=quant, PITCH1234=63))
+    l.key(0, 1)
+    l.run(8 * SR)
+    f = peak_hz(l.run(4 * SR), 20, 4000)
+    m = 69 + 12 * math.log2(f / 440.0)
+    return abs(m - round(m)) * 100
+
+
+offs_q = [quant_cents(t, 1) for t in (60, 67, 74, 83, 91, 104)]
+offs_f = [quant_cents(t, 0) for t in (60, 67, 74, 83, 91, 104)]
+check("QUANTIZE on: every tune lands on a note (worst %.1f cents off: the oscillator's own accuracy)" % max(offs_q), max(offs_q) < 6.0)
+check("... off: the knob is continuous (some are far from a note: %.0f cents)" % max(offs_f), max(offs_f) > 15.0)
+
+
 # CPU
 l = Lira()
 for i in range(8):

@@ -82,12 +82,12 @@ def chord(i):
 
 
 # a missing file changes nothing
-before = (get(16), get(121), chord(140))
+before = (get(16), get(125), chord(140))
 e.call("lira_load")
-check("no file: the settings stay as they are", (get(16), get(121), chord(140)) == before and opened[-1] == ("bbmod.bin", 1), str(opened[-1:]))
+check("no file: the settings stay as they are", (get(16), get(125), chord(140)) == before and opened[-1] == ("bbmod.bin", 1), str(opened[-1:]))
 # set things, save
 e.call("lira_ui_set", 16, 321)
-e.call("lira_ui_set", 121, 777)
+e.call("lira_ui_set", 125, 777)
 e.call("lira_ui_set", 105, 3)
 e.call("lira_ui_set", 106, 8)
 e.call("lira_ui_action", 19)
@@ -100,10 +100,10 @@ e.call("lira_ui_action", 4)
 notes = [None] * 8
 e.call("lira_save")
 check("save: bbmod.bin written with create-always (mode 0x0a)", opened[-1] == ("bbmod.bin", 0x0A) and len(disk["bbmod.bin"]) > 1000, str(opened[-1]) + " %d bytes" % len(disk.get("bbmod.bin", b"")))
-want = (get(16), get(121), get(105), get(108), chord(140), chord(141), chord(150), chord(153), chord(154), get(106), chord(195))
+want = (get(16), get(125), get(105), get(108), chord(140), chord(141), chord(150), chord(153), chord(154), get(106), chord(195))
 # change everything, load, compare
 e.call("lira_ui_set", 16, 1)
-e.call("lira_ui_set", 121, 2)
+e.call("lira_ui_set", 125, 2)
 e.call("lira_ui_set", 105, 0)
 e.call("lira_ui_set", 106, 0)
 e.call("lira_ui_action", 19)
@@ -114,7 +114,7 @@ e.call("lira_ui_action", 0)
 e.call("lira_ui_action", 3)
 e.call("lira_ui_action", 4)
 e.call("lira_load")
-got = (get(16), get(121), get(105), get(108), chord(140), chord(141), chord(150), chord(153), chord(154), get(106), chord(195))
+got = (get(16), get(125), get(105), get(108), chord(140), chord(141), chord(150), chord(153), chord(154), get(106), chord(195))
 check("load: the controls, FM source, chord state and waveform come back", got == want, "%s vs %s" % (got, want))
 # WIDTH and DRIFT travel in a tail after the blob; older files (without it) still load and leave them as they are
 e.call("lira_ui_set", 180, 111)

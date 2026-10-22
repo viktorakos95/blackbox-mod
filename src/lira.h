@@ -123,6 +123,8 @@ void lira_param(lira_t *l, int id, float value);
    knobs are at LIRA_PITCH_UNITY; the note should lie in 33 .. 93, which every oscillator reaches. */
 #define LIRA_PITCH_UNITY 63.1809f
 float lira_tune_for_midi(int o, float midi);
+/* the MIDI note (fractions allowed) oscillator o sounds for its TUNE (0..1) and pitch factor (the PITCH knob 0..1), before quantizing */
+float lira_midi_of(int o, float tune01, float pitch01);
 /* the range of MIDI notes oscillator o can reach at LIRA_PITCH_UNITY */
 void lira_tune_range(int o, float *lo, float *hi);
 /* tempo sync (the caller works out hz, the phase 0..1 within the cycle or -1, and seconds) */
