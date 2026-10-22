@@ -29,7 +29,6 @@ def check(name, ok, info=""):
 resets = []
 e.stub(e.sym["crash_reset"], lambda: resets.append(1))
 e.stub(e.sym["crash_ipsr"], value=0)                              # (Unicorn has no M-profile special registers)
-e.stub(e.sym["crash_psp"], value=0)
 e.stub(e.sym["crash_irq_off"], value=0)
 e.stub(e.sym["crash_irq_on"])
 e.w32(0x24000088, 0xC0100000)                                   # the allocator: 1 MB free
@@ -146,7 +145,6 @@ e.w32(RSR, 1 << 28)
 e.call("crash_boot")
 L = lines()
 check("window watchdog restart: WINDOW WDG", L[0] == "LAST RESTART: WINDOW WDG / NO FAULT", L[0])
-check("... the GUI went on ~341 ms after the last audio block, loop A ~53 ms", L[9] == "AFTER AUDIO: GUI +341MS  LOOP A +53MS", L[9])
 check("... and the lags at the last check (A 300 blocks, B 100)", L[10].startswith("LAG A 300 B 100  A AT "), L[10])
 
 # loop A late: its saved PC / LR sampled from its TCB
@@ -208,7 +206,6 @@ e.w32(RSR, 1 << 28)
 e.call("crash_boot")
 L = lines()
 check("the tick rate (here: stopped in the last second) and the longest run of blocks with the scheduler suspended", L[18].startswith("TICKS/S 55 SUSPENDED MAX 200 NOW 200"), L[18])
-check("... where (TCB of the running task at the longest one)", L[19].startswith("SUSP AT PC ") and L[19].endswith("TCB 24072000"), L[19])
 
 # who has the CPU: the SysTick counts the running task; the three busiest of the last 250 ticks, named from their TCBs
 for t, nm in ((0x24073000, b"audio"), (0x24073100, b"gui"), (0x24073200, b"usbmidi")):
@@ -266,16 +263,29 @@ check("an empty list is left alone", e.r32(RL) == 0 and e.r32(0x2401F1A0) & 0xFF
 e.w32(RSR, 1 << 28)
 e.call("crash_boot")
 check("at boot the last run's repairs are kept (2) and the new run's start at 0", "REPAIRS LAST 2 NOW 0" in lines()[23], lines()[23])
-# the kernel tick: a ring of readings every 64 blocks, and backward jumps counted
-e.w32(0x2401F1A4, 100)
-for blk in range(1, 64 * 8 + 1):
-    e.w32(OBJ + 8, blk)
-    e.w32(0x2401F1A4, 100 + blk if blk != 300 else 5)                # one reading goes backwards
-    e.call("crash_wd", OBJ)
+# the SD driver's read: a failed read is tried again (queue drained, HAL idle first), counted, kept at boot
+e.uc.mem_map(0x52007000, 0x1000)
+e.w32(0x52007034, 0x00000020)                                     # SDMMC STA: RX overrun
+e.uc.mem_write(0x24009BFC + 0x30, bytes([1]))                     # HAL state READY
+e.w32(0x24009BFC + 0x34, 0x20)                                    # its error code
+tries = []
+res_fail = [2]
+def sd_read():
+    tries.append(e.arg(2))
+    e.ret(1 if len(tries) <= res_fail[0] else 0)
+e.stubs[0x08045974] = sd_read
+drained = []
+e.stub(0x08087BE8, lambda: (drained.append(1), e.w32(e.arg(0), 0)))
+e.stub(0x08087A5C, value=1000)
+e.call("crash_sd_read", 0, 0x24000000, 1234, 1)
+check("a read that fails twice is tried again and works", e.uc.reg_read(UC_ARM_REG_R0) == 0 and tries == [1234] * 3 and len(drained) >= 2, (e.uc.reg_read(UC_ARM_REG_R0), tries))
+tries.clear(); res_fail[0] = 9
+e.call("crash_sd_read", 0, 0x24000000, 77, 1)
+check("... one that keeps failing gives up after three tries (an error, not a hang)", e.uc.reg_read(UC_ARM_REG_R0) == 1 and len(tries) == 3, tries)
 e.w32(RSR, 1 << 28)
 e.call("crash_boot")
 L = lines()
-check("the last run's tick readings (oldest first) and its backward jumps", L[12] == "TICKS 000000E4 00000124 00000164 000001A4 " and L[13].startswith("      000001E4 00000224 00000264 BACK 1"), L[12:14])
+check("the record: 5 failures, 1 read OK again, 1 given up, the HAL state / error and the SDMMC status", L[9] == "SD READ FAILS 5 OK AGAIN 1 GAVE UP 1 01000020/00000020", L[9])
 
 # the patch: the four fault vectors and the allocator's call site
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+clkmon+lira+lirarec+lirasave+crash+cave/BLACKBOX.bin", "rb").read()
@@ -286,7 +296,7 @@ from thumb import bl                                               # noqa: E402
 o = 0x08044452 - 0x08040000
 check("the allocator's halt message call goes to crash_oom_thunk", img[o:o + 4] == bl(0x08044452, e.sym["crash_oom_thunk"]))
 check("SysTick (vector 15) goes through crash_systick_thunk", struct.unpack("<I", img[0x3C:0x40])[0] == (e.sym["crash_systick_thunk"] | 1))
-check("the SD driver is the stock one again (table and waits untouched)", img[0x080CFC24 - 0x08040000:0x080CFC2C - 0x08040000] == struct.pack("<2I", 0x08045975, 0x080459E9) and img[0x08045998 - 0x08040000:][:4] == bytes.fromhex("41f28832"))
+check("the SD driver's read goes to the retrying wrapper with a 1000-tick wait; writes stay stock", img[0x080CFC24 - 0x08040000:0x080CFC2C - 0x08040000] == struct.pack("<2I", e.sym["crash_sd_read"] | 1, 0x080459E9) and img[0x08045998 - 0x08040000:][:4] == bytes.fromhex("40f2e832") and img[0x08045A0E - 0x08040000:][:4] == bytes.fromhex("41f28832"))
 
 print("failures:", fails)
 sys.exit(1 if fails else 0)

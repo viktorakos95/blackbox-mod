@@ -67,20 +67,8 @@ struct asamp {
     uint32_t r4, chain[5];         /* the latest sample's r4, its wake time, the kernel's next wake-up, the tick, the two delayed lists */
     uint32_t cont, evc;            /* the latest sample: the list its state item is on (ready / delayed / suspended), the list its event item is on */
     uint8_t prio, rbit, rcnt, rheal;   /* its priority; that ready list's priority bit and item count (at the sample); at boot: the last run's repairs */
-    uint32_t r_tk[7];              /* at boot: the last run's tick ring (oldest first) */
-    uint8_t r_back, _q[3];         /* and its count of backward tick jumps */
 };
 #define AS ((volatile struct asamp *)0x38800390u)
-/* The kernel tick over the last ~2.4 s: a reading every 64 audio blocks (~0.34 s) into a ring of 7, and how often it went
- * backwards. Backup SRAM 0x38800940..0x3880096c (where the SD figures were). */
-struct tring {
-    uint32_t magic, last;
-    uint32_t t[7];
-    uint8_t i, back, _p[2];
-};
-#define TR ((volatile struct tring *)0x38800940u)
-#define TR_MAGIC 0x4b434954u
-_Static_assert(0x38800940u + sizeof(struct tring) <= 0x3880096cu, "the tick ring must end before the scheduler figures at 0x96c");
 #define CUR_TCB (*(volatile uint32_t *)0x2401f2a8u)    /* FreeRTOS pxCurrentTCB (the PendSV handler's literal) */
 _Static_assert(0x38800390u + sizeof(struct asamp) <= 0x388003f0u, "the loop-A samples must end before the frozen CPU shares at 0x3f0");
 /* The RTOS clock: is the tick running, and is the scheduler suspended (then no task switches and no timeout expires)?
@@ -127,6 +115,22 @@ struct prof_r {                    /* at boot: the last run's last full window, 
 #define PROFR ((volatile struct prof_r *)0x388003f0u)
 _Static_assert(0x388003f0u + sizeof(struct prof_r) <= 0x38800400u, "the frozen CPU shares must end before comp.c's state at 0x400");
 _Static_assert(0x38800fdcu + sizeof(struct prof) <= 0x38801000u, "the CPU shares must fit 0xfdc..0x1000");
+/* The SD card driver's read (stock sd_diskio 0x08045974): starts the DMA read and waits for the completion message (stock: 5000 ticks,
+ * which at this kernel's 501 ticks a second is ~10 s). A read that never completes sends nothing, so two of them in the loader's
+ * first folder scan are 20 s and the watchdog restarts the unit (build 76's record: the loader in that wait, the SD queue). Here
+ * (patches/crash.py): the wait is 1000 ticks (~2 s), and a failed read is tried again (three tries), after the driver's queue is
+ * drained (a late completion must not count for the retry) and the HAL is idle again. Writes are the stock ones. Counted, with the
+ * HAL's state / error and the SDMMC's status at the last failure. Backup SRAM 0x38800940 (frozen copy at boot). */
+struct sdst {
+    uint32_t magic;
+    uint16_t fails, recov, gaveup, _p;
+    uint32_t err, sta;
+    uint16_t r_fails, r_recov, r_gaveup, _q;
+    uint32_t r_err, r_sta;
+};
+#define SD ((volatile struct sdst *)0x38800940u)
+#define SD_MAGIC 0x32534453u
+_Static_assert(0x38800940u + sizeof(struct sdst) <= 0x3880096cu, "the SD block must end before the scheduler figures at 0x96c");
 #define LIVE ((volatile struct live *)0x38800b20u)
 #define REC ((volatile struct rec *)0x38800b38u)
 #define LIVE_MAGIC 0x4556494cu
@@ -237,11 +241,6 @@ void crash_boot(void)
     {
         volatile struct wdog *w = WD;
         int ok = v->magic == LIVE_MAGIC;
-        int okp = ok && w->per > 100000u && w->per < 100000000u;  /* (the block period measured: the ms figures make sense) */
-        float k = okp ? (256000.f / 48000.f) / (float)w->per : 0.f;   /* ms a cycle */
-        float g = (float)(int32_t)(w->cyc_gui - w->cyc_au) * k, a = (float)(int32_t)(w->cyc_a - w->cyc_au) * k;
-        w->r_gui = (int16_t)(g > 32000.f ? 32000.f : g < -32000.f ? -32000.f : g);
-        w->r_a = (int16_t)(a > 32000.f ? 32000.f : a < -32000.f ? -32000.f : a);
         w->r_lag_a = ok ? w->lag_a : 0;
         w->r_lag_b = ok ? w->lag_b : 0;
         w->r_site = ok ? w->site_a : 0;
@@ -250,18 +249,6 @@ void crash_boot(void)
         as->r_n = n;
         as->r_pc[0] = n ? as->pc[0] : 0;
         as->r_lr[0] = n ? as->lr[0] : 0;
-        {
-            volatile struct tring *tr = TR;
-            int tok = tr->magic == TR_MAGIC;
-            for (int i = 0; i < 7; i++)
-                as->r_tk[i] = tok ? tr->t[(tr->i + i) % 7u] : 0;  /* (i is the next slot: the oldest) */
-            as->r_back = tok ? tr->back : 0;
-            tr->magic = TR_MAGIC;
-            tr->i = tr->back = 0;
-            tr->last = 0;
-            for (int i = 0; i < 7; i++)
-                tr->t[i] = 0;
-        }
         as->n = 0;
         as->tcb = 0;
         volatile struct sched *sk = SC;
@@ -270,8 +257,6 @@ void crash_boot(void)
         kr->max = ok ? sk->max : 0;
         kr->streak = ok ? sk->streak : 0;
         kr->ipsr = ok ? sk->ipsr : 0;
-        kr->pc = ok ? SC_PC : 0;
-        kr->tcb = ok ? SC_TCB : 0;
         as->rheal = (uint8_t)(ok ? (sk->heal > 255u ? 255u : sk->heal) : 0);
         volatile struct prof *f = PROF;
         volatile struct prof_r *fr = PROFR;
@@ -290,9 +275,20 @@ void crash_boot(void)
         sk->rate = sk->streak = sk->max = sk->ipsr = 0;
         sk->heal = 0;
         sk->heal_p = 0;
-        SC_PC = SC_TCB = 0;
         w->cyc_au = w->cyc_gui = w->cyc_a = w->site_a = w->per = 0;
         w->lag_a = w->lag_b = 0;
+    }
+    {
+        volatile struct sdst *q = SD;
+        int ok = q->magic == SD_MAGIC;
+        q->r_fails = ok ? q->fails : 0;
+        q->r_recov = ok ? q->recov : 0;
+        q->r_gaveup = ok ? q->gaveup : 0;
+        q->r_err = ok ? q->err : 0;
+        q->r_sta = ok ? q->sta : 0;
+        q->magic = SD_MAGIC;
+        q->fails = q->recov = q->gaveup = 0;
+        q->err = q->sta = 0;
     }
     r->state = 2;                                                 /* (not looked at yet) */
     r->rsr = rsr;
@@ -346,12 +342,6 @@ void __attribute__((noipa)) crash_irq_on(uint32_t v)
     __asm volatile("msr primask, %0" :: "r"(v) : "memory");
 }
 
-uint32_t __attribute__((noipa)) crash_psp(void)
-{
-    uint32_t v;
-    __asm volatile("mrs %0, psp" : "=r"(v));
-    return v;
-}
 
 /* In place of the audio block's watchdog check (bl @0x0804cb36): obj = {stamp A, stamp B, blocks}. */
 void crash_wd(volatile uint32_t *obj)
@@ -368,19 +358,6 @@ void crash_wd(volatile uint32_t *obj)
         volatile struct sched *k = SC;
         uint32_t ip = crash_ipsr();
         k->ipsr = (uint16_t)(ip & 0x1ffu);
-        {
-            volatile struct tring *tr = TR;
-            uint32_t t = XTICK;
-            if (tr->magic == TR_MAGIC) {
-                if (t < tr->last && tr->back < 255u)
-                    tr->back++;                                   /* the tick went backwards */
-                tr->last = t;
-                if ((c & 63u) == 0) {
-                    tr->t[tr->i] = t;
-                    tr->i = (uint8_t)((tr->i + 1u) % 7u);
-                }
-            }
-        }
         if ((c % 188u) == 0) {                                    /* about once a second: ticks since the last time */
             uint32_t t = XTICK, dt = t - k->tick0;
             k->rate = (uint16_t)(dt > 0xffffu ? 0xffffu : dt);
@@ -432,12 +409,8 @@ void crash_wd(volatile uint32_t *obj)
         if (XSUSP) {
             if (k->streak < 0xffffu)
                 k->streak++;
-            if (k->streak > k->max) {
+            if (k->streak > k->max)
                 k->max = k->streak;
-                uint32_t psp = crash_psp();
-                SC_PC = (ip & 0x1ffu) && in_ram(psp) ? ((const uint32_t *)psp)[6] : 0;
-                SC_TCB = CUR_TCB;
-            }
         } else {
             k->streak = 0;
         }
@@ -522,6 +495,45 @@ int crash_starve(void)
     return lag >= 2250u ? 2 : lag >= 1300u ? 1 : 0;
 }
 
+static int sd_settle(void)
+{
+    typedef void (*get_fn)(uint32_t *ev, uint32_t queue, uint32_t ms);
+    typedef uint32_t (*tick_fn)(void);
+    uint32_t ev[3];
+    for (int i = 0; i < 8; i++) {                                 /* drain the driver's queue (osMessageGet, no wait) */
+        ((get_fn)0x08087be9u)(ev, *(volatile uint32_t *)0x24009bf8u, 0);
+        if (ev[0] != 0x10u)
+            break;
+    }
+    uint32_t t0 = ((tick_fn)0x08087a5du)();                       /* osKernelSysTick */
+    while (*(volatile uint8_t *)(0x24009bfcu + 0x30) != 1)        /* the HAL's state back to READY (1), up to 400 ticks (~0.8 s) */
+        if (((tick_fn)0x08087a5du)() - t0 > 400u)
+            return 0;
+    return 1;
+}
+
+int crash_sd_read(uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count)     /* in the driver table, for 0x08045975 */
+{
+    volatile struct sdst *q = SD;
+    for (int t = 0; t < 3; t++) {
+        if (t && !sd_settle())
+            break;
+        if (((int (*)(uint8_t, uint8_t *, uint32_t, uint32_t))0x08045975u)(lun, buf, sector, count) == 0) {
+            if (t && q->recov < 0xffffu)
+                q->recov++;
+            return 0;
+        }
+        if (q->fails < 0xffffu)
+            q->fails++;
+        volatile uint8_t *h = (volatile uint8_t *)0x24009bfcu;    /* the HAL's SD handle: +0x30 state, +0x34 error code */
+        q->err = (uint32_t)h[0x30] << 24 | (*(volatile uint32_t *)(h + 0x34) & 0xffffffu);
+        q->sta = *(volatile uint32_t *)0x52007034u;               /* SDMMC1 STA */
+    }
+    if (q->gaveup < 0xffffu)
+        q->gaveup++;
+    return 1;
+}
+
 int crash_pending(void)
 {
     return REC->magic == REC_MAGIC && REC->state == 2 && (REC->kind || (REC->rsr & ((1u << 26) | (1u << 28))));
@@ -565,17 +577,6 @@ static char *put_u(char *p, char *e, uint32_t v)
     while (n && p < e)
         *p++ = t[--n];
     return p;
-}
-
-static char *put_i(char *p, char *e, int v)
-{
-    if (v < 0 && p < e) {
-        *p++ = '-';
-        v = -v;
-    } else if (p < e) {
-        *p++ = '+';
-    }
-    return put_u(p, e, (uint32_t)v);
 }
 
 static const char *bc_name(int id)
@@ -699,15 +700,6 @@ int crash_line(int i, char *buf, int n)
         p = put_s(p, e, "  RSR ");
         p = put_x(p, e, r->rsr);
         break;
-    case 9: {
-        volatile struct wdog *w = WD;
-        p = put_s(p, e, "AFTER AUDIO: GUI ");
-        p = put_i(p, e, w->r_gui);
-        p = put_s(p, e, "MS  LOOP A ");
-        p = put_i(p, e, w->r_a);
-        p = put_s(p, e, "MS");
-        break;
-    }
     case 10: {
         volatile struct wdog *w = WD;
         p = put_s(p, e, "LAG A ");
@@ -730,20 +722,6 @@ int crash_line(int i, char *buf, int n)
         p = put_x(p, e, a->r_lr[0]);
         p = put_s(p, e, " N ");
         p = put_u(p, e, a->r_n);
-        break;
-    }
-    case 12:
-    case 13: {
-        volatile struct asamp *a = AS;
-        p = put_s(p, e, i == 12 ? "TICKS " : "      ");
-        for (int k = (i - 12) * 4; k < 7 && k < (i - 12) * 4 + 4; k++) {
-            p = put_x(p, e, a->r_tk[k]);
-            p = put_s(p, e, " ");
-        }
-        if (i == 13) {
-            p = put_s(p, e, "BACK ");
-            p = put_u(p, e, a->r_back);
-        }
         break;
     }
     case 14:
@@ -772,14 +750,20 @@ int crash_line(int i, char *buf, int n)
         p = put_u(p, e, kr->ipsr);
         break;
     }
-    case 19: {
-        volatile struct sched_r *kr = SCR;
-        if (!kr->max)
-            return 0;
-        p = put_s(p, e, "SUSP AT PC ");
-        p = put_x(p, e, kr->pc);
-        p = put_s(p, e, " TCB ");
-        p = put_x(p, e, kr->tcb);
+    case 9: {
+        volatile struct sdst *q = SD;
+        p = put_s(p, e, "SD READ FAILS ");
+        p = put_u(p, e, q->r_fails);
+        p = put_s(p, e, " OK AGAIN ");
+        p = put_u(p, e, q->r_recov);
+        p = put_s(p, e, " GAVE UP ");
+        p = put_u(p, e, q->r_gaveup);
+        if (q->r_fails) {
+            p = put_s(p, e, " ");
+            p = put_x(p, e, q->r_err);
+            p = put_s(p, e, "/");
+            p = put_x(p, e, q->r_sta);
+        }
         break;
     }
     case 20:

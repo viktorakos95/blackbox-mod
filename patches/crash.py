@@ -29,5 +29,7 @@ PATCHES = [vector(3), vector(4), vector(5), vector(6),
     (0x08044452, bl(0x08044452, 0x08043DE4), bl(0x08044452, sym["crash_oom_thunk"])),   # the allocator's message before it halts
     (0x0804CB36, bl(0x0804CB36, 0x08046994), bl(0x0804CB36, sym["crash_wd"])),           # the audio block's watchdog check
     (0x080A2264, bl(0x080A2264, 0x080469CA), bl(0x080A2264, sym["crash_stamp_b"])),      # the GUI's stamp
+    (0x080CFC24, struct.pack("<I", 0x08045975), struct.pack("<I", sym["crash_sd_read"] | 1)),   # the SD driver table: read (writes stay stock)
+    (0x08045998, bytes.fromhex("41f28832"), movw_r2(1000)),                                        # the read's wait: 5000 -> 1000 ticks
 ] + [(a, bl(a, 0x080469C4), bl(a, sym["crash_stamp_a"]))                                   # the other loop's stamps
      for a in (0x08072BDE, 0x08072C96, 0x080740F4, 0x080743F2, 0x08074402, 0x080744CC, 0x08091DFE, 0x08092B6A)]
