@@ -55,6 +55,11 @@ static const t2m_params defaults = {
     .cc_on = 0, .cc_num = 1, .cc_mode = 0, .cc_fixed = 100, .channel = 1,
 };
 
+const t2m_params *t2m_defaults(void)
+{
+    return &defaults;
+}
+
 void t2m_boot(void)
 {
     bkp_enable();

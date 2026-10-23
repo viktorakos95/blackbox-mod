@@ -12,7 +12,7 @@ take its code from there (`git show b68a4bf:src/looper_page.c`, `git show b68a4b
 | Crash record (why the unit last restarted; SEEN / CLEAR) | Looper SETUP, tap the BPM box | `draw_setup` (`DBG_VIEW`), `looper_page_down` (`Z_DBG`) |
 | "RESTART: SEE SETUP" | Looper footer | `draw_footer` (`crash_pending()`) |
 | `SHED n`, audio load `avg/peak Dn` | DRONE-8 top bar (MIX tab) | `lira_ui.inc`, top bar (`lira_ui_load`) |
-| STOCK FX button (the Blackbox's own FX page), and INFO + FX doing the same | every page's footer, right end | `draw_footer`, `looper_page_hit` (track 94), `stock_fx()` |
+| STOCK FX button (the Blackbox's own FX page) on SAMPLR, TRIG and DRONE-8 (the Looper's pages keep it, and INFO + FX) | footer, right end | `draw_footer`, `looper_page_hit` (track 94) |
 
 The data behind them is still kept: `crash_line()` formats the restart record, `lira_ui_load()` the drone's load,
 `struct samplr_ctl` the SAMPLR shares (`shp shd shl shxp ... ov[] ovn`). `tools/peaks.py` profiles blocks in the emulator.

@@ -288,6 +288,8 @@ static inline struct dsp *DSP(void)
     return (struct dsp *)fxbuf(0);
 }
 
+static const float opt_defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
+
 /* Replaces the sample pool init call (bl @0x0804c20e): once per boot, after the pool has its memory. */
 void looper_boot(void *engine)
 {
@@ -314,9 +316,8 @@ void looper_boot(void *engine)
     S->dw = 0;
     S->gphase = 0.f;
     S->bpm = 0.f;
-    static const float defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
     for (int i = 0; i < LOOPER_OPTS; i++)
-        S->opt[i] = defaults[i];
+        S->opt[i] = opt_defaults[i];
     for (int t = 0; t < LOOPER_TRACKS; t++) {
         vtrack *k = &S->t[t];
         k->mode = LOOPER_EMPTY;
@@ -2576,6 +2577,11 @@ void looper_set_opt(int o, float v)
     if (o < 0 || o >= LOOPER_OPTS || S->magic != MAGIC)
         return;
     S->opt[o] = o <= LOOPER_O_DTIME || o == LOOPER_O_ROUTE || o == LOOPER_O_HWBTN || o == LOOPER_O_PITCH ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
+}
+
+float looper_opt_default(int o)
+{
+    return o >= 0 && o < LOOPER_OPTS ? opt_defaults[o] : 0.f;
 }
 
 float looper_get_opt(int o)

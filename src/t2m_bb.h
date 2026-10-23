@@ -49,7 +49,9 @@ void t2m_seq(const void *seq, uint32_t lo, int32_t hi);   /* the stock sequencer
 
 /* the TRIG page (src/t2m_page.c), drawn and touched by src/looper_page.c */
 void t2m_page_draw(int w, int foot);
-void t2m_page_touch(int x, int d, int w, int foot);
+int t2m_page_touch(int x, int d, int w, int foot);          /* the value touched (a V_ code), else -1 */
+void t2m_page_reset(int v);                                  /* that value back to its default (a double tap) */
+const t2m_params *t2m_defaults(void);
 void t2m_page_knob(int knob, int counts);
 void t2m_page_sheet(int sheet);
 int t2m_page_sheet_now(void);        /* the sheet shown */

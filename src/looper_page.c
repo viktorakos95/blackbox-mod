@@ -375,7 +375,11 @@ int looper_page_hit(int x, int d, int *track, float *val)
     if (P->hg < 120 || P->w < 80 || cw <= 0)
         return Z_NONE;                                            /* (hg is 0 until the page has been drawn once) */
     layout(0, &L);
-    if (d > L.foot_y) {                                           /* the footer: the tabs */
+    if (d > L.foot_y) {                                           /* the footer: the tabs, and on the Looper's at the right the stock FX shortcut */
+        if (P->mode < M_SMPLR && x >= P->w - 58 && x < P->w - 4) {
+            *track = 94;
+            return Z_OPTC;
+        }
         if (P->mode == M_LIRA)
             return Z_NONE;
         if (P->mode == M_SMPLR || P->mode == M_TRIG) {            /* the sheets (track >= 10 tells Z_TAB apart) */
@@ -924,6 +928,19 @@ static void set_fx_sel(int p)
         P->fx_sel[t] = (uint8_t)p;
 }
 
+/* The stock FX page: the FX button's own message, handed to the app's dispatcher (the Blackbox goes to its FX page from here
+ * as it does from the pads). Reached by the Looper footer's STOCK FX button and by INFO + FX on the Looper. */
+static void stock_fx(void)
+{
+    uint16_t m[32];
+    for (int i = 0; i < 32; i++)
+        m[i] = 0;
+    m[0] = P->bset[B_FX] ? P->bid[B_FX] : 0xf9;
+    *(uint32_t *)((uint8_t *)m + 0xc) = P->bset[B_FX] ? P->bidx[B_FX] : 4;
+    P->info_on = 0;
+    fw_app_msg((void *)0x24020088u, m);
+}
+
 /* A tab of the footer (0 MAIN, 1 FX, 2 FX2, 3 SETUP, 4 MORE). FX / FX2 keep the square where it is when it is on that page. */
 static void tab_select(int i)
 {
@@ -1119,6 +1136,10 @@ static void draw_footer(const struct lay *L)
             text_c(3 + 60 * i, L->foot_y + 4, 58, sm_sheet_name[i], on ? C_CYAN : C_GREY, 1);
         }
         x0 = P->w;
+    }
+    if (P->mode < M_SMPLR) {
+        frame(P->w - 58, L->foot_y + 2, 54, FOOT - 3, C_RAIL, 1);
+        text_c(P->w - 58, L->foot_y + 4, 54, "STOCK FX", C_LIGHT, 1);
     }
     if (looper_paused() && P->mode < M_SMPLR)             /* (the Looper's own state: not carried onto the other pages) */
         text(x0, L->foot_y + 4, "PAUSE", C_RED, 1);
@@ -1405,9 +1426,9 @@ static void draw_samplr(void)
             text_c(155 + 38 * L, r1 + (SM_BH - 8) / 2, 36, d, recL ? C_RED : have ? C_CYAN : C_GREY, 1);
         }
         sm_button(271, r1, 40, "PANIC", 0);                        /* silences every track: loops, latches, clouds, sequences */
-    } else if (sh == SMS_FX) {                                    /* FX: filter, resonance, delay and reverb send of this track (the four encoders turn them, pink 1-4), attack and release */
-        static const char *const fxn[6] = {"FILT", "DLY", "REV", "RES", "A", "R"};   /* in the order of the encoders 1-4 */
-        static const uint8_t fx_which[4] = {0, 2, 3, 1};
+    } else if (sh == SMS_FX) {                                    /* FX: filter, resonance, reverb and delay send of this track (the four encoders turn them, pink 1-4), attack and release */
+        static const char *const fxn[6] = {"FILT", "RES", "REV", "DLY", "A", "R"};   /* the encoders 1-4: top-left, top-right, bottom-left, bottom-right */
+        static const uint8_t fx_which[4] = {0, 1, 3, 2};
         for (int i = 0; i < 6; i++) {
             int x0 = 3 + 51 * i;
             frame(x0, r1, 49, SM_BH, C_RAIL, 1);
@@ -1458,6 +1479,16 @@ static int sm_up(int id)
 }
 
 /* A touch on the SAMPLR page above the footer. */
+/* Taps on one control (code, track) closer than DTAP: a double tap, which puts the control back to its default. */
+static int dtap(int code, int t)
+{
+    int dbl = P->dtap_c == code && P->dtap_trk == t && looper_ticks() - P->dtap_t < DTAP;
+    P->dtap_c = dbl ? 0 : (uint8_t)code;
+    P->dtap_trk = (uint8_t)t;
+    P->dtap_t = looper_ticks();
+    return dbl;
+}
+
 static int sm_touch(int kind, int id, int x, int d)
 {
     int wx, wy, wh, ty, r1;
@@ -1508,10 +1539,22 @@ static int sm_touch(int kind, int id, int x, int d)
     }
     if (d >= r1) {
         int sh = SM_SHEET < SM_SHEETS ? SM_SHEET : 0;
-        static const uint8_t fx_which[4] = {0, 2, 3, 1};
+        static const uint8_t fx_which[4] = {0, 1, 3, 2};
         if (sh == SMS_FX && kind != 2 && s) {                     /* the FX bars (and attack / release) follow the finger */
             int i = (x - 3) / 51, v = x - 3 - 51 * i - 2;
             v = v < 0 ? 0 : v > 45 ? 45 : v;
+            if (kind == 1 && P->dtap_c == 0xfe)                   /* (after a double tap the finger moves nothing until it lifts) */
+                return 1;
+            if (kind == 0 && x >= 3 && i < 6 && dtap(70 + i, 0)) {  /* a fast double tap: back to the default */
+                static const int16_t fx_def[4] = {512, 512, 0, 0};    /* filter centre (off), resonance flat, delay, reverb */
+                if (i < 4)
+                    samplr_fx_set(fx_which[i], fx_def[fx_which[i]]);
+                else
+                    samplr_set_env(i - 4, i == 4 ? 19 : 32);
+                P->dtap_c = 0xfe;
+                P->sig = 0;
+                return 1;
+            }
             if (x >= 3 && i < 6 && (x - 3) % 51 < 49) {
                 if (i < 4)
                     samplr_fx_set(fx_which[i], v * 1023 / 45);
@@ -2016,7 +2059,9 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         struct lay L;
         layout(0, &L);
         if (d < L.foot_y) {
-            t2m_page_touch(x, d, P->w, L.foot_y);
+            int v = t2m_page_touch(x, d, P->w, L.foot_y);
+            if (v >= 0 && dtap(100 + v, 0))                       /* a fast double tap on a value: back to its default */
+                t2m_page_reset(v);
             dirty_now(view);
             return;
         }
@@ -2047,6 +2092,8 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         if (t >= 95 && t <= 99) {
             int slot = 100 - t;                                   /* LEARN <button>: the next press of it is remembered */
             P->learn = P->learn == slot ? 0 : (uint8_t)slot;
+        } else if (t == 94) {
+            stock_fx();
 #ifdef BANK2
         } else if (t == 93) {                                     /* size test: read back the pattern past the old end of the cave */
             const volatile uint32_t *q = (const volatile uint32_t *)0x08100000u;
@@ -2061,9 +2108,13 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
             P->entered = 0;                                       /* e.g. FULL SCREEN: repaint the whole background */
         }
     } else if (zone == Z_SLIDER) {
-        looper_set_opt(t, v);
-        P->drag_opt = (uint8_t)t;
-        P->pressed = P_SLIDER;
+        if (dtap(60 + t, 0)) {                                    /* a fast double tap: back to the default */
+            looper_set_opt(t, looper_opt_default(t));
+        } else {
+            looper_set_opt(t, v);
+            P->drag_opt = (uint8_t)t;
+            P->pressed = P_SLIDER;
+        }
     } else if (zone == Z_CLEAR) {
         if (P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) {
             P->clear_arm = 2;                                     /* asked twice within 3 s: CLEARED! for a while */
@@ -2075,10 +2126,7 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         }
     } else if (zone == Z_FX) {
         int p = (int)(v + .5f);
-        int dbl = p != 6 && p != 7 && P->dtap_c == p + 1 && P->dtap_trk == t && looper_ticks() - P->dtap_t < DTAP;
-        P->dtap_c = dbl ? 0 : (uint8_t)(p + 1);
-        P->dtap_trk = (uint8_t)t;
-        P->dtap_t = looper_ticks();
+        int dbl = dtap(p + 1, t) && p != 6 && p != 7;
         int was = P->sel == t && FX_GROUP == (p >> 2);
         P->sel = (uint8_t)t;                                      /* a tap moves the one pink square to that block of four */
         set_fx_sel(p >> 2);
@@ -2115,10 +2163,16 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         }
     } else if (zone == Z_FADER) {
         if (was_sel) {                                            /* the first touch of an unselected track only selects it */
-            looper_set_level(t, v);
-            P->pressed = P_FADER;
+            if (dtap(40, t)) {
+                looper_set_level(t, 1.f);                         /* a fast double tap: 0 dB */
+            } else {
+                looper_set_level(t, v);
+                P->pressed = P_FADER;
+            }
         }
     } else if (zone == Z_PAN) {
+        if (dtap(50, t))
+            looper_set_pan(t, 0.f);                               /* a fast double tap: centre (and the knob's mode as it was before the first tap) */
         P->pan_sel ^= (uint8_t)(1u << t);
     } else if (zone == Z_REV) {
         looper_event(t, LOOPER_EV_REVERSE);
@@ -2190,9 +2244,11 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
 {
     if (msg && msg[0] == MSG_KNOB && solo_looper_view() == view) {
         int knob = *(const int16_t *)((const uint8_t *)msg + 0xc);
-        knob = knob < 2 ? knob ^ 1 : knob;                       /* left encoders: the bottom one is track 1 */
+        knob = knob < 2 ? knob ^ 1 : knob;                       /* 0 bottom-left, 1 top-left, 2 top-right, 3 bottom-right */
         int counts = *(const int16_t *)((const uint8_t *)msg + 0x10);
         if (knob >= 0 && knob < LOOPER_TRACKS) {
+            if (P->mode == M_MAIN || P->mode == M_SMPLR || P->mode == M_TRIG)
+                knob = knob_slot[knob];                           /* a row of four, as on DRONE-8: top-left, top-right, bottom-left, bottom-right */
             struct looper_info k;
             looper_track(knob, &k);
             float step = (float)counts * KNOB_SCALE;
@@ -2428,7 +2484,9 @@ static void app_msg(void *app, const uint16_t *msg)
                 }
                 switch (slot) {
                 case B_FX:
-                    if (P->mode != M_FX)                      /* the FX button: MAIN -> FX -> FX2 -> MAIN */
+                    if (P->info_on)                                /* INFO + FX: the Blackbox's own FX page */
+                        stock_fx();
+                    else if (P->mode != M_FX)                      /* the FX button: MAIN -> FX -> FX2 -> MAIN */
                         tab_select(1);
                     else if (FX_GROUP < 2)
                         tab_select(2);

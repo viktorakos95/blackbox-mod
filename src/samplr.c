@@ -734,7 +734,7 @@ void samplr_fx_knob(int knob, int counts)
     struct sm *s = samplr();
     if (!s || knob < 0 || knob > 3)
         return;
-    static const uint8_t which_of[4] = {0, 2, 3, 1};              /* encoder 1 filter, 2 delay, 3 reverb, 4 resonance */
+    static const uint8_t which_of[4] = {0, 1, 3, 2};              /* the row's 1 filter, 2 resonance, 3 reverb, 4 delay (the page hands over the position in the row) */
     int w = which_of[knob];
     int a = s->kacc[knob] + counts, steps = a / 20;                /* a step per 20 counts: the whole range in about 2000 */
     s->kacc[knob] = (int16_t)(a - steps * 20);

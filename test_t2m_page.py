@@ -68,7 +68,8 @@ MSG = 0x2403A000
 
 
 def knob(i, counts):
-    """As test_looper.py: knob i (track i's), counts; the left encoders arrive swapped."""
+    """The row's i-th value: the encoders top-left, top-right, bottom-left, bottom-right (as on DRONE-8); the left encoders arrive swapped."""
+    i = (1, 2, 0, 3)[i]
     i = i ^ 1 if i < 2 else i
     e.uc.mem_write(MSG, struct.pack("<H", 0x32) + bytes(10) + struct.pack("<h", i) + bytes(2) + struct.pack("<h", counts))
     e.call("looper_view_msg", VIEW, MSG)
@@ -235,6 +236,10 @@ f = picture("detect_floor")
 check("... and the cell shows it", inside(f))
 knob(2, 40 * 120)
 check("FLOOR up stops at -40 dB", fl(O["p_floor_db"]) == -40.0)
+tap(192, 134 + 10)
+tap(192, 134 + 10)
+check("a fast double tap on NOISE FLOOR: back to the patch's -60 dB", fl(O["p_floor_db"]) == -60.0, fl(O["p_floor_db"]))
+knob(2, 40 * 120)
 knob(2, -40 * 20)
 check("... back to the patch's -60 dB", fl(O["p_floor_db"]) == -60.0, fl(O["p_floor_db"]))
 touch("down", 3 + 120 + 10, 216)
