@@ -87,7 +87,7 @@ e.call("lira_ui_set", 109, 600)
 check("per pair source / touch / FM depth stored", rv("lira_ui_get", 105) == 3 and rv("lira_ui_get", 100) == 2
       and rv("lira_ui_get", 109) == 600)
 e.call("lira_ui_set", 105, 99)
-check("source clamps to the list", rv("lira_ui_get", 105) == 7)
+check("source clamps to the list (nine entries, the last is OUT)", rv("lira_ui_get", 105) == 8)
 r = rms(run(20)[-5 * N:])
 check("still finite with FM Source Pair4 / Touch Follow", r == r and r < 2.0, "%.4f" % r)
 check("momentary toggles", rv("lira_ui_momentary", 0) == 0 and rv("lira_ui_momentary", 1) == 1 and

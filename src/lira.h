@@ -19,7 +19,7 @@ enum {
     LIRA_FAST12, LIRA_FAST34, LIRA_FAST56, LIRA_FAST78,   /* 0/1: touch envelope 100/100 ms (1) or 200 ms / 8 s (0) */
     LIRA_SHARP12, LIRA_SHARP34, LIRA_SHARP56, LIRA_SHARP78,   /* triangle <-> square */
     LIRA_MOD12, LIRA_MOD34, LIRA_MOD56, LIRA_MOD78,   /* FM depth */
-    LIRA_SOURCE12, LIRA_SOURCE34, LIRA_SOURCE56, LIRA_SOURCE78,   /* FM source: 0 self (neighbour voices), 1 off, 2 LFO/feedback */
+    LIRA_SOURCE12, LIRA_SOURCE34, LIRA_SOURCE56, LIRA_SOURCE78,   /* FM source: 0 self (neighbour voices), 1 off, 2 LFO/feedback, 3 ext, 4..7 a pair, 8 the master output */
     LIRA_PITCH1234, LIRA_PITCH5678,   /* global pitch of each half */
     LIRA_HOLD1234, LIRA_HOLD5678,     /* drone level with no touch */
     LIRA_SWITCH,      /* 0/1: which neighbour voice drives the FM in "self" */
@@ -73,6 +73,8 @@ typedef struct {
     int16_t *buf;                         /* the memory, 16-bit (half the RAM of floats; the PT2399 is a ~12-bit part): value * DL_SCALE */
     int len, w;
     float acc, est, stp;
+    float wob;                            /* the clock's slow random wobble (relative; DRIFT scales it; not on a tempo-synced line) */
+    float dpos;                           /* the tap's delay in samples as it is now (gliding to the clock's value) */
     int pbit;
     float hp_x, in1, in2, out1, out2, self_lp;
     lira_ramp time, mod;                  /* seconds at the clock set by the knob; relative clock modulation depth */
@@ -105,12 +107,11 @@ typedef struct {
     float wd0, wd1, dgo;          /* the delay lines coming and going (shed): each line's weight in the wet sum minus its full value (0.5), and how much of the delay is out of the mix; all 0 = full */
     float width, drift;           /* stereo width and slow pitch wander (0..1); width 0 runs the cheaper mono path */
     float bodyc;                  /* the bass lift (a gain; 0.41, fixed) */
-    float harm;                   /* low-order harmonics of the bass (0..1; fixed at LIRA_HARM) */
-    float hb1, hb2, hbd, hbl;     /* their filters: the bass band (two poles), the rectifier's DC block, the harmonics' low-pass */
     float pan[8];                 /* each oscillator's place in the stereo image (-1..1, random per unit, scaled by width) */
     float *out_r;                 /* the right channel, set by the caller before lira_process (NULL: mono, as the pads use it) */
     float dr[8];                  /* the oscillators' pitch wander, relative */
     float side_lp;                /* the side signal's top-end filter */
+    uint8_t dsync;                /* bit i: delay line i is tempo-synced (set by the page): it keeps its time exactly, no wobble */
 } lira_t;
 
 int lira_size(void);
@@ -125,6 +126,10 @@ void lira_param(lira_t *l, int id, float value);
    knobs are at LIRA_PITCH_UNITY; the note should lie in 33 .. 93, which every oscillator reaches. */
 #define LIRA_PITCH_UNITY 63.1809f
 float lira_tune_for_midi(int o, float midi);
+/* the MIDI note (fractions allowed) oscillator o sounds for its TUNE (0..1) and pitch factor (the PITCH knob 0..1), before quantizing */
+float lira_midi_of(int o, float tune01, float pitch01);
+/* ... and the TUNE (0..1) that gives oscillator o the MIDI note `midi` at that pitch factor (clamped to the knob) */
+float lira_tune01_for(int o, float midi, float pitch01);
 /* the range of MIDI notes oscillator o can reach at LIRA_PITCH_UNITY */
 void lira_tune_range(int o, float *lo, float *hi);
 /* tempo sync (the caller works out hz, the phase 0..1 within the cycle or -1, and seconds) */
@@ -135,9 +140,7 @@ void lira_key(lira_t *l, int sensor /* 0..7 */, int on);
 void lira_touch(lira_t *l, int sensor, float drive);
 void lira_process(lira_t *l, float *out, int n);
 /* The page's tone: width = stereo spread of the pairs and the two delay lines (0 = mono, and the right channel is a copy: the cheap path);
-   drift = how far each oscillator wanders (up to ~6 cents, a few seconds a turn); harm = a quiet 2nd harmonic made from the bass band (below
-   ~160 Hz) by a rectifier, so low notes carry on small speakers and headphones (LIRA_HARM is what the sound has by default). */
-#define LIRA_HARM 0.2f
-void lira_tone(lira_t *l, float width, float drift, float harm);
+   drift = how far each oscillator wanders (up to ~6 cents, a few seconds a turn). */
+void lira_tone(lira_t *l, float width, float drift);
 
 #endif

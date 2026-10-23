@@ -223,15 +223,12 @@ check("hold, slow voice: silent at 0.4, droning at 0.6 (12 o'clock threshold), f
 check("hold, FAST voice: silent at 0.6, droning at 0.8 (2 o'clock threshold), fully open at the top", h_fast[0] < -45 and h_fast[1] > -30 and abs(h_fast[2]) < 1.5,
       "%s dB" % ["%.0f" % v for v in h_fast])
 
-# ---------------------------------------------------------------- bleed (no output VCA)
-bleed = rms(Lira(DEL_MIX=0, DST_MIX=0, FAST12=1).run(SR))
-check("nothing touched: a low-level bleed remains (-75 .. -40 dB re one open voice)", -75 < db(bleed / full) < -40,
-      "%.0f dB" % db(bleed / full))
+# ---------------------------------------------------------------- closed voices are silent (3.1.AI: the bleed of the hardware is gone)
+quiet = rms(Lira(DEL_MIX=0, DST_MIX=0, FAST12=1).run(SR))
+check("nothing touched: silence (the bleed of a closed voice is gone): rms %.1e" % quiet, quiet < 1e-6)
 hi_t = {f"TUNE{i}": 120 for i in range(1, 9)}
-lo_t = {f"TUNE{i}": 20 for i in range(1, 9)}
 b_hi = rms(Lira(DEL_MIX=0, DST_MIX=0, **hi_t).run(SR))
-b_lo = rms(Lira(DEL_MIX=0, DST_MIX=0, **lo_t).run(SR))
-check("bleed rises with tuning (capacitive coupling)", b_hi > 1.5 * b_lo, "%.0f dB vs %.0f dB" % (db(b_hi), db(b_lo)))
+check("... whatever the tuning (turning a pitch knob with the voices off makes no sound): rms %.1e" % b_hi, b_hi < 1e-6)
 
 # ---------------------------------------------------------------- vibrato
 def jitter(vib, seed=1):
@@ -406,7 +403,7 @@ _o = os.path.join(tmp, "off")
 open(_o + ".c", "w").write('#include "lira.h"\n#include <stddef.h>\n#include <stdio.h>\nint main(){printf("%d",(int)offsetof(lira_t,out_r));}')
 subprocess.check_call(["gcc", "-I" + os.path.join(HERE, "src"), "-o", _o, _o + ".c"])
 OUT_R = int(subprocess.check_output([_o]))
-lib.lira_tone.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 3
+lib.lira_tone.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 2
 
 
 def run_st(l, n, tone, stereo=True):
@@ -426,29 +423,29 @@ def full_drone():
 
 
 l = full_drone()
-run_st(l, SR, (0, 0, 0))
-a, b = run_st(l, SR, (0, 0, 0))
+run_st(l, SR, (0, 0))
+a, b = run_st(l, SR, (0, 0))
 check("width 0: left = right", np.array_equal(a, b) and np.std(a) > 0.01)
 l = full_drone()
-run_st(l, SR, (1, 0, 0))
-a, b = run_st(l, 2 * SR, (1, 0, 0))
+run_st(l, SR, (1, 0))
+a, b = run_st(l, 2 * SR, (1, 0))
 mid, side = (a + b) / 2, (a - b) / 2
 ratio = math.sqrt(np.mean(side ** 2) / np.mean(mid ** 2))
 check("width 1: a real stereo image (side %.2f of mid, correlation %.2f)" % (ratio, np.corrcoef(a, b)[0, 1]), 0.25 < ratio < 1.0 and np.corrcoef(a, b)[0, 1] < 0.85)
 check("... and balanced: the voices are dealt out so neither side is crowded (L / R level %.2f)" % (np.sqrt(np.mean(a ** 2) / np.mean(b ** 2))), 0.8 < np.sqrt(np.mean(a ** 2) / np.mean(b ** 2)) < 1.25)
 check("... finite and bounded", np.all(np.isfinite(a)) and np.all(np.isfinite(b)) and max(abs(a).max(), abs(b).max()) < 1.5)
 l1, l2 = full_drone(), full_drone()
-run_st(l1, SR, (0.8, 0, 0))
-run_st(l2, SR, (0.8, 0, 0), stereo=False)
-a, _ = run_st(l1, 8192, (0.8, 0, 0))
-c, d = run_st(l2, 8192, (0.8, 0, 0), stereo=False)
+run_st(l1, SR, (0.8, 0))
+run_st(l2, SR, (0.8, 0), stereo=False)
+a, _ = run_st(l1, 8192, (0.8, 0))
+c, d = run_st(l2, 8192, (0.8, 0), stereo=False)
 check("with no right buffer the engine stays mono (a pad's instance: no crash, a signal, nothing written)", np.std(c) > 0.01 and np.all(d == 0))
 
 
 def pitch_track(drift, sec=40):
     l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0))
     l.key(0, 1)
-    x = np.concatenate([run_st(l, SR, (0, drift, 0), stereo=False)[0] for _ in range(sec)])
+    x = np.concatenate([run_st(l, SR, (0, drift), stereo=False)[0] for _ in range(sec)])
     f = []
     for i in range(15, sec):                                        # after the envelope has settled
         seg = x[i * SR:(i + 1) * SR]
@@ -463,27 +460,86 @@ check("drift off: the pitch is steady (%.2f cents)" % c_off, c_off < 0.2)
 check("drift 0.5 wanders a few cents (%.1f), full more (%.1f), none beyond 25" % (c_half, c_full), 1.0 < c_half < c_full < 25.0)
 
 
-# ---- HARM: the bass band's 2nd harmonic (3.1.AC) ----
-def bass_voice(harm, tune=45, secs=3):
-    l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0, TUNE1=tune))
+# ---- the delay's clock moves the pitch of the echoes, it does not move the read pointer (3.1.AI: no tick at a square LFO's edges) ----
+def clicks(x):
+    h = np.diff(x, 2)
+    n = int(SR * 0.002)
+    e = np.array([np.sqrt(np.mean(h[i:i + n] ** 2)) for i in range(0, len(h) - n, n)])
+    return e.max() / np.median(e)
+
+
+l = Lira(DEL_MIX=90, FEEDBACK=60, DST_MIX=0, VIBRATO=0, DEL_MOD=2, LFO_WAV=0, MOD1=127, MOD2=127, F_A=70, F_B=70, TIME1=40, TIME2=50)
+for i in range(4):
+    l.key(i, 1)
+l.run(6 * SR)
+tri_part = l.run(SR // 2)
+l.set("LFO_WAV", 1)
+sq_part = l.run(SR // 2)
+check("LFO square on the delay clock: no clicks (peak / median of the 2nd-difference energy %.1f, was 44; the triangle's %.1f)" % (clicks(sq_part), clicks(tri_part)),
+      clicks(sq_part) < 12)
+
+
+# ---- FM Source OUT (8): the master output itself modulates the pair (3.1.AJ) ----
+def src_run(src, mod=60):
+    l = Lira(**dict(CLEAN, WAVE=0, DEL_MIX=0, DST_MIX=20, MOD12=mod, SOURCE12=src))
     l.key(0, 1)
-    run_st(l, 20 * SR, (0, 0, harm), stereo=False)
-    return run_st(l, secs * SR, (0, 0, harm), stereo=False)[0]
+    l.key(1, 1)
+    l.run(SR)
+    return l.run(2 * SR)
 
 
-b0, b2, b10 = bass_voice(0), bass_voice(0.2), bass_voice(1.0)
-fb = peak_hz(b0, 20, 400)
-h2 = lambda x: db(level_at(x, 2 * fb) / level_at(x, fb))
-check("HARM off: no 2nd harmonic (%.0f dB at %.0f Hz)" % (h2(b0), fb), h2(b0) < -35)
-check("HARM 0.2 (the default): a quiet 2nd harmonic (%.0f dB)" % h2(b2), -30 < h2(b2) < -14)
-check("HARM 1: clearly there but under the fundamental (%.0f dB)" % h2(b10), -12 < h2(b10) < -3)
-check("... the fundamental itself is not changed (%.2f dB)" % db(level_at(b10, fb) / level_at(b0, fb)), abs(db(level_at(b10, fb) / level_at(b0, fb))) < 0.5)
-dc = abs(np.mean(b10))
-check("... and no DC offset appears (%.5f)" % dc, dc < 0.002)
-hi = bass_voice(1.0, tune=100)
-h_hi = bass_voice(0.0, tune=100)
-fh = peak_hz(hi, 400, 4000)
-check("a voice above the bass band gets next to nothing (2nd harmonic %.0f dB, it was %.0f)" % (db(level_at(hi, 2 * fh) / level_at(hi, fh)), db(level_at(h_hi, 2 * fh) / level_at(h_hi, fh))), db(level_at(hi, 2 * fh) / level_at(hi, fh)) < -38)
+x_off, x_out, x_lfo = src_run(1), src_run(8), src_run(2)
+check("FM Source OUT: finite, bounded, and not the same as Off or LFO (rms %.3f / %.3f / %.3f)" % (rms(x_out), rms(x_off), rms(x_lfo)),
+      np.all(np.isfinite(x_out)) and abs(x_out).max() < 1.5 and not np.allclose(x_out, x_off, atol=1e-4) and not np.allclose(x_out, x_lfo, atol=1e-4))
+check("... and with no depth it does nothing (the same as Off)", np.allclose(src_run(8, 0), src_run(1, 0), atol=1e-6))
+
+
+# ---- QUANTIZE: every voice sounds an exact equal-tempered note ----
+def quant_cents(tune, quant):
+    l = Lira(**dict(CLEAN, WAVE=1, DEL_MIX=0, TUNE1=tune, QUANTIZE=quant, PITCH1234=63))
+    l.key(0, 1)
+    l.run(8 * SR)
+    f = peak_hz(l.run(4 * SR), 20, 4000)
+    m = 69 + 12 * math.log2(f / 440.0)
+    return abs(m - round(m)) * 100
+
+
+offs_q = [quant_cents(t, 1) for t in (60, 67, 74, 83, 91, 104)]
+offs_f = [quant_cents(t, 0) for t in (60, 67, 74, 83, 91, 104)]
+check("QUANTIZE on: every tune lands on a note (worst %.1f cents off: the oscillator's own accuracy)" % max(offs_q), max(offs_q) < 6.0)
+check("... off: the knob is continuous (some are far from a note: %.0f cents)" % max(offs_f), max(offs_f) > 15.0)
+
+
+# ---- the delay clock's wobble (3.1.AN): a drone and its echo stop cancelling in the same places; a tempo-synced line keeps its time ----
+_o2 = os.path.join(tmp, "off2")
+open(_o2 + ".c", "w").write('#include "lira.h"\n#include <stddef.h>\n#include <stdio.h>\nint main(){printf("%d %d",(int)offsetof(lira_t,dsync),(int)offsetof(lira_t,line[0].wob));}')
+subprocess.check_call(["gcc", "-I" + os.path.join(HERE, "src"), "-o", _o2, _o2 + ".c"])
+OFF_DSYNC, OFF_WOB = (int(v) for v in subprocess.check_output([_o2]).split())
+
+
+def echo_level(drift, dsync=0, tune=100, secs=24):
+    l = Lira(DST_MIX=0, VIBRATO=0, FAST12=1, MOD12=0, SOURCE12=1, SHARP12=0, WAVE=1, PITCH1234=63, TUNE1=tune, DEL_MIX=64, FEEDBACK=0,
+             MOD1=0, MOD2=0, DEL_MOD=1, TIME1=70, TIME2=70)
+    l.key(0, 1)
+    l.run(8 * SR)
+    ctypes.c_uint8.from_address(ctypes.addressof(l.mem) + OFF_DSYNC).value = dsync
+    lib.lira_tone(l.mem, 0, drift)
+    x = l.run(secs * SR)
+    wob = ctypes.c_float.from_address(ctypes.addressof(l.mem) + OFF_WOB).value
+    return x, wob
+
+
+_lr = Lira(DST_MIX=0, VIBRATO=0, FAST12=1, MOD12=0, SOURCE12=1, SHARP12=0, WAVE=1, PITCH1234=63, TUNE1=100, DEL_MIX=0)
+_lr.key(0, 1)
+_lr.run(8 * SR)
+ref = rms(_lr.run(8 * SR))
+x_still, w_still = echo_level(0.0)
+x_wob, w_wob = echo_level(0.4)
+x_syn, w_syn = echo_level(0.4, dsync=3)
+lv = lambda x: 20 * np.log10(rms(x[SR:]) / ref)
+check("no drift: the tone and its echo cancel for good at this pitch and time (%.0f dB)" % lv(x_still), lv(x_still) < -25)
+check("DRIFT 0.4: the cancellation moves on, the average level comes back (%.0f dB)" % lv(x_wob), lv(x_wob) > -14 and 0 < abs(w_wob) < 0.06)
+check("a tempo-synced line keeps its time exactly (wobble %.5f)" % w_syn, abs(w_syn) < 1e-6)
 
 
 # CPU

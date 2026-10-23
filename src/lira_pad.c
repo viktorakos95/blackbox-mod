@@ -99,6 +99,7 @@ float park_rate(const uint8_t *pad);                   /* filter.c: rate of the 
 #define C_SHARP  9
 #define C_HOLD   10
 #define C_DLYMOD 20
+#define C_VIBRATO 13
 #define IDLE_CYCLES  25000000u                         /* ~50 ms without a voice: the instance may go to another pad */
 
 /* ---- the 25 controls ---- */
@@ -111,7 +112,7 @@ struct ctl {
     const char *const *names;
     uint8_t names_n;
 };
-static const char *const source_names[8] = {"Self", "Off", "LFO", "Ext", "Pair1", "Pair2", "Pair3", "Pair4"};
+static const char *const source_names[9] = {"Self", "Off", "LFO", "Ext", "Pair1", "Pair2", "Pair3", "Pair4", "Out"};
 static const char *const touch_names[3] = {"Slow", "Fast", "Ext"};
 #define PCT(x) ((int16_t)((x) * 1000.0f / 127.0f + 0.5f))
 #define P0 0x1db
@@ -129,7 +130,7 @@ static const struct ctl ctls[] = {
     {P0 + 10, K_PCT, 2, {LIRA_HOLD1234, LIRA_HOLD5678}, PCT(0), "Hold:", "lirahold", 0, 0},
     {P0 + 11, K_PCT, 4, {LIRA_MOD12, LIRA_MOD34, LIRA_MOD56, LIRA_MOD78}, PCT(0), "FM Depth:", "liramod", 0, 0},
     {P0 + 12, K_LIST, 4, {LIRA_SOURCE12, LIRA_SOURCE34, LIRA_SOURCE56, LIRA_SOURCE78}, 0, "FM Source:", "lirasource",
-     source_names, 8},
+     source_names, 9},
     {P0 + 13, K_PCT, 1, {LIRA_VIBRATO}, PCT(1), "Vibrato:", "liravibrato", 0, 0},
     {P0 + 14, K_PCT, 1, {LIRA_F_A}, PCT(42), "LFO A:", "liralfoa", 0, 0},
     {P0 + 15, K_PCT, 1, {LIRA_F_B}, PCT(64), "LFO B:", "liralfob", 0, 0},
@@ -168,6 +169,7 @@ struct slot {
 struct pg {                      /* the LIRA page's own instance (Mixer screen page, no pad): see lira_page_run */
     struct slot s;
     int16_t row[NCTL];           /* its controls, as a pad's side[] row */
+    int8_t tfrac[8];             /* a voice's tune between two units of its knob (hundredths of a unit: a unit is 0.1 % of the range, about 11 cents), so QUANT and STEP can land exactly on a note; not saved */
     int16_t mod[4], level;       /* FM depth per pair (0..1000), output level */
     int16_t tone[3];             /* MIX tab, SPACE panel: stereo pan spread, drift, send to the stock reverb (0..1000) */
     int16_t ex[18];              /* the plugin's split controls: Hold 1234 / 5678, Pitch 1234 / 5678, Dly Mod 1 / 2, Sharp per pair, then the eight voice levels */
@@ -407,6 +409,7 @@ void lira_register(void *table)
         g->want[k] = g->keyed[k] = 0;
         g->btn_t[k] = 0;
         g->ex[10 + k] = 1000;
+        g->tfrac[k] = 0;
     }
     g->lfo[0] = g->lfo[1] = g->lfo[2] = 0;
     g->lfo[3] = 2;
@@ -712,6 +715,9 @@ void lira_mode_set(void *store, unsigned id, int value)
 /* ---- the LIRA page: one more instance, run by the looper's output stage (looper_stage), so it needs no pad or sample.
    The page's UI (looper_page.c, lira_ui.inc) reads and writes it through these. Controls: 0..NCTL-1 are ctls[] (the
    per-pair FM Depth, FM Source and Touch are 100+pair, 104+pair, 108+pair), 120 = level. */
+static int tune_hund(const struct pg *g, int v);
+static void tune_to(struct pg *g, int v, float midi);
+
 int lira_ui_get(int c)
 {
     struct pool *p = pool();
@@ -747,12 +753,16 @@ void lira_ui_set(int c, int v)
     struct pg *g = &p->pg;
     if (c >= 0 && c < 8 && g->chord_on)
         return;
+    if (c >= 0 && c < 8 && g->tfrac[c]) {
+        g->tfrac[c] = 0;
+        g->s.vals[c] = -1;
+    }
     if (c >= 0 && c < NCTL)
         g->row[c] = (int16_t)(v < 0 ? 0 : v > (ctls[c].kind == K_LIST ? ctls[c].names_n - 1 : 1000) ? (ctls[c].kind == K_LIST ? ctls[c].names_n - 1 : 1000) : v);
     else if (c >= 100 && c < 104)
         g->touch[c - 100] = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
     else if (c >= 104 && c < 108)
-        g->src[c - 104] = (uint8_t)(v < 0 ? 0 : v > 7 ? 7 : v);
+        g->src[c - 104] = (uint8_t)(v < 0 ? 0 : v > 8 ? 8 : v);
     else if (c >= 108 && c < 112)
         g->mod[c - 108] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
     else if (c == 120)
@@ -1086,7 +1096,7 @@ void lira_page_run(float *l, float *r, int n)
             lira_param(&s->l, LIRA_MOD12 + k, (float)g->mod[k] * (127.0f / 1000.0f));
             lira_param(&s->l, LIRA_SHARP12 + k, (float)g->ex[6 + k] * (127.0f / 1000.0f));
         }
-        lira_tone(&s->l, g->tone[0] < 30 ? 0.0f : (float)g->tone[0] * 0.001f, (float)g->tone[1] * 0.001f, LIRA_HARM);   /* (under 3 % the knob reads 0 to 3: that is mono, exactly) */
+        lira_tone(&s->l, g->tone[0] < 30 ? 0.0f : (float)g->tone[0] * 0.001f, (float)g->tone[1] * 0.001f);   /* (under 3 % the knob reads 0 to 3: that is mono, exactly) */
         lira_param(&s->l, LIRA_LFO_WAV, (float)g->lfo[0]);
         lira_param(&s->l, LIRA_ANDOR, (float)g->lfo[1]);
         lira_param(&s->l, LIRA_LINK, (float)g->lfo[2]);
@@ -1100,6 +1110,10 @@ void lira_page_run(float *l, float *r, int n)
             lira_param(&s->l, LIRA_MOD1 + k, (float)g->ex[4 + k] * (127.0f / 1000.0f));
         }
     }
+    if (!g->chord_on)
+        for (int o = 0; o < 8; o++)
+            if (g->tfrac[o])                                  /* a tune between two knob units: QUANT / STEP landed exactly on a note */
+                lira_param(&s->l, LIRA_TUNE1 + o, ((float)g->row[o] + 0.01f * (float)g->tfrac[o]) * (127.0f / 1000.0f));
     apply_sync(g, s);
     const float *xl = 0, *xr = 0;
     int xn = 0;
@@ -1188,6 +1202,7 @@ static void apply_sync(struct pg *g, struct slot *s)
         if ((g->sync_on >> k & 1) && !(on >> k & 1))
             s->vals[14 + k] = -1;                         /* off again: the knob's value applies (ctls[14..17] = LFO A, LFO B, Time 1, Time 2) */
     g->sync_on = on;
+    s->l.dsync = (uint8_t)(on >> 2 & 3);                 /* the delay lines (3rd and 4th sync) that are on the grid: no wobble there */
 }
 
 /* A finger's drag on the page (state kept here: the cave has no .bss). op 0: set kind / idx / y0 / v0, 1: read kind, 2: idx,
@@ -1283,6 +1298,8 @@ int lira_ui_chord_get(int id)                              /* the index behind a
         return g->btn_on;
     if (id == 194)
         return g->off;
+    if (id == 195)
+        return g->row[C_VIBRATO] >= 4;                     /* (the engine's switch is on from 0.5 of 127: the default 8 / 1000 is on) */
     if (id == 167)
         return g->pend;
     if (id == 166)                                         /* the loop's position, 0..8 */
@@ -1441,6 +1458,15 @@ void lira_ui_action(int a)
         g->glayers = 0;
     } else if (a == 8) {
         g->btn_on ^= 1;
+    } else if (a == 20) {                                 /* QUANT, once: every voice goes to the nearest real note (chord mode: its cents go to 0) */
+        for (int v = 0; v < 8; v++) {
+            if (g->chord_on)
+                g->fine[v] = 0;
+            else
+                tune_to(g, v, (float)((tune_hund(g, v) + 50) / 100));
+        }
+    } else if (a == 19) {                                 /* VIBRATO on / off (its default is on) */
+        g->row[C_VIBRATO] = g->row[C_VIBRATO] >= 4 ? 0 : ctls[C_VIBRATO].def;
     } else if (a == 18) {                                 /* ENGINE on / off: off stops the synth, its tail and its modulation, and the next start is fresh */
         g->off ^= 1;
         if (g->off) {
@@ -1578,6 +1604,53 @@ void lira_ui_note_set(int v, int note)
     if (p && v >= 0 && v < 8) {
         lira_ui_pitch_set(v, (note < 33 ? 33 : note > 93 ? 93 : note) * 100);
     }
+}
+
+/* The voices' TUNE knobs in notes (outside chord mode): where the knob and the pitch knob put voice v, in hundredths of a semitone;
+   and the knob set to a note. Whole numbers of semitones are exact notes. */
+static int tune_hund(const struct pg *g, int v)
+{
+    float m = lira_midi_of(v, ((float)g->row[v] + 0.01f * (float)g->tfrac[v]) * 0.001f, (float)g->ex[2 + (v >> 2)] * 0.001f);
+    int h = (int)(m * 100.0f + 10000.5f) - 10000;
+    return h < 0 ? 0 : h;
+}
+
+static void tune_to(struct pg *g, int v, float midi)
+{
+    float t = lira_tune01_for(v, midi, (float)g->ex[2 + (v >> 2)] * 0.001f) * 1000.0f;
+    int r = (int)(t + 0.5f), f = (int)((t - (float)r) * 100.0f + (t >= (float)r ? 0.5f : -0.5f));
+    g->row[v] = (int16_t)(r < 0 ? 0 : r > 1000 ? 1000 : r);
+    g->tfrac[v] = (int8_t)(f < -50 ? -50 : f > 50 ? 50 : f);
+    g->s.vals[v] = -1;                                      /* (the engine takes the knob again, then the fraction) */
+}
+
+int lira_ui_tunepitch(int v)
+{
+    struct pool *p = pool();
+    return p && v >= 0 && v < 8 ? tune_hund(&p->pg, v) : 0;
+}
+
+void lira_ui_tune_step(int v, int dir)                   /* STEP: the knob goes to the next note up or down */
+{
+    struct pool *p = pool();
+    if (!p || v < 0 || v > 7)
+        return;
+    int h = tune_hund(&p->pg, v), n = h / 100;
+    if (dir > 0)
+        n += 1;
+    else if (h % 100 == 0)
+        n -= 1;
+    tune_to(&p->pg, v, (float)n);
+}
+
+void lira_ui_tune_detent(int v)                          /* a drag lands on a note when it is within 12 cents of one */
+{
+    struct pool *p = pool();
+    if (!p || v < 0 || v > 7)
+        return;
+    int h = tune_hund(&p->pg, v), n = (h + 50) / 100, d = h - n * 100;
+    if (d >= -12 && d <= 12)
+        tune_to(&p->pg, v, (float)n);
 }
 
 /* a voice's pitch in hundredths of a semitone (note * 100 + cents) */
@@ -1868,8 +1941,10 @@ static void lira_load_(void)
     for (int i = 0; i < 4; i++) {
         g->mod[i] = b->mod[i];
         g->touch[i] = (uint8_t)(b->touch[i] > 2 ? 1 : b->touch[i]);
-        g->src[i] = (uint8_t)(b->src[i] & 7);
+        g->src[i] = (uint8_t)(b->src[i] < 9 ? b->src[i] : 0);
     }
+    for (int i = 0; i < 8; i++)
+        g->tfrac[i] = 0;
     g->level = b->level;
     for (int i = 0; i < 18; i++)
         g->ex[i] = b->ex[i] < 0 ? 0 : b->ex[i] > 1000 ? 1000 : b->ex[i];
@@ -1899,6 +1974,7 @@ static void lira_load_(void)
     for (int i = 0; i < 4; i++)
         g->sync[i] = (uint8_t)(b->misc[15 + i] < 12 ? b->misc[15 + i] : 0);
     g->btn_on = b->misc[19] & 1;
+    g->ex[0] = g->ex[1] = 0;                                 /* Hold is gone from the screen: a saved value would drone with no way to stop it */
     g->glen_i = (uint8_t)(b->misc[20] & 3);
     revoice(g);
     int ok = 1;
