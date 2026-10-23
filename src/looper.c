@@ -276,6 +276,7 @@ struct dsp {
         uint16_t nblk;                           /* frames in a block */
         uint16_t rep;
         float fo[LOOPER_TRACKS];                 /* how far it is faded: 0 not at all (as set), 1 silent */
+        uint16_t spike_show;                     /* blocks the top bars' warning still shows that an engine was left out of a block (in-block check) */
     } gd;
     int16_t ws[5120];                            /* WSOLA: the candidate region, mono */
     float zero[MAXN];
@@ -2018,7 +2019,10 @@ int looper_over_cap(int e)
             if (track_out(k) && !k->muted)
                 need += guard_est(d, t, k, g->nblk);
         }
-    return need * 1000.f > (float)(880 + 20 * below(e)) * g->per;
+    int over = need * 1000.f > (float)(880 + 20 * below(e)) * g->per;
+    if (over)
+        g->spike_show = 375;                                  /* (~2 s on the top bars) */
+    return over;
 }
 
 /* The same for DRONE-8, which runs first (before SAMPLR and the looper's tracks): the time used, its own cost (own, cycles), and the time of the engines
@@ -2041,7 +2045,10 @@ int looper_drone_spike(uint32_t own)
             if (track_out(k) && !k->muted)
                 need += guard_est(d, t, k, g->nblk);
         }
-    return need * 1000.f > (float)(880 + 20 * below(E_DRONE)) * g->per;
+    int over = need * 1000.f > (float)(880 + 20 * below(E_DRONE)) * g->per;
+    if (over)
+        g->spike_show = 375;                                  /* (~2 s on the top bars) */
+    return over;
 }
 
 /* Before track t: is there time for it in this block? If not it is cut here with a ramp to 0 (computed as cheaply as possible, even when that
@@ -2106,6 +2113,8 @@ void looper_block_done(uint32_t now)
         return;
     struct guard *g = &DSP()->gd;
     uint32_t used = now - WAKE;
+    if (g->spike_show)
+        g->spike_show--;
     if (g->per > 0.f && (float)used < 4.f * g->per) {
         float w = (float)used * 1000.f / g->per;
         if (w > 1000.f)
@@ -2119,6 +2128,27 @@ void looper_block_done(uint32_t now)
         g->w4[0] = (uint16_t)w;
         g->wpk = m4 > g->wpk ? m4 : g->wpk + (m4 - g->wpk) * (1.f / 750.f);
     }
+}
+
+/* The top bars' warning, 0..3: 1 the load is near where the first engine starts to fade; 2 something is held out now (a looper track,
+ * SAMPLR's quality steps or tracks, DRONE-8); 3 an engine had to be left out of a block (a spike) in the last ~2 s. */
+int lira_ui_load(int which);
+int looper_overload_level(void)
+{
+    if (S->magic != MAGIC || !S->ok)
+        return 0;
+    struct guard *g = &DSP()->gd;
+    if (g->spike_show)
+        return 3;
+    int held = (g->shown & 15) != 0 || samplr_held() || lira_ui_load(2) >= 3;
+    for (int t = 0; t < LOOPER_TRACKS; t++)
+        held |= g->fading[t] || g->gm[t];
+    if (held)
+        return 2;
+    int mk = looper_soft_threshold(E_LOOPER);
+    for (int e = E_SAMPLR; e <= E_DRONE; e++)
+        mk = looper_soft_threshold(e) < mk ? looper_soft_threshold(e) : mk;
+    return g->wema >= (float)(mk - 60) || g->wpk >= (float)mk ? 1 : 0;
 }
 
 int looper_guard_level(void)                       /* the readout: tracks muted (or fading) by the guard, most in the last second; +16 if one had to be cut */

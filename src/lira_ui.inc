@@ -392,8 +392,9 @@ static void draw_lira(void)
             }
     }
     /* (the governor's SHED and the load readouts that stood here: docs/diagnostics.md) */
-    b[9] = 0;                                                     /* (it must stay clear of the switches) */
-    text(54, 4, b, *b ? C_WHITE : C_GREY, 1);
+    b[8] = 0;                                                     /* (it must stay clear of the switches) */
+    draw_load(50);                                                /* the overload warning (looper_page.c draw_load) */
+    text(61, 4, b, *b ? C_WHITE : C_GREY, 1);
     int mom = lira_ui_momentary(0), sine = lira_ui_chord_get(154), fr = lira_ui_chord_get(157), xs = lira_ui_chord_get(156), gm = lira_ui_chord_get(158);
     /* six switches at the right, 32 px wide every 33, from the right: LATCH / HOLD, TRI / SINE, X:IN / X:MIX / X:ALL, STEP / FREE, REC, BTN */
 #define LU_SW(k) (P->w - 35 - 33 * (k))

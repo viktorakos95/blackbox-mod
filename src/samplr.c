@@ -2956,6 +2956,17 @@ int samplr_run(float *bl, float *br, int n, float **snd)
     return fed;
 }
 
+int samplr_held(void)                                              /* SAMPLR is holding back: a quality step, or tracks faded out */
+{
+    struct sm *s = trk_get(0, 0);
+    if (!s || !s->sc || !(s->sc->shed || s->sc->gout))
+        return 0;
+    for (int t = 0; t < samplr_tracks(); t++)
+        if (samplr_track_info(t) & (2 | 4 | 16))                  /* (only while it plays: the steps are taken whether or not anything sounds) */
+            return 1;
+    return 0;
+}
+
 uint32_t samplr_last_cycles(void)                                  /* what the last block of SAMPLR took (cycles): the guard keeps that much for it */
 {
     struct sm *s = trk_get(0, 0);

@@ -530,9 +530,6 @@ check("fader: touching near the bottom of the bars sets a low level", tr(2, O_LE
 touch("move", 190, 79)
 check("fader: dragging to the top sets about +6 dB", abs(tr(2, O_LEVEL, "f") - 2.0) < 0.08, tr(2, O_LEVEL, "f"))
 touch("up", 190, 78)
-touch("down", 190, 141)
-touch("up", 190, 141)
-check("fader: a fast double tap puts the level back to 0 dB", tr(2, O_LEVEL, "f") == 1.0, tr(2, O_LEVEL, "f"))
 check("the page's touches never reach the stock mixer handlers", len(stock) == stock_clear, stock)
 
 # knobs: message 0x32 to the view

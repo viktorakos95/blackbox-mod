@@ -44,7 +44,8 @@ void looper_set_param(int track, int param, float v);   /* LOOPER_P_*: filt and 
 float looper_get_param(int track, int param);
 void looper_set_opt(int opt, float v);
 float looper_get_opt(int opt);
-float looper_opt_default(int opt);                 /* what a double tap puts back */
+float looper_opt_default(int opt);
+int looper_overload_level(void);                   /* the top bars' warning: 0 fine, 1 near the first fade, 2 something held out, 3 spikes */                 /* what a double tap puts back */
 void looper_clear_all(void);
 void looper_track(int track, struct looper_info *out);
 float looper_progress(void);                     /* master loop playhead 0..1 (0 = none), or first-take fill */

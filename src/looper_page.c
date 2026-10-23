@@ -816,6 +816,22 @@ static float opt_get(int o)
     return looper_get_opt(o);
 }
 
+/* The overload warning at the right of a top bar (looper.c looper_overload_level): three segments, lit from the bottom up. Green: the load
+ * is near where the first engine starts to fade; orange: something is held out now (a track or a synth fading or faded out, SAMPLR at a
+ * lower quality); red: an engine had to be left out of a block in the last ~2 s (a spike: a short dropout). 7 px wide. */
+static void draw_load(int x)
+{
+    int lv = looper_overload_level();
+    static const uint8_t col[3] = {C_GREEN, C_PINK, C_RED};
+    for (int i = 0; i < 3; i++) {
+        int d = 2 + 4 * (2 - i);
+        if (lv > i)
+            box(x, d, 7, 3, col[i]);
+        else
+            frame(x, d, 7, 3, C_RAIL, 1);
+    }
+}
+
 static void draw_top(int t, const struct lay *L, const struct looper_info *k)
 {
     int x = L->cx, w = L->cw;
@@ -1197,8 +1213,9 @@ static void draw_sm_top(struct sm *s, const char *info)
         int n = 0;
         while (st[n])
             n++;
-        text(P->w - 6 - 6 * n, 4, st, col, 1);
+        text(P->w - 16 - 6 * n, 4, st, col, 1);
     }
+    draw_load(P->w - 10);
 }
 
 static void draw_samplr(void)
@@ -1642,6 +1659,7 @@ static uint32_t signature(void)
               (uint32_t)(P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) << 29 | (uint32_t)(P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW) << 28)) * 16777619u;
     for (int o = 0; o < LOOPER_OPTS; o++)
         h = (h ^ (uint32_t)(looper_get_opt(o) * 1000.f + .5f)) * 16777619u;
+    h = (h ^ (uint32_t)looper_overload_level()) * 16777619u;
     return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : P->mode == M_TRIG ? t2m_page_sig() : 0u) ^ (P->mode == M_LIRA ? lira_ui_sig() : 0u);
 }
 
@@ -1767,6 +1785,8 @@ static void paint_(uint8_t *view)
         if (t < LOOPER_TRACKS - 1)
             vline(L.cx + L.cw, 1, (P->mode >= M_SETUP ? TOPBAR : L.foot_y) - 1, C_RAIL);
     }
+    if (P->mode < M_SMPLR)
+        draw_load(P->w - 10);
     layout(0, &L);
     if (P->mode == M_SETUP || P->mode == M_MORE)
         draw_setup(&L);
@@ -2163,12 +2183,8 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         }
     } else if (zone == Z_FADER) {
         if (was_sel) {                                            /* the first touch of an unselected track only selects it */
-            if (dtap(40, t)) {
-                looper_set_level(t, 1.f);                         /* a fast double tap: 0 dB */
-            } else {
-                looper_set_level(t, v);
-                P->pressed = P_FADER;
-            }
+            looper_set_level(t, v);
+            P->pressed = P_FADER;
         }
     } else if (zone == Z_PAN) {
         if (dtap(50, t))
