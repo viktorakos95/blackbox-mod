@@ -30,6 +30,7 @@ void looper_page_move(uint8_t *view, const int *pt, int id);
 void looper_page_up(uint8_t *view, const int *pt, int id);
 void looper_page_want(int tab);
 int looper_page_tab(void);
+int looper_page_last(void);
 void looper_page_goto(uint8_t *view, int tab);
 
 #define FN(addr) ((addr) | 1u)
@@ -296,8 +297,8 @@ void solo_pad_pressed(uint8_t *app, int computed, int a, int b)
 }
 
 /* Replaces the set-screen call in the SONG button handler (screen 0x2d). SONG cycles forward through the pages: Looper (MAIN), SAMPLR,
- * TRIG (Trigger2MIDI), DRONE-8, then the stock song screen, and round to the Looper again. From any stock screen it opens the Looper's
- * MAIN page; from one of the Looper's other tabs (FX, SETUP, MORE) it first goes back to MAIN. (BACK goes to the previous page where it
+ * TRIG (Trigger2MIDI), DRONE-8, then the stock song screen, and round to the Looper again. From any other stock screen (the pads ...)
+ * it opens the page that was open last; from one of the Looper's other tabs (FX, SETUP, MORE) it first goes back to MAIN. (BACK goes to the previous page where it
  * has no use of its own: on TRIG; the Looper, SAMPLR and DRONE-8 pages use BACK themselves.) */
 void solo_song_pressed(uint8_t *app, int computed, int a, int b)
 {
@@ -314,9 +315,20 @@ void solo_song_pressed(uint8_t *app, int computed, int a, int b)
             looper_page_goto(S->view, tab == 6 ? 7 : tab == 5 ? 6 : tab == 0 ? 5 : 0);
     } else {
         S->looper_pending = 1;
-        looper_page_want(0);
+        looper_page_want(cur == 0x2d ? 0 : looper_page_last());   /* from the stock song screen the round goes on (the Looper); from anywhere else: the page opened last */
         fw_set_screen(app, SCREEN_MUTE, a, b);
     }
+}
+
+/* Open one of the pages (a tab of looper_page_goto) from a stock screen: BACK on the stock song screen opens DRONE-8. */
+void solo_open_page(uint8_t *app, int tab)
+{
+    ensure();
+    if (!looper_ready())
+        return;
+    S->looper_pending = 1;
+    looper_page_want(tab);
+    fw_set_screen(app, SCREEN_MUTE, 0, 0);
 }
 
 /* BACK on the Looper's MAIN page: the stock song screen (what the page replaced). */

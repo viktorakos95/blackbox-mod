@@ -60,6 +60,7 @@ typedef void (*msg_fn)(void *obj, const uint16_t *msg);
 
 uint8_t *solo_looper_view(void);
 void solo_song_screen(uint8_t *app);
+void solo_open_page(uint8_t *app, int tab);
 void looper_guard(int mode);
 void looper_note_app(void *app);
 unsigned looper_screen_id(void);
@@ -191,7 +192,7 @@ struct page {
 
 _Static_assert(sizeof(struct page) <= 0xdc, "page state must fit below 0x38800fdc (the crash recorder's CPU shares, crash.c)");
 
-#define DBG_VIEW (P->_le[0])     /* SETUP shows the crash record (src/crash.c) instead of its options */
+#define LAST_TAB (P->_r6[2])     /* the tab opened last (0..3 the Looper's, 5 SAMPLR, 6 TRIG, 7 DRONE-8) */
 #define FB ((void *)P->fb)       /* the frame buffer (no .bss in the code cave: it lives with the page state) */
 
 /* ---- geometry */
@@ -931,6 +932,7 @@ static void tab_select(int i)
     if (i == 5 && P->mode != M_SMPLR)
         samplr_enter();
     P->mode = (uint8_t)(i == 0 ? M_MAIN : i <= 2 ? M_FX : i == 3 ? M_SETUP : i == 4 ? M_MORE : i == 6 ? M_TRIG : i == 7 ? M_LIRA : M_SMPLR);
+    LAST_TAB = (uint8_t)(i == 4 ? 3 : i);                         /* SONG from another screen comes back here */
     if (P->mode != M_TRIG) {                                      /* (the TRIG page is nobody's: the leader stays) */
         uint8_t l = (uint8_t)(P->mode == M_LIRA ? 2 : P->mode == M_SMPLR ? 1 : 0);
         if (l != P->lead) {
@@ -1865,6 +1867,12 @@ void looper_page_want(int tab)
     P->_r6[0] = (uint8_t)(tab + 1);
 }
 
+int looper_page_last(void)
+{
+    int t = LAST_TAB;
+    return t <= 7 && t != 4 ? t : 0;
+}
+
 int looper_page_tab(void)
 {
     return P->mode == M_LIRA ? 7 : P->mode == M_TRIG ? 6 : P->mode == M_SMPLR ? 5 : P->mode;
@@ -2303,6 +2311,14 @@ static void app_msg(void *app, const uint16_t *msg)
                 P->scr_h[i] = P->scr_h[i - 1];
             P->scr_h[0] = sc;
         }
+    }
+    if (msg && ((const uint8_t *)app)[0x8ca4] == 0x2d && P->bset[B_BACK] && msg[0] == P->bid[B_BACK] &&
+        *(const uint32_t *)((const uint8_t *)msg + 0xc) == P->bidx[B_BACK]) {
+        if (looper_ticks() - P->btn_t > 20) {                     /* BACK on the stock song screen: the previous page of SONG's round, DRONE-8 */
+            P->btn_t = looper_ticks();                            /* (its release, arriving on the page, is the same press) */
+            solo_open_page((uint8_t *)app, 7);
+        }
+        return;
     }
     if (msg && msg[0] == MSG_PAINT) {
         P->paint_req = 0;
