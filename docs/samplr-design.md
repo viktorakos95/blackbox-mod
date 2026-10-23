@@ -696,3 +696,7 @@ Build 79: a read that works in the loader's task (pxCurrentTCB = the TCB seen at
 Build 79 confirmed on the unit: no restart; the first folder listing under load is slow but finishes.
 Removed (built on theories that the records later ruled out, and they ran every block with interrupts off): the ready-list bit / count / wrong-priority repairs and the next-unblock repair. The SD read retry and the loader's check-in on a successful read stay.
 Peaks: the SAMPLR top bar has a fifth view (tap it until W shows): the worst whole audio block of the last second (W, % of the block) with its own parts: P the audio task before the looper stage (stock voices, pads, effects), D the DRONE-8 page, L the looper's tracks, S SAMPLR, R the rest of the block after the stage (stock output stage, master effects, interrupts). The existing MAX view gives the worst of each part separately (often from different blocks); W gives the one block that came closest to the limit, so we see what it was made of.
+
+## Build 81
+
+User: the glitches come with W around 107, but the numbers are hard to catch (not always on the page). The W view now holds the last block over 100 % since power-on (N: how many) with its parts, until the next one: N n W P D L S R. Look at it any time after a glitch.

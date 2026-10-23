@@ -166,6 +166,8 @@ struct smscr {
     uint32_t cp, cd, cl, cs;                /* this block's parts: before the stage, the LIRA synth, the looper, SAMPLR (cycles) */
     uint32_t wt, wp, wd, wl, ws, wr;        /* the worst whole block this report (cycles): its total and its parts (wr: the rest after the stage) */
     uint16_t shw[6];                        /* their last report (per mille): total, P, D, L, S, R */
+    uint32_t d1;                            /* cycles per mille of the block period (from the last report) */
+    uint16_t ovn, ov[6];                    /* blocks over 100 % since power-on, and the last one's total and parts (per mille), held */
     uint32_t t_end;                         /* the cycle count at the end of the looper stage this block (0: not reached) */
     uint16_t gcool, gcalm;                  /* the guard's track fades: blocks before the next may start; blocks in a row with room for one to return */
     uint8_t gout, _go[3];                   /* tracks out (fading or out) */

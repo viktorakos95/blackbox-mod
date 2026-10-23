@@ -1222,12 +1222,15 @@ static void draw_sm_top(struct sm *s, const char *info)
             *q++ = 'R';
             q = put_uint(q, (s->sc->shxr + 5u) / 10u);
         }
-    } else if (s->sc->prof == 4) {                                /* the next tap: the worst whole block of the last second (W, percent of the block) and its parts */
+    } else if (s->sc->prof == 4) {                                /* the next tap: the last block over 100 % (held) and its parts, and how many since power-on (N) */
         static const char lab[6] = {'W', 'P', 'D', 'L', 'S', 'R'};
+        *q++ = ' ';
+        *q++ = 'N';
+        q = put_uint(q, s->sc->ovn);
         for (int i = 0; i < 6; i++) {
             *q++ = ' ';
             *q++ = lab[i];
-            q = put_uint(q, (s->sc->shw[i] + 5u) / 10u);
+            q = put_uint(q, (s->sc->ov[i] + 5u) / 10u);
         }
     } else if (s->sc->prof) {                                     /* the next tap: inside SAMPLR (voices, grains, reading + interpolating inside both, mix + strips) */
         static const char lab[4] = {'R', 'G', 'B', 'M'};

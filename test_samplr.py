@@ -1516,4 +1516,13 @@ for pre, lira, run_all, sdur, rest in ((1000, 200, 900, 300, 100), (3000, 500, 1
 W = [u32(SC + scr_off(n)) for n in ("wt", "wp", "wd", "wl", "ws", "wr")]
 check("the worst whole block is kept with its own parts (stock before, drone, looper, SAMPLR, the rest)", W == [3000 + 500 + 800 + 700 + 400, 3000, 500, 800, 700, 400], W)
 
+e.uc.mem_write(SC + scr_off("d1"), struct.pack("<I", 10))           # 10 cycles per mille: a block is 10000 cycles
+n0 = struct.unpack("<H", e.uc.mem_read(SC + scr_off("ovn"), 2))[0]
+for pre, lira, run_all, sdur, rest in ((6000, 2000, 2500, 1500, 800), (1000, 100, 200, 100, 50)):    # 113 %, then 13 %
+    e.uc.mem_write(SC + scr_off("last_sdur"), struct.pack("<I", sdur))
+    e.call("samplr_stage_prof", pre, lira, run_all)
+    e.call("samplr_block_done", (u32(SC + scr_off("t_end")) + rest) & 0xffffffff)
+ov = struct.unpack("<7H", e.uc.mem_read(SC + scr_off("ovn"), 14))
+check("a block over 100 % is held with its parts (per mille) and counted; a later normal block leaves it", ov == (n0 + 1, 1130, 600, 200, 100, 150, 80), ov)
+
 print(f"\n{fails} failure(s)")

@@ -2670,6 +2670,13 @@ void samplr_block_done(uint32_t now)
         if (r < 100000000u && r > sc->xrest)
             sc->xrest = r;
         uint32_t t = sc->cp + sc->cd + sc->cl + sc->cs + (r < 100000000u ? r : 0u);
+        if (sc->d1 && t > 1000u * sc->d1) {                       /* over the block: a glitch. Held (with its parts) until the next one */
+            const uint32_t w6[6] = {t, sc->cp, sc->cd, sc->cl, sc->cs, r < 100000000u ? r : 0u};
+            for (int i = 0; i < 6; i++)
+                sc->ov[i] = (uint16_t)(w6[i] / sc->d1 > 9990u ? 9990u : w6[i] / sc->d1);
+            if (sc->ovn < 0xffffu)
+                sc->ovn++;
+        }
         if (t > sc->wt) {                                         /* the worst whole block: which parts made it */
             sc->wt = t;
             sc->wp = sc->cp;
@@ -2915,6 +2922,7 @@ int samplr_run(float *bl, float *br, int n, float **snd)
                 sc->shd = (uint16_t)(sc->pd / d);
                 sc->shl = (uint16_t)(sc->pl / d);
                 uint32_t d1 = per / 1000u + 1u;                   /* the worst single block, of one block period */
+                sc->d1 = d1;
                 sc->shxp = (uint16_t)(sc->xp / d1 > 9990u ? 9990u : sc->xp / d1);
                 sc->shxd = (uint16_t)(sc->xd / d1 > 9990u ? 9990u : sc->xd / d1);
                 sc->shxl = (uint16_t)(sc->xlp / d1 > 9990u ? 9990u : sc->xlp / d1);
