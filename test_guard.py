@@ -357,9 +357,19 @@ check("leader looper: 94 % is no reason to fade a track (its mark is 95 %)", fad
 n7 = until(lambda: muted() != [0] * 4 or fading() != [0] * 4, 1500, 0.10, 0.985)
 check("... 98.5 % is", n7 > 0, (n7, muted(), fading()))
 check("... and SAMPLR keeps time for the looper's tracks: with 72 % used before it, the tracks' ~20 % would take it over its cap (88 %)", over(1, 0.72) == 1 and over(1, 0.40) == 0, (over(1, 0.72), over(1, 0.40)))
+def dspike(used, own=0.0):
+    """DRONE-8's in-block check (it runs first): used and its own cost as fractions of the block"""
+    run_at(0.10, 0.70, 1)
+    e.w32(0x2405FFD4, ((e.r32(0xE0001004) & 0xFFFFFFFF) - int(used * PERC)) & 0xFFFFFFFF)
+    e.call("looper_drone_spike", int(own * PERC))
+    return r0s()
+check("DRONE-8 below the looper keeps time for the tracks after it: 72 % used leaves it no room this block, 40 % does", dspike(0.72) == 1 and dspike(0.40) == 0, (dspike(0.72), dspike(0.40)))
 until(lambda: muted() != [0] * 4, 900, 0.10, 0.985)
 unmute_all()
 run_at(0.10, 0.70, 600)
+e.call("looper_page_set_leader", 2)
+check("DRONE-8 the leader keeps no time for the others: its cap is 92 % (72 % used is room, 93 % is not)", dspike(0.72) == 0 and dspike(0.93) == 1, (dspike(0.72), dspike(0.93)))
+check("... and its own cost counts: 80 % used + 15 % of its own is over", dspike(0.80, 0.15) == 1 and dspike(0.60, 0.15) == 0, (dspike(0.80, 0.15), dspike(0.60, 0.15)))
 e.call("looper_page_set_leader", 1)                    # the SAMPLR page was opened last: the looper gives way before it
 check("leader SAMPLR: it does not keep time for the looper (72 % used is no problem; its cap is 92 %)", over(1, 0.72) == 0 and over(1, 0.93) == 1, (over(1, 0.72), over(1, 0.93)))
 n8 = until(lambda: muted() != [0] * 4 or fading() != [0] * 4, 1500, 0.10, 0.94)

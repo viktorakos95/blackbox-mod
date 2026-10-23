@@ -307,6 +307,24 @@ for _ in range(20):
 check("... the synth does not run: silence and no share of the audio task", r_off == 0.0 and rv("lira_ui_load", 0) == 0, (r_off, rv("lira_ui_load", 0)))
 e.call("lira_ui_action", 18)
 check("ENGINE on again", rv("lira_ui_chord_get", 194) == 0)
+# the in-block check (looper.c looper_drone_spike, stubbed here): a block with no time for the synth
+spike = [0]
+e.stub(e.sym["looper_drone_spike"], lambda: e.uc.reg_write(UC_ARM_REG_R0, spike[0]))
+e.call("lira_ui_key", 0, 1)
+for _ in range(1500):
+    wv = wave(0.3)
+before = wave(0.3)
+spike[0] = 1
+cut = wave(0.3)
+spike[0] = 0
+check("a spike: the synth sounds before it", math.sqrt(sum(v * v for v in before) / N) > 0.001)
+check("... the cut block starts where the last one ended and dies away in ~3 ms (no step), then silence",
+      abs(cut[0] - before[-1]) < 0.05 + abs(before[-1] - before[-2]) * 2 and all(v == 0.0 for v in cut[144:]), (before[-1], cut[0], max(abs(v) for v in cut[144:])))
+held = [math.sqrt(sum(v * v for v in wave(0.3)) / N) for _ in range(7)]
+check("... it stays out for 8 blocks (~45 ms)", all(v == 0.0 for v in held), held)
+back = [wave(0.3) for _ in range(10)]
+rb = [math.sqrt(sum(v * v for v in w) / N) for w in back]
+check("... then fades back in over 8 blocks", rb[0] > 0.0 and rb[0] < rb[7] and abs(back[0][0]) < 0.02, rb)
 e.uc.mem_write(0x2405FFE2, struct.pack("<HH", 523, 871))
 check("the CPU readouts are cpu.c's average and worst block", (rv("lira_ui_load", 3), rv("lira_ui_load", 4)) == (52, 87), (rv("lira_ui_load", 3), rv("lira_ui_load", 4)))
 check("the flight recorder in backup SRAM holds this run's peaks", e.r32(0x38800BC0) == 0x46524331 and e.r16(0x38800BC4) >= 840, str((hex(e.r32(0x38800BC0)), e.r16(0x38800BC4))))

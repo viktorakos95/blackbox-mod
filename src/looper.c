@@ -2021,6 +2021,29 @@ int looper_over_cap(int e)
     return need * 1000.f > (float)(880 + 20 * below(e)) * g->per;
 }
 
+/* The same for DRONE-8, which runs first (before SAMPLR and the looper's tracks): the time used, its own cost (own, cycles), and the time of the engines
+ * after it that outrank it (SAMPLR's last block, the tracks' estimates) against its cap. The engines below it get no time kept: they have their own checks. */
+int looper_drone_spike(uint32_t own)
+{
+    if (S->magic != MAGIC || !S->ok)
+        return 0;
+    struct dsp *d = DSP();
+    struct guard *g = &d->gd;
+    uint32_t used = CYC - WAKE;
+    if (g->force || g->per <= 0.f || (float)used > 2.f * g->per)
+        return 0;
+    float need = (float)used + (float)own;
+    if (prio(E_SAMPLR) > prio(E_DRONE))
+        need += (float)samplr_last_cycles();
+    if (prio(E_LOOPER) > prio(E_DRONE))
+        for (int t = 0; t < LOOPER_TRACKS; t++) {
+            vtrack *k = &S->t[t];
+            if (track_out(k) && !k->muted)
+                need += guard_est(d, t, k, g->nblk);
+        }
+    return need * 1000.f > (float)(880 + 20 * below(E_DRONE)) * g->per;
+}
+
 /* Before track t: is there time for it in this block? If not it is cut here with a ramp to 0 (computed as cheaply as possible, even when that
  * overshoots a little: a stop would be worse) and fades back in over the next blocks that have room. Nothing is muted: it is a moment. */
 static int guard_fit(struct dsp *d, int t, int n)

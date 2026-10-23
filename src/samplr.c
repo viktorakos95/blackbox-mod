@@ -2956,6 +2956,12 @@ int samplr_run(float *bl, float *br, int n, float **snd)
     return fed;
 }
 
+uint32_t samplr_last_cycles(void)                                  /* what the last block of SAMPLR took (cycles): the guard keeps that much for it */
+{
+    struct sm *s = trk_get(0, 0);
+    return s && s->sc ? s->sc->last_sdur : 0u;
+}
+
 uint32_t samplr_sig(void)
 {
     struct sm *s = samplr();

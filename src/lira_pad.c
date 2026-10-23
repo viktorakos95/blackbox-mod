@@ -211,6 +211,9 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     float wl, wpk;               /* ... its smoothed load (permille) and near misses lately */
     float mf0, mf1;              /* the mute is a fade (0 sounding .. 1 silent): where it was at the start of this block and where it is at the end */
     float dhold;                 /* this synth's share of the audio task (per mille) when it went out: the load with it back is the load now plus this */
+    uint8_t sp_hold;             /* the in-block check: blocks it stays out after a spike (looper_drone_spike) */
+    float sc0, sc1;              /* ... and its fade back (0 sounding .. 1 out), at the start / end of this block */
+    float lastl, lastr;          /* the last frame this synth added (a cut dies away from it instead of stepping to 0) */
 };
 #define GEV_MAX 1024
 struct gev {                     /* one recorded gesture: when (frames from the bar line), what (a control id, or 300 + voice for a plate, 400 + voice a chord pitch, 500 + stepped id, 600 + action; the layer in bits 11..12) and its value */
@@ -253,6 +256,7 @@ float looper_beat_frames(void);
 double looper_clock_now(void);
 void looper_guard_want(int e, int share);
 int looper_page_leader(void);
+int looper_drone_spike(uint32_t own);     /* looper.c: no time for this synth in this block (spikes: what is used, its own cost, the engines after it that outrank it) */
 int looper_soft_threshold(int e);          /* looper.c: the mark on the averaged load where engine e (2 = this synth) starts to give way: the engine that gives way first the lowest, the one whose page was opened last the highest */
 
 static void grec(struct pg *g, int id, int val)
@@ -1061,6 +1065,31 @@ void lira_page_run(float *l, float *r, int n)
         rec_zero(p, 0, n);
         return;
     }
+    /* The in-block check, for spikes (a sequence starting, a grain cloud): if this block cannot hold the synth and what has to run after it, the
+       synth is left out (what it was playing dies away in ~3 ms from its last frame) for at least 8 blocks (~45 ms), then fades back in over 8. */
+    if (g->sp_hold)
+        g->sp_hold--;
+    if (g->per && looper_drone_spike((uint32_t)((float)g->dsp * (float)g->per * 0.001f)))
+        g->sp_hold = 8;
+    g->sc0 = g->sc1;
+    if (g->sp_hold) {
+        int nt = n < 144 ? n : 144;
+        for (int i = 0; i < nt; i++) {
+            float k = 1.0f - (float)(i + 1) / (float)nt;
+            l[i] += g->lastl * k;
+            r[i] += g->lastr * k;
+        }
+        rec_zero(p, 0, n);
+        for (int i = 0; i < nt; i++) {
+            p->rec[0][0][i] = g->lastl * (1.0f - (float)(i + 1) / (float)nt);
+            p->rec[0][1][i] = g->lastr * (1.0f - (float)(i + 1) / (float)nt);
+        }
+        g->lastl = g->lastr = 0.0f;
+        g->sc0 = g->sc1 = 1.0f;
+        return;
+    }
+    if (g->sc1 > 0.0f)
+        g->sc1 = g->sc1 - 0.125f < 0.0f ? 0.0f : g->sc1 - 0.125f;
     s->l.shed = g->shed >= 3 ? 2 : g->shed;      /* (while it fades out it runs as at step 2) */
     if (s->clearing) {
         int a = (s->clearing - 1) * (DLEN / CLEAR_STEPS);
@@ -1154,6 +1183,15 @@ void lira_page_run(float *l, float *r, int n)
         mute_ramp_part(g, tmp, m, i0, n);
         if (s->l.out_r)
             mute_ramp_part(g, tmr, m, i0, n);
+        if (g->sc0 > 0.0f || g->sc1 > 0.0f) {                   /* back in after a spike */
+            float a = 1.0f - g->sc0, d = (g->sc0 - g->sc1) / (float)n;
+            for (int i = 0; i < m; i++) {
+                float k = a + d * (float)(i0 + i + 1);
+                tmp[i] *= k;
+                if (s->l.out_r)
+                    tmr[i] *= k;
+            }
+        }
         s->l.out_r = 0;
         for (int i = 0; i < m; i++) {
             l[i0 + i] += tmp[i] * gain;
@@ -1161,6 +1199,8 @@ void lira_page_run(float *l, float *r, int n)
             p->rec[0][0][i0 + i] = tmp[i] * gain;
             p->rec[0][1][i0 + i] = tmr[i] * gain;
         }
+        g->lastl = tmp[m - 1] * gain;
+        g->lastr = tmr[m - 1] * gain;
     }
     if (g->per)                                  /* this synth's own share of a block */
         g->dsp = (uint16_t)((int)g->dsp + ((int)((DWT_CYCCNT - c0) / (g->per / 1000u + 1u)) - (int)g->dsp) / 10);
