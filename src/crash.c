@@ -57,47 +57,12 @@ struct wdog {
 #define WD ((volatile struct wdog *)0x38800b98u)
 #define CYC (*(volatile uint32_t *)0xe0001004u)
 _Static_assert(0x38800b98u + sizeof(struct wdog) <= 0x38800bc0u, "the watchdog block must end before the flight recorder at 0xbc0");
-/* While loop A is late (2 s and more), where it is: its saved PC and LR (FreeRTOS: the task's TCB starts with its saved
- * stack pointer; the context there is r4-r11 and EXC_RETURN, then s16-s31 if it used the FPU, then the exception frame),
- * a sample every 64 blocks into a ring of six. Backup SRAM 0x38800390..0x38800400 (after od.c's bank, before comp.c). */
+/* The loader's task (loop A): its TCB, seen when it stamps (crash_sd_read counts its reads as its progress). Backup SRAM 0x38800390. */
 struct asamp {
-    uint32_t tcb, n;               /* task A's TCB (seen when it stamps); samples taken this run */
-    uint32_t pc[1], lr[1];         /* the latest sample */
-    uint32_t r_n, r_pc[1], r_lr[1];   /* at boot: the last run's */
-    uint32_t r4, chain[5];         /* the latest sample's r4, its wake time, the kernel's next wake-up, the tick, the two delayed lists */
-    uint32_t cont, evc;            /* the latest sample: the list its state item is on (ready / delayed / suspended), the list its event item is on */
-    uint8_t prio, rbit, rcnt, rheal;   /* its priority; that ready list's priority bit and item count (at the sample); at boot: the last run's repairs */
-    uint32_t rsum;                 /* the ready lists at the sample: with tasks (bits 0-6), with a task of another priority (8-14), uxTopReadyPriority (16-22) */
+    uint32_t tcb;
 };
 #define AS ((volatile struct asamp *)0x38800390u)
 #define CUR_TCB (*(volatile uint32_t *)0x2401f2a8u)    /* FreeRTOS pxCurrentTCB (the PendSV handler's literal) */
-_Static_assert(0x38800390u + sizeof(struct asamp) <= 0x388003f0u, "the loop-A samples must end before the frozen CPU shares at 0x3f0");
-/* The RTOS clock: is the tick running, and is the scheduler suspended (then no task switches and no timeout expires)?
- * Sampled every audio block: ticks a second, the longest run of blocks with the scheduler suspended this run, and then the
- * running task's TCB and (when the audio code runs in an interrupt) the interrupted task's PC. Live 0x38800930 (after MCL's
- * 0x920..0x930), the last run's figures at 0x3880096c (after the SD block). */
-struct sched {
-    uint32_t tick0;                /* the tick count at the last rate sample */
-    uint16_t rate, streak, max, ipsr;
-    uint16_t heal;                 /* ready lists found with their priority bit missing (and put right), since boot */
-    uint8_t heal_p, _p;            /* the priority of the last one */
-};
-struct sched_r {
-    uint16_t rate, max, streak, ipsr;
-    uint32_t pc, tcb;
-};
-#define XTICK (*(volatile uint32_t *)0x2401f1a4u)        /* FreeRTOS xTickCount */
-#define XSUSP (*(volatile uint32_t *)0x2401f180u)        /* uxSchedulerSuspended */
-#define XNEXT (*(volatile uint32_t *)0x2401f188u)        /* xNextTaskUnblockTime (prvResetNextTaskUnblockTime, 0x08088a18) */
-#define XDLY (*(volatile uint32_t *)0x2401f1f0u)         /* pxDelayedTaskList */
-#define XOVF (*(volatile uint32_t *)0x2401f1ecu)         /* pxOverflowDelayedTaskList */
-#define XTOP (*(volatile uint32_t *)0x2401f1a0u)         /* uxTopReadyPriority: one bit per priority with a ready task (vTaskSwitchContext's CLZ) */
-#define XREADY ((volatile uint32_t *)0x2401f21cu)        /* pxReadyTasksLists[7], 20 bytes (5 words) each, uxNumberOfItems first */
-#define SC ((volatile struct sched *)0x38800930u)
-#define SCR ((volatile struct sched_r *)0x3880096cu)
-#define SC_PC (*(volatile uint32_t *)0x38800384u)        /* (live: the interrupted PC and the TCB at the longest suspension) */
-#define SC_TCB (*(volatile uint32_t *)0x38800388u)
-_Static_assert(sizeof(struct sched) <= 16, "the scheduler block is 0x930..0x940");
 /* Who has the CPU: the SysTick interrupt (crash_systick_thunk, vector 15) looks at the running task each tick and counts
  * it; the three busiest tasks of each 250 ticks (0.5 s) are kept with their shares, the rest as "other". Backup SRAM
  * 0x38800fdc..0x38801000 (the top of the page state's 256 bytes; looper_page.c keeps below 0xdc). The names are read from
@@ -245,20 +210,7 @@ void crash_boot(void)
         w->r_lag_a = ok ? w->lag_a : 0;
         w->r_lag_b = ok ? w->lag_b : 0;
         w->r_site = ok ? w->site_a : 0;
-        volatile struct asamp *as = AS;
-        uint32_t n = ok ? as->n : 0;
-        as->r_n = n;
-        as->r_pc[0] = n ? as->pc[0] : 0;
-        as->r_lr[0] = n ? as->lr[0] : 0;
-        as->n = 0;
-        as->tcb = 0;
-        volatile struct sched *sk = SC;
-        volatile struct sched_r *kr = SCR;
-        kr->rate = ok ? sk->rate : 0;
-        kr->max = ok ? sk->max : 0;
-        kr->streak = ok ? sk->streak : 0;
-        kr->ipsr = ok ? sk->ipsr : 0;
-        as->rheal = (uint8_t)(ok ? (sk->heal > 255u ? 255u : sk->heal) : 0);
+        AS->tcb = 0;
         volatile struct prof *f = PROF;
         volatile struct prof_r *fr = PROFR;
         for (int i = 0; i < 3; i++) {
@@ -272,10 +224,6 @@ void crash_boot(void)
         fr->o = f->ro;
         f->ro = 0;
         f->co = f->n = 0;
-        sk->tick0 = 0;
-        sk->rate = sk->streak = sk->max = sk->ipsr = 0;
-        sk->heal = 0;
-        sk->heal_p = 0;
         w->cyc_au = w->cyc_gui = w->cyc_a = w->site_a = w->per = 0;
         w->lag_a = w->lag_b = 0;
     }
@@ -356,53 +304,6 @@ void crash_wd(volatile uint32_t *obj)
     uint32_t c = obj[2];
     w->lag_a = (uint16_t)((c - obj[0]) > 0xffffu ? 0xffffu : c - obj[0]);
     w->lag_b = (uint16_t)((c - obj[1]) > 0xffffu ? 0xffffu : c - obj[1]);
-    {
-        volatile struct sched *k = SC;
-        uint32_t ip = crash_ipsr();
-        k->ipsr = (uint16_t)(ip & 0x1ffu);
-        if ((c % 188u) == 0) {                                    /* about once a second: ticks since the last time */
-            uint32_t t = XTICK, dt = t - k->tick0;
-            k->rate = (uint16_t)(dt > 0xffffu ? 0xffffu : dt);
-            k->tick0 = t;
-        }
-        if (XSUSP) {
-            if (k->streak < 0xffffu)
-                k->streak++;
-            if (k->streak > k->max)
-                k->max = k->streak;
-        } else {
-            k->streak = 0;
-        }
-    }
-    volatile struct asamp *as = AS;
-    if (w->lag_a >= 375u && (w->lag_a & 63u) == 0 && in_ram(as->tcb) && LIVE->blocks > 5600u) {   /* loop A 2 s late: where is it? (not in the
-                                                                   first 30 s: it is late while the unit starts, and the last run's samples must stay) */
-        const uint32_t *sp = *(const uint32_t *const *)as->tcb;
-        if (in_ram((uint32_t)sp) && in_ram((uint32_t)(sp + 40))) {
-            uint32_t exc = sp[8];
-            const uint32_t *hw = sp + 9 + ((exc & 0x10u) ? 0 : 16);
-            uint32_t k = 0;
-            as->pc[k] = hw[6];
-            as->lr[k] = hw[5];
-            as->n++;
-            as->r4 = sp[0];
-            as->cont = ((const uint32_t *)as->tcb)[5];            /* (TCB: +0x14 xStateListItem.pvContainer, +0x28 xEventListItem.pvContainer, +0x2c uxPriority) */
-            as->evc = ((const uint32_t *)as->tcb)[10];
-            as->prio = (uint8_t)((const uint32_t *)as->tcb)[11];
-            if (as->prio < 7) {
-                as->rbit = (uint8_t)((XTOP >> as->prio) & 1u);
-                uint32_t cn = XREADY[5 * as->prio];
-                as->rcnt = (uint8_t)(cn > 255u ? 255u : cn);
-            }
-            int m = 0;                                            /* its callers: odd code addresses above its frame */
-            const uint32_t *q = hw + ((exc & 0x10u) ? 8 : 26);
-            for (int i = 0; i < 96 && m < 5 && in_ram((uint32_t)(q + i)); i++)
-                if ((q[i] & 1u) && q[i] >= 0x08040001u && q[i] < 0x08140000u)
-                    as->chain[m++] = q[i];
-            for (; m < 5; m++)
-                as->chain[m] = 0;
-        }
-    }
     ((void (*)(volatile uint32_t *))0x08046995u)(obj);
 }
 
@@ -672,46 +573,6 @@ int crash_line(int i, char *buf, int n)
         p = put_x(p, e, w->r_site);
         break;
     }
-    case 11: {
-        volatile struct asamp *a = AS;
-        if (!a->r_n) {
-            p = put_s(p, e, "LOOP A WAS NEVER LATE");
-            break;
-        }
-        p = put_s(p, e, "A LATE AT PC ");
-        p = put_x(p, e, a->r_pc[0]);
-        p = put_s(p, e, " LR ");
-        p = put_x(p, e, a->r_lr[0]);
-        p = put_s(p, e, " N ");
-        p = put_u(p, e, a->r_n);
-        break;
-    }
-    case 14:
-    case 15: {
-        volatile struct asamp *a = AS;
-        if (!a->r_n)
-            return 0;
-        p = put_s(p, e, i == 14 ? "OBJ " : "");
-        if (i == 14)
-            p = put_x(p, e, a->r4);
-        for (int k = (i - 14) * 3; k < 5 && k < (i - 14) * 3 + 3; k++) {
-            p = put_s(p, e, " ");
-            p = put_x(p, e, a->chain[k]);
-        }
-        break;
-    }
-    case 18: {
-        volatile struct sched_r *kr = SCR;
-        p = put_s(p, e, "TICKS/S ");
-        p = put_u(p, e, kr->rate);
-        p = put_s(p, e, " SUSPENDED MAX ");
-        p = put_u(p, e, kr->max);
-        p = put_s(p, e, " NOW ");
-        p = put_u(p, e, kr->streak);
-        p = put_s(p, e, " IRQ ");
-        p = put_u(p, e, kr->ipsr);
-        break;
-    }
     case 9: {
         volatile struct sdst *q = SD;
         p = put_s(p, e, "SD READ FAILS ");
@@ -754,49 +615,6 @@ int crash_line(int i, char *buf, int n)
             p = put_u(p, e, f->o);
             p = put_s(p, e, "%");
         }
-        break;
-    }
-    case 22: {
-        volatile struct asamp *a = AS;
-        if (!a->r_n)
-            return 0;
-        p = put_s(p, e, "LOADER P");
-        p = put_u(p, e, a->prio);
-        p = put_s(p, e, " ON ");
-        p = put_x(p, e, a->cont);
-        p = put_s(p, e, " EV ");
-        p = put_x(p, e, a->evc);
-        p = put_s(p, e, " BIT ");
-        p = put_u(p, e, a->rbit);
-        p = put_s(p, e, " N ");
-        p = put_u(p, e, a->rcnt);
-        break;
-    }
-    case 23: {
-        volatile struct sched *k = SC;
-        p = put_s(p, e, "REPAIRS LAST ");
-        p = put_u(p, e, AS->rheal);
-        p = put_s(p, e, " NOW ");
-        p = put_u(p, e, k->heal);
-        if (k->heal) {
-            p = put_s(p, e, " (PRIO ");
-            p = put_u(p, e, k->heal_p);
-            p = put_s(p, e, ")");
-        }
-        p = put_s(p, e, " IRQ<5:");
-        int m = 0;
-        volatile const uint32_t *iser = (volatile const uint32_t *)0xe000e100u;
-        volatile const uint8_t *ipr = (volatile const uint8_t *)0xe000e400u;
-        for (int n = 0; n < 160 && m < 4; n++)                     /* enabled interrupts more urgent than FreeRTOS allows (BASEPRI 0x50) */
-            if ((iser[n >> 5] >> (n & 31)) & 1u && ipr[n] < 0x50u) {
-                p = put_s(p, e, " ");
-                p = put_u(p, e, (uint32_t)n);
-                p = put_s(p, e, "/");
-                p = put_u(p, e, ipr[n] >> 4);
-                m++;
-            }
-        if (!m)
-            p = put_s(p, e, " NONE");
         break;
     }
     default:

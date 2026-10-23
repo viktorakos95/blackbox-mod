@@ -1279,6 +1279,42 @@ n5 = stepsof(600, 300)
 check("... one step back", n5 == 4, n5)
 n6 = stepsof(600, 2000)
 check("... and all the way back", n6 == 0, n6)
+# the peaks (looper_load_peak): runs of heavy blocks, as a synced grain cloud's, held ~2 s; a single slow block is not one
+G_WPK = FXB + dsp_off("gd.wpk")
+def blk_done(w):
+    e.uc.mem_write(G_PER, struct.pack("<f", float(PB)))
+    e.uc.mem_write(0x2405ffd4, struct.pack("<I", 0))
+    e.call("looper_block_done", int(w * PB / 1000))
+def peak():
+    e.call("looper_load_peak")
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+e.uc.mem_write(G_WPK, struct.pack("<f", 0.0))
+for w in [300] * 8 + [990] + [300] * 8:
+    blk_done(w)
+check("peaks: one slow block (the screen, the SD card) is not a peak", peak() < 320, peak())
+for w in [990] * 8:
+    blk_done(w)
+p1 = peak()
+for w in [300] * 188:
+    blk_done(w)
+p2 = peak()
+check("... a run of 8 heavy blocks is (99 %), and it is held: a second later it is still above 80 %", p1 >= 985 and 800 < p2 < 990, (p1, p2))
+def stepspk(pk, nb):
+    for _ in range(nb):
+        gset(0.30, 400)
+        e.uc.mem_write(G_WPK, struct.pack("<f", float(pk)))
+        play()
+    return e.r8(SHED)
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))
+q1 = stepspk(900, 300)
+check("quality steps: the average at 40 %, peaks at 90 %: no step", q1 == 0, q1)
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))
+q2 = stepspk(950, 70)
+check("... peaks at 95 %: a step (in ~0.3 s), though the average is low", q2 == 1, q2)
+q3 = stepspk(880, 1000)
+check("... peaks at 88 %: no step back (only under 84 %)", q3 == 1, q3)
+q4 = stepspk(800, 400)
+check("... peaks at 80 %: back", q4 == 0, q4)
 # a pause by another task in SAMPLR's own time does not count: its own cost is not looked at
 gset(0.30, 400)
 touch(0, 0, 3 * 64 + 10, 100)

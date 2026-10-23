@@ -1190,8 +1190,10 @@ static const char *const sm_q_name[4] = {"Q OFF", "Q 1/4", "Q 1/8", "Q 1/16"};
 static void draw_sm_top(struct sm *s, const char *info)
 {
     box(1, 1, P->w - 2, TOPBAR, C_BG);
-    text(6, 4, info, C_CYAN, 1);
-    char b[48], *q = b;                                           /* C: the whole audio task (average / peak %), S: SAMPLR's share, V voices, G grains */
+    int full = s->sc->prof != 0;                                  /* (a measuring view takes the whole bar: the settings text would hide it) */
+    if (!full)
+        text(6, 4, info, C_CYAN, 1);
+    char b[64], *q = b;                                           /* C: the whole audio task (average / peak %), S: SAMPLR's share, V voices, G grains */
     *q++ = 'C';
     q = put_uint(q, (*(volatile uint16_t *)0x2405ffe2u + 5u) / 10u);
     *q++ = '/';
@@ -1280,8 +1282,8 @@ static void draw_sm_top(struct sm *s, const char *info)
         *q++ = P->lead == 0 ? 'L' : P->lead == 1 ? 'S' : 'D';
     }
     *q = 0;
-    int x = P->w - 6 - 6 * (int)(q - b);
-    text(x, 4, b, C_GREY, 1);
+    int x = full ? 6 : P->w - 6 - 6 * (int)(q - b);
+    text(x, 4, b, full ? C_LIGHT : C_GREY, 1);
     const char *st = 0;
     int col = C_CYAN;
     if (s->g_rec >= 0) {
@@ -1297,7 +1299,7 @@ static void draw_sm_top(struct sm *s, const char *info)
         st = "CLK";                                               /* SAMPLR is on the sequencer's clock (else its own free-running grid) */
         col = C_GREY;
     }
-    if (st)
+    if (st && !full)
         text(x - 6 * 7, 4, st, col, 1);
 }
 

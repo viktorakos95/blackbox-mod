@@ -700,3 +700,8 @@ Peaks: the SAMPLR top bar has a fifth view (tap it until W shows): the worst who
 ## Build 81
 
 User: the glitches come with W around 107, but the numbers are hard to catch (not always on the page). The W view now holds the last block over 100 % since power-on (N: how many) with its parts, until the next one: N n W P D L S R. Look at it any time after a glitch.
+
+## Build 82: SAMPLR's runs of heavy blocks
+
+tools/peaks.py (the prof_samplr.py scenario, instructions per block; PEAK_LINES=1 with a -g build for source lines): the arp + grain cloud + slicer scene is not flat. A synced cloud starts all its grains on the same step (here 12 at once), they sound together for ~8 blocks (~40 ms) at ~3.6x the quiet cost, then nothing for ~15 blocks: median 106 k instructions a block, 380-400 k in a run. The mixing loop is already ~17 instructions a frame a grain and the copy at normal pitch ~6: nothing to win there. The DRONE-8 engine is flat (400 blocks within 0.3 %). The quality steps followed only the ~0.5 s average (~55 % in such a scene), which never sees a 40 ms run: the runs went over 100 % with the steps at 0.
+Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the last 4 blocks (a run, not one block the screen or the SD card held up), held, let down over a few seconds. SAMPLR also takes a quality step when that reaches 94 % (no more often than every ~0.3 s), and goes back only when it is under 84 % and the average is low as before. The steps are the existing ones (1: grains linear, 2: and mono, ...). To make room in the cave, the crash recorder's restart investigation lines (loader samples, RTOS tick / suspension, ready-list) are gone; the restart record, LAG, SD and CPU lines stay.

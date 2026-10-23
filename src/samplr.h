@@ -185,6 +185,7 @@ int samplr_track_info(int t);               /* bits: 1 has a sample, 2 loop runn
 void samplr_stage_prof(uint32_t pre, uint32_t lira, uint32_t run_all);
 void samplr_block_done(uint32_t now);       /* from cpu.c: the audio task has finished its block (the rest after the looper stage) */
 unsigned looper_load_avg(void);             /* looper.c: the whole task's load (per mille) averaged over ~0.5 s */
+unsigned looper_load_peak(void);            /* ... its peaks that come in runs of blocks, held a few seconds */
 int looper_soft_threshold(int e);           /* looper.c: the per mille of the averaged load that starts engine e's fade (1 = SAMPLR) */
 int looper_over_cap(int e);                 /* looper.c: 1 if the time already used in this block leaves no room for engine e (the hard check for spikes; 1 = SAMPLR) */
 void looper_guard_want(int e, int share);   /* looper.c: the leader, held out by the guard, says what it would add (per mille): the engines below give way */

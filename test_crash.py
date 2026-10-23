@@ -147,54 +147,11 @@ L = lines()
 check("window watchdog restart: WINDOW WDG", L[0] == "LAST RESTART: WINDOW WDG / NO FAULT", L[0])
 check("... and the lags at the last check (A 300 blocks, B 100)", L[10].startswith("LAG A 300 B 100  A AT "), L[10])
 
-# loop A late: its saved PC / LR sampled from its TCB
-TCB, STK = 0x24072000, 0x24072100
+# stamp A notes the loader's task (its reads count as its progress, below)
+TCB = 0x24072000
 e.w32(0x2401F2A8, TCB)                                            # pxCurrentTCB while loop A stamps
-e.w32(TCB, STK)                                                   # TCB: the saved stack pointer first
-ctx = [0x2400BEEF] + [0] * 7 + [0xFFFFFFFD] + [0] * 5 + [0x0807ABC1, 0x08088757, 0x01000000]   # r4-r11, EXC_RETURN (no FPU), r0-r3 r12, lr, pc, xpsr
-ctx += [0x24001234, 0x08074123, 0x00000000, 0x080740F9, 0x08074407, 0x0808A001, 0x08099999]  # the task's stack above: data and return addresses
-e.uc.mem_write(STK, struct.pack("<24I", *ctx))
-e.w32(TCB + 4, 0x00012345)                                        # its wake time
-e.w32(0x2401F188, 0xFFFFFFFF)                                     # xNextTaskUnblockTime: damaged (never)
-e.w32(0x2401F1A4, 0x00011111)                                     # xTickCount
-e.w32(0x2401F1F0, 0x2401F208)                                     # pxDelayedTaskList
-e.w32(0x2401F1EC, 0x2401F1F4)                                     # pxOverflowDelayedTaskList
-e.w32(0x38800B28, 10000)                                          # (the live block's uptime: past the first 30 s)
-e.w32(OBJ, 0); e.w32(OBJ + 4, 0); e.w32(OBJ + 8, 0)
 e.call("crash_stamp_a", OBJ)
-for blk in range(1, 520):
-    e.w32(OBJ + 4, blk)                                           # the GUI keeps stamping
-    e.w32(OBJ + 8, blk)
-    cyc += PER
-    e.w32(0xE0001004, cyc)
-    e.call("crash_wd", OBJ)
-e.w32(RSR, 1 << 28)
-e.call("crash_boot")
-L = lines()
-check("loop A late: where it was (its saved PC and LR) and how many samples", any(l.startswith("A LATE AT PC 08088757 LR 0807ABC1 N 3") for l in L), L[11:])
-check("... the object it waits on (r4) and its callers (odd code addresses above its frame)", L[14] == "OBJ 2400BEEF 08074123 080740F9 08074407" and L[15] == " 0808A001 08099999", L[14:16])
-# in the first 30 s after a boot the loader is not sampled (it is late while the unit starts; the last run's samples stay)
-e.w32(0x38800B28, 100)
-n0 = e.r32(0x38800394)
-e.w32(OBJ, 0); e.w32(OBJ + 8, 384)
-e.call("crash_wd", OBJ)
-check("no sample in the first 30 s after a boot", e.r32(0x38800394) == n0, (n0, e.r32(0x38800394)))
-
-# the RTOS clock: ticks a second and the scheduler held suspended
-e.w32(OBJ, 0); e.w32(OBJ + 4, 0)
-tick = 5000
-for blk in range(1, 400):
-    e.w32(OBJ + 8, blk)
-    tick += 5 if blk < 200 else 0                                 # 5 ms a block, then the tick stops
-    e.w32(0x2401F1A4, tick)
-    e.w32(0x2401F180, 1 if blk >= 200 else 0)                     # and the scheduler is held suspended
-    cyc += PER
-    e.w32(0xE0001004, cyc)
-    e.call("crash_wd", OBJ)
-e.w32(RSR, 1 << 28)
-e.call("crash_boot")
-L = lines()
-check("the tick rate (here: stopped in the last second) and the longest run of blocks with the scheduler suspended", L[18].startswith("TICKS/S 55 SUSPENDED MAX 200 NOW 200"), L[18])
+check("stamp A notes the loader's task", e.r32(0x38800390) == TCB, hex(e.r32(0x38800390)))
 
 # the SD driver's read: a failed read is tried again (queue drained, HAL idle first), counted, kept at boot
 e.uc.mem_map(0x52007000, 0x1000)

@@ -262,6 +262,8 @@ struct dsp {
         uint8_t want_eng1;                       /* the leader held out by the guard, +1 (0 none): the engines below it give way, see looper_guard_want */
         uint16_t want_share;
         float wema;                              /* the whole task's load, per mille, averaged over ~0.5 s (what the C readout shows, smoothed) */
+        float wpk;                               /* its peaks: the lowest of the last 4 blocks, held, let down over a few seconds (see looper_load_peak) */
+        uint16_t w4[4];
         uint16_t cool;                           /* blocks before the next fade may start */
         uint16_t urec[LOOPER_TRACKS];            /* blocks since the player unmuted a track the guard had muted (it is the last to go again) */
         uint16_t gct[LOOPER_TRACKS];             /* blocks since the guard muted a track */
@@ -1900,6 +1902,16 @@ unsigned looper_load_avg(void)                     /* the whole task's load (per
     return (unsigned)DSP()->gd.wema;
 }
 
+/* The whole task's peaks (per mille): blocks that come in runs, as a synced grain cloud's (all its grains start on the same step and sound
+ * together for some 40 ms), not a single block that the screen or the SD card held up: the lowest of the last 4 blocks, held, let down over a few
+ * seconds (to a third in ~4 s). */
+unsigned looper_load_peak(void)
+{
+    if (S->magic != MAGIC || !S->ok)
+        return 0u;
+    return (unsigned)DSP()->gd.wpk;
+}
+
 /* Before the tracks: the player's unmutes, the fades (one at a time), the return of tracks the guard muted. */
 static void guard_decide(struct dsp *d)
 {
@@ -2075,6 +2087,13 @@ void looper_block_done(uint32_t now)
         if (w > 1000.f)
             w = 1000.f;
         g->wema += (w - g->wema) * (w > g->wema ? 1.f / 100.f : 1.f / 188.f);   /* (a load that is rising is seen in ~0.25 s, one that falls in ~0.5 s) */
+        float m4 = w;
+        for (int i = 3; i > 0; i--) {
+            g->w4[i] = g->w4[i - 1];
+            m4 = (float)g->w4[i] < m4 ? (float)g->w4[i] : m4;
+        }
+        g->w4[0] = (uint16_t)w;
+        g->wpk = m4 > g->wpk ? m4 : g->wpk + (m4 - g->wpk) * (1.f / 750.f);
     }
 }
 

@@ -2689,6 +2689,7 @@ void samplr_block_done(uint32_t now)
     }
 }
 
+#define SHED_PEAK 940
 int samplr_run(float *bl, float *br, int n, float **snd)
 {
     struct sm *s = trk_get(0, 1);
@@ -2701,14 +2702,15 @@ int samplr_run(float *bl, float *br, int n, float **snd)
     {   /* Quality steps (1 grains use linear interpolation, 2 and one channel, and all voices linear, 3 half the grain rate and 24 grains in all, 4 12, 5 6),
          * slow: from the whole task's load averaged over ~0.5 s (looper.c) against this engine's mark (the lower its rank, the lower the mark; the page
          * opened last has the highest). A step when it is within 2 % of the mark, no more often than every ~0.5 s; one back when it is 7 % under, no more
-         * often than every ~1 s. Nothing here looks at SAMPLR's own cost: a pause by another task (the screen, the SD card, a sample loading) is not a reason. */
+         * often than every ~1 s. Also a step when the peaks reach 94 % (runs of heavy blocks, as a synced cloud's: the average does not see them, the
+         * listener hears them), back only when they stay under 84 %. Nothing here looks at SAMPLR's own cost: a pause by another task (the screen, the SD card, a sample loading) is not a reason. */
         struct smscr *sc = s->sc;
-        int avg = (int)looper_load_avg(), mk = looper_soft_threshold(1);
+        int avg = (int)looper_load_avg(), mk = looper_soft_threshold(1), pk = (int)looper_load_peak();
         uint32_t since = s->tick - sc->shed_t;
-        if (avg >= mk - 60 && sc->shed < 5 && since > (avg >= mk + 25 ? 60u : 150u)) {   /* (well over the mark, as when stock pads pile on: quicker) */
+        if (((avg >= mk - 60 && since > (avg >= mk + 25 ? 60u : 150u)) || (pk >= SHED_PEAK && since > 60u)) && sc->shed < 5) {   /* (well over the mark, as when stock pads pile on: quicker) */
             sc->shed++;
             sc->shed_t = s->tick;
-        } else if (avg < mk - 110 && sc->shed > 0 && since > 376) {
+        } else if (avg < mk - 110 && pk < SHED_PEAK - 100 && sc->shed > 0 && since > 376) {
             sc->shed--;
             sc->shed_t = s->tick;
         }
