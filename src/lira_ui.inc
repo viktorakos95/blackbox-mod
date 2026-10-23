@@ -6,8 +6,8 @@
  * in its pair's colour, and a big plate below them: tap = on / off, the top-right switch makes the plates HOLD). The eight hardware
  * buttons are the same plates. Above them one of four tabs (footer), each a row of four panels of four controls:
  *   VOICES   one panel per voice pair: MOD, SHARP, FM source, TOUCH
- *   SOUND    DELAY (time 1, 2, feedback, mix), MOD (mod 1, 2, LFO A, B), PITCH (hold 1-4, 5-8, pitch 1-4, 5-8), LFO (shape, combine, link, delay source)
- *   MIX      OUTPUT (drive, dist, volume, ext in), TEMPO SYNC, GESTURE, SPACE (PAN: how far the eight voices are spread left and right, DRIFT of the pitch, the ENGINE switch)
+ *   SOUND    DELAY (time 1, 2, feedback, mix), MOD + SYNC (mod 1, 2 and the tempo sync of the two lines), LFO + SYNC (LFO A, B and their sync), LFO SHAPE (shape, combine, link, delay source)
+ *   MIX      OUTPUT (drive, dist, volume, ext in), PITCH (the two pitches, QUANT, VIB), GESTURE, FEEL (PAN, DRIFT, the ENGINE switch)
  *   CHORD    TONAL SPACE (space, root, register, span), VOICING (chord on, tuning, shuffle, rotate), the notes of the voices
  * The four encoders turn the four controls of the active group (white frame): the strip's voices 1-4 or 5-8, or a panel. A touch on
  * a control makes its group the active one; BACK flips between voices 1-4 and 5-8; INFO moves on within the part of the page the
@@ -100,7 +100,7 @@ static const char *const lu_touch[3] = {"SLOW", "FAST", "EXT"};
 static const char *const lu_src[9] = {"SELF", "OFF", "LFO", "EXT", "P1-2", "P3-4", "P5-6", "P7-8", "OUT"};
 static const uint8_t lu_pair_col[4] = {LU_ACC1, LU_ACC2, LU_ACC1, LU_ACC2};
 static const int8_t lu_enc_cell[4] = {1, 2, 0, 3};                /* a panel's cells (top-left, top-right, bottom-left, bottom-right) -> encoder */
-static const int8_t lu_enc_row[4] = {0, 3, 1, 2};                 /* a row of four voices -> encoder: bottom left, bottom right, top left, top right */
+static const int8_t lu_enc_row[4] = {1, 2, 0, 3};                 /* a row of four voices -> encoder: top left, top right, bottom left, bottom right (like a panel's cells) */
 
 #define LU_SP(i, I, X, D, W, H, B, E, K, C, R, N) o[i] = (struct lu_spec){I, X, D, W, H, B, E, K, C, R, N}
 
@@ -139,39 +139,43 @@ static int lu_specs(int sel, struct lu_spec *o)
             n++;
         }
     } else if (page == LP_SOUND) {
-        static const uint16_t ids[16] = {16, 17, 18, 19, 125, 126, 14, 15, 181, 195, 123, 124, 160, 161, 162, 163};
-        static const char *const nm[16] = {"TIME1", "TIME2", "FDBK", "MIX", "MOD1", "MOD2", "LFO A", "LFO B",
-                                           "DRIFT", "VIB", "P 1-4", "P 5-8", "SHAPE", "COMB", "LINK", "D.SRC"};
+        /* DELAY (time 1, 2, feedback, mix) | MOD + SYNC (how far the clocks are modulated, and the tempo sync of each line) |
+           LFO + SYNC (the two rates and their tempo sync) | LFO SHAPE (shape, combine, link, and what modulates the delay) */
+        static const uint16_t ids[16] = {16, 17, 18, 19, 125, 126, 146, 147, 14, 15, 144, 145, 160, 161, 162, 163};
+        static const char *const nm[16] = {"TIME1", "TIME2", "FDBK", "MIX", "MOD1", "MOD2", "SYNC 1", "SYNC 2",
+                                           "LFO A", "LFO B", "SYNC A", "SYNC B", "SHAPE", "COMB", "LINK", "D.SRC"};
         for (int i = 0; i < 16; i++) {
+            int btn = ids[i] >= 144;                              /* (tempo sync: how long one cycle / one echo is, in the Blackbox clock's beats) */
             lu_cell(i >> 2, i & 3, &x, &d);
-            LU_SP(n, ids[i], x, d, LU_COL, 38, 2 + (i >> 2), lu_enc_cell[i & 3], i >= 12 || ids[i] == 195 ? LK_BTN : LK_KNOB, LU_ACC1, 11, nm[i]);
+            LU_SP(n, ids[i], x, d, LU_COL, 38, 2 + (i >> 2), lu_enc_cell[i & 3], btn ? LK_BTN : LK_KNOB, ids[i] < 160 && btn ? LU_ACC2 : LU_ACC1, btn ? 0 : 11, nm[i]);
             n++;
         }
-    } else if (page == LP_MIX) {                                  /* OUTPUT (knobs), SYNC and GESTURE (buttons), STATUS (text) */
+    } else if (page == LP_MIX) {                                  /* OUTPUT, PITCH, GESTURE, FEEL */
         static const uint16_t ids[4] = {22, 23, LU_LEVEL, 21};
         static const char *const nm[4] = {"DRIVE", "DIST", "VOL", "EXT"};
-        static const char *const sn[4] = {"LFO A", "LFO B", "DLY 1", "DLY 2"};
         static const uint16_t gid[4] = {190, 148, 191, 193};
         static const char *const gn[4] = {"REC", "LEN", "UNDO", "LOOP"};
+        static const uint16_t pid[4] = {123, 124, 196, 195};      /* PITCH: the two global pitches, QUANT (the nearest real note), VIB (the vibrato) */
+        static const char *const pn[4] = {"P 1-4", "P 5-8", "QUANT", "VIB"};
         for (int i = 0; i < 4; i++) {
             lu_cell(0, i, &x, &d);
             LU_SP(n, ids[i], x, d, LU_COL, 38, 2, lu_enc_cell[i], LK_KNOB, LU_ACC1, 11, nm[i]);
             n++;
-            lu_cell(1, i, &x, &d);                                /* tempo sync: how long one cycle / one echo is, in the Blackbox clock's beats */
-            LU_SP(n, 144 + i, x, d, LU_COL, 38, 3, lu_enc_cell[i], LK_BTN, LU_ACC2, 0, sn[i]);
+            lu_cell(1, i, &x, &d);
+            LU_SP(n, pid[i], x, d, LU_COL, 38, 3, lu_enc_cell[i], i < 2 ? LK_KNOB : LK_BTN, LU_ACC1, i < 2 ? 11 : 0, pn[i]);
             n++;
             lu_cell(2, i, &x, &d);
             LU_SP(n, gid[i], x, d, LU_COL, 38, 4, lu_enc_cell[i], LK_BTN, LU_ACC1, 0, gn[i]);
             n++;
         }
-        lu_cell(3, 0, &x, &d);                                    /* SPACE: the stereo pan (0 = mono, the cheap path), the engine switch and QUANT; the previous run's peaks fill the last cell */
+        lu_cell(3, 0, &x, &d);                                    /* FEEL: the stereo pan (0 = mono, the cheap path), the pitch drift, the engine switch; the previous run's peaks fill the last cell */
         LU_SP(n, 180, x, d, LU_COL, 38, 5, lu_enc_cell[0], LK_KNOB, LU_ACC2, 11, "PAN");
         n++;
         lu_cell(3, 1, &x, &d);
-        LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[1], LK_BTN, LU_ACC2, 0, "ENGINE");
+        LU_SP(n, 181, x, d, LU_COL, 38, 5, lu_enc_cell[1], LK_KNOB, LU_ACC2, 11, "DRIFT");
         n++;
-        lu_cell(3, 2, &x, &d);                                    /* QUANT: the voices sound the nearest real note */
-        LU_SP(n, 196, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "QUANT");
+        lu_cell(3, 2, &x, &d);
+        LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "ENGINE");
         n++;
     } else {
         static const char *const nm[8] = {"SPACE", "ROOT", "OCT", "SPAN", "CHORD", "TUNE", "SHUFL", "CYCLE"};
@@ -368,8 +372,8 @@ static void draw_lira(void)
     int n = lu_specs(sel, sp);
     char b[40], *q;
     static const char *const ptitle[LU_TABS][4] = {{"PAIR 1-2", "PAIR 3-4", "PAIR 5-6", "PAIR 7-8"},
-                                                   {"DELAY", "MOD", "PITCH", "LFO"},
-                                                   {"OUTPUT", "TEMPO SYNC", "GESTURE", "SPACE"},
+                                                   {"DELAY", "MOD + SYNC", "LFO + SYNC", "LFO SHAPE"},
+                                                   {"OUTPUT", "PITCH", "GESTURE", "FEEL"},
                                                    {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"}};
     box(1, 1, P->w - 2, TOPBAR, C_BG);
     text(6, 4, "DRONE-8", C_WHITE, 1);
