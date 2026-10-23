@@ -374,11 +374,7 @@ int looper_page_hit(int x, int d, int *track, float *val)
     if (P->hg < 120 || P->w < 80 || cw <= 0)
         return Z_NONE;                                            /* (hg is 0 until the page has been drawn once) */
     layout(0, &L);
-    if (d > L.foot_y) {                                           /* the footer: the tabs, and at the right the stock FX shortcut */
-        if (x >= P->w - 58 && x < P->w - 4) {
-            *track = 94;
-            return Z_OPTC;
-        }
+    if (d > L.foot_y) {                                           /* the footer: the tabs */
         if (P->mode == M_LIRA)
             return Z_NONE;
         if (P->mode == M_SMPLR || P->mode == M_TRIG) {            /* the sheets (track >= 10 tells Z_TAB apart) */
@@ -409,11 +405,9 @@ int looper_page_hit(int x, int d, int *track, float *val)
             *track = 100 - ((r - OPT_ROWS) * 3 + b + 1);          /* 99 FX, 98 REC, 97 BACK, 96 STOP, 95 PLAY, 94 STOCK FX */
             return Z_OPTC;
         }
-        if (P->mode == M_SETUP && DBG_VIEW && r < OPT_ROWS)
-            return Z_NONE;                                        /* (the crash record's lines are not options) */
         if (r == OPT_ROWS) {
             if (P->mode == M_SETUP)
-                return x >= OPT_X && x < OPT_X + 110 ? Z_CLEAR : x >= OPT_X + 116 ? Z_DBG : Z_NONE;
+                return x >= OPT_X && x < OPT_X + 110 ? Z_CLEAR : Z_NONE;
 #ifdef BANK2
             if (P->mode == M_MORE) {
                 *track = 93;
@@ -929,19 +923,6 @@ static void set_fx_sel(int p)
         P->fx_sel[t] = (uint8_t)p;
 }
 
-/* The stock FX page: the FX button's own message, handed to the app's dispatcher (the Blackbox goes to its FX page from here
- * as it does from the pads). Reached by the footer's STOCK FX button and by INFO + FX. */
-static void stock_fx(void)
-{
-    uint16_t m[32];
-    for (int i = 0; i < 32; i++)
-        m[i] = 0;
-    m[0] = P->bset[B_FX] ? P->bid[B_FX] : 0xf9;
-    *(uint32_t *)((uint8_t *)m + 0xc) = P->bset[B_FX] ? P->bidx[B_FX] : 4;
-    P->info_on = 0;
-    fw_app_msg((void *)0x24020088u, m);
-}
-
 /* A tab of the footer (0 MAIN, 1 FX, 2 FX2, 3 SETUP, 4 MORE). FX / FX2 keep the square where it is when it is on that page. */
 static void tab_select(int i)
 {
@@ -1006,18 +987,6 @@ static void draw_setup(const struct lay *L)
 {
     box(1, L->col_y, P->w - 2, L->col_h, C_BG);
     const struct optrow *rows = page_rows();
-    if (P->mode == M_SETUP && DBG_VIEW) {                         /* the crash record (src/crash.c): why the unit last restarted */
-        char b[64];
-        for (int i = 0, y = 0; i < 24; i++)
-            if (crash_line(i, b, sizeof b))
-                text(6, row_d(L, 0) + 1 + 8 * y++, b, i == 0 ? (crash_pending() ? C_RED : C_WHITE) : C_LIGHT, 1);
-        int d = row_d(L, OPT_ROWS);
-        frame(OPT_X, d, 110, ROW_H - 4, C_RAIL, 1);
-        text_c(OPT_X, d + 5, 110, "SEEN / CLEAR", C_LIGHT, 1);
-        frame(OPT_X + 116, d, 80, ROW_H - 4, C_CYAN, 1);
-        text_c(OPT_X + 116, d + 5, 80, "OPTIONS", C_CYAN, 1);
-        return;
-    }
     for (int r = 0; r < OPT_ROWS; r++) {
         const struct optrow *R = &rows[r];
         int d = row_d(L, r);
@@ -1064,7 +1033,6 @@ static void draw_setup(const struct lay *L)
             *p++ = *q;
         *p = 0;
         text(OPT_X + 120, d + 5, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
-        frame(OPT_X + 116, d - 1, P->w - OPT_X - 120, ROW_H - 2, crash_pending() ? C_RED : C_RAIL, 1);   /* tap: the crash record */
     } else {
         /* one diagnostic line: the last button message, the sequencer clock's position and rate, the screens visited */
         for (const char *q = "LAST "; *q; q++)
@@ -1150,11 +1118,7 @@ static void draw_footer(const struct lay *L)
         }
         x0 = P->w;
     }
-    frame(P->w - 58, L->foot_y + 2, 54, FOOT - 3, C_RAIL, 1);
-    text_c(P->w - 58, L->foot_y + 4, 54, "STOCK FX", C_LIGHT, 1);
-    if (crash_pending() && P->mode < M_SMPLR && !looper_paused())
-        text(x0, L->foot_y + 4, "RESTART: SEE SETUP", C_RED, 1);
-    else if (looper_paused() && P->mode < M_SMPLR)             /* (the Looper's own state: not carried onto the other pages) */
+    if (looper_paused() && P->mode < M_SMPLR)             /* (the Looper's own state: not carried onto the other pages) */
         text(x0, L->foot_y + 4, "PAUSE", C_RED, 1);
     else if (P->info_on == 1)
         text(x0, L->foot_y + 4, "SHIFT", C_RED, 1);
@@ -1190,101 +1154,8 @@ static const char *const sm_q_name[4] = {"Q OFF", "Q 1/4", "Q 1/8", "Q 1/16"};
 static void draw_sm_top(struct sm *s, const char *info)
 {
     box(1, 1, P->w - 2, TOPBAR, C_BG);
-    int full = s->sc->prof != 0;                                  /* (a measuring view takes the whole bar: the settings text would hide it) */
-    if (!full)
-        text(6, 4, info, C_CYAN, 1);
-    char b[64], *q = b;                                           /* C: the whole audio task (average / peak %), S: SAMPLR's share, V voices, G grains */
-    *q++ = 'C';
-    q = put_uint(q, (*(volatile uint16_t *)0x2405ffe2u + 5u) / 10u);
-    *q++ = '/';
-    q = put_uint(q, (*(volatile uint16_t *)0x2405ffe4u + 5u) / 10u);
-    if (!s->sc->prof) {
-        *q++ = ' ';
-        *q++ = 'S';
-        q = put_uint(q, (s->t_avg_shown + 5u) / 10u);
-    }
-    if (s->sc->prof == 1 || s->sc->prof == 2) {                   /* tap the top bar: P = the audio task before the looper stage (stock voices and effects), D = the LIRA synth, L = the looper, S = SAMPLR (percent of the audio block); again: the same, the worst block in the last second */
-        static const char lab[4] = {'P', 'D', 'L', 'S'};
-        const uint16_t v4[4] = {s->sc->shp, s->sc->shd, s->sc->shl, s->t_avg_shown};
-        const uint16_t x4[4] = {s->sc->shxp, s->sc->shxd, s->sc->shxl, s->t_peak_shown};
-        const uint16_t *v = s->sc->prof == 1 ? v4 : x4;
-        if (s->sc->prof == 2) {
-            *q++ = ' ';
-            *q++ = 'M';
-            *q++ = 'A';
-            *q++ = 'X';
-        }
-        for (int i = 0; i < 4; i++) {
-            *q++ = ' ';
-            *q++ = lab[i];
-            q = put_uint(q, (v[i] + 5u) / 10u);
-        }
-        if (s->sc->prof == 2) {                                   /* R: the rest of the block after the looper stage (stock output, master compressor, interrupts) */
-            *q++ = ' ';
-            *q++ = 'R';
-            q = put_uint(q, (s->sc->shxr + 5u) / 10u);
-        }
-    } else if (s->sc->prof == 4) {                                /* the next tap: the last block over 100 % (held) and its parts, and how many since power-on (N) */
-        static const char lab[6] = {'W', 'P', 'D', 'L', 'S', 'R'};
-        *q++ = ' ';
-        *q++ = 'N';
-        q = put_uint(q, s->sc->ovn);
-        for (int i = 0; i < 6; i++) {
-            *q++ = ' ';
-            *q++ = lab[i];
-            q = put_uint(q, (s->sc->ov[i] + 5u) / 10u);
-        }
-    } else if (s->sc->prof) {                                     /* the next tap: inside SAMPLR (voices, grains, reading + interpolating inside both, mix + strips) */
-        static const char lab[4] = {'R', 'G', 'B', 'M'};
-        const uint16_t v4[4] = {s->sc->shr, s->sc->shg, s->sc->shb, s->sc->shm};
-        for (int i = 0; i < 4; i++) {
-            *q++ = ' ';
-            *q++ = lab[i];
-            q = put_uint(q, (v4[i] + 5u) / 10u);
-        }
-    } else {
-        *q++ = ' ';
-        *q++ = 'V';
-        q = put_uint(q, s->n_voices);
-        *q++ = ' ';
-        *q++ = 'G';
-        q = put_uint(q, s->n_grains);
-    }
-    if (s->sc->shed) {                                            /* SAMPLR is holding back (the audio task is near its limit) */
-        *q++ = ' ';
-        *q++ = '!';
-        *q++ = (char)('0' + s->sc->shed);
-    }
-    if (s->sc->mshown) {                                          /* SAMPLR had to cut a track in a spike in the last second */
-        *q++ = ' ';
-        *q++ = '!';
-        *q++ = 'M';
-    }
-    if (s->sc->gout) {                                            /* SAMPLR tracks faded out (and later back in) for lack of time */
-        *q++ = ' ';
-        *q++ = 'x';
-        *q++ = (char)('0' + s->sc->gout);
-    }
-    {
-        int gl = looper_guard_level();                            /* the looper: tracks it faded out and muted for lack of time (3 first, then 2, 1, 4); c: one had to be cut */
-        if (gl > 0) {
-            *q++ = ' ';
-            *q++ = 'L';
-            *q++ = '!';
-            *q++ = (char)('0' + (gl & 15));
-            if (gl & 16)
-                *q++ = 'c';
-        }
-    }
-    if (P->lead < 3) {                                            /* the leader: the engine whose page was opened last is the last to give way when time runs short */
-        *q++ = ' ';
-        *q++ = '>';
-        *q++ = P->lead == 0 ? 'L' : P->lead == 1 ? 'S' : 'D';
-    }
-    *q = 0;
-    int x = full ? 6 : P->w - 6 - 6 * (int)(q - b);
-    text(x, 4, b, full ? C_LIGHT : C_GREY, 1);
-    const char *st = 0;
+    text(6, 4, info, C_CYAN, 1);
+    const char *st = 0;                                           /* (the load readouts that stood here: docs/diagnostics.md) */
     int col = C_CYAN;
     if (s->g_rec >= 0) {
         st = "REC";
@@ -1299,8 +1170,12 @@ static void draw_sm_top(struct sm *s, const char *info)
         st = "CLK";                                               /* SAMPLR is on the sequencer's clock (else its own free-running grid) */
         col = C_GREY;
     }
-    if (st && !full)
-        text(x - 6 * 7, 4, st, col, 1);
+    if (st) {
+        int n = 0;
+        while (st[n])
+            n++;
+        text(P->w - 6 - 6 * n, 4, st, col, 1);
+    }
 }
 
 static void draw_samplr(void)
@@ -1599,12 +1474,8 @@ static int sm_touch(int kind, int id, int x, int d)
         P->sig = 0;
         return 1;
     }
-    if (d < ty - 2) {                                             /* the top bar: tap = V G / where the time goes */
-        if (kind == 0 && s)
-            s->sc->prof = (uint8_t)((s->sc->prof + 1) % 5);
-        P->sig = 0;
+    if (d < ty - 2)                                               /* the top bar: nothing to touch */
         return 1;
-    }
     if (d >= ty - 2 && d < wy - 2) {                              /* the strip above the sample */
         if (kind != 0)
             return 1;
@@ -1745,44 +1616,24 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
 
 #include "lira_ui.inc"
 
-/* Each page gets its own tint, the same way the DRONE page does (in the DMA2D's CLUT while the page shows, see clut_write):
- * the Looper is brushed silver (the EHX 45000 it follows), SAMPLR a little lighter and bluer with a pale mint waveform (C_WAVE).
+/* Each page has its own colours, like the DRONE page (lu_theme): dark backgrounds, light labels, soft accents. The Looper is graphite
+ * with silver labels, SAMPLR indigo with a mint waveform and lilac samples; the selection (C_PINK) is the DRONE page's orange on both.
  * TRIG keeps the stock colours. */
 static const struct { uint8_t idx; uint32_t argb; } tint_looper[] = {
-    {0x02, 0xff30333a}, {0x19, 0xff24262b}, {0x10, 0xff6a6e78},
+    {0x02, 0xff0e0f12}, {0x19, 0xff17191d}, {0x10, 0xff34373e}, {0x09, 0xff787d87}, {0x16, 0xffc4c8d0}, {0x01, 0xff24262c},
+    {0x20, 0xfff09a4a}, {0x1b, 0xff7cc8f0}, {0x14, 0xfff0d070}, {0x17, 0xff6fd1b6}, {0x18, 0xffb08cf0}, {0x1a, 0xff2d6a7a},
+    {0x06, 0xffe5484d}, {0x0b, 0xff5fcf8f}, {0x0c, 0xffd65a5a},
 };
 static const struct { uint8_t idx; uint32_t argb; } tint_samplr[] = {
-    {0x02, 0xff262c47}, {0x19, 0xff1d2238}, {0x10, 0xff4b5580}, {0x1c, 0xffb4ead6}, {0x1e, 0xffc3aef0}, {0x14, 0xffc3aef0},
+    {0x02, 0xff0b0d18}, {0x19, 0xff141829}, {0x10, 0xff2e3550}, {0x09, 0xff6f7aa0}, {0x16, 0xffb8c0e0}, {0x01, 0xff1f2438},
+    {0x20, 0xfff09a4a}, {0x1b, 0xff7cc8f0}, {0x14, 0xffb69cf0}, {0x17, 0xff6fd1b6}, {0x18, 0xffb08cf0}, {0x1a, 0xff2d6a7a},
+    {0x06, 0xffe5484d}, {0x0b, 0xff5fcf8f}, {0x0c, 0xffd65a5a}, {0x1c, 0xff7fd8bc}, {0x1e, 0xffb69cf0},
 };
-static int tint_set(uint32_t *save)
-{
-    const uint32_t *t = 0;
-    int n = 0;
-    if (P->mode == M_SMPLR) {
-        t = (const uint32_t *)tint_samplr; n = (int)(sizeof tint_samplr / sizeof tint_samplr[0]);
-    } else if (P->mode < M_SMPLR) {
-        t = (const uint32_t *)tint_looper; n = (int)(sizeof tint_looper / sizeof tint_looper[0]);
-    }
-    volatile uint32_t *pal = (volatile uint32_t *)0x24000000u;
-    for (int i = 0; i < n; i++) {
-        const struct { uint8_t idx; uint32_t argb; } *e = (const void *)(t + 2 * i);
-        save[i] = pal[e->idx];
-        pal[e->idx] = e->argb;
-    }
-    return n;
-}
-static void tint_restore(const uint32_t *save, int n)
-{
-    const uint32_t *t = P->mode == M_SMPLR ? (const uint32_t *)tint_samplr : (const uint32_t *)tint_looper;
-    volatile uint32_t *pal = (volatile uint32_t *)0x24000000u;
-    for (int i = 0; i < n; i++)
-        pal[((const uint8_t *)(t + 2 * i))[0]] = save[i];
-}
 
 /* What the unit's screen shows. The frame buffer holds palette indices (a byte a pixel: a fill stores the index itself) and
  * the DMA2D turns them into colours when a frame goes to the display, through its own copy of the palette (its CLUT, loaded
- * once at boot from the RAM table). So the RAM swap above changes nothing on the unit: the page's colours are written into
- * the CLUT, for as long as the page shows, and the stock ones (the firmware's table) put back as soon as a stock screen
+ * once at boot from the RAM table). So changing the RAM table while a page draws changes nothing on the unit: the page's colours
+ * are written into the CLUT, for as long as the page shows, and the stock ones (the firmware's table) put back as soon as a stock screen
  * draws (solo.c looper_fill_blocked -> looper_page_clut_stock) or the page is left. Only while the DMA2D is idle, with
  * interrupts off so that no transfer starts in between; otherwise the next draw tries again. P->_r6[1]: the colours in
  * the CLUT now (0 stock, 1 Looper, 2 SAMPLR, 3 DRONE-8). */
@@ -1792,7 +1643,8 @@ static void tint_restore(const uint32_t *save, int n)
 #define DMA2D_FGCLUT  ((volatile uint32_t *)0x52001400u)
 #define DMA2D_BGCLUT  ((volatile uint32_t *)0x52001800u)
 #define PAL_STOCK     ((const uint32_t *)0x080f1d80u)
-static const uint8_t clut_idx[] = {0x02, 0x09, 0x0f, 0x10, 0x14, 0x16, 0x19, 0x1a, 0x1c, 0x1d, 0x1e, 0x1f, 0x20};
+static const uint8_t clut_idx[] = {0x01, 0x02, 0x06, 0x09, 0x0b, 0x0c, 0x0f, 0x10, 0x14, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
+                                   0x1e, 0x1f, 0x20};
 
 static int clut_theme(void)
 {
@@ -1841,14 +1693,8 @@ static void paint(uint8_t *view)
 
 static void paint_(uint8_t *view)
 {
-    uint32_t pal_save[16];
-    int tn = 0;
     if (P->_r6[1] != clut_theme())
         clut_write(clut_theme());
-    if (P->mode == M_LIRA)
-        lu_theme_set(pal_save);
-    else
-        tn = tint_set(pal_save);
     geometry(view);
     rehide(view);
     widen(view);
@@ -1888,10 +1734,6 @@ static void paint_(uint8_t *view)
     draw_footer(&L);
     P->sig = signature();
     looper_guard_drawing(0);
-    if (P->mode == M_LIRA)
-        lu_theme_restore(pal_save);
-    else
-        tint_restore(pal_save, tn);
 }
 
 static void dirty(uint8_t *view)
@@ -2176,7 +2018,7 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         return;
     P->track = (uint8_t)t;
     int was_sel = P->sel == t;
-    if (zone != Z_TAB && zone != Z_OPTC && zone != Z_SLIDER && zone != Z_CLEAR && zone != Z_DBG)
+    if (zone != Z_TAB && zone != Z_OPTC && zone != Z_SLIDER && zone != Z_CLEAR)
         P->sel = (uint8_t)t;                                      /* touching a track's column selects it */
     if (P->info_on)
         info_touch();
@@ -2197,8 +2039,6 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         if (t >= 95 && t <= 99) {
             int slot = 100 - t;                                   /* LEARN <button>: the next press of it is remembered */
             P->learn = P->learn == slot ? 0 : (uint8_t)slot;
-        } else if (t == 94) {
-            stock_fx();
 #ifdef BANK2
         } else if (t == 93) {                                     /* size test: read back the pattern past the old end of the cave */
             const volatile uint32_t *q = (const volatile uint32_t *)0x08100000u;
@@ -2216,10 +2056,6 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         looper_set_opt(t, v);
         P->drag_opt = (uint8_t)t;
         P->pressed = P_SLIDER;
-    } else if (zone == Z_DBG) {
-        DBG_VIEW = (uint8_t)!DBG_VIEW;
-    } else if (zone == Z_CLEAR && DBG_VIEW) {
-        crash_clear();                                            /* (in the crash record's view the button only marks it seen) */
     } else if (zone == Z_CLEAR) {
         if (P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) {
             P->clear_arm = 2;                                     /* asked twice within 3 s: CLEARED! for a while */
@@ -2576,9 +2412,7 @@ static void app_msg(void *app, const uint16_t *msg)
                 }
                 switch (slot) {
                 case B_FX:
-                    if (P->info_on)                                /* INFO + FX: the Blackbox's own FX page */
-                        stock_fx();
-                    else if (P->mode != M_FX)                      /* the FX button: MAIN -> FX -> FX2 -> MAIN */
+                    if (P->mode != M_FX)                      /* the FX button: MAIN -> FX -> FX2 -> MAIN */
                         tab_select(1);
                     else if (FX_GROUP < 2)
                         tab_select(2);

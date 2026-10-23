@@ -36,9 +36,7 @@
 #define LU_ACC2D  0x1f
 #define LU_SEL    0x20                                            /* the encoders' group (orange): its frame and labels */
 
-/* The page's colours. On the unit they reach the screen through the DMA2D's CLUT while the page shows (looper_page.c clut_write);
- * the firmware's RAM palette (0x24000000, one ARGB word per index) is also swapped while the page draws and then put back, which
- * only matters for surfaces that are not 8-bit indexed. */
+/* The page's colours: written into the DMA2D's CLUT while the page shows (looper_page.c clut_write). */
 static const struct { uint8_t idx; uint32_t argb; } lu_theme[] = {
     {0x02, 0xff0c0c14},                                           /* background: midnight */
     {0x19, 0xff15151f},                                           /* cards */
@@ -53,22 +51,6 @@ static const struct { uint8_t idx; uint32_t argb; } lu_theme[] = {
     {0x20, 0xfff09a4a},                                           /* orange: the encoders' group */
 };
 #define LU_NTHEME ((int)(sizeof lu_theme / sizeof lu_theme[0]))
-
-static void lu_theme_set(uint32_t *save)
-{
-    volatile uint32_t *pal = (volatile uint32_t *)0x24000000u;
-    for (int i = 0; i < LU_NTHEME; i++) {
-        save[i] = pal[lu_theme[i].idx];
-        pal[lu_theme[i].idx] = lu_theme[i].argb;
-    }
-}
-
-static void lu_theme_restore(const uint32_t *save)
-{
-    volatile uint32_t *pal = (volatile uint32_t *)0x24000000u;
-    for (int i = 0; i < LU_NTHEME; i++)
-        pal[lu_theme[i].idx] = save[i];
-}
 
 static int lu_dark(int col)
 {
@@ -409,21 +391,7 @@ static void draw_lira(void)
                 *q = 0;
             }
     }
-    if (!*b && lira_ui_load(2)) {                                 /* the governor is cutting the synth's quality: say so (the rest is on the MIX tab) */
-        for (const char *t = "SHED "; *t;)
-            *q++ = *t++;
-        q = put_uint(q, (unsigned)lira_ui_load(2));
-        *q = 0;
-    }
-    if (!*b && page == LP_MIX) {                                  /* the MIX tab: the audio task's load, average / peak, and this synth's share */
-        q = put_uint(b, (unsigned)lira_ui_load(3));
-        *q++ = '/';
-        q = put_uint(q, (unsigned)lira_ui_load(4));
-        *q++ = ' ';
-        *q++ = 'D';
-        q = put_uint(q, (unsigned)lira_ui_load(0));
-        *q = 0;
-    }
+    /* (the governor's SHED and the load readouts that stood here: docs/diagnostics.md) */
     b[9] = 0;                                                     /* (it must stay clear of the switches) */
     text(54, 4, b, *b ? C_WHITE : C_GREY, 1);
     int mom = lira_ui_momentary(0), sine = lira_ui_chord_get(154), fr = lira_ui_chord_get(157), xs = lira_ui_chord_get(156), gm = lira_ui_chord_get(158);

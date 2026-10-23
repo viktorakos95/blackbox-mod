@@ -6,6 +6,7 @@ the GUI hit test, fill / outline / text drawing (recorded), the stock view and a
 NOT checked: the real pool's behaviour around claimed blocks, how the page looks (font size, which knob index is
 which), CPU on the real chip (hardware).
 """
+import os
 import struct
 import sys
 
@@ -387,15 +388,42 @@ def draw(cell=0):
     return list(fills)
 
 
+def snap(name):
+    """LOOPER_PNG=<dir>: the last draw as a picture, in the colours the DMA2D's CLUT holds (stock where it holds nothing)."""
+    import os
+    out = os.environ.get("LOOPER_PNG")
+    if not out:
+        return
+    from PIL import Image
+    fw = open("firmware/BLACKBOX-3.1.9.bin", "rb").read()
+    pal = []
+    for i in range(0x24):
+        c = e.r32(0x52001400 + 4 * i) & 0xFFFFFFFF
+        pal.append(c if c else struct.unpack("<I", fw[0x080F1D80 - 0x08040000 + 4 * i:][:4])[0])
+    im = Image.new("RGB", (320, 240))
+    px = im.load()
+    rgb = lambda c: ((pal[c] >> 16) & 255, (pal[c] >> 8) & 255, pal[c] & 255)
+    for x, y, w, h, c, _ in fills:
+        for yy in range(max(0, 240 - y - h), min(240, 240 - y)):
+            for xx in range(max(0, x), min(320, x + w)):
+                px[xx, yy] = rgb(c)
+    for x, y, c in pixels:
+        if 0 <= x < 320 and 0 <= 239 - y < 240:
+            px[x, 239 - y] = rgb(c)
+    os.makedirs(out, exist_ok=True)
+    im.resize((640, 480), Image.NEAREST).save(os.path.join(out, name + ".png"))
+
+
 f = draw(5)
 check("only the first cell draws the page; the others draw nothing and skip the stock draw", not f and not pixels and not celldraw)
 f = draw(0)
 # page: 224 high (cells y 0..224), top edge 224, y up, 314 wide from x 3 (320 screen, 3 px margins); 77 px columns
 # split by hairlines. Column 0's record box: a 1 px outline at x 7, 71 wide, top edge at d = 19
 title0 = [x for x in f if x[2] == 71 and x[3] == 1]
+snap("main")
 check("page painted: background first, then top bar, columns, footer", f[0][:4] == (3, 0, 314, 224) and f[0][4] == 0x02, f[:1])
-check("the Looper's silver is in the DMA2D's CLUT (what the display shows)",
-      e.r32(0x52001400 + 4 * 0x02) & 0xFFFFFFFF == 0xFF30333A and e.r32(0x52001800 + 4 * 0x10) & 0xFFFFFFFF == 0xFF6A6E78,
+check("the Looper's colours are in the DMA2D's CLUT (what the display shows)",
+      e.r32(0x52001400 + 4 * 0x02) & 0xFFFFFFFF == 0xFF0E0F12 and e.r32(0x52001800 + 4 * 0x16) & 0xFFFFFFFF == 0xFFC4C8D0,
       hex(e.r32(0x52001400 + 4 * 0x02) & 0xFFFFFFFF))
 check("track 1's record box (empty = dark grey outline) sits under the top row: x 7, y = 224 - 19 - 1 = 204",
       any(x[:4] == (7, 204, 71, 1) and x[4] == 0x10 for x in f), title0[:3])
@@ -680,16 +708,8 @@ check("SETUP: SPEED PITCH choice GRAIN (1)", optv(14) == 1.0)
 touch("down", 84 + 150, row(9))
 touch("up", 84 + 150, row(9))
 f = draw(0)
-check("SETUP: a tap on the right end of the last row shows the crash record instead of the options (no sliders), inside the screen",
-      not any(x[2] == 150 and x[3] == 1 for x in f) and len(pixels) > 100 and all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f), (len(pixels),))
-o9 = optv(9)
-touch("down", 84 + 30, row(5))
-touch("up", 84 + 30, row(5))
-check("... where the option rows were, a tap changes nothing", optv(9) == o9, (o9, optv(9)))
-touch("down", 84 + 150, row(9))
-touch("up", 84 + 150, row(9))
-f = draw(0)
-check("... and a second tap brings the options back", any(x[2] == 150 and x[3] == 1 for x in f))
+check("SETUP: the right end of the last row is no button any more (the crash record view is gone, docs/diagnostics.md)",
+      any(x[2] == 150 and x[3] == 1 for x in f))
 
 opt_sync_off = struct.pack("<f", 0.0)
 for off in (164, 168, 176, 164 + 40):
@@ -760,18 +780,15 @@ check("... the FX button again: the FX2 page (still the FX tab)", e.r8(PAGE + 76
 blocks(30)
 button(6)
 check("... and once more: back to MAIN", e.r8(PAGE + 76) == 0 and not appmsg)
-# the stock FX page: INFO + FX (on MAIN), and the footer's STOCK FX button
+# no stock FX page from here any more: INFO + FX is the FX button, the footer has no STOCK FX button
 blocks(30)
 button(0, msg_id=0xC)
 check("INFO switches SHIFT on (MAIN tab)", e.r8(PAGE + 7) == 1, e.r8(PAGE + 7))
 blocks(30)
 button(6)
-check("INFO + FX: the FX button's message goes to the stock handler (its FX page), SHIFT is off again", appmsg == [(0xF9, 6)] and e.r8(PAGE + 7) == 0 and e.r8(PAGE + 76) == 0, (appmsg, e.r8(PAGE + 7), e.r8(PAGE + 76)))
-appmsg.clear()
-check("the footer's right end is the STOCK FX button", hit(300, 224 - 5)[:2] == (9, 94), hit(300, 224 - 5))
-touch("down", 300, 224 - 5)
-touch("up", 300, 224 - 5)
-check("tapping STOCK FX hands the FX message to the stock handler", appmsg == [(0xF9, 6)], appmsg)
+check("INFO + FX: the FX tab, nothing to the stock handler, SHIFT is off again", appmsg == [] and e.r8(PAGE + 7) == 0 and e.r8(PAGE + 76) == 1, (appmsg, e.r8(PAGE + 7), e.r8(PAGE + 76)))
+tab(0)
+check("the footer's right end is no button", hit(300, 224 - 5)[0] == 0, hit(300, 224 - 5))
 appmsg.clear()
 e.uc.mem_write(APP + 0x8CA4, b"\x25")
 blocks(30)
@@ -1057,6 +1074,7 @@ e.stub(0x08074A00, pcm_stub)
 e.stub(0x08074CE8)
 e.call("looper_page_goto", VIEW, 5)
 f = draw(0)
+snap("samplr")
 check("SMPLR page: no footer tabs (a page of its own), nothing is drawn outside the screen",
       not any(x[2] == 34 and x[3] == 1 and x[1] <= 14 for x in f) and all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f),
       [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
@@ -1124,6 +1142,13 @@ check("SMPLR: the track buttons in the strip show track 2 (a state of its own)",
 e.call("samplr_track", 0, count=50_000_000)
 e.call("looper_page_goto", VIEW, 0)
 check("SMPLR: leaving the tab releases the voices", True)
+
+if os.environ.get("LOOPER_PNG"):
+    for tab, name in ((1, "fx"), (3, "setup"), (6, "trig"), (0, "main2")):
+        e.call("looper_page_goto", VIEW, tab)
+        draw(0)
+        snap(name)
+    e.call("looper_page_goto", VIEW, 0)
 
 # ---- page order: MIX opens the Looper first; SONG cycles Looper MAIN -> SMPLR -> TRIG -> DRONE-8 -> the stock song screen
 e.uc.mem_write(APP + 0x8CA4, b"\x25")
