@@ -272,6 +272,12 @@ float lira_midi_of(int o, float tune01, float pitch01)
     return TUNE_LO[o & 7] + clip_(tune01, 0.f, 1.f) * (TUNE_HI[o & 7] - TUNE_LO[o & 7]) + 12.f * flog2(clip_(pitch01, 0.f, 1.f) * 1.99f + 0.01f);
 }
 
+float lira_tune01_for(int o, float midi, float pitch01)
+{
+    float lo = TUNE_LO[o & 7], hi = TUNE_HI[o & 7];
+    return clip_((midi - 12.f * flog2(clip_(pitch01, 0.f, 1.f) * 1.99f + 0.01f) - lo) / (hi - lo), 0.f, 1.f);
+}
+
 void lira_tune_range(int o, float *lo, float *hi)
 {
     *lo = TUNE_LO[o & 7];

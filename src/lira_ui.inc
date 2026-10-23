@@ -7,7 +7,7 @@
  * buttons are the same plates. Above them one of four tabs (footer), each a row of four panels of four controls:
  *   VOICES   one panel per voice pair: MOD, SHARP, FM source, TOUCH
  *   SOUND    DELAY (time 1, 2, feedback, mix), MOD + SYNC (mod 1, 2 and the tempo sync of the two lines), LFO + SYNC (LFO A, B and their sync), LFO SHAPE (shape, combine, link, delay source)
- *   MIX      OUTPUT (drive, dist, volume, ext in), PITCH (the two pitches, QUANT, VIB), GESTURE, FEEL (PAN, DRIFT, the ENGINE switch)
+ *   MIX      OUTPUT (drive, dist, volume, ext in), PITCH (the two pitches, QUANT, VIB), GESTURE, FEEL (PAN, DRIFT, the POWER switch)
  *   CHORD    TONAL SPACE (space, root, register, span), VOICING (chord on, tuning, shuffle, rotate), the notes of the voices
  * The four encoders turn the four controls of the active group (white frame): the strip's voices 1-4 or 5-8, or a panel. A touch on
  * a control makes its group the active one; BACK flips between voices 1-4 and 5-8; INFO moves on within the part of the page the
@@ -142,8 +142,8 @@ static int lu_specs(int sel, struct lu_spec *o)
         /* DELAY (time 1, 2, feedback, mix) | MOD + SYNC (how far the clocks are modulated, and the tempo sync of each line) |
            LFO + SYNC (the two rates and their tempo sync) | LFO SHAPE (shape, combine, link, and what modulates the delay) */
         static const uint16_t ids[16] = {16, 17, 18, 19, 125, 126, 146, 147, 14, 15, 144, 145, 160, 161, 162, 163};
-        static const char *const nm[16] = {"TIME1", "TIME2", "FDBK", "MIX", "MOD1", "MOD2", "SYNC 1", "SYNC 2",
-                                           "LFO A", "LFO B", "SYNC A", "SYNC B", "SHAPE", "COMB", "LINK", "D.SRC"};
+        static const char *const nm[16] = {"TIME1", "TIME2", "FDBK", "MIX", "MOD1", "MOD2", "SYNC1", "SYNC2",
+                                           "LFO A", "LFO B", "SYNCA", "SYNCB", "SHAPE", "COMB", "LINK", "D.SRC"};
         for (int i = 0; i < 16; i++) {
             int btn = ids[i] >= 144;                              /* (tempo sync: how long one cycle / one echo is, in the Blackbox clock's beats) */
             lu_cell(i >> 2, i & 3, &x, &d);
@@ -175,7 +175,7 @@ static int lu_specs(int sel, struct lu_spec *o)
         LU_SP(n, 181, x, d, LU_COL, 38, 5, lu_enc_cell[1], LK_KNOB, LU_ACC2, 11, "DRIFT");
         n++;
         lu_cell(3, 2, &x, &d);
-        LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "ENGINE");
+        LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "POWER");
         n++;
     } else {
         static const char *const nm[8] = {"SPACE", "ROOT", "OCT", "SPAN", "CHORD", "TUNE", "SHUFL", "CYCLE"};
@@ -277,12 +277,16 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
         if (s->id < 8 && chord) {                                 /* chord mode: the voice's note */
             lu_pitch_text(s->id, b);
             text_c(s->x, cy + s->r + 3, s->w, b, C_WHITE, 1);
-        } else if (s->id < 8 && lira_ui_chord_get(196)) {         /* QUANT: the real note the knob is on, as it passes through them */
-            lira_note_name(lira_ui_qnote(s->id), lira_ui_flats(), b);
-            text_c(s->x, cy + s->r + 3, s->w, b, C_WHITE, 1);
-        } else if (s->id < 8) {
-            q = put_uint(b, (unsigned)(s->id + 1));
-            *q = 0;
+        } else if (s->id < 8) {                                   /* the note the knob is on: its name on a note, else the MIDI number with a tenth (51.1, 51.2 ...) */
+            int h = lira_ui_tunepitch(s->id), nn = (h + 50) / 100;
+            if (h - nn * 100 >= -12 && h - nn * 100 <= 12) {
+                lira_note_name(nn, lira_ui_flats(), b);
+            } else {
+                q = put_uint(b, (unsigned)(h / 100));
+                *q++ = '.';
+                *q++ = (char)('0' + (h % 100) / 10);
+                *q = 0;
+            }
             text_c(s->x, cy + s->r + 3, s->w, b, hot ? LU_SEL : LU_DIM, 1);
         } else if (s->kind == LK_STEP && s->id != 140) {          /* a stepped knob shows its setting */
             int k = lira_ui_chord_get(s->id);
@@ -324,8 +328,6 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             st = lira_ui_chord_get(194) ? "OFF" : "ON", on = !lira_ui_chord_get(194);
         else if (s->id == 195)
             st = lira_ui_chord_get(195) ? "ON" : "OFF", on = lira_ui_chord_get(195);
-        else if (s->id == 196)
-            st = lira_ui_chord_get(196) ? "ON" : "OFF", on = lira_ui_chord_get(196);
         else if (s->id == 193)
             st = lira_ui_chord_get(167) ? "NEXT" : lira_ui_chord_get(158) == 6 ? "PLAY" : "STOP", on = lira_ui_chord_get(158) == 6;
         else if (s->id >= 160 && s->id < 164) {
@@ -639,8 +641,11 @@ static void lira_touch(int kind, int id, int x, int d)
             if (i < n && sp[i].id < 8 && lira_ui_chord_get(150)) {     /* chord mode: the voice's pitch, free (60 semitones over 80 px), with a detent on every note */
                 int h = lira_ui_drag(id, 4, 0, 0, 0, 0) + dy * 75, nn = (h + 50) / 100;
                 lira_ui_pitch_set(sp[i].id, h - nn * 100 >= -12 && h - nn * 100 <= 12 ? nn * 100 : h);
-            } else if (i < n)
+            } else if (i < n) {
                 lu_set(&sp[i], lira_ui_drag(id, 4, 0, 0, 0, 0) + (lira_ui_drag(id, 3, 0, 0, 0, 0) - d) * 1000 / 80);
+                if (sp[i].id < 8 && sp[i].kind == LK_KNOB)
+                    lira_ui_tune_detent(sp[i].id);                /* a detent on every note */
+            }
         }
         return;
     }
@@ -722,6 +727,10 @@ static void lira_knob(int knob, int counts)
                     lira_ui_chord_set(sp[i].id, lira_ui_chord_get(sp[i].id) + st);
                 for (int k = 0; sp[i].kind == LK_BTN && sp[i].id < 190 && k < (st < 0 ? -st : st) && k < 3; k++)
                     lu_press(&sp[i], st > 0 ? 1 : -1);
+            } else if (sp[i].id < 8 && !lira_ui_chord_get(157)) {     /* STEP (top bar), outside chord mode: a click is a semitone (a step per ~100 counts) */
+                int st = lira_ui_accum(knob, counts, 100);
+                for (int k = 0; k < (st < 0 ? -st : st); k++)
+                    lira_ui_tune_step(sp[i].id, st > 0 ? 1 : -1);
             } else if (!(sp[i].id < 8 && chord)) {
                 lira_ui_set(sp[i].id, lira_ui_get(sp[i].id) + d);
             }
