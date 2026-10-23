@@ -627,6 +627,24 @@ e.uc.mem_write(PALRAM, b"".join(struct.pack("<I", 0xFF000000 + 0x010101 * i) for
 orig = bytes(e.uc.mem_read(PALRAM, 144))
 f = draw(0)
 check("the page's colours are put back after it is drawn (the stock palette is untouched)", bytes(e.uc.mem_read(PALRAM, 144)) == orig)
+CLUT = 0x52001400
+cl = lambda a: e.r32(a) & 0xFFFFFFFF
+STOCK2 = struct.unpack("<I", open("firmware/BLACKBOX-3.1.9.bin", "rb").read()[0x080F1D80 - 0x08040000 + 8:][:4])[0]
+check("the page's colours are in the DMA2D's CLUT, which the display goes through (background midnight)",
+      cl(CLUT + 4 * 0x02) == 0xFF0C0C14 and cl(CLUT + 0x400 + 4 * 0x02) == 0xFF0C0C14 and cl(CLUT + 4 * 0x20) == 0xFFF09A4A,
+      hex(cl(CLUT + 4 * 0x02)))
+e.call("looper_guard", 0)
+e.uc.mem_write(0x24070000, struct.pack("<HHHHHH", 0, 0, 10, 10, 100, 100))
+e.call("looper_fill_blocked", 0, 2, 0x24070000)
+check("a stock screen's first fill puts the stock colours back in the CLUT", cl(CLUT + 4 * 0x02) == STOCK2 and
+      cl(CLUT + 4 * 0x20) == struct.unpack("<I", open("firmware/BLACKBOX-3.1.9.bin", "rb").read()[0x080F1D80 - 0x08040000 + 0x80:][:4])[0],
+      hex(cl(CLUT + 4 * 0x02)))
+e.uc.mem_write(0x52001000, struct.pack("<I", 1))
+f = draw(0)
+check("not while the DMA2D is busy", cl(CLUT + 4 * 0x02) == STOCK2)
+e.uc.mem_write(0x52001000, struct.pack("<I", 0))
+f = draw(0)
+check("the next draw after it is idle", cl(CLUT + 4 * 0x02) == 0xFF0C0C14)
 # the pad button on the page goes back to the stock pad screen; MIX goes to the looper's first page
 screens.clear()
 e.call("solo_pad_pressed", APP, 0, 0, 0)

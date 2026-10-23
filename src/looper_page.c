@@ -1745,7 +1745,7 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
 
 #include "lira_ui.inc"
 
-/* Each page gets its own tint, the same way the DRONE page does (palette entries swapped while the page is drawn, then put back):
+/* Each page gets its own tint, the same way the DRONE page does (in the DMA2D's CLUT while the page shows, see clut_write):
  * the Looper is brushed silver (the EHX 45000 it follows), SAMPLR a little lighter and bluer with a pale mint waveform (C_WAVE).
  * TRIG keeps the stock colours. */
 static const struct { uint8_t idx; uint32_t argb; } tint_looper[] = {
@@ -1779,6 +1779,56 @@ static void tint_restore(const uint32_t *save, int n)
         pal[((const uint8_t *)(t + 2 * i))[0]] = save[i];
 }
 
+/* What the unit's screen shows. The frame buffer holds palette indices (a byte a pixel: a fill stores the index itself) and
+ * the DMA2D turns them into colours when a frame goes to the display, through its own copy of the palette (its CLUT, loaded
+ * once at boot from the RAM table). So the RAM swap above changes nothing on the unit: the page's colours are written into
+ * the CLUT, for as long as the page shows, and the stock ones (the firmware's table) put back as soon as a stock screen
+ * draws (solo.c looper_fill_blocked -> looper_page_clut_stock) or the page is left. Only while the DMA2D is idle, with
+ * interrupts off so that no transfer starts in between; otherwise the next draw tries again. P->_r6[1]: the colours in
+ * the CLUT now (0 stock, 1 Looper, 2 SAMPLR, 3 DRONE-8). */
+#define DMA2D_CR      (*(volatile uint32_t *)0x52001000u)
+#define DMA2D_FGPFCCR (*(volatile uint32_t *)0x5200101cu)
+#define DMA2D_BGPFCCR (*(volatile uint32_t *)0x52001024u)
+#define DMA2D_FGCLUT  ((volatile uint32_t *)0x52001400u)
+#define DMA2D_BGCLUT  ((volatile uint32_t *)0x52001800u)
+#define PAL_STOCK     ((const uint32_t *)0x080f1d80u)
+static const uint8_t clut_idx[] = {0x02, 0x09, 0x0f, 0x10, 0x14, 0x16, 0x19, 0x1a, 0x1c, 0x1d, 0x1e, 0x1f, 0x20};
+
+static int clut_theme(void)
+{
+    return P->mode == M_LIRA ? 3 : P->mode == M_SMPLR ? 2 : P->mode < M_SMPLR ? 1 : 0;
+}
+
+static void clut_write(int theme)
+{
+    const uint32_t *t = theme == 3 ? (const uint32_t *)lu_theme : theme == 2 ? (const uint32_t *)tint_samplr : (const uint32_t *)tint_looper;
+    int n = theme == 3 ? LU_NTHEME : theme == 2 ? (int)(sizeof tint_samplr / sizeof tint_samplr[0]) :
+            theme == 1 ? (int)(sizeof tint_looper / sizeof tint_looper[0]) : 0;
+    uint32_t v[sizeof clut_idx];
+    for (unsigned k = 0; k < sizeof clut_idx; k++) {
+        v[k] = PAL_STOCK[clut_idx[k]];
+        for (int i = 0; i < n; i++)
+            if (((const uint8_t *)(t + 2 * i))[0] == clut_idx[k])
+                v[k] = t[2 * i + 1];
+    }
+    uint32_t pm = crash_irq_off();
+    int idle = !(DMA2D_CR & 1u) && !(DMA2D_FGPFCCR & 0x20u) && !(DMA2D_BGPFCCR & 0x20u);
+    if (idle)
+        for (unsigned k = 0; k < sizeof clut_idx; k++) {
+            DMA2D_FGCLUT[clut_idx[k]] = v[k];
+            DMA2D_BGCLUT[clut_idx[k]] = v[k];
+        }
+    crash_irq_on(pm);
+    if (idle)
+        P->_r6[1] = (uint8_t)theme;
+}
+
+void looper_page_clut_stock(void)
+{
+    if (P->_r6[1])
+        clut_write(0);
+}
+
 /* The whole page, into the frame buffer the last stock draw pass handed over. */
 static void paint_(uint8_t *view);
 static void paint(uint8_t *view)
@@ -1793,6 +1843,8 @@ static void paint_(uint8_t *view)
 {
     uint32_t pal_save[16];
     int tn = 0;
+    if (P->_r6[1] != clut_theme())
+        clut_write(clut_theme());
     if (P->mode == M_LIRA)
         lu_theme_set(pal_save);
     else
@@ -1940,6 +1992,7 @@ void looper_page_leave(uint8_t *view)
 {
     samplr_leave();
     looper_guard(0);
+    looper_page_clut_stock();
     hide_children(view, 0);
     if (P->rect_on) {
         int *r = (int *)(view + 4);
@@ -1995,6 +2048,7 @@ void looper_page_boot(void)
     }
     looper_guard(0);
     looper_guard_drawing(0);
+    P->_r6[1] = 0;                                           /* the DMA2D's CLUT is loaded with the stock colours at boot */
     P->lead = P->lead_eff = 3;                               /* no page opened yet: the engines keep their own order (DRONE-8, SAMPLR, looper) */
     P->info_set = 1;                                         /* INFO is message 0xc (seen as "INFO=12" on the unit);   */
     P->info_id = 0xc;                                        /* the backup SRAM does not survive a power cycle, so  */

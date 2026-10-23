@@ -36,9 +36,9 @@
 #define LU_ACC2D  0x1f
 #define LU_SEL    0x20                                            /* the encoders' group (orange): its frame and labels */
 
-/* The page's colours. The firmware's palette is a RAM table (0x24000000, one ARGB word per index) and a fill turns the index into a
- * colour when it runs, so while the page is drawn these entries are replaced and then put back: the pixels keep the page's colours,
- * everything else the Blackbox draws keeps its own. */
+/* The page's colours. On the unit they reach the screen through the DMA2D's CLUT while the page shows (looper_page.c clut_write);
+ * the firmware's RAM palette (0x24000000, one ARGB word per index) is also swapped while the page draws and then put back, which
+ * only matters for surfaces that are not 8-bit indexed. */
 static const struct { uint8_t idx; uint32_t argb; } lu_theme[] = {
     {0x02, 0xff0c0c14},                                           /* background: midnight */
     {0x19, 0xff15151f},                                           /* cards */

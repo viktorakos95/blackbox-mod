@@ -394,6 +394,9 @@ f = draw(0)
 # split by hairlines. Column 0's record box: a 1 px outline at x 7, 71 wide, top edge at d = 19
 title0 = [x for x in f if x[2] == 71 and x[3] == 1]
 check("page painted: background first, then top bar, columns, footer", f[0][:4] == (3, 0, 314, 224) and f[0][4] == 0x02, f[:1])
+check("the Looper's silver is in the DMA2D's CLUT (what the display shows)",
+      e.r32(0x52001400 + 4 * 0x02) & 0xFFFFFFFF == 0xFF30333A and e.r32(0x52001800 + 4 * 0x10) & 0xFFFFFFFF == 0xFF6A6E78,
+      hex(e.r32(0x52001400 + 4 * 0x02) & 0xFFFFFFFF))
 check("track 1's record box (empty = dark grey outline) sits under the top row: x 7, y = 224 - 19 - 1 = 204",
       any(x[:4] == (7, 204, 71, 1) and x[4] == 0x10 for x in f), title0[:3])
 check("four columns of 78 px pitch across the whole width (record boxes at x 7, 85, 163, 241)",

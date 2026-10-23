@@ -24,6 +24,7 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx);
 void looper_page_poke(uint8_t *view);
 void looper_page_enter(uint8_t *view);
 void looper_page_leave(uint8_t *view);
+void looper_page_clut_stock(void);
 void looper_page_down(uint8_t *view, const int *pt, int id);
 void looper_page_move(uint8_t *view, const int *pt, int id);
 void looper_page_up(uint8_t *view, const int *pt, int id);
@@ -473,7 +474,11 @@ int looper_fill_blocked(void *fb, int color, const uint16_t *r)
 {
     (void)fb;
     (void)color;
-    if (GUARD_DRAW == DRW1 || !page_visible())
+    if (!page_visible()) {
+        looper_page_clut_stock();                          /* a stock screen draws: its own colours on the display again */
+        return 0;
+    }
+    if (GUARD_DRAW == DRW1)
         return 0;
     int x = r[4], w = r[2];
     if (w > 0 && (x + w <= 32 || x >= 288)) {
