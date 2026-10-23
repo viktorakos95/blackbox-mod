@@ -1152,6 +1152,7 @@ static void apply_sync(struct pg *g, struct slot *s)
         if ((g->sync_on >> k & 1) && !(on >> k & 1))
             s->vals[14 + k] = -1;                         /* off again: the knob's value applies (ctls[14..17] = LFO A, LFO B, Time 1, Time 2) */
     g->sync_on = on;
+    s->l.dsync = (uint8_t)(on >> 2 & 3);                 /* the delay lines (3rd and 4th sync) that are on the grid: no wobble there */
 }
 
 /* A finger's drag on the page (state kept here: the cave has no .bss). op 0: set kind / idx / y0 / v0, 1: read kind, 2: idx,

@@ -73,6 +73,7 @@ typedef struct {
     int16_t *buf;                         /* the memory, 16-bit (half the RAM of floats; the PT2399 is a ~12-bit part): value * DL_SCALE */
     int len, w;
     float acc, est, stp;
+    float wob;                            /* the clock's slow random wobble (relative; DRIFT scales it; not on a tempo-synced line) */
     float dpos;                           /* the tap's delay in samples as it is now (gliding to the clock's value) */
     int pbit;
     float hp_x, in1, in2, out1, out2, self_lp;
@@ -109,6 +110,7 @@ typedef struct {
     float *out_r;                 /* the right channel, set by the caller before lira_process (NULL: mono, as the pads use it) */
     float dr[8];                  /* the oscillators' pitch wander, relative */
     float side_lp;                /* the side signal's top-end filter */
+    uint8_t dsync;                /* bit i: delay line i is tempo-synced (set by the page): it keeps its time exactly, no wobble */
 } lira_t;
 
 int lira_size(void);

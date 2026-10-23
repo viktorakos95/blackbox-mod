@@ -510,6 +510,38 @@ check("QUANTIZE on: every tune lands on a note (worst %.1f cents off: the oscill
 check("... off: the knob is continuous (some are far from a note: %.0f cents)" % max(offs_f), max(offs_f) > 15.0)
 
 
+# ---- the delay clock's wobble (3.1.AN): a drone and its echo stop cancelling in the same places; a tempo-synced line keeps its time ----
+_o2 = os.path.join(tmp, "off2")
+open(_o2 + ".c", "w").write('#include "lira.h"\n#include <stddef.h>\n#include <stdio.h>\nint main(){printf("%d %d",(int)offsetof(lira_t,dsync),(int)offsetof(lira_t,line[0].wob));}')
+subprocess.check_call(["gcc", "-I" + os.path.join(HERE, "src"), "-o", _o2, _o2 + ".c"])
+OFF_DSYNC, OFF_WOB = (int(v) for v in subprocess.check_output([_o2]).split())
+
+
+def echo_level(drift, dsync=0, tune=100, secs=24):
+    l = Lira(DST_MIX=0, VIBRATO=0, FAST12=1, MOD12=0, SOURCE12=1, SHARP12=0, WAVE=1, PITCH1234=63, TUNE1=tune, DEL_MIX=64, FEEDBACK=0,
+             MOD1=0, MOD2=0, DEL_MOD=1, TIME1=70, TIME2=70)
+    l.key(0, 1)
+    l.run(8 * SR)
+    ctypes.c_uint8.from_address(ctypes.addressof(l.mem) + OFF_DSYNC).value = dsync
+    lib.lira_tone(l.mem, 0, drift)
+    x = l.run(secs * SR)
+    wob = ctypes.c_float.from_address(ctypes.addressof(l.mem) + OFF_WOB).value
+    return x, wob
+
+
+_lr = Lira(DST_MIX=0, VIBRATO=0, FAST12=1, MOD12=0, SOURCE12=1, SHARP12=0, WAVE=1, PITCH1234=63, TUNE1=100, DEL_MIX=0)
+_lr.key(0, 1)
+_lr.run(8 * SR)
+ref = rms(_lr.run(8 * SR))
+x_still, w_still = echo_level(0.0)
+x_wob, w_wob = echo_level(0.4)
+x_syn, w_syn = echo_level(0.4, dsync=3)
+lv = lambda x: 20 * np.log10(rms(x[SR:]) / ref)
+check("no drift: the tone and its echo cancel for good at this pitch and time (%.0f dB)" % lv(x_still), lv(x_still) < -25)
+check("DRIFT 0.4: the cancellation moves on, the average level comes back (%.0f dB)" % lv(x_wob), lv(x_wob) > -14 and 0 < abs(w_wob) < 0.06)
+check("a tempo-synced line keeps its time exactly (wobble %.5f)" % w_syn, abs(w_syn) < 1e-6)
+
+
 # CPU
 l = Lira()
 for i in range(8):

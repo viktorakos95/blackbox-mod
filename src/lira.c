@@ -478,14 +478,14 @@ static inline void dl_put(lira_line *ln, int i, float v)
 }
 static inline float dl_get(const lira_line *ln, int i) { return (float)ln->buf[i] * (1.f / DL_SCALE); }
 
-static inline __attribute__((always_inline)) float line_run(lira_line *ln, float in, float mv, float k_ratio, float d0, float depth, const float *c)
+static inline __attribute__((always_inline)) float line_run(lira_line *ln, float in, float mv, float k_ratio, float d0, float depth, float wob, const float *c)
 {
     /* c: [0] 1 Hz high-pass, [1] input low-pass (5 kHz, two poles), [2] output low-pass (2.8 kHz, one pole: SoS "a single
        capacitor"), [3] 689 Hz (self-modulation sense) */
     float x = hip(&ln->hp_x, in, c[0]);
     x = lop(&ln->in1, x, c[1]);
     x = lop(&ln->in2, x, c[1]);
-    float den = fmax_(1.f + depth * mv, 0.25f);          /* the clock runs faster with positive modulation */
+    float den = fmax_(1.f + depth * mv + wob, 0.25f);    /* the clock runs faster with positive modulation */
     float ratio = k_ratio * den;                          /* memory steps per audio sample */
     float raw;
     if (ratio >= 1.f) {                                   /* clock above the audio rate: a tap */
@@ -591,6 +591,8 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
     }
     /* drift: each oscillator's pitch is low-passed noise (a few seconds a turn, up to ~6 cents at full) */
     const float drifta = 1.f - (float)LIRA_CR * isr / 6.f;
+    const float wda = 1.f - (float)LIRA_CR * isr / 3.f, wfade = 1.f - (float)LIRA_CR * isr / 0.5f;
+    const float wdb = l->drift * 0.012f * 1.732f * fexp2(0.5f * flog2(2.f * (float)LIRA_CR * isr / 3.f));
     const float driftb = l->drift > 0.f ? l->drift * l->drift * 0.0035f * 1.732f * fexp2(0.5f * flog2(2.f * (float)LIRA_CR * isr / 6.f)) : 0.f;
     const float bodyc = l->bodyc;
     int ei = 0;
@@ -714,6 +716,11 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
         float k_ratio[2], d0[2], depth[2];
         for (int i = 0; i < 2; i++) {
             lira_line *ln = &l->line[i];
+            if (driftb > 0.f && !(l->dsync >> i & 1)) {         /* the delay clock wobbles a little, slowly and at random (DRIFT sets how far, up to ~1.2 %): a drone and its echo stop cancelling in the same places for good */
+                ln->wob = ln->wob * wda + rnd(l) * wdb;
+            } else {
+                ln->wob *= wfade;                               /* (a synced line, or drift off: it settles back to the exact time in ~0.5 s) */
+            }
             rstep(&ln->time, m);
             rstep(&ln->mod, m);
             k_ratio[i] = PT_BITS * isr / ln->time.cur;
@@ -771,7 +778,7 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
             for (int i = 0; i < nlines; i++) {
                 lira_line *ln = &l->line[i];
                 float mv = delmod == 0 ? ln->self_lp * 0.5f : lfom;
-                float yd = line_run(ln, lin, mv, k_ratio[i], d0[i], depth[i], dc);
+                float yd = line_run(ln, lin, mv, k_ratio[i], d0[i], depth[i], l->line[i].wob, dc);
                 wet += yd;
                 if (i == 0)
                     yl0 = yd;
