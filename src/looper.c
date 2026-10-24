@@ -292,12 +292,14 @@ static inline struct dsp *DSP(void)
 static const float opt_defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
 
 /* Replaces the sample pool init call (bl @0x0804c20e): once per boot, after the pool has its memory. */
+void tcm_boot(void);
 void looper_boot(void *engine)
 {
     fw_pool_init(engine);
     bkp_enable();
     crash_boot();                                 /* why the last run ended (src/crash.c), before anything else of ours runs */
     t2m_boot();                                   /* Trigger2MIDI (src/t2m_bb.c): its memory, while nothing else allocates */
+    tcm_boot();                                   /* the TCM probe (src/tcmprobe.c, temporary): which fast-memory blocks the firmware uses */
     S->magic = 0;
     S->engine = (uint8_t *)engine;
     S->ok = 0;

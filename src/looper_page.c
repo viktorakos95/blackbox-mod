@@ -61,6 +61,8 @@ typedef void (*msg_fn)(void *obj, const uint16_t *msg);
 uint8_t *solo_looper_view(void);
 void solo_song_screen(uint8_t *app);
 void solo_open_page(uint8_t *app, int tab);
+void tcm_step(void);                                      /* src/tcmprobe.c (temporary) */
+void tcm_text(char *b);
 void looper_guard(int mode);
 void looper_note_app(void *app);
 unsigned looper_screen_id(void);
@@ -190,7 +192,7 @@ struct page {
 #define P ((volatile struct page *)0x38800f00u)
 #define PMAGIC 0x50414732u
 
-_Static_assert(sizeof(struct page) <= 0xdc, "page state must fit below 0x38800fdc (the crash recorder's CPU shares, crash.c)");
+_Static_assert(sizeof(struct page) <= 0xd8, "page state must fit below 0x38800fd8 (the TCM probe's pointer, tcmprobe.c; then the crash recorder's CPU shares at 0x38800fdc, crash.c)");
 
 #define LAST_TAB (P->_r6[2])     /* the tab opened last (0..3 the Looper's, 5 SAMPLR, 6 TRIG, 7 DRONE-8) */
 #define FB ((void *)P->fb)       /* the frame buffer (no .bss in the code cave: it lives with the page state) */
@@ -1161,6 +1163,11 @@ static void draw_footer(const struct lay *L)
         text(x0, L->foot_y + 4, "PAUSE", C_RED, 1);
     else if (P->info_on == 1)
         text(x0, L->foot_y + 4, "SHIFT", C_RED, 1);
+    else if (P->mode < M_SMPLR) {                                 /* the TCM probe's result (src/tcmprobe.c; temporary) */
+        char b[28];
+        tcm_text(b);
+        text(x0, L->foot_y + 4, b, C_GREY, 1);
+    }
 }
 
 /* ---- the SAMPLR page: the sample's waveform on top (touch it), below it two rows of big buttons that depend on the sheet picked in the footer:
@@ -1759,6 +1766,7 @@ static void paint_(uint8_t *view)
 {
     if (P->_r6[1] != clut_theme())
         clut_write(clut_theme());
+    tcm_step();
     geometry(view);
     rehide(view);
     widen(view);
