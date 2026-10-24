@@ -5,10 +5,12 @@ cd "$(dirname "$0")"
 mkdir -p out
 arm-none-eabi-g++ -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -O2 -ffreestanding -nostdlib -fno-exceptions \
   -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit -fno-math-errno -std=gnu++17 -Wall -Werror -Wno-unused-function \
-  -Wno-class-memaccess -Wno-unused-but-set-variable -Wno-unused-variable -Wno-unused-parameter -isystem src/munchi/sys -c -o out/munchi.o src/munchi.cpp
+  -Wno-class-memaccess -Wno-unused-but-set-variable -Wno-unused-variable -Wno-unused-parameter -ffunction-sections -isystem src/munchi/sys -c -o out/munchi.o src/munchi.cpp
 LD=src/cave.ld; EXTRA=; OCJ="-j .cave"
 if [ -n "$BANK2" ]; then LD=src/cave_b2.ld; EXTRA="-DBANK2 src/bank2.S"; OCJ="-j .cave -j .bank2"; fi
-arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffreestanding -nostdlib $EXTRA \
-  -fno-builtin -Wall -Wextra -Werror -T $LD -Wl,-e,0 -o out/cave.elf src/solo.c src/slice.c src/duck.c src/duck_thunk.S src/chord.c src/cond.c src/cond_thunk.S src/filter.c src/filter_thunk.S src/cpu.c src/od.c src/comp.c src/seqfix.c src/fx2.c src/fx2_thunk.S src/looper.c src/looper_page.c src/samplr.c src/t2m.c src/t2m_bb.c src/t2m_page.c src/clkmon.c src/looper_thunk.S src/lira.c src/lira_chord.c src/lira_pad.c src/lira_thunk.S src/crash.c src/crash_thunk.S src/tcmprobe.c out/munchi.o
+arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffunction-sections -ffreestanding -nostdlib $EXTRA \
+  -fno-builtin -Wall -Wextra -Werror -T $LD -Wl,-e,0 -o out/cave.elf src/solo.c src/slice.c src/duck.c src/duck_thunk.S src/chord.c src/cond.c src/cond_thunk.S src/filter.c src/filter_thunk.S src/cpu.c src/od.c src/comp.c src/seqfix.c src/fx2.c src/fx2_thunk.S src/looper.c src/looper_page.c src/samplr.c src/t2m.c src/t2m_bb.c src/t2m_page.c src/clkmon.c src/looper_thunk.S src/lira.c src/lira_chord.c src/lira_pad.c src/lira_thunk.S src/crash.c src/crash_thunk.S src/itcm_thunk.S out/munchi.o
 arm-none-eabi-objcopy -O binary $OCJ out/cave.elf out/cave.bin
-arm-none-eabi-size -A out/cave.elf | grep -E 'cave|data|bss'
+rm -f out/itcm.bin
+if arm-none-eabi-objdump -h out/cave.elf | grep -q ' \.itcm '; then arm-none-eabi-objcopy -O binary -j .itcm out/cave.elf out/itcm.bin; fi
+arm-none-eabi-size -A out/cave.elf | grep -E 'cave|itcm|data|bss'

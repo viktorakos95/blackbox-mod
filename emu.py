@@ -35,13 +35,15 @@ class Emu:
         uc.mem_map(0x08000000, 0x200000)
         uc.mem_write(BASE, open(image, "rb").read())
         uc.mem_map(0x24000000, 0x80000)
-        uc.mem_map(0x00000000, 0x10000)               # ITCM and DTCM: the TCM probe reads them
-        uc.mem_map(0x20000000, 0x20000)
+        uc.mem_map(0x00000000, 0x10000)               # ITCM: the audio code that runs every sample (src/cave.ld)
         uc.mem_map(0x52001000, 0x1000)               # DMA2D: the pages write their colours into its CLUT
         uc.mem_write(RET, b"\x00\xbf\x00\xbf")
         uc.reg_write(UC_ARM_REG_C1_C0_2, 0xF << 20)   # FPU on
         uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
         self.stubs, self.calls = _Stubs(uc), []
+        if "__itcm_start" in self.sym:                # the code that runs from ITCM: looper_boot copies it in on the unit
+            a, n = self.sym["__itcm_start"], self.sym["__itcm_end"] - self.sym["__itcm_start"]
+            uc.mem_write(a, bytes(uc.mem_read(self.sym["__itcm_load"], n)))
         for name in ("crash_irq_off", "crash_irq_on"):  # PRIMASK: not in unicorn's ARM model
             if name in self.sym:
                 self.stub(self.sym[name], value=0)

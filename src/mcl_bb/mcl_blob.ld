@@ -3,7 +3,7 @@
  * .data/.bss/heap live in a fixed SDRAM region at the top of the 64 MB, reserved by lowering the allocator's initial top
  * (patches/mclblob.py rewrites the .data image word at 0x080f1e08: 0xc4000000 -> 0xc3f80000), so every address is known at link time. */
 MEMORY {
-  BLOB (rx)  : ORIGIN = 0x08120000, LENGTH = 0x60000
+  BLOB (rx)  : ORIGIN = 0x08120000, LENGTH = 0x50000      /* (0x08170000.. holds the main cave's ITCM image, src/cave.ld) */
   RAM  (rwx) : ORIGIN = 0xC3F80000, LENGTH = 0x80000
 }
 ENTRY(mcl_entry_table)
