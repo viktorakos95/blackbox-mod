@@ -992,11 +992,13 @@ static uint32_t govern(struct pg *g)
                 g->shed_blk = g->blk;
                 g->dhold = (float)g->dsp;
             }
-        } else if (load + g->dhold < mark - 30.0f && inst < 800.0f && since > 800) {
+        } else if (load + g->dhold < mark - 30.0f && inst - (float)g->dsp + g->dhold < 900.0f && since > 800) {   /* (dsp is its share when it last ran: not now) */
             g->shed = 0;
             g->shed_blk = g->blk;
         }
-        looper_guard_want(2, g->shed >= 3 && looper_page_leader() == 2 ? (int)g->dhold : 0);   /* the leader out: the engines below give way for it */
+        /* the leader out: the engines below give way for it, by its share and a margin, so that the load ends up clearly under the line where it
+           comes back (with its share only they stopped right at that line, and it never came back) */
+        looper_guard_want(2, g->shed >= 3 && looper_page_leader() == 2 ? (int)g->dhold + 80 : 0);
     }
     return c0;
 }
@@ -1156,7 +1158,7 @@ void lira_page_run(float *l, float *r, int n)
             xn = en;
         }
     }
-    float gain = (float)g->level * (1.0f / 700.0f);
+    float gain = (float)g->level * (1.0f / 500.0f);           /* (+3 dB on build 91: it sat under the other machines) */
     float tmp[128], tmr[128], exl[128], exr[128];
     for (int i0 = 0; i0 < n; i0 += 128) {
         int m = n - i0 < 128 ? n - i0 : 128;

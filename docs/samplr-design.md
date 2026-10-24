@@ -728,3 +728,11 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
   loads (build 78's record: 31 % idle, the loader waiting on the card). crash.c stamps the loader's last read that worked; while it has read in the
   last ~0.5 s (`crash_loading`), every engine's mark on the averaged load is 12 % lower (LOADING_ROOM): they give way in their usual order (fades,
   SAMPLR's steps) and come back after the load.
+
+## Build 92 (DRONE-8: meter, attack, level, coming back)
+- The overload warning sits at the right end of the DRONE-8 top bar like on the other pages (the six switches moved 10 px left).
+- FAST's attack is a snap (3 ms, whatever the touch); the slow attack is 1.5x slower (~0.6 s time constant at full touch).
+- The output is 3 dB louder (level / 500): it sat under the other machines.
+- Coming back as the leader: the others gave way by its share only, so the load settled right at the line where it comes back and it stayed out
+  (while SAMPLR, below it, had already gone). Now they give way by its share + 8 %; and its return check no longer counts its old share as if
+  it were still running (the share before the synth + its share < 90 %).

@@ -394,11 +394,11 @@ static void draw_lira(void)
     }
     /* (the governor's SHED and the load readouts that stood here: docs/diagnostics.md) */
     b[8] = 0;                                                     /* (it must stay clear of the switches) */
-    draw_load(50);                                                /* the overload warning (looper_page.c draw_load) */
-    text(61, 4, b, *b ? C_WHITE : C_GREY, 1);
+    text(54, 4, b, *b ? C_WHITE : C_GREY, 1);
+    draw_load(P->w - 10);                                         /* the overload warning at the right, as on the other pages (looper_page.c draw_load) */
     int mom = lira_ui_momentary(0), sine = lira_ui_chord_get(154), fr = lira_ui_chord_get(157), xs = lira_ui_chord_get(156), gm = lira_ui_chord_get(158);
     /* six switches at the right, 32 px wide every 33, from the right: LATCH / HOLD, TRI / SINE, X:IN / X:MIX / X:ALL, STEP / FREE, REC, BTN */
-#define LU_SW(k) (P->w - 35 - 33 * (k))
+#define LU_SW(k) (P->w - 45 - 33 * (k))                           /* (the overload warning sits right of them) */
     frame(LU_SW(0), 2, 32, TOPBAR - 2, mom ? LU_ACC2 : LU_LINE, 1);
     text_c(LU_SW(0), 4, 32, mom ? "HOLD" : "LATCH", LU_DIM, 1);
     frame(LU_SW(1), 2, 32, TOPBAR - 2, sine ? LU_ACC1 : LU_LINE, 1);
@@ -612,7 +612,7 @@ static void lira_touch(int kind, int id, int x, int d)
     }
     lira_ui_drag(id, 0, 0, 0, 0, 0);
     if (d <= TOPBAR + 1) {
-        int k = (P->w - 3 - x) / 33;                              /* the switches: 0 LATCH, 1 TRI / SINE, 2 X:, 3 STEP / FREE, 4 REC, 5 BTN */
+        int k = x < P->w - 13 ? (P->w - 13 - x) / 33 : -1;                              /* the switches: 0 LATCH, 1 TRI / SINE, 2 X:, 3 STEP / FREE, 4 REC, 5 BTN */
         if (k == 0)
             lira_ui_momentary(1);
         else if (k == 1)

@@ -201,8 +201,21 @@ def opened(fast):
     l = Lira(**{**CLEAN, "FAST12": fast, "FAST34": fast})
     for k in range(4):
         l.key(k, 1)
-    l.run(SR)
+    l.run(3 * SR)                                 # (the slow attack is ~0.6 s at full touch: well open after 3 s)
     return rms(l.run(SR // 4))
+
+
+def attack_ms(fast, frac=0.7):
+    """ms until voice 1's level (20 ms windows) reaches frac of its open level"""
+    l = Lira(**{**CLEAN, "FAST12": fast})
+    l.key(0, 1)
+    lv = [rms(l.run(SR // 50)) for _ in range(150)]
+    top = max(lv[-10:])
+    return next(i for i, v in enumerate(lv) if v >= frac * top) * 20
+
+
+a_fast, a_slow = attack_ms(1), attack_ms(0)
+check("FAST opens with a snap (within the first 20 ms window), the slow envelope takes about half a second or more", a_fast == 0 and a_slow >= 400, "fast %d ms, slow %d ms" % (a_fast, a_slow))
 
 
 def held(fast, hold):

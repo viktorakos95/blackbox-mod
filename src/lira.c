@@ -34,6 +34,7 @@
                                     to play with); the gain is the envelope squared, so -60 dB takes ~3.5 tau = 11.5 s; +-20 % per voice */
 #define REL_FAST      0.145f     /* s, FAST: -60 dB in 0.5 s */
 #define ATTACK_TAU    0.2f       /* (assumed) s at full touch: attack resistor 300 k-1 M with 2.2 uF (DIY docs) */
+#define ATTACK_SNAP   0.003f     /* s, FAST's attack: a snap (asked for; the hardware's is the slow RC above) */
 #define HOLD_SLOW     0.5f       /* knob position where slow-envelope voices start to drone (12 o'clock) */
 #define HOLD_FAST     0.7f       /* ... FAST voices (2 o'clock) */
 #define PT_BITS       44000.0f   /* PT2399 memory */
@@ -665,8 +666,8 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
                 float dr = vo->fast ? clip_((gn->drive - 0.15f) * (1.f / 0.85f), 0.f, 1.f) : gn->drive;
                 if (vo->follow)
                     gn->ve += (fd - gn->ve) * (1.f - expm_small(dt / (fd > gn->ve ? 0.004f : 0.2f)));
-                else if (dr > gn->ve)
-                    gn->ve += (dr - gn->ve) * (1.f - expm_small(dt * (0.3f + 0.7f * dr) / (ATTACK_TAU * (vo->fast ? 1.4f : 2.f))));
+                else if (dr > gn->ve)                     /* FAST: a snap (3 ms whatever the touch); slow: ~0.6 s at full touch, slower with a light one */
+                    gn->ve += (dr - gn->ve) * (1.f - expm_small(vo->fast ? dt * (1.f / ATTACK_SNAP) : dt * (0.3f + 0.7f * dr) / (ATTACK_TAU * 3.f)));
                 else if (gn->drive == 0.f)
                     gn->ve *= expm_small(dt / (vo->fast ? gn->t_fast : gn->t_slow));   /* gain = ve^2 */
                 float f0 = gn->tune.cur;

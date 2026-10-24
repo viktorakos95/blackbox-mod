@@ -1896,7 +1896,7 @@ void looper_guard_want(int e, int share)
     struct guard *g = &DSP()->gd;
     if (share > 0) {
         g->want_eng1 = (uint8_t)(e + 1);
-        g->want_share = (uint16_t)(share > 350 ? 350 : share);
+        g->want_share = (uint16_t)(share > 430 ? 430 : share);
     } else if (g->want_eng1 == e + 1) {
         g->want_eng1 = 0;
     }
