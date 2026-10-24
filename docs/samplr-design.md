@@ -736,3 +736,11 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
 - Coming back as the leader: the others gave way by its share only, so the load settled right at the line where it comes back and it stayed out
   (while SAMPLR, below it, had already gone). Now they give way by its share + 8 %; and its return check no longer counts its old share as if
   it were still running (the share before the synth + its share < 90 %).
+
+## Build 93 (DRONE-8: no click on the snap, coming back with fewer voices)
+- The envelope's gain was worked out once per 16-sample control block and held: a 3 ms attack rose in nine steps, which clicked. It glides
+  per sample now (each oscillator keeps the last block's gain terms, `pga` / `pgb`).
+- Coming back: it waited for room for its whole share when it went out (`dhold`), even with fewer voices held now. The share is scaled to the
+  voices that would sound now (about a third of it is the delay lines and the output stage, there with any number of voices): `back_cost`.
+- (Report: "release got faster". The release times are unchanged; with the slower attack a short press opens a voice less far, so its release
+  starts lower and is gone sooner.)

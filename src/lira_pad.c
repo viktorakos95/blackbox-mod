@@ -214,6 +214,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t sp_hold;             /* the in-block check: blocks it stays out after a spike (looper_drone_spike) */
     float sc0, sc1;              /* ... and its fade back (0 sounding .. 1 out), at the start / end of this block */
     float lastl, lastr;          /* the last frame this synth added (a cut dies away from it instead of stepping to 0) */
+    uint8_t nv_hold;             /* voices sounding when it went out (dhold was their cost) */
 };
 #define GEV_MAX 1024
 struct gev {                     /* one recorded gesture: when (frames from the bar line), what (a control id, or 300 + voice for a plate, 400 + voice a chord pitch, 500 + stepped id, 600 + action; the layer in bits 11..12) and its value */
@@ -929,6 +930,28 @@ int lira_ui_prev(int which)                              /* the run before: 0 lo
     return which == 0 ? (o->c_pk + 5) / 10 : which == 1 ? (o->d_pk + 5) / 10 : which == 2 ? o->free_min : which == 3 ? o->shed : which == 5 ? (o->w_pk + 5) / 10 : 1;
 }
 
+/* Voices that would sound now: plates held or latched, and a group whose Hold keeps it droning counts all four. */
+static int voices_on(const struct pg *g)
+{
+    int n = 0;
+    for (int grp = 0; grp < 2; grp++) {
+        int c = 0;
+        for (int k = 0; k < 4; k++)
+            c += g->want[4 * grp + k] != 0;
+        n += g->ex[grp] > 480 ? 4 : c;
+    }
+    return n;
+}
+
+/* What it would cost back (per mille): its share when it went out, scaled to the voices that would sound now (about a third of it is the
+   delay lines, the output stage and the bookkeeping, there with any number of voices). */
+static float back_cost(const struct pg *g)
+{
+    float nv = (float)voices_on(g), n0 = (float)(g->nv_hold ? g->nv_hold : 1);
+    nv = nv < 1.0f ? 1.0f : nv;
+    return g->dhold * (0.35f + 0.65f * nv / n0);
+}
+
 static uint32_t govern(struct pg *g)
 {
     if (!(DWT_CTRL & 1u)) {
@@ -991,14 +1014,16 @@ static uint32_t govern(struct pg *g)
                 g->shed = 3;
                 g->shed_blk = g->blk;
                 g->dhold = (float)g->dsp;
+                int nv = voices_on(g);
+                g->nv_hold = (uint8_t)(nv < 1 ? 1 : nv);
             }
-        } else if (load + g->dhold < mark - 30.0f && inst - (float)g->dsp + g->dhold < 900.0f && since > 800) {   /* (dsp is its share when it last ran: not now) */
+        } else if (load + back_cost(g) < mark - 30.0f && inst - (float)g->dsp + back_cost(g) < 900.0f && since > 800) {   /* (dsp is its share when it last ran: not now) */
             g->shed = 0;
             g->shed_blk = g->blk;
         }
         /* the leader out: the engines below give way for it, by its share and a margin, so that the load ends up clearly under the line where it
            comes back (with its share only they stopped right at that line, and it never came back) */
-        looper_guard_want(2, g->shed >= 3 && looper_page_leader() == 2 ? (int)g->dhold + 80 : 0);
+        looper_guard_want(2, g->shed >= 3 && looper_page_leader() == 2 ? (int)back_cost(g) + 80 : 0);
     }
     return c0;
 }

@@ -628,7 +628,8 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
         const float fx = fol * 14.f;                       /* the external input's level, for Touch = Follow: compressed so quiet
                                                          hits still open the envelope (gain is ve squared, so it must reach 1) */
         const float fd = clip_(1.25f * fx / (fx + 1.f), 0.f, 1.f);
-        float vmod[4], vat[4], vas[4], vk[4], vkn[4], vf[8], vx[8], vga[8], vgb[8], vlvl[8], vll[8], vlr[8];
+        float vmod[4], vat[4], vas[4], vk[4], vkn[4], vf[8], vx[8], vga[8], vgb[8], dga[8], dgb[8], vlvl[8], vll[8], vlr[8];
+        const float invm = 1.f / (float)m;
         uint8_t vact[8];
         for (int v = 0; v < 4; v++) {
             lira_voice *vo = &l->v[v];
@@ -685,8 +686,15 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
                 }
                 /* the envelope's transistor: gain, plus a bend that grows as it closes (waveshaper), the bleed, the trim:
                    (wave * ga + WSHAPE (1 - ga) ga wave^2 + wave * leak) * trim = wave * (vga + vgb * wave) */
-                vga[o] = (ga + gn->leak_f) * gn->trim;
-                vgb[o] = WSHAPE * (1.f - ga) * ga * gn->trim;
+                {   /* the gain glides from the last block's value to this one's over the block's samples (a fast attack in 16-sample steps clicked) */
+                    float a1 = (ga + gn->leak_f) * gn->trim, b1 = WSHAPE * (1.f - ga) * ga * gn->trim;
+                    vga[o] = gn->pga;
+                    vgb[o] = gn->pgb;
+                    dga[o] = (a1 - gn->pga) * invm;
+                    dgb[o] = (b1 - gn->pgb) * invm;
+                    gn->pga = a1;
+                    gn->pgb = b1;
+                }
                 vlvl[o] = gn->lvl.cur;
                 vll[o] = vlvl[o] * pgl[o];
                 vlr[o] = vlvl[o] * pgr[o];
@@ -763,6 +771,8 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
                         tri = z * (35.f + z2 * (-35.f + z2 * (21.f - 5.f * z2))) * vkn[v];
                     }
                     float wave = vat[v] * tri + vas[v] * sq;
+                    vga[o] += dga[o];
+                    vgb[o] += dgb[o];
                     float tr = wave * (vga[o] + vgb[o] * wave);
                     yl += tr * vll[o];                    /* what is heard: the voice's level fader, and its place left / right */
                     yr += tr * vlr[o];

@@ -57,6 +57,7 @@ typedef struct {
     float bph;                            /* phase of the cheap stand-in that carries a closed oscillator's bleed */
     lira_ramp tune;                       /* Hz */
     lira_ramp lvl;                        /* this oscillator's level (a mixer fader) */
+    float pga, pgb;                       /* the envelope's gain terms at the end of the last control block (they glide per sample: no steps) */
 } lira_gen;
 
 typedef struct {
