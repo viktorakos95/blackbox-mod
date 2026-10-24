@@ -93,6 +93,7 @@ struct sdst {
     uint32_t err, sta;
     uint16_t r_fails, r_recov, r_gaveup, r_reads;
     uint32_t r_err, r_sta;
+    uint32_t last_rd;                       /* the audio block count at the loader's last read that worked (crash_loading) */
 };
 #define SD ((volatile struct sdst *)0x38800940u)
 #define SD_MAGIC 0x32534453u
@@ -238,7 +239,7 @@ void crash_boot(void)
         q->r_sta = ok ? q->sta : 0;
         q->magic = SD_MAGIC;
         q->fails = q->recov = q->gaveup = q->reads = 0;
-        q->err = q->sta = 0;
+        q->err = q->sta = q->last_rd = 0;
     }
     r->state = 2;                                                 /* (not looked at yet) */
     r->rsr = rsr;
@@ -365,6 +366,15 @@ static int sd_settle(void)
     return 1;
 }
 
+/* The stock loader is reading the card (a preset, a sample, a folder listing): it read something in the last ~0.5 s. Each of its reads
+ * waits for the audio task to finish its block, so the less of the block our engines take, the faster it loads (looper.c). */
+int crash_loading(void)
+{
+    volatile struct sdst *q = SD;
+    uint32_t now = ((volatile uint32_t *)0x2400a584u)[2];
+    return q->magic == SD_MAGIC && q->last_rd && now + 1u - q->last_rd < 200u;
+}
+
 int crash_sd_read(uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count)     /* in the driver table, for 0x08045975 */
 {
     volatile struct sdst *q = SD;
@@ -381,6 +391,7 @@ int crash_sd_read(uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count)   
                                                                      loader alternately waiting on the SD queue and ready, no read failing). */
                 volatile uint32_t *wd = (volatile uint32_t *)0x2400a584u;   /* {stamp A, stamp B, blocks} */
                 wd[0] = wd[2];
+                q->last_rd = wd[2] + 1u;                          /* (+1: 0 is "never") */
                 if (q->reads < 0xffffu)
                     q->reads++;
             }

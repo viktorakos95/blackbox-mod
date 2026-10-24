@@ -277,6 +277,8 @@ struct dsp {
         uint16_t rep;
         float fo[LOOPER_TRACKS];                 /* how far it is faded: 0 not at all (as set), 1 silent */
         uint16_t spike_show;                     /* blocks the top bars' warning still shows that an engine was left out of a block (in-block check) */
+        uint32_t t_out;                          /* cycle count when the looper stage ended (0: not this block) */
+        float rpk;                               /* the rest of the block after it (stock output, master compressor, interrupts), per mille: its recent worst, let down over a few seconds */
     } gd;
     int16_t ws[5120];                            /* WSOLA: the candidate region, mono */
     float zero[MAXN];
@@ -1798,6 +1800,7 @@ int lira_send_add(float *l, float *r, int n);              /* lira_pad.c: the dr
  *   A track it leaves out fades back in by itself over the next blocks. */
 enum { E_LOOPER, E_SAMPLR, E_DRONE };               /* the engines, for the guard's priorities (below) */
 int looper_soft_threshold(int e);
+#define LOADING_ROOM 120                          /* per mille: how much lower every mark is while the stock loader reads the card */
 #define GUARD_SOFT 920                            /* per mille of the averaged load: where the engine that gives way first starts to fade (later ones a little higher) */
 #define FADE_OUT   (1.f / 750.f)                  /* ~2 s out; coming back takes ~2.5 s */
 #define WAKE (*(volatile uint32_t *)0x2405ffd4u)  /* cpu.c: the cycle count when the audio task woke up for this block */
@@ -1901,7 +1904,7 @@ void looper_guard_want(int e, int share)
 
 int looper_soft_threshold(int e)                   /* per mille of the averaged load that starts engine e's fade: the first to give way earliest */
 {
-    int m = GUARD_SOFT + 15 * below(e);
+    int m = GUARD_SOFT + 15 * below(e) - (crash_loading() ? LOADING_ROOM : 0);   /* (a preset or sample loading: room for the loader, see crash_loading) */
     int we = (S->magic == MAGIC && S->ok) ? (int)DSP()->gd.want_eng1 - 1 : -1;
     if (we >= 0 && we != e && prio(we) > prio(e)) {
         m -= DSP()->gd.want_share;
@@ -2017,6 +2020,15 @@ static void guard_decide(struct dsp *d)
  * effects, DRONE-8, SAMPLR before it) and, if the looper's tracks outrank SAMPLR, the tracks' time kept for them. Past the engine's cap (88 %, +2 % for
  * each engine that ranks below it) there is no time for it in this block: it is left out of it (a ramp to 0, or for the looper's tracks a cheap one)
  * and fades back in when the next blocks have room. A pause by another task cannot fool it: it only looks at the time already gone. */
+/* An engine's in-block cap (per mille of the block): 88 %, +2 % for each engine that ranks below it, but always leaving room for the rest of the
+ * block after the looper stage as it has been lately (the stock output, the master compressor: it grows with a busy sequence or the compressor on). */
+static int cap_of(const struct guard *g, int e)
+{
+    int cap = 880 + 20 * below(e), room = 1000 - 20 - (int)g->rpk;
+    cap = room < cap ? room : cap;
+    return cap < 500 ? 500 : cap;
+}
+
 int looper_over_cap(int e)
 {
     if (S->magic != MAGIC || !S->ok)
@@ -2033,7 +2045,7 @@ int looper_over_cap(int e)
             if (track_out(k) && !k->muted)
                 need += guard_est(d, t, k, g->nblk);
         }
-    int over = need * 1000.f > (float)(880 + 20 * below(e)) * g->per;
+    int over = need * 1000.f > (float)cap_of(g, e) * g->per;
     if (over)
         g->spike_show = 375;                                  /* (~2 s on the top bars) */
     return over;
@@ -2059,7 +2071,7 @@ int looper_drone_spike(uint32_t own)
             if (track_out(k) && !k->muted)
                 need += guard_est(d, t, k, g->nblk);
         }
-    int over = need * 1000.f > (float)(880 + 20 * below(E_DRONE)) * g->per;
+    int over = need * 1000.f > (float)cap_of(g, E_DRONE) * g->per;
     if (over)
         g->spike_show = 375;                                  /* (~2 s on the top bars) */
     return over;
@@ -2129,6 +2141,14 @@ void looper_block_done(uint32_t now)
     uint32_t used = now - WAKE;
     if (g->spike_show)
         g->spike_show--;
+    if (g->t_out && g->per > 0.f) {                                   /* the rest of the block after the looper stage */
+        uint32_t rc = now - g->t_out;
+        if ((float)rc < g->per) {
+            float rw = (float)rc * 1000.f / g->per;
+            g->rpk = rw > g->rpk ? rw : g->rpk + (rw - g->rpk) * (1.f / 750.f);
+        }
+        g->t_out = 0;
+    }
     if (g->per > 0.f && (float)used < 4.f * g->per) {
         float w = (float)used * 1000.f / g->per;
         if (w > 1000.f)
@@ -2441,6 +2461,7 @@ void looper_stage(uint8_t *obj, void *bufs)
         uint32_t c_y = *(volatile uint32_t *)0xe0001004u - c_l;
         samplr_stage_prof(pre, c_l - c_in, c_y);
         lira_rec_end(l, r, n);                     /* what the looper added, for the pad recorder's LOOPER input */
+        DSP()->gd.t_out = *(volatile uint32_t *)0xe0001004u | 1u;   /* (looper_block_done: what came after) */
         crash_bc(BC_AUDIO, 0);
     }
 }

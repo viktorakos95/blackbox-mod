@@ -345,9 +345,14 @@ run_at(0.10, 0.70, 400)
 # --- the leader: the engine whose page was opened last is protected longest
 def r0s():
     return e.uc.reg_read(A.UC_ARM_REG_R0) & 0xFFFFFFFF
+G_RPK = g_at("rpk")
+def no_tail():
+    """(run_at's blocks have no time in the tracks, so whole - pre is all 'after the looper stage': for the cap checks the tail is set to 0)"""
+    setf(G_RPK, 0.0)
 def over(eng, used):
     """does the time already used (a fraction of the block) leave no room for engine eng (1 SAMPLR, 0 looper)?"""
     run_at(0.10, 0.70, 1)
+    no_tail()
     e.w32(0x2405FFD4, ((e.r32(0xE0001004) & 0xFFFFFFFF) - int(used * PERC)) & 0xFFFFFFFF)
     e.call("looper_over_cap", eng)
     return r0s()
@@ -360,6 +365,7 @@ check("... and SAMPLR keeps time for the looper's tracks: with 72 % used before 
 def dspike(used, own=0.0):
     """DRONE-8's in-block check (it runs first): used and its own cost as fractions of the block"""
     run_at(0.10, 0.70, 1)
+    no_tail()
     e.w32(0x2405FFD4, ((e.r32(0xE0001004) & 0xFFFFFFFF) - int(used * PERC)) & 0xFFFFFFFF)
     e.call("looper_drone_spike", int(own * PERC))
     return r0s()
@@ -370,6 +376,28 @@ run_at(0.10, 0.70, 600)
 e.call("looper_page_set_leader", 2)
 check("DRONE-8 the leader keeps no time for the others: its cap is 92 % (72 % used is room, 93 % is not)", dspike(0.72) == 0 and dspike(0.93) == 1, (dspike(0.72), dspike(0.93)))
 check("... and its own cost counts: 80 % used + 15 % of its own is over", dspike(0.80, 0.15) == 1 and dspike(0.60, 0.15) == 0, (dspike(0.80, 0.15), dspike(0.60, 0.15)))
+run_at(0.10, 0.70, 1)
+setf(G_RPK, 250.0)
+e.w32(0x2405FFD4, ((e.r32(0xE0001004) & 0xFFFFFFFF) - int(0.76 * PERC)) & 0xFFFFFFFF)
+e.call("looper_drone_spike", 0)
+check("a long tail after the looper stage lately (the compressor, 25 %): DRONE-8's cap (92 %) leaves room for it: 76 % used is over", r0s() == 1, r0s())
+run_at(0.10, 0.30, 400)
+e.call("looper_drone_spike", 0)
+check("... and the tail shrinks back over a few seconds when the rest of the block is short again", r0s() == 0, r0s())
+def thr2(x):
+    e.call("looper_soft_threshold", x)
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+m0 = thr2(0)
+e.uc.mem_write(0x38800940, struct.pack("<I", 0x32534453))              # crash.c's SD record: the loader read something just now
+blk = 5000
+e.uc.mem_write(0x2400A58C, struct.pack("<I", blk))
+e.uc.mem_write(0x38800964, struct.pack("<I", blk + 1))
+check("the stock loader reading the card (a preset, a sample, a listing): every mark 12 % lower, so it gets its time", thr2(0) == m0 - 120, (m0, thr2(0)))
+e.uc.mem_write(0x2400A58C, struct.pack("<I", blk + 400))
+check("... back once it has not read for a while", thr2(0) == m0, (m0, thr2(0)))
+e.uc.mem_write(0x2400A58C, struct.pack("<I", blk))
+e.uc.mem_write(0x38800964, struct.pack("<I", 0))
+dspike(0.99)
 def olv():
     e.call("looper_overload_level")
     return r0s()

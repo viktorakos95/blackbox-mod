@@ -21,6 +21,7 @@ void crash_boot(void);                          /* from looper_boot: the reset's
 void crash_tick(void);                          /* from the audio stage, once a block: uptime, free RAM low point */
 int crash_line(int i, char *buf, int n);        /* the debug view's line i (0..); 0 when there are no more */
 void crash_clear(void);
+int crash_loading(void);                        /* the stock loader read the card in the last ~0.5 s */
 uint32_t crash_irq_off(void);                  /* interrupts off: the old PRIMASK */
 void crash_irq_on(uint32_t v);                 /* ... and back */
 int crash_pending(void);                        /* a record of a restart not looked at yet */

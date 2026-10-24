@@ -716,3 +716,15 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
   Calls between flash and ITCM go through the linker's veneers; stock hooks into moved functions go through `*_flash` entries (src/itcm_thunk.S).
 - Same code, same sound: only where it runs changed. What it saves (flash wait states and instruction cache misses: the hot code was ~190 KB of
   flash for a 16 KB cache) can only be seen on the unit. The main cave shrank from 188 KB to 126 KB.
+
+## Build 91 (room for the block's tail, room for the loader)
+- Report on build 90: installs and runs, feels the same; sequences and the compressor still push it; loading presets / samples while machines run
+  (the looper most) is very slow, files do not show, the preset list stops at a random folder; with everything stopped browsing is normal.
+- The in-block caps (looper_over_cap, looper_drone_spike) were fixed (88 %, +2 % for each engine ranking below): they assumed the rest of the block
+  after the looper stage (stock output, the master compressor) fits in what is left. Now that rest is measured every block (looper_stage stamps its
+  end, looper_block_done sees the task finish), its recent worst is held (`gd.rpk`, let down over a few seconds) and every cap leaves room for it.
+- The compressor's loop has no divisions left (1 / ratio, the knee's divisor and the dry share are worked out once a block).
+- Loading: each SD read of the stock loader waits for the audio task to finish its block, so the less of the block the engines take, the faster it
+  loads (build 78's record: 31 % idle, the loader waiting on the card). crash.c stamps the loader's last read that worked; while it has read in the
+  last ~0.5 s (`crash_loading`), every engine's mark on the averaged load is 12 % lower (LOADING_ROOM): they give way in their usual order (fades,
+  SAMPLR's steps) and come back after the load.
