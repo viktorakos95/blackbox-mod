@@ -744,3 +744,14 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
   voices that would sound now (about a third of it is the delay lines and the output stage, there with any number of voices): `back_cost`.
 - (Report: "release got faster". The release times are unchanged; with the slower attack a short press opens a voice less far, so its release
   starts lower and is gone sooner.)
+
+## Build 94 (the pads' own cost: a keys sequence alone overloaded it)
+- Report: a keys sequence (HighQ, the pad filter on, no chord) overloads the unit on its own; stock 3.1.9 handles anything.
+- Emulator, per voice per 128 frames (stereo): our 24 dB filter took 6.6 k instructions (11.7 k with Res past noon, the drive); the stock 12 dB
+  biquad it replaces is about 2.5 k. A keys sequence of 15-20 voices: 100-230 k instructions a block on top of stock, 10-20 % of it.
+- The filter is one pass over a channel now (drive, Butterworth stage, resonant stage per sample; before: three passes, each sample stored and
+  read back between them), one loop per case (LP / HP, clean / driven: no test inside). Same arithmetic in the same order (test_filter's
+  reference model still matches). 6.6 k -> 6.2 k, 11.7 k -> 9.8 k.
+- The pad's Interp (asked by the filter, every read kernel call, the overdrive) walks the pad's settings list each time; it is kept for the
+  rest of the block per pad (backup SRAM 0x38800fc8: pad, cpu.c's wake stamp, value). A keys sequence's voices share one pad: one lookup a block.
+- Idle machines (looper stage with nothing recorded, SAMPLR empty): ~7 k instructions a 128-frame block, under 1 %.

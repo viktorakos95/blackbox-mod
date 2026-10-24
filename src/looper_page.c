@@ -190,7 +190,7 @@ struct page {
 #define P ((volatile struct page *)0x38800f00u)
 #define PMAGIC 0x50414732u
 
-_Static_assert(sizeof(struct page) <= 0xdc, "page state must fit below 0x38800fdc (the crash recorder's CPU shares, crash.c)");
+_Static_assert(sizeof(struct page) <= 0xc8, "page state must fit below 0x38800fc8 (filter.c's Interp memo; then the crash recorder's CPU shares at 0x38800fdc)");
 
 #define LAST_TAB (P->_r6[2])     /* the tab opened last (0..3 the Looper's, 5 SAMPLR, 6 TRIG, 7 DRONE-8) */
 #define FB ((void *)P->fb)       /* the frame buffer (no .bss in the code cave: it lives with the page state) */

@@ -18,7 +18,7 @@ SECTIONS {
     __itcm_start = .;
     *(.text.lira_process .text.fexp2*)
     *(.text.samplr_run .text.sample_block_* .text.grain_spawn*)
-    *(.text.play_seg* .text.looper_filter .text.looper_in .text.svf .text.soft .text.crunch .text.frame_at .text.rd_span .text.lpos)
+    *(.text.play_seg* .text.looper_filter .text.looper_in .text.svf .text.svf24 .text.soft .text.crunch .text.frame_at .text.rd_span .text.lpos)
     *(.text.munchi_process .text._ZN13granularDelay12processDelayEPfS0_ .text._ZN10delayVoice4ReadEPfS0_)
     *(.text.filter_process .text.comp_process .text.od_process)
     . = ALIGN(4);

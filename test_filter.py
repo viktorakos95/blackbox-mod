@@ -450,5 +450,20 @@ set_interp(0, sat=1000)
 reset()
 l = run(sine(997))[0]
 check("Saturation in Normal Fidelity: no drive here (the warm saturation in od.c handles it)", all(abs(p - q) < 1e-7 for p, q in zip(l, sine(997))))
+# the pad's Interp is looked up once a block per pad (a keys sequence: one pad, many voices)
+lookups = []
+e.stub(0x08093E9C, lambda: (lookups.append(e.arg(1)), e.uc.reg_write(UC_ARM_REG_R0, 1)))   # (Interp = HighQ for every lookup)
+e.w32(0x2405FFD0, 0x43505532)
+e.w32(0x2405FFD4, 1000)
+setup(-0.5, 0.5, 1)
+lookups.clear()
+for _ in range(4):
+    run(sine(200, 64), sine(200, 64))
+check("one block, four voices of the same pad: the Interp is looked up once", lookups.count(0xF1) == 1, lookups)
+e.w32(0x2405FFD4, 2000)
+run(sine(200, 64), sine(200, 64))
+check("... and again in the next block (a change on the screen is seen a block later at most)", lookups.count(0xF1) == 2, lookups)
+e.w32(0x2405FFD0, 0)
+
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

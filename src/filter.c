@@ -191,42 +191,46 @@ static inline __attribute__((always_inline)) float soft(float x, float inv_t, fl
 }
 
 /*
- * stmlib Svf::Process<FILTER_MODE_LOW_PASS / HIGH_PASS> for one channel with coefficients fixed for the block.
- * CLIP: soft-limit the band-pass integrator (the resonant loop); only used on the resonant stage while driven.
+ * stmlib Svf::Process<FILTER_MODE_LOW_PASS / HIGH_PASS>, twice, for one channel with coefficients fixed for the block: the whole filter in one pass
+ * (same arithmetic, same order as the three passes it was before build 94): the drive into the soft clipper, the
+ * Butterworth stage, the resonant stage (its band-pass integrator soft-limited while driven). One pass instead of three: no store and reload
+ * of every sample between the stages.
  */
-#define SVF_LOOP(OUT, NEXT_S1)                                                                                     \
+#define SVF24_LOOP(HP, DRIVEN)                                                                                     \
     for (int i = 0; i < n; i++) {                                                                                  \
-        float hp = (x[i] - rg * s1 - s2) * h;                                                                      \
-        float bp = g * hp + s1;                                                                                    \
-        s1 = NEXT_S1;                                                                                              \
-        float lp = g * bp + s2;                                                                                    \
-        s2 = g * bp + lp;                                                                                          \
-        x[i] = OUT;                                                                                                \
+        float in = DRIVEN ? soft(x[i] * pre, 1.0f, 1.0f) : x[i];                                                   \
+        float hp = (in - rga * a1 - a2) * ha, bp = g * hp + a1;                                                    \
+        a1 = g * hp + bp;                                                                                          \
+        float lp = g * bp + a2;                                                                                    \
+        a2 = g * bp + lp;                                                                                          \
+        hp = ((HP ? hp : lp) - rgb * b1 - b2) * hb;                                                                \
+        bp = g * hp + b1;                                                                                          \
+        b1 = DRIVEN ? soft(g * hp + bp, inv, limit) : g * hp + bp;                                                 \
+        lp = g * bp + b2;                                                                                          \
+        b2 = g * bp + lp;                                                                                          \
+        x[i] = HP ? hp : lp;                                                                                       \
     }
 
-static void svf(float *x, int n, float g, float r, float *s1p, float *s2p, int highpass, float limit)
+static void svf24(float *x, int n, float g, float r, float *s1a, float *s2a, float *s1b, float *s2b, int highpass, float limit, float pre)
 {
-    float h = 1.0f / (1.0f + r * g + g * g), rg = r + g, s1 = *s1p, s2 = *s2p;
-    if (limit > 0.0f) {
-        float inv = 1.0f / limit;
+    float ha = 1.0f / (1.0f + R_BUTTERWORTH * g + g * g), rga = R_BUTTERWORTH + g;
+    float hb = 1.0f / (1.0f + r * g + g * g), rgb = r + g;
+    float a1 = *s1a, a2 = *s2a, b1 = *s1b, b2 = *s2b;
+    float inv = limit > 0.0f ? 1.0f / limit : 0.0f;
+    if (limit > 0.0f) {                                                     /* (one loop per case: no test inside) */
         if (highpass)
-            SVF_LOOP(hp, soft(g * hp + bp, inv, limit))
+            SVF24_LOOP(1, 1)
         else
-            SVF_LOOP(lp, soft(g * hp + bp, inv, limit))
+            SVF24_LOOP(0, 1)
     } else if (highpass) {
-        SVF_LOOP(hp, g * hp + bp)
+        SVF24_LOOP(1, 0)
     } else {
-        SVF_LOOP(lp, g * hp + bp)
+        SVF24_LOOP(0, 0)
     }
-    *s1p = s1;
-    *s2p = s2;
-}
-
-static void drive_in(float *x, int n, float amount)
-{
-    float pre = 1.0f + 3.0f * amount;
-    for (int i = 0; i < n; i++)
-        x[i] = soft(x[i] * pre, 1.0f, 1.0f);
+    *s1a = a1;
+    *s2a = a2;
+    *s1b = b1;
+    *s2b = b2;
 }
 
 /*
@@ -251,9 +255,29 @@ static unsigned pad_setting(const uint8_t *pad, unsigned param)
     return (unsigned)fw_setting((const void *)(APP_PADS + row * 0xf0u + col * 0x30u), param);
 }
 
+/* The pad's Interp is asked for by every voice of it, several times a block (the filter, the read kernels, the overdrive): a keys sequence
+ * plays one pad on many voices, and each lookup walks the pad's whole settings list. The last answer is kept, for that pad, for the rest of
+ * the audio block (cpu.c's wake-up stamp tells blocks apart). Backup SRAM 0x38800fc8, just after the page state (looper_page.c). */
+struct imemo {
+    uint32_t pad, stamp, interp;
+};
+#define IMEMO   ((volatile struct imemo *)0x38800fc8u)
+#define CPU_OK  (*(volatile uint32_t *)0x2405ffd0u == 0x43505532u)   /* cpu.c's state: its wake-up stamp is live */
+#define WOKE    (*(volatile uint32_t *)0x2405ffd4u)
+
 static unsigned pad_interp(const uint8_t *pad)
 {
-    return pad_setting(pad, 0xf1);
+    volatile struct imemo *m = IMEMO;
+    if (!CPU_OK)
+        return pad_setting(pad, 0xf1);
+    uint32_t stamp = WOKE;
+    if (m->pad == (uint32_t)pad && m->stamp == stamp)
+        return m->interp;
+    unsigned v = pad_setting(pad, 0xf1);
+    m->pad = (uint32_t)pad;
+    m->stamp = stamp;
+    m->interp = v;
+    return v;
 }
 
 /* For lira_pad.c */
@@ -380,10 +404,7 @@ void filter_process(uint8_t *obj, void *buf, const uint8_t *pad)
     for (int c = 0; c < 2; c++) {
         if (!ch[c])
             continue;
-        if (st->drive > 0.001f)
-            drive_in(ch[c], n, st->drive);
-        svf(ch[c], n, st->g, R_BUTTERWORTH, &st->s1[0][c], &st->s2[0][c], hp, 0.0f);
-        svf(ch[c], n, st->g, st->r, &st->s1[1][c], &st->s2[1][c], hp, limit);
+        svf24(ch[c], n, st->g, st->r, &st->s1[0][c], &st->s2[0][c], &st->s1[1][c], &st->s2[1][c], hp, limit, 1.0f + 3.0f * st->drive);
     }
 }
 
