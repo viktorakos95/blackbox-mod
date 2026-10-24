@@ -816,13 +816,13 @@ static float opt_get(int o)
     return looper_get_opt(o);
 }
 
-/* The overload warning at the right of a top bar (looper.c looper_overload_level): three segments, lit from the bottom up. Green: the load
+/* The overload warning at the right of a top bar (looper.c looper_overload_level): three segments, lit from the bottom up. Yellow: the load
  * is near where the first engine starts to fade; orange: something is held out now (a track or a synth fading or faded out, SAMPLR at a
  * lower quality); red: an engine had to be left out of a block in the last ~2 s (a spike: a short dropout). 7 px wide. */
 static void draw_load(int x)
 {
     int lv = looper_overload_level();
-    static const uint8_t col[3] = {C_GREEN, C_PINK, C_RED};
+    static const uint8_t col[3] = {0x12, C_PINK, C_RED};      /* yellow (0x12 in every page's colours), orange, red */
     for (int i = 0; i < 3; i++) {
         int d = 2 + 4 * (2 - i);
         if (lv > i)
@@ -1685,12 +1685,13 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
 static const struct { uint8_t idx; uint32_t argb; } tint_looper[] = {
     {0x02, 0xff0e0f12}, {0x19, 0xff17191d}, {0x10, 0xff34373e}, {0x09, 0xff787d87}, {0x16, 0xffc4c8d0}, {0x01, 0xff24262c},
     {0x20, 0xfff09a4a}, {0x1b, 0xff7cc8f0}, {0x14, 0xfff0d070}, {0x17, 0xff6fd1b6}, {0x18, 0xffb08cf0}, {0x1a, 0xff2d6a7a},
-    {0x06, 0xffe5484d}, {0x0b, 0xff5fcf8f}, {0x0c, 0xffd65a5a},
+    {0x06, 0xffe5484d}, {0x0b, 0xff5fcf8f}, {0x0c, 0xffd65a5a}, {0x12, 0xfff2d24a},
 };
 static const struct { uint8_t idx; uint32_t argb; } tint_samplr[] = {
     {0x02, 0xff0b0d18}, {0x19, 0xff141829}, {0x10, 0xff2e3550}, {0x09, 0xff6f7aa0}, {0x16, 0xffb8c0e0}, {0x01, 0xff1f2438},
     {0x20, 0xfff09a4a}, {0x1b, 0xff7cc8f0}, {0x14, 0xffb69cf0}, {0x17, 0xff6fd1b6}, {0x18, 0xffb08cf0}, {0x1a, 0xff2d6a7a},
     {0x06, 0xffe5484d}, {0x0b, 0xff5fcf8f}, {0x0c, 0xffd65a5a}, {0x1c, 0xff7fd8bc}, {0x1e, 0xffb69cf0},
+    {0x12, 0xfff2d24a},
 };
 
 /* What the unit's screen shows. The frame buffer holds palette indices (a byte a pixel: a fill stores the index itself) and
@@ -1706,7 +1707,7 @@ static const struct { uint8_t idx; uint32_t argb; } tint_samplr[] = {
 #define DMA2D_FGCLUT  ((volatile uint32_t *)0x52001400u)
 #define DMA2D_BGCLUT  ((volatile uint32_t *)0x52001800u)
 #define PAL_STOCK     ((const uint32_t *)0x080f1d80u)
-static const uint8_t clut_idx[] = {0x01, 0x02, 0x06, 0x09, 0x0b, 0x0c, 0x0f, 0x10, 0x14, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
+static const uint8_t clut_idx[] = {0x01, 0x02, 0x06, 0x09, 0x0b, 0x0c, 0x0f, 0x10, 0x12, 0x14, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
                                    0x1e, 0x1f, 0x20};
 
 static int clut_theme(void)

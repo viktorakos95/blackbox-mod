@@ -49,6 +49,7 @@ static const struct { uint8_t idx; uint32_t argb; } lu_theme[] = {
     {0x1d, 0xff3b3263},                                           /* dark violet */
     {0x1f, 0xff21493e},                                           /* dark seafoam */
     {0x20, 0xfff09a4a},                                           /* orange: the encoders' group */
+    {0x12, 0xfff2d24a},                                           /* yellow: the overload warning's first step */
 };
 #define LU_NTHEME ((int)(sizeof lu_theme / sizeof lu_theme[0]))
 
