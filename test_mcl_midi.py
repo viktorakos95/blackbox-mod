@@ -148,6 +148,15 @@ check("owner: RXNE is passed to the stock handler", r.irq_calls == 1)
 r.isr(0x08)
 check("owner: an overrun flag is passed to the stock handler", r.irq_calls == 2)
 
+# --- receive errors (a MIDI IN optocoupler too slow for the speed shows as framing / noise errors)
+fe0, ne0, ore0 = r.call("bb_midi_stat", 6), r.call("bb_midi_stat", 7), r.call("bb_midi_stat", 8)
+r.isr(0x20 | 0x02)                                               # a byte with a framing error
+r.isr(0x20 | 0x04)                                               # noise
+r.isr(0x08)                                                      # overrun
+r.isr(0x20)                                                      # a clean byte
+check("receive errors counted once per interrupt: framing, noise, overrun; a clean byte counts none",
+      (r.call("bb_midi_stat", 6) - fe0, r.call("bb_midi_stat", 7) - ne0, r.call("bb_midi_stat", 8) - ore0) == (1, 1, 1))
+
 # --- TurboMIDI: the jack's speed
 e.w32(U, e.r32(U) | 0x0D)                                        # UE, RE, TE as the stock init leaves them
 e.w32(U + 0x1C, 0x40 | 0x80)                                     # TC, TXE: the line is idle

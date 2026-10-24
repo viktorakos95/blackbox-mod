@@ -14,5 +14,6 @@ int bb_midi_owner(void);
 uint32_t bb_midi_set_speed(uint32_t bps, uint32_t wait_ms);   /* TurboMIDI: the jack's speed, once what is queued has left (at most wait_ms); returns the speed now. Not from an interrupt. */
 uint32_t bb_midi_speed(void);
 void bb_midi_filter_clock(int on);            /* drop the stock firmware's own single-byte F8 / FA / FB / FC (MCL's timer is the clock source) */
-uint32_t bb_midi_stat(int which);             /* 0 rx bytes, 1 rx dropped, 2 tx bytes written to TDR, 3 tx rejected (ring full), 4 stock messages redirected, 5 real-time bytes rejected (FIFO full) */
+uint32_t bb_midi_stat(int which);             /* 0 rx bytes, 1 rx dropped, 2 tx bytes written to TDR, 3 tx rejected (ring full), 4 stock messages redirected, 5 real-time bytes rejected (FIFO full),
+                                                 6 / 7 / 8 receive errors: framing / noise / overrun */
 }

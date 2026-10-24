@@ -416,7 +416,7 @@ extern "C" char *mcl_status_text(char *p, uint32_t room)
 
 struct mcl_entry {
     uint32_t magic;                                   /* "MCLB" */
-    uint32_t abi;                                     /* 3: boot, status(p, room), gui(), compact; then the page: fb(), sig(), input() */
+    uint32_t abi;                                     /* 3: boot, status(p, room), gui(), compact; then the page: fb(), sig(), input(); 4: midi() */
     uint32_t (*boot)(void);
     char *(*status)(char *, uint32_t);
     void (*gui)(void);
@@ -424,6 +424,7 @@ struct mcl_entry {
     const uint8_t *(*fb)(void);                       /* the 128x32 screen (bb_ui.h); null while the runtime is not up */
     uint32_t (*sig)(void);                            /* draws it; a hash that changes with the picture (0 while the runtime is not up) */
     void (*input)(uint32_t kind, int32_t a, int32_t b);     /* encoders and buttons from the page, GUI task */
+    uint32_t (*midi)(uint32_t which);                 /* abi 4, the jack for the page: 0 speed (bit/s), 1 bytes received, 2 receive errors (framing + noise + overrun) */
 };
 static int ready(void)
 {
@@ -444,9 +445,17 @@ static void page_input(uint32_t kind, int32_t a, int32_t b)
     } else
         bb_ui_input(kind, a, b);
 }
+static uint32_t page_midi(uint32_t which)
+{
+    switch (which) {
+    case 0: return bb_midi_speed();
+    case 1: return bb_midi_stat(0);
+    default: return bb_midi_stat(6) + bb_midi_stat(7) + bb_midi_stat(8);
+    }
+}
 #if defined(M3_TEST) || defined(M4_TEST) || defined(M5_TEST) || defined(COMPACT_LABEL)
 #define COMPACT 1u
 #else
 #define COMPACT 0u
 #endif
-extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 3, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input};
+extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 4, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input, page_midi};

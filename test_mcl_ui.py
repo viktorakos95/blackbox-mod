@@ -118,6 +118,10 @@ lit = sum(px(f, x, y) for x in range(128) for y in range(64))
 check("the runs cover exactly the lit pixels (2x)", sum(c[3] // 2 for c in runs) == lit, (sum(c[3] // 2 for c in runs), lit))
 check("tile frames are drawn (screen frame + 5 tiles)", len([c for c in calls if c[0] == "lp_frame"]) == 6)
 check("tile names and roles are drawn", len([c for c in calls if c[0] == "lp_text_c"]) == 10)
+texts = [e.cstr(c[4]) for c in calls if c[0] == "lp_text_c"]
+import re
+check("under B2: the MIDI jack's speed and bytes received ('1X <n>'); under B3: receive errors ('0 ERR')",
+      any(re.fullmatch(r"1X \d+", t) for t in texts) and "0 ERR" in texts, texts)
 
 sig_a = entry("mcl_page_sig")
 check("page signature depends on the picture", sig_a == entry("mcl_page_sig"))

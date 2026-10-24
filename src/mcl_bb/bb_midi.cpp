@@ -46,6 +46,7 @@ static volatile uint32_t rx_wr, rx_rd, tx_wr, tx_rd;
 static volatile uint8_t rt[16];
 static volatile uint32_t rt_wr, rt_rd;
 static volatile uint32_t st_rx, st_rx_drop, st_tx, st_tx_rej, st_redirect, st_rt_rej;
+static volatile uint32_t st_fe, st_ne, st_ore;  /* receive errors seen by the interrupt: framing, noise, overrun (a too-slow MIDI IN optocoupler shows as FE / NE at TurboMIDI speeds) */
 static uint32_t uart_clk, cur_bps;             /* USART6's kernel clock (from the stock 31250 baud set-up), the speed now */
 
 /* entered from patched stock code, or the API MCL calls: the linker must keep them */
@@ -68,6 +69,7 @@ HOOK void bb_midi_init(void)
     rx_wr = rx_rd = tx_wr = tx_rd = rt_wr = rt_rd = 0;
     owner = want = filter_clock = 0;
     st_rx = st_rx_drop = st_tx = st_tx_rej = st_redirect = st_rt_rej = 0;
+    st_fe = st_ne = st_ore = 0;
     cur_bps = 31250u;
     uart_clk = (U_CR1 & CR1_OVER8) ? 0u : (U_BRR & 0xffffu) * 31250u;    /* (16x oversampling, what the stock init sets: BRR = clock / baud) */
     ready = READY_MAGIC;
@@ -192,6 +194,9 @@ HOOK uint32_t bb_midi_stat(int which)
     case 2: return st_tx;
     case 3: return st_tx_rej;
     case 5: return st_rt_rej;
+    case 6: return st_fe;
+    case 7: return st_ne;
+    case 8: return st_ore;
     default: return st_redirect;
     }
 }
@@ -223,6 +228,15 @@ HOOK uint32_t mcl_tx_hook(uint32_t port, const uint8_t *buf, uint32_t len)
 
 HOOK void mcl_usart6_isr(void)
 {
+    if (ready == READY_MAGIC) {
+        uint32_t e = U_ISR;                    /* (the stock handler clears these flags: each is counted once here) */
+        if (e & 0x2u)
+            st_fe++;
+        if (e & 0x4u)
+            st_ne++;
+        if (e & 0x8u)
+            st_ore++;
+    }
     if (ready == READY_MAGIC && owner) {
         uint32_t isr = U_ISR;
         if ((U_CR1 & CR1_TXEIE) && (isr & ISR_TXE)) {

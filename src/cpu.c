@@ -77,7 +77,7 @@ struct mcl_ui {
 
 /* MCL blob (milestone M2): patches/mclblob.py sets mcl_entry to the blob's entry table at 0x08120000 (0 = no blob in this image). */
 struct mcl_entry {
-    uint32_t magic, abi;                 /* "MCLB", 3 */
+    uint32_t magic, abi;                 /* "MCLB", 3 or 4 */
     uint32_t (*boot)(void);              /* once per power-up: .data, .bss, heap, constructors, self test */
     char *(*status)(char *, uint32_t);   /* "Mok" or "M<code>" (and test results) for the label, at most `room` characters */
     void (*gui)(void);                   /* slow work that must run in the GUI task (the M3 hardware test); a no-op otherwise */
@@ -85,12 +85,13 @@ struct mcl_entry {
     const uint8_t *(*fb)(void);          /* abi 3, the MCL page: the 128x64 one-bit screen (16 bytes a row, leftmost pixel in the top bit), null while the runtime is down */
     uint32_t (*sig)(void);               /* draws it; a hash of the picture (0 while the runtime is down) */
     void (*input)(uint32_t kind, int32_t a, int32_t b);    /* 1: encoder a turned b detents; 2 / 3: button a down / up */
+    uint32_t (*midi)(uint32_t which);    /* abi 4, the MIDI jack: 0 speed (bit/s), 1 bytes received, 2 receive errors */
 };
 const volatile uint32_t mcl_entry = 0;
 static const struct mcl_entry *mcl_blob(void)
 {
     const struct mcl_entry *e = (const struct mcl_entry *)mcl_entry;
-    return e && e->magic == 0x424c434du && e->abi == 3 ? e : 0;
+    return e && e->magic == 0x424c434du && (e->abi == 3 || e->abi == 4) ? e : 0;
 }
 
 static void start(void)
@@ -339,7 +340,8 @@ uint32_t mcl_page_sig(void)
 {
     const struct mcl_entry *e = mcl_blob();
     bkp_enable();
-    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u;
+    uint32_t m = e && e->abi >= 4 ? e->midi(0) / 3125u + e->midi(1) * 7u + e->midi(2) * 131u : 0u;    /* (the MIDI line under B2 / B3 changes too) */
+    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + m * 977u;
 }
 
 void mcl_page_draw(int w, int foot_y)
@@ -349,6 +351,33 @@ void mcl_page_draw(int w, int foot_y)
     const struct mcl_entry *e = mcl_blob();
     const uint8_t *fb = e ? e->fb() : 0;
     int x0 = mcl_x0(w);
+    char midi[16], err[16];              /* under B2: the jack's speed (TurboMIDI factor) and bytes received; under B3: receive errors (a MIDI IN too slow for the speed) */
+    midi[0] = err[0] = 0;
+    if (e && e->abi >= 4 && e->midi(0)) {                    /* (0 until the MIDI layer is up) */
+        uint32_t x10 = (e->midi(0) * 10u + 15625u) / 31250u, rx = e->midi(1);
+        char *p = put_uint(midi, x10 / 10u);
+        if (x10 % 10u) {
+            *p++ = '.';
+            *p++ = (char)('0' + x10 % 10u);
+        }
+        *p++ = 'X';
+        *p++ = ' ';
+        if (rx < 10000u) {                                    /* (put_uint shows up to 4 digits) */
+            p = put_uint(p, rx);
+        } else if (rx < 10000000u) {
+            p = put_uint(p, rx / 1000u);
+            *p++ = 'K';
+        } else {
+            p = put_uint(p, rx / 1000000u);
+            *p++ = 'M';
+        }
+        *p = 0;
+        uint32_t ne = e->midi(2);
+        p = put_uint(err, ne < 9999u ? ne : 9999u);
+        for (const char *t = " ERR"; *t; t++)
+            *p++ = *t;
+        *p = 0;
+    }
     bkp_enable();
     lp_box(1, 16, w - 2, foot_y - 16, 0x02);
     lp_box(x0 - 2, MCL_TOP - 2, 128 * MCL_SCALE + 4, 64 * MCL_SCALE + 4, 0x0e);
@@ -378,7 +407,7 @@ void mcl_page_draw(int w, int foot_y)
         lp_box(4 + i * tw + 1, MCL_TILE_Y + 1, tw - 3, MCL_TILE_H - 2, on ? 0x1b : 0x01);
         lp_frame(4 + i * tw, MCL_TILE_Y, tw - 1, MCL_TILE_H, on ? 0x0f : 0x10, 1);
         lp_text_c(4 + i * tw, MCL_TILE_Y + 10, tw - 1, name[i], on ? 0x0e : 0x0f, 2);
-        lp_text_c(4 + i * tw, MCL_TILE_Y + 32, tw - 1, role[i], on ? 0x0e : 0x16, 1);
+        lp_text_c(4 + i * tw, MCL_TILE_Y + 32, tw - 1, i == 1 && midi[0] ? midi : i == 2 && err[0] ? err : role[i], on ? 0x0e : 0x16, 1);
     }
 }
 
