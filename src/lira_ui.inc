@@ -458,9 +458,10 @@ static void draw_lira(void)
 static void lira_footer(const struct lay *L)
 {
     int page = lira_ui_sel(-1) & 15;
-    for (int i = 0; i < LU_TABS; i++) {
-        frame(LU_X0 + LU_TABW * i, L->foot_y + 2, LU_TABW - 2, FOOT - 3, page == i ? C_WHITE : LU_LINE, 1);
-        text_c(LU_X0 + LU_TABW * i, L->foot_y + 4, LU_TABW - 2, lu_tabname[i], page == i ? C_WHITE : LU_DIM, 1);
+    for (int i = 0; i < LU_TABS; i++) {                          /* in the footer CHORD comes before MIX (the pages keep their numbers) */
+        int q = i < 2 ? i : 5 - i;
+        frame(LU_X0 + LU_TABW * i, L->foot_y + 2, LU_TABW - 2, FOOT - 3, page == q ? C_WHITE : LU_LINE, 1);
+        text_c(LU_X0 + LU_TABW * i, L->foot_y + 4, LU_TABW - 2, lu_tabname[q], page == q ? C_WHITE : LU_DIM, 1);
     }
 }
 
@@ -476,7 +477,7 @@ static int lira_footer_hit(int x)
     int i = (x - LU_X0) / LU_TABW;
     if (x < LU_X0 || i >= LU_TABS || (x - LU_X0) % LU_TABW >= LU_TABW - 2)
         return 0;
-    lira_page_set(i, 2);                                          /* a new tab: its first panel is the encoder group */
+    lira_page_set(i < 2 ? i : 5 - i, 2);                          /* a new tab: its first panel is the encoder group */
     return 1;
 }
 

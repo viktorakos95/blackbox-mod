@@ -446,7 +446,7 @@ check("the top-left encoder turns LEVEL 1 now", get(170) == 990 and get(171) < 6
 tap(5 + 38 + 19, 118)
 tap(5 + 38 + 19, 118)
 check("a double tap puts the level back to full", get(171) == 1000, get(171))
-tap(5 + 124 + 10, 215)
+tap(5 + 186 + 10, 215)                                      # MIX: the last tab (CHORD before it)
 check("the MIX tab: the output stage in one row", sel() == 2 | 2 << 4, sel())
 d0 = get(22)
 drag(5 + 19, 60, 20)
@@ -503,7 +503,7 @@ check("the LFO panel: LINK switches on, DLY SRC goes LFO -> self", chord(162) ==
 tap(5 + 228 + 19, 47)
 tap(5 + 228 + 38 + 19, 47)
 check("SHAPE and COMBINE toggle", chord(160) == 1 and chord(161) == 1, (chord(160), chord(161)))
-tap(5 + 186 + 10, 215)
+tap(5 + 124 + 10, 215)                                      # CHORD: the third tab
 check("the CHORD tab", sel() == 3 | 2 << 4, sel())
 check("chord mode starts off, MAJ 9, root C", chord(150) == 0 and chord(140) == 0 and chord(141) == 0, (chord(150), chord(140), chord(141)))
 knob(0, 300)
