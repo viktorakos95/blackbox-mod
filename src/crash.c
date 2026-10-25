@@ -94,6 +94,8 @@ struct sdst {
     uint16_t r_fails, r_recov, r_gaveup, r_reads;
     uint32_t r_err, r_sta;
     uint32_t last_rd;                       /* the audio block count at the loader's last read that worked (crash_loading) */
+    uint8_t rd_win, rd_prev;                /* the loader's reads this second, and the second before (bit 7: the one before that had many too) */
+    uint16_t win_t;                         /* the block count (low 16 bits) when this second began */
 };
 #define SD ((volatile struct sdst *)0x38800940u)
 #define SD_MAGIC 0x32534453u
@@ -240,6 +242,8 @@ void crash_boot(void)
         q->magic = SD_MAGIC;
         q->fails = q->recov = q->gaveup = q->reads = 0;
         q->err = q->sta = q->last_rd = 0;
+        q->rd_win = q->rd_prev = 0;
+        q->win_t = 0;
     }
     r->state = 2;                                                 /* (not looked at yet) */
     r->rsr = rsr;
@@ -368,11 +372,23 @@ static int sd_settle(void)
 
 /* The stock loader is reading the card (a preset, a sample, a folder listing): it read something in the last ~0.5 s. Each of its reads
  * waits for the audio task to finish its block, so the less of the block our engines take, the faster it loads (looper.c). */
+#define LD_MANY 30u                         /* reads in a second that make it a long load (a folder listing, a big sample), not a pad opening */
 int crash_loading(void)
 {
     volatile struct sdst *q = SD;
     uint32_t now = ((volatile uint32_t *)0x2400a584u)[2];
-    return q->magic == SD_MAGIC && q->last_rd && now + 1u - q->last_rd < 200u;
+    if (q->magic != SD_MAGIC)
+        return 0;
+    uint16_t el = (uint16_t)((uint16_t)now - q->win_t);
+    if (el >= 375u) {                                    /* a second (375 blocks) has gone: roll the counts */
+        uint8_t was = (q->rd_prev & 0x7fu) >= LD_MANY ? 0x80u : 0u;
+        uint8_t c = el >= 750u ? 0u : q->rd_win;         /* (two seconds or more without a look: nothing in between) */
+        q->rd_prev = (uint8_t)((c > 0x7fu ? 0x7fu : c) | (el >= 750u ? 0u : was));
+        q->rd_win = 0;
+        q->win_t = (uint16_t)now;
+    }
+    /* a long load: many reads in each of the last two seconds, and still reading (a pad opening or a recording does not count) */
+    return q->last_rd && now + 1u - q->last_rd < 200u && (q->rd_prev & 0x7fu) >= LD_MANY && (q->rd_prev & 0x80u);
 }
 
 int crash_sd_read(uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count)     /* in the driver table, for 0x08045975 */
@@ -392,6 +408,8 @@ int crash_sd_read(uint8_t lun, uint8_t *buf, uint32_t sector, uint32_t count)   
                 volatile uint32_t *wd = (volatile uint32_t *)0x2400a584u;   /* {stamp A, stamp B, blocks} */
                 wd[0] = wd[2];
                 q->last_rd = wd[2] + 1u;                          /* (+1: 0 is "never") */
+                if (q->rd_win < 255u)
+                    q->rd_win++;
                 if (q->reads < 0xffffu)
                     q->reads++;
             }

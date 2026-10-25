@@ -755,3 +755,15 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
 - The pad's Interp (asked by the filter, every read kernel call, the overdrive) walks the pad's settings list each time; it is kept for the
   rest of the block per pad (backup SRAM 0x38800fc8: pad, cpu.c's wake stamp, value). A keys sequence's voices share one pad: one lookup a block.
 - Idle machines (looper stage with nothing recorded, SAMPLR empty): ~7 k instructions a 128-frame block, under 1 %.
+
+## Build 95 (filters 12 dB by default, the DRONE-8 ENV tab, a gentler loading guard)
+- Pads: a Slope setting under Fidelity (new parameter 0x1cf, "12 dB" / "24 dB", xml "filterslope"), 12 dB by default (also for presets made
+  before it): the resonant stage alone, half the work of the two-stage filter (emulator: a stereo voice, 128 frames). The looper's tracks and
+  SAMPLR: SETUP FILTERS 12 DB / 24 DB (the old delay time's option slot, LOOPER_O_SLOPE), 12 dB by default. (SETUP rows 16 px to fit.)
+- DRONE-8 ENV tab (fifth): FAST attack 2 ms .. 300 ms (3 ms), FAST release x0.2 .. x5 (as built), slow attack 50 ms .. 3 s (0.6 s), slow
+  release x0.2 .. x5; VELOCITY: AMT, SOURCE (OFF / TAP = the height of the touch on a plate: top full, bottom soft), TO (DEPTH: the envelope
+  opens that far / VOL: the voice plays that loud); MIDI: the panel waits for it. Saved in a tail of bbmod.bin ("ENV1"; older files: defaults).
+  The engine takes the times every block before the notes (lira_env) and a gain per oscillator (lira_vgain).
+- DRONE-8 3 dB louder again (level / 350).
+- The loading guard (build 91) only acts on a long load: 30 or more reads in each of the last two seconds and still reading (a pad opening or
+  a pad recording does not count), and takes 8 % instead of 12 %.

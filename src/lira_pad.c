@@ -1129,7 +1129,7 @@ static uint32_t govern(struct pg *g)
                 int nv = voices_on(g);
                 g->nv_hold = (uint8_t)(nv < 1 ? 1 : nv);
             }
-        } else if (load + back_cost(g) < mark - 30.0f && inst - (float)g->dsp + back_cost(g) < 900.0f && since > 800) {   /* (dsp is its share when it last ran: not now) */
+        } else if (load + back_cost(g) < mark - 30.0f && inst - (float)g->dsp + back_cost(g) < 920.0f && since > 800) {   /* (3 % below the mark: no flapping) */   /* (dsp is its share when it last ran: not now) */
             g->shed = 0;
             g->shed_blk = g->blk;
         }
@@ -1307,7 +1307,7 @@ void lira_page_run(float *l, float *r, int n)
             xn = en;
         }
     }
-    float gain = (float)g->level * (1.0f / 500.0f);           /* (+3 dB on build 91: it sat under the other machines) */
+    float gain = (float)g->level * (1.0f / 350.0f);           /* (+3 dB on build 92, +3 dB more on build 95: it sat under the other machines) */
     float tmp[128], tmr[128], exl[128], exr[128];
     for (int i0 = 0; i0 < n; i0 += 128) {
         int m = n - i0 < 128 ? n - i0 : 128;

@@ -47,9 +47,10 @@ def set_interp(v, row=PAD_ROW, col=PAD_COL, sat=0):
     """The app's record of the pad (what the screen shows and presets save)."""
     store = APP_PADS + row * 0xF0 + col * 0x30
     arr = ARR + (row * 4 + col) * 0x40
-    e.uc.mem_write(arr, struct.pack("<HHI", 0x8B, 0, 0) + struct.pack("<HHI", 0xF1, 0, v) + struct.pack("<HHI", 0xDB, 0, sat))
+    e.uc.mem_write(arr, struct.pack("<HHI", 0x8B, 0, 0) + struct.pack("<HHI", 0xF1, 0, v) + struct.pack("<HHI", 0xDB, 0, sat) +
+                   struct.pack("<HHI", 0x1CF, 0, 1))                        # (Slope 24 dB: the model below is the two-stage filter)
     e.w32(store + 4, arr)
-    e.uc.mem_write(store + 10, struct.pack("<H", 3))
+    e.uc.mem_write(store + 10, struct.pack("<H", 4))
 
 
 def setup(knob, res=0.0, interp=0):
@@ -473,14 +474,14 @@ def level_at(hz, slope):
 
 
 cut_hz = curve(0x08060640, 0.5)
-l24, l12 = level_at(cut_hz * 8, 0), level_at(cut_hz * 8, 1)
-check("Slope 12 dB: three octaves above the cutoff it lets through far more than 24 dB (about -36 vs -72 dB of a 4-pole)",
+l24, l12 = level_at(cut_hz * 8, 1), level_at(cut_hz * 8, 0)      # (0 = 12 dB, the default; 1 = 24 dB)
+check("Slope 12 dB (the default): three octaves above the cutoff it lets through far more than 24 dB (about -36 vs -72 dB of a 4-pole)",
       db(l12 / 0.5) > db(l24 / 0.5) + 20 and db(l12 / 0.5) < -20, (round(db(l12 / 0.5), 1), round(db(l24 / 0.5), 1)))
 from unicorn import UC_HOOK_CODE
 cnt = [0]
 hk = e.uc.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: cnt.__setitem__(0, cnt[0] + 1))
 work = []
-for sl in (0, 1):
+for sl in (1, 0):
     reset()
     setup(-0.5, 0.5, 1)
     set_slope(sl)

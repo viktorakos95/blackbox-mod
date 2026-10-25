@@ -93,11 +93,11 @@ const unsigned interp_lira = INTERPS - 1;
 void lira_register(void *table);
 
 
-/* The filter's slope, per pad (new parameter 0x1cf, xml "filterslope"; under Fidelity on the pad page): 24 dB, the two-stage filter (the
- * default, also for presets made before it), or 12 dB, the resonant stage alone (half the work: a keys sequence of many voices costs about
- * what the stock filter did). Every pad gets it at 24 dB with its defaults (slope_defaults, after Interp). */
+/* The filter's slope, per pad (new parameter 0x1cf, xml "filterslope"; under Fidelity on the pad page): 12 dB, the resonant stage alone (the
+ * default, also for presets made before it: half the work, a keys sequence of many voices costs about what the stock filter did), or 24 dB,
+ * the two-stage filter. Every pad gets it at 12 dB with its defaults (slope_defaults, after Interp). */
 #define PARAM_SLOPE 0x1cf
-static const char *const slope_names[2] = {"24 dB", "12 dB"};
+static const char *const slope_names[2] = {"12 dB", "24 dB"};
 typedef void (*store_add_fn)(void *store, int param, int value);
 #define fw_store_add ((store_add_fn)FN(0x08093ef6))
 
@@ -450,7 +450,7 @@ void filter_process(uint8_t *obj, void *buf, const uint8_t *pad)
         st->r += SMOOTH * (r - st->r);
         st->drive += SMOOTH * (drive - st->drive);
     }
-    int hp = knob > 0.0f, slope12 = pad_slope(pad) == 1;
+    int hp = knob > 0.0f, slope12 = pad_slope(pad) == 0;
     /* resonant stage ceiling: off below noon (clean, linear), from 4 down to 1 as drive rises */
     float limit = st->drive > 0.001f ? 4.0f - 3.0f * st->drive : 0.0f;
     for (int c = 0; c < 2; c++) {

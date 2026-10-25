@@ -150,7 +150,7 @@ static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "REC", "FX", "SMPL"
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
 
 #define TAB_W      34
-#define ROW_H      18                      /* SETUP: one option per row */
+#define ROW_H      16                      /* SETUP: one option per row (ten rows and the CLEAR ALL row above the footer) */
 #define OPT_X      84                      /* SETUP: where the choices start */
 #define CHOICE_W   52
 #define SLIDER_W   150
@@ -323,6 +323,7 @@ static const struct optrow rows_setup[] = {
     {"HW STOP PLAY", LOOPER_O_HWBTN, 2, {"LOOPER", "+STOCK", 0, 0}},
     {"MONITOR INPUT K2", LOOPER_O_MON, 0, {0, 0, 0, 0}},
     {"SPEED PITCH", LOOPER_O_PITCH, 3, {"TAPE", "GRAIN", "SMOOTH", 0}},
+    {"FILTERS", LOOPER_O_SLOPE, 2, {"12 DB", "24 DB", 0, 0}},              /* the looper's and SAMPLR's (12 dB: half the work) */
 };
 static const struct optrow rows_more[] = {
     {"MONITOR INPUT K1", LOOPER_O_MON, 0, {0, 0, 0, 0}},
@@ -333,7 +334,7 @@ static int opt_rows(void);
 
 static int opt_rows(void)
 {
-    return P->mode == M_MORE ? 2 : 9;
+    return P->mode == M_MORE ? 2 : 10;
 }
 
 static const struct optrow *page_rows(void)
@@ -1025,13 +1026,13 @@ static void draw_setup(const struct lay *L)
     for (int r = 0; r < OPT_ROWS; r++) {
         const struct optrow *R = &rows[r];
         int d = row_d(L, r);
-        text(6, d + 5, R->name, C_LIGHT, 1);
+        text(6, d + 3, R->name, C_LIGHT, 1);
         if (R->n) {
             int cur = (int)(opt_get(R->opt) + .5f);
             for (int c = 0; c < R->n; c++) {
                 int on = c == cur;
                 frame(OPT_X + c * CHOICE_W, d, CHOICE_W - 3, ROW_H - 4, on ? C_CYAN : C_RAIL, 1);
-                text_c(OPT_X + c * CHOICE_W, d + 5, CHOICE_W - 3, R->c[c], on ? C_WHITE : C_GREY, 1);
+                text_c(OPT_X + c * CHOICE_W, d + 3, CHOICE_W - 3, R->c[c], on ? C_WHITE : C_GREY, 1);
             }
         } else {
             float v = opt_get(R->opt);
@@ -1047,7 +1048,7 @@ static void draw_setup(const struct lay *L)
             else
                 p = put_pct(p, v);
             *p = 0;
-            text(OPT_X + SLIDER_W + 8, d + 5, b, C_LIGHT, 1);
+            text(OPT_X + SLIDER_W + 8, d + 3, b, C_LIGHT, 1);
         }
     }
     int d = row_d(L, OPT_ROWS);
@@ -1056,7 +1057,7 @@ static void draw_setup(const struct lay *L)
         int armed = P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT;
         int done = P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW;
         frame(OPT_X, d, 110, ROW_H - 4, done ? C_GREEN : C_RED, 1);
-        text_c(OPT_X, d + 5, 110, done ? "CLEARED!" : armed ? "TAP AGAIN" : "CLEAR ALL", done ? C_GREEN : armed ? C_WHITE : C_RED, 1);
+        text_c(OPT_X, d + 3, 110, done ? "CLEARED!" : armed ? "TAP AGAIN" : "CLEAR ALL", done ? C_GREEN : armed ? C_WHITE : C_RED, 1);
         float bpm = looper_bpm();
         for (const char *q = "BPM "; *q; q++)
             *p++ = *q;
@@ -1067,7 +1068,7 @@ static void draw_setup(const struct lay *L)
         for (const char *q = looper_running() ? " RUN" : " STOP"; *q; q++)
             *p++ = *q;
         *p = 0;
-        text(OPT_X + 120, d + 5, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
+        text(OPT_X + 120, d + 3, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
     } else {
         /* one diagnostic line: the last button message, the sequencer clock's position and rate, the screens visited */
         for (const char *q = "LAST "; *q; q++)

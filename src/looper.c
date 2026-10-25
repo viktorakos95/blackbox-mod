@@ -291,7 +291,7 @@ static inline struct dsp *DSP(void)
     return (struct dsp *)fxbuf(0);
 }
 
-static const float opt_defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 1.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
+static const float opt_defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 0.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
 
 /* Replaces the sample pool init call (bl @0x0804c20e): once per boot, after the pool has its memory. */
 /* The audio code that runs every sample is linked to run from ITCM (src/cave.ld): copy it in from its image in flash. First thing at boot,
@@ -816,6 +816,7 @@ struct pb {                                       /* one track, one block */
     int filt;                                     /* 1 low pass, 2 high pass (the filter always runs: its mix fades) */
     float fm0, dfm;
     float g, r2, h1, rg1, h2, rg2, fdrive, limit, ilimit;
+    int twelve;                                       /* SETUP FILTERS 12 dB: the resonant stage alone */
     int crunch, hold_n;
     float q, qi;
     int drive;
@@ -934,6 +935,7 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
         p->fdrive = d->sdr[t] > .001f ? d->sdr[t] : 0.f;
         p->limit = p->fdrive > 0.f ? 4.f - 3.f * p->fdrive : 0.f;
         p->ilimit = p->limit > 0.f ? 1.f / p->limit : 0.f;
+        p->twelve = opt_i(LOOPER_O_SLOPE) == 0;
         float target = active ? 1.f : 0.f;
         p->fm0 = d->fm[t];
         p->dfm = (target - p->fm0) / (float)n;
@@ -1514,9 +1516,14 @@ __attribute__((optimize("O2"))) static void play_seg(struct dsp *d, int t, int i
                 x0 = soft(x0 * (1.f + 3.f * p->fdrive), 1.f, 1.f);
                 x1 = soft(x1 * (1.f + 3.f * p->fdrive), 1.f, 1.f);
             }
-            x0 = svf(x0, &z[0], &z[1], p->g, R_BUTTERWORTH, p->h1, p->rg1, hp, 0.f, 0.f);
-            x1 = svf(x1, &z[2], &z[3], p->g, R_BUTTERWORTH, p->h1, p->rg1, hp, 0.f, 0.f);
-            if (two) {
+            if (p->twelve) {                                       /* 12 dB: the resonant stage alone (SETUP FILTERS) */
+                x0 = svf(x0, &z[4], &z[5], p->g, p->r2, p->h2, p->rg2, hp, two ? p->limit : 0.f, two ? p->ilimit : 0.f);
+                x1 = svf(x1, &z[6], &z[7], p->g, p->r2, p->h2, p->rg2, hp, two ? p->limit : 0.f, two ? p->ilimit : 0.f);
+            } else {
+                x0 = svf(x0, &z[0], &z[1], p->g, R_BUTTERWORTH, p->h1, p->rg1, hp, 0.f, 0.f);
+                x1 = svf(x1, &z[2], &z[3], p->g, R_BUTTERWORTH, p->h1, p->rg1, hp, 0.f, 0.f);
+            }
+            if (two && !p->twelve) {
                 x0 = svf(x0, &z[4], &z[5], p->g, p->r2, p->h2, p->rg2, hp, p->limit, p->ilimit);
                 x1 = svf(x1, &z[6], &z[7], p->g, p->r2, p->h2, p->rg2, hp, p->limit, p->ilimit);
             }
@@ -1800,7 +1807,7 @@ int lira_send_add(float *l, float *r, int n);              /* lira_pad.c: the dr
  *   A track it leaves out fades back in by itself over the next blocks. */
 enum { E_LOOPER, E_SAMPLR, E_DRONE };               /* the engines, for the guard's priorities (below) */
 int looper_soft_threshold(int e);
-#define LOADING_ROOM 120                          /* per mille: how much lower every mark is while the stock loader reads the card */
+#define LOADING_ROOM 80                           /* per mille: how much lower every mark is during a long load (crash_loading) */
 #define GUARD_SOFT 920                            /* per mille of the averaged load: where the engine that gives way first starts to fade (later ones a little higher) */
 #define FADE_OUT   (1.f / 750.f)                  /* ~2 s out; coming back takes ~2.5 s */
 #define WAKE (*(volatile uint32_t *)0x2405ffd4u)  /* cpu.c: the cycle count when the audio task woke up for this block */
@@ -2407,6 +2414,7 @@ void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, in
     float h2 = 1.f / (1.f + st->r2 * st->g + st->g * st->g), rg2 = st->r2 + st->g;
     float fd = st->drive > .001f ? st->drive : 0.f, limit = fd > 0.f ? 4.f - 3.f * fd : 0.f, ilimit = limit > 0.f ? 1.f / limit : 0.f;
     float target = active ? 1.f : 0.f, m0 = st->mix, dm = (target - m0) / (float)n;
+    const int twelve = opt_i(LOOPER_O_SLOPE) == 0;
     st->mix = target;
     for (int i = 0; i < n; i++) {
         float m = m0 + dm * (float)(i + 1), x2[2] = {l[i], r[i]}, in[2] = {l[i], r[i]};
@@ -2414,7 +2422,8 @@ void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, in
             float x = x2[c];
             if (fd > 0.f)
                 x = soft(x * (1.f + 3.f * fd), 1.f, 1.f);
-            x = svf(x, &st->s[0][c][0], &st->s[0][c][1], st->g, R_BUTTERWORTH, h1, rg1, hp, 0.f, 0.f);
+            if (!twelve)
+                x = svf(x, &st->s[0][c][0], &st->s[0][c][1], st->g, R_BUTTERWORTH, h1, rg1, hp, 0.f, 0.f);
             x2[c] = svf(x, &st->s[1][c][0], &st->s[1][c][1], st->g, st->r2, h2, rg2, hp, limit, ilimit);
         }
         l[i] = in[0] + (x2[0] - in[0]) * m;
@@ -2664,7 +2673,7 @@ void looper_set_opt(int o, float v)
 {
     if (o < 0 || o >= LOOPER_OPTS || S->magic != MAGIC)
         return;
-    S->opt[o] = o <= LOOPER_O_DTIME || o == LOOPER_O_ROUTE || o == LOOPER_O_HWBTN || o == LOOPER_O_PITCH ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
+    S->opt[o] = o <= LOOPER_O_SLOPE || o == LOOPER_O_ROUTE || o == LOOPER_O_HWBTN || o == LOOPER_O_PITCH ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
 }
 
 float looper_opt_default(int o)

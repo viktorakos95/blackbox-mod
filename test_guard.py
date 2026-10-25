@@ -388,15 +388,21 @@ def thr2(x):
     e.call("looper_soft_threshold", x)
     return e.uc.reg_read(A.UC_ARM_REG_R0)
 m0 = thr2(0)
-e.uc.mem_write(0x38800940, struct.pack("<I", 0x32534453))              # crash.c's SD record: the loader read something just now
+e.uc.mem_write(0x38800940, struct.pack("<I", 0x32534453))              # crash.c's SD record
 blk = 5000
 e.uc.mem_write(0x2400A58C, struct.pack("<I", blk))
-e.uc.mem_write(0x38800964, struct.pack("<I", blk + 1))
-check("the stock loader reading the card (a preset, a sample, a listing): every mark 12 % lower, so it gets its time", thr2(0) == m0 - 120, (m0, thr2(0)))
-e.uc.mem_write(0x2400A58C, struct.pack("<I", blk + 400))
+def sd_reads(prev, last=blk + 1):
+    """the loader's reads: prev = the last second's count (| 0x80: the second before had many too), the last read's block"""
+    e.uc.mem_write(0x38800964, struct.pack("<IBBH", last, 0, prev, blk & 0xFFFF))
+sd_reads(5)
+check("a pad opening (a few reads): no room taken from the machines", thr2(0) == m0, (m0, thr2(0)))
+sd_reads(40)
+check("... nor one second of many reads (a sample loading quickly)", thr2(0) == m0, (m0, thr2(0)))
+sd_reads(0x80 | 40)
+check("a long load (many reads two seconds running, still reading): every mark 8 % lower, so the loader gets its time", thr2(0) == m0 - 80, (m0, thr2(0)))
+sd_reads(0x80 | 40, last=blk - 300)
 check("... back once it has not read for a while", thr2(0) == m0, (m0, thr2(0)))
-e.uc.mem_write(0x2400A58C, struct.pack("<I", blk))
-e.uc.mem_write(0x38800964, struct.pack("<I", 0))
+sd_reads(0, last=0)
 dspike(0.99)
 def olv():
     e.call("looper_overload_level")
