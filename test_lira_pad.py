@@ -62,7 +62,8 @@ fid = [r for r in regs if r[1] == 0xF1]
 check("Fidelity list: 15 entries, the last one LIRA",
       len(fid) == 1 and fid[0][3] == 15 and e.cstr(e.r32(fid[0][2] + 4 * INTERP_LIRA) & 0xFFFFFFFF) == "DRONE-8",
       str(fid))
-ids = sorted(r[1] for r in regs if r[1] != 0xF1)
+check("the filter's Slope (0x1cf) is registered with Fidelity", any(r[1] == 0x1CF for r in regs))
+ids = sorted(r[1] for r in regs if r[1] not in (0xF1, 0x1CF))
 check("25 LIRA controls at 0x1db..0x1f3", ids == list(range(P0, P0 + NCTL)), str([hex(i) for i in ids]))
 check("percent controls are 0..1000", all(r[2] == 8 and r[3] == 1000 for r in regs if r[0] == "num"))
 check("one SDRAM allocation, 0.5..2 MB", len(allocs) == 1 and 1 << 19 < allocs[0] < 2 << 20, str(allocs))
