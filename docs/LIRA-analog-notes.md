@@ -32,6 +32,7 @@ one place (`#define`s at the top of `lira.c`) so they can be changed after liste
 | The higher a voice is tuned, the less sensitive it is to FM. A modulating voice is always also in the mix. | Manual step 2; ModWiggler (search excerpt) |
 | The Hyper LFO edges are soft when the two LFOs are added ("gradient"). | Manual; SoS |
 | Output response: bass boosted a little, highs softer. | Manual |
+| Distortion: last in the chain (after the delay), DRIVE = amount, MIX = clean / distorted. Keeps its low-frequency weight under heavy drive, a subtle low-pass character, smooth at high DRIVE and MIX. A 100 uF electrolytic sits in the distortion circuit (a builder fitted it backwards). No schematic is published. | Manual V2.1; FutureMusic and Sinesquares reviews; Mod Wiggler DIY thread (search excerpts) |
 
 ## What the engine does
 
@@ -54,7 +55,11 @@ one place (`#define`s at the top of `lira.c`) so they can be changed after liste
    delays get the real chip's coarse sampling, aliasing and noise instead of a clean tap. SELF/LFO modulate the clock, not a
    tap position. The two lines share one feedback loop. The plugin's compressor/expander are gone (they are not in the hardware);
    the loop saturates like op-amps/PT2399 overload.
-7. **Output**: bass lift and soft top end after the distortion.
+7. **Output**: bass lift and soft top end after the distortion. The distortion (build 96, after a comparison with the real one: more
+   DRIVE gave it more bass and body, the model only more edge): the distorted signal keeps its level (it was divided by up to 4x the drive
+   gain), a one-pole low-pass after the clipper darkens it as DRIVE rises (6 kHz to 2.2 kHz), and the bass lift grows with DRIVE x MIX
+   (0.6 -> about 1.9, i.e. +4 dB -> about +9 dB below ~150 Hz); half of the rise in level is taken back (up to -5.6 dB). Emulator, two low
+   voices: bass +7 dB at full drive, the top 14 dB down; a mid voice at full drive: 5 dB more bass, the top 4 dB lower than before.
 
 ## Assumptions (not documented)
 

@@ -349,7 +349,7 @@ void lira_param(lira_t *l, int id, float x)
     case LIRA_VIBRATO:
         rset(&l->vibsw, x >= 0.5f ? 1.f : 0.f, n);
         break;
-    case LIRA_DRV: rset(&l->drv_g, db2lin(3.f + fpow(3.f, 2.f * d + 1.f)), n); break;
+    case LIRA_DRV: rset(&l->drv_g, db2lin(3.f + fpow(3.f, 2.f * d + 1.f)), n); l->drv01 = d; break;
     case LIRA_DST_MIX: rset(&l->dst, d, n); break;
     case LIRA_VOL: rset(&l->vol, d * d, n); break;
     case LIRA_F_A: rset(&l->lfo_a, mtof(fpow(d, 2.f) * 127.f - 75.f), n); break;
@@ -406,7 +406,7 @@ void lira_reset(lira_t *l, float sr, int16_t *dl1, int16_t *dl2, int len, uint32
     for (unsigned i = 0; i < sizeof *l; i++)
         p[i] = 0;
     l->sr = sr;
-    l->bodyc = 0.41f;                                     /* (the bass lift of the original; width and drift are off until a page asks) */
+    l->bodyc = 0.6f;                                      /* (the bass lift: +4 dB below ~150 Hz; was 0.41, the real one has more body; width and drift are off until a page asks) */
     lira_env(l, ATTACK_SNAP, ATTACK_TAU * 3.f, 1.f, 1.f);
     for (int i = 0; i < 8; i++)
         l->vg[i] = 1.f;
@@ -615,7 +615,6 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
     const float wda = 1.f - (float)LIRA_CR * isr / 3.f, wfade = 1.f - (float)LIRA_CR * isr / 0.5f;
     const float wdb = l->drift * 0.012f * 1.732f * fexp2(0.5f * flog2(2.f * (float)LIRA_CR * isr / 3.f));
     const float driftb = l->drift > 0.f ? l->drift * l->drift * 0.0035f * 1.732f * fexp2(0.5f * flog2(2.f * (float)LIRA_CR * isr / 6.f)) : 0.f;
-    const float bodyc = l->bodyc;
     int ei = 0;
     const int have_ext = l->ext_l && l->ext_r && l->ext_n > 0;
     float ext = 0.f;
@@ -740,7 +739,14 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
         rstep(&l->dst, m);
         rstep(&l->vol, m);
         const float fbl = l->fbline.cur, dm = l->dmix.cur;
-        const float g = l->drv_g.cur, ig = 1.f / clip_(g, 1.f, 4.f), dstm = l->dst.cur, vol = l->vol.cur;
+        const float g = l->drv_g.cur, ig = 1.f / clip_(g, 1.f, 2.f), dstm = l->dst.cur, vol = l->vol.cur;
+        /* the distortion (build 96, after playing the real one: more drive gave it more bass and body, ours only more edge): the distorted
+           signal keeps its level (it was divided by up to 4), a one-pole low-pass after the clipper darkens it as DRIVE rises (6 kHz down to
+           ~2.2 kHz: "a subtle low-pass character", the edges not reaching the output at full brightness), and the output's bass lift grows with
+           DRIVE x MIX (up to about +9 dB below ~150 Hz, the clipped low end filling out as a transistor stage's does) */
+        const float dlpc = clip_((6000.f - 3800.f * l->drv01) * TWO_PI * isr, 0.f, 1.f);
+        const float bodyd = l->bodyc * (1.f + 2.2f * l->drv01 * dstm);
+        const float dvol = vol / (1.f + 0.9f * l->drv01 * dstm);   /* (about half of the rise in level that comes with it taken back: up to -5.6 dB) */
         const float lfom = delmod == 2 ? (lfowav ? sqsum : tri_lfo) : 0.f;
         float k_ratio[2], d0[2], depth[2];
         for (int i = 0; i < 2; i++) {
@@ -831,11 +837,11 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
                 float t2 = t * t, t4 = t2 * t2, t8 = t4 * t4, t16 = t8 * t8;
                 pw31 = t16 * t8 * t4 * t2 * t;
             }
-            float dist = hip(&l->hp2, t + pw31 * 0.25f, hp10c) * ig;
+            float dist = lop(&l->dlp, hip(&l->hp2, t + pw31 * 0.25f, hp10c), dlpc) * ig;
             float yv = ptanh(dly * (1.f - dstm) + (dly * 0.1f + dist) * dstm);
             tfb_s = hip(&l->hp3, yv, hp3c);
             /* bass lifted a little, highs softer (manual) */
-            float yt = ptanh(lop(&l->hf, yv + bodyc * lop(&l->lf, yv, lp150), lp9k)) * vol;
+            float yt = ptanh(lop(&l->hf, yv + bodyd * lop(&l->lf, yv, lp150), lp9k)) * dvol;
             if (out_r) {                                      /* the side: the voices' spread and the two delay lines one to each side, softened like the master's top */
                 float sd = (mixl - mixr) * 0.5f * 0.166667f;
                 if (ddg != 0.f)

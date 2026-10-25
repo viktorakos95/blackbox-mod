@@ -114,6 +114,8 @@ typedef struct {
     float side_lp;                /* the side signal's top-end filter */
     float ienv[4];                /* the envelope's times (lira_env): 1 / FAST attack s, slow attack s, FAST and slow release (x the voice's own) */
     float vg[8];                  /* each oscillator's velocity gain (lira_vgain; 1 = full) */
+    float drv01;                  /* the DRIVE knob, 0..1 (the distortion's darkening and its bass grow with it) */
+    float dlp;                    /* the distorted signal's low-pass state */
     uint8_t dsync;                /* bit i: delay line i is tempo-synced (set by the page): it keeps its time exactly, no wobble */
 } lira_t;
 
