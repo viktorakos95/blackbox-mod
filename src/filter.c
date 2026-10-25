@@ -93,6 +93,20 @@ const unsigned interp_lira = INTERPS - 1;
 void lira_register(void *table);
 
 
+/* The filter's slope, per pad (new parameter 0x1cf, xml "filterslope"; under Fidelity on the pad page): 24 dB, the two-stage filter (the
+ * default, also for presets made before it), or 12 dB, the resonant stage alone (half the work: a keys sequence of many voices costs about
+ * what the stock filter did). Every pad gets it at 24 dB with its defaults (slope_defaults, after Interp). */
+#define PARAM_SLOPE 0x1cf
+static const char *const slope_names[2] = {"24 dB", "12 dB"};
+typedef void (*store_add_fn)(void *store, int param, int value);
+#define fw_store_add ((store_add_fn)FN(0x08093ef6))
+
+void slope_defaults(void *store, int param, int value)
+{
+    fw_store_add(store, param, value);
+    fw_store_add(store, PARAM_SLOPE, 0);
+}
+
 /* Replaces the Interp list registration call: 2 -> 9 entries, and the label "Interp:" -> "Fidelity:" (his pick of
    names; the xml name "interpqual" stays, so presets are unaffected). */
 void interp_register(void *table, int param, const char *label, const char *const *names, int count, const char *xml)
@@ -101,6 +115,7 @@ void interp_register(void *table, int param, const char *label, const char *cons
     (void)names;
     (void)count;
     fw_register_list(table, param, "Fidelity:", interp_names, INTERPS, xml);
+    fw_register_list(table, PARAM_SLOPE, "Slope:", slope_names, 2, "filterslope");
     lira_register(table);                                       /* LIRA's controls + its memory, once at boot */
 }
 
@@ -211,6 +226,35 @@ static inline __attribute__((always_inline)) float soft(float x, float inv_t, fl
         x[i] = HP ? hp : lp;                                                                                       \
     }
 
+/* 12 dB: the resonant stage alone (same drive and soft limit). */
+#define SVF12_LOOP(HP, DRIVEN)                                                                                     \
+    for (int i = 0; i < n; i++) {                                                                                  \
+        float in = DRIVEN ? soft(x[i] * pre, 1.0f, 1.0f) : x[i];                                                   \
+        float hp = (in - rgb * b1 - b2) * hb, bp = g * hp + b1;                                                    \
+        b1 = DRIVEN ? soft(g * hp + bp, inv, limit) : g * hp + bp;                                                 \
+        float lp = g * bp + b2;                                                                                    \
+        b2 = g * bp + lp;                                                                                          \
+        x[i] = HP ? hp : lp;                                                                                       \
+    }
+
+static void svf12(float *x, int n, float g, float r, float *s1b, float *s2b, int highpass, float limit, float pre)
+{
+    float hb = 1.0f / (1.0f + r * g + g * g), rgb = r + g, b1 = *s1b, b2 = *s2b;
+    float inv = limit > 0.0f ? 1.0f / limit : 0.0f;
+    if (limit > 0.0f) {
+        if (highpass)
+            SVF12_LOOP(1, 1)
+        else
+            SVF12_LOOP(0, 1)
+    } else if (highpass) {
+        SVF12_LOOP(1, 0)
+    } else {
+        SVF12_LOOP(0, 0)
+    }
+    *s1b = b1;
+    *s2b = b2;
+}
+
 static void svf24(float *x, int n, float g, float r, float *s1a, float *s2a, float *s1b, float *s2b, int highpass, float limit, float pre)
 {
     float ha = 1.0f / (1.0f + R_BUTTERWORTH * g + g * g), rga = R_BUTTERWORTH + g;
@@ -259,25 +303,33 @@ static unsigned pad_setting(const uint8_t *pad, unsigned param)
  * plays one pad on many voices, and each lookup walks the pad's whole settings list. The last answer is kept, for that pad, for the rest of
  * the audio block (cpu.c's wake-up stamp tells blocks apart). Backup SRAM 0x38800fc8, just after the page state (looper_page.c). */
 struct imemo {
-    uint32_t pad, stamp, interp;
+    uint32_t pad, stamp, interp, slope;
 };
 #define IMEMO   ((volatile struct imemo *)0x38800fc8u)
 #define CPU_OK  (*(volatile uint32_t *)0x2405ffd0u == 0x43505532u)   /* cpu.c's state: its wake-up stamp is live */
 #define WOKE    (*(volatile uint32_t *)0x2405ffd4u)
 
-static unsigned pad_interp(const uint8_t *pad)
+static volatile struct imemo *pad_memo(const uint8_t *pad)
 {
     volatile struct imemo *m = IMEMO;
-    if (!CPU_OK)
-        return pad_setting(pad, 0xf1);
     uint32_t stamp = WOKE;
-    if (m->pad == (uint32_t)pad && m->stamp == stamp)
-        return m->interp;
-    unsigned v = pad_setting(pad, 0xf1);
-    m->pad = (uint32_t)pad;
-    m->stamp = stamp;
-    m->interp = v;
-    return v;
+    if (m->pad != (uint32_t)pad || m->stamp != stamp) {
+        m->interp = pad_setting(pad, 0xf1);
+        m->slope = pad_setting(pad, PARAM_SLOPE);
+        m->pad = (uint32_t)pad;
+        m->stamp = stamp;
+    }
+    return m;
+}
+
+static unsigned pad_interp(const uint8_t *pad)
+{
+    return CPU_OK ? pad_memo(pad)->interp : pad_setting(pad, 0xf1);
+}
+
+static unsigned pad_slope(const uint8_t *pad)
+{
+    return CPU_OK ? pad_memo(pad)->slope : pad_setting(pad, PARAM_SLOPE);
 }
 
 /* For lira_pad.c */
@@ -398,13 +450,16 @@ void filter_process(uint8_t *obj, void *buf, const uint8_t *pad)
         st->r += SMOOTH * (r - st->r);
         st->drive += SMOOTH * (drive - st->drive);
     }
-    int hp = knob > 0.0f;
+    int hp = knob > 0.0f, slope12 = pad_slope(pad) == 1;
     /* resonant stage ceiling: off below noon (clean, linear), from 4 down to 1 as drive rises */
     float limit = st->drive > 0.001f ? 4.0f - 3.0f * st->drive : 0.0f;
     for (int c = 0; c < 2; c++) {
         if (!ch[c])
             continue;
-        svf24(ch[c], n, st->g, st->r, &st->s1[0][c], &st->s2[0][c], &st->s1[1][c], &st->s2[1][c], hp, limit, 1.0f + 3.0f * st->drive);
+        if (slope12)
+            svf12(ch[c], n, st->g, st->r, &st->s1[1][c], &st->s2[1][c], hp, limit, 1.0f + 3.0f * st->drive);
+        else
+            svf24(ch[c], n, st->g, st->r, &st->s1[0][c], &st->s2[0][c], &st->s1[1][c], &st->s2[1][c], hp, limit, 1.0f + 3.0f * st->drive);
     }
 }
 

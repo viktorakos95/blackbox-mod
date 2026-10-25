@@ -351,10 +351,10 @@ def page(addr):
     return ids
 
 
-check("Sample pad page: Saturation, Interp, then the rest", page(0x080EFD38) == [0xDB, 0xF1, 0x93, 0x95, 0x62, 0xA0, 0xC4, 0x6A, 0xD0, 0xF5], [hex(v) for v in page(0x080EFD38)])
-check("Multisample pad page: same", page(0x080EFBD0) == [0xDB, 0xF1, 0x93, 0x95, 0x62, 0xA0, 0xF5, 0xC4, 0x6A], [hex(v) for v in page(0x080EFBD0)])
-check("Slicer pad page: same (Interp added)", page(0x080EF900) == [0xDB, 0xF1, 0x93, 0x95, 0x62, 0xC4, 0xA1, 0x6A, 0xF5], [hex(v) for v in page(0x080EF900)])
-check("Clip pad page: same (Interp added)", page(0x080EFA68) == [0xDB, 0xF1, 0x93, 0x95, 0x62, 0xC4, 0xA1, 0x6A, 0xF5], [hex(v) for v in page(0x080EFA68)])
+check("Sample pad page: Saturation, Interp, Slope, then the rest", page(0x080EFD38) == [0xDB, 0xF1, 0x1CF, 0x93, 0x95, 0x62, 0xA0, 0xC4, 0x6A, 0xD0, 0xF5], [hex(v) for v in page(0x080EFD38)])
+check("Multisample pad page: same", page(0x080EFBD0) == [0xDB, 0xF1, 0x1CF, 0x93, 0x95, 0x62, 0xA0, 0xF5, 0xC4, 0x6A], [hex(v) for v in page(0x080EFBD0)])
+check("Slicer pad page: same (Interp added)", page(0x080EF900) == [0xDB, 0xF1, 0x1CF, 0x93, 0x95, 0x62, 0xC4, 0xA1, 0x6A, 0xF5], [hex(v) for v in page(0x080EF900)])
+check("Clip pad page: same (Interp added)", page(0x080EFA68) == [0xDB, 0xF1, 0x1CF, 0x93, 0x95, 0x62, 0xC4, 0xA1, 0x6A, 0xF5], [hex(v) for v in page(0x080EFA68)])
 
 # --- Interp list
 seen = {}
@@ -450,6 +450,48 @@ set_interp(0, sat=1000)
 reset()
 l = run(sine(997))[0]
 check("Saturation in Normal Fidelity: no drive here (the warm saturation in od.c handles it)", all(abs(p - q) < 1e-7 for p, q in zip(l, sine(997))))
+# Slope (0x1cf, per pad): 12 dB = the resonant stage alone
+def db(x):
+    return 20 * math.log10(max(x, 1e-9))
+
+
+def set_slope(v, row=PAD_ROW, col=PAD_COL):
+    store = APP_PADS + row * 0xF0 + col * 0x30
+    arr = ARR + (row * 4 + col) * 0x40
+    e.uc.mem_write(arr, struct.pack("<HHI", 0x8B, 0, 0) + struct.pack("<HHI", 0xF1, 0, 1) + struct.pack("<HHI", 0xDB, 0, 0) + struct.pack("<HHI", 0x1CF, 0, v))
+    e.w32(store + 4, arr)
+    e.uc.mem_write(store + 10, struct.pack("<H", 4))
+
+
+def level_at(hz, slope):
+    reset()
+    setup(-0.5, 0.0, 1)
+    set_slope(slope)
+    for k in range(6):
+        out, _ = run(sine(hz, 256, 256 * k))
+    return max(abs(v) for v in out)
+
+
+cut_hz = curve(0x08060640, 0.5)
+l24, l12 = level_at(cut_hz * 8, 0), level_at(cut_hz * 8, 1)
+check("Slope 12 dB: three octaves above the cutoff it lets through far more than 24 dB (about -36 vs -72 dB of a 4-pole)",
+      db(l12 / 0.5) > db(l24 / 0.5) + 20 and db(l12 / 0.5) < -20, (round(db(l12 / 0.5), 1), round(db(l24 / 0.5), 1)))
+from unicorn import UC_HOOK_CODE
+cnt = [0]
+hk = e.uc.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: cnt.__setitem__(0, cnt[0] + 1))
+work = []
+for sl in (0, 1):
+    reset()
+    setup(-0.5, 0.5, 1)
+    set_slope(sl)
+    run(sine(200, 128), sine(200, 128))
+    cnt[0] = 0
+    run(sine(200, 128, 128), sine(200, 128, 128))
+    work.append(cnt[0])
+e.uc.hook_del(hk)
+check("... and costs about half (instructions for a stereo voice, 128 frames: 24 dB / 12 dB)", work[1] < 0.6 * work[0], work)
+set_slope(0)
+
 # the pad's Interp is looked up once a block per pad (a keys sequence: one pad, many voices)
 lookups = []
 e.stub(0x08093E9C, lambda: (lookups.append(e.arg(1)), e.uc.reg_write(UC_ARM_REG_R0, 1)))   # (Interp = HighQ for every lookup)
