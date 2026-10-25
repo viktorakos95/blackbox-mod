@@ -116,6 +116,8 @@ typedef struct {
     float vg[8];                  /* each oscillator's velocity gain (lira_vgain; 1 = full) */
     float drv01;                  /* the DRIVE knob, 0..1 (the distortion's darkening and its bass grow with it) */
     float dlp;                    /* the distorted signal's low-pass state */
+    float eqlf;                   /* the EQ stage's bass (between the delay and the distortion) */
+    float dgl;                    /* the drive stage's gain path (its feedback capacitor) */
     uint8_t dsync;                /* bit i: delay line i is tempo-synced (set by the page): it keeps its time exactly, no wobble */
 } lira_t;
 

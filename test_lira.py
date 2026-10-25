@@ -285,9 +285,10 @@ def delay_lag(knob, secs):
     dry = Lira(**{**kw, "DEL_MIX": 0})
     wet = Lira(**{**kw, "DEL_MIX": 127, "DRV": 0})
     for l in (dry, wet):
+        l.run(SR // 5)                                   # the knobs settle first (their glide from the defaults leaks a little dry)
         l.touch(0, 0.5)                                  # a slow, partial attack gives a clear onset
     yd, yw = dry.run(SR * secs), wet.run(SR * secs)
-    return onset(yw) - onset(yd)
+    return onset(yw, frac=0.25) - onset(yd, frac=0.25)   # (the echo first comes in at about half its final level: the codec's compander settles)
 
 
 for knob, secs in ((45, 3), (95, 8)):
@@ -372,7 +373,7 @@ sin = one_voice(1, 57)
 f0 = mtof(57)
 h3_tri = db(level_at(tri, 3 * f0) / level_at(tri, f0))
 h3_sin = db(level_at(sin, 3 * f0) / level_at(sin, f0))
-check("sine mode: 3rd harmonic %.0f dB (the triangle's: %.0f dB, theory -19)" % (h3_sin, h3_tri), h3_tri > -24 and h3_sin < -50)
+check("sine mode: 3rd harmonic %.0f dB (the triangle's: %.0f dB, theory -19)" % (h3_sin, h3_tri), h3_tri > -24 and h3_sin < -46)   # (-50 until 3.1.AO: the EQ stage's bass lift drives the master's tanh a little harder)
 h5_sin = db(level_at(sin, 5 * f0) / level_at(sin, f0))
 check("sine mode: 5th harmonic %.0f dB" % h5_sin, h5_sin < -55)
 for note in (36, 48, 57, 60, 72, 84, 93):
@@ -553,6 +554,51 @@ lv = lambda x: 20 * np.log10(rms(x[SR:]) / ref)
 check("no drift: the tone and its echo cancel for good at this pitch and time (%.0f dB)" % lv(x_still), lv(x_still) < -25)
 check("DRIFT 0.4: the cancellation moves on, the average level comes back (%.0f dB)" % lv(x_wob), lv(x_wob) > -14 and 0 < abs(w_wob) < 0.06)
 check("a tempo-synced line keeps its time exactly (wobble %.5f)" % w_syn, abs(w_syn) < 1e-6)
+
+
+# ---- the Hyper LFO's AND (3.1.AO): logic squares, high only while both are; OR / SUM their sum, three levels ----
+def lfo_pitch(andor, fa=40, fb=55):
+    l = Lira(**dict(CLEAN, WAVE=1, MOD12=90, SOURCE12=2, ANDOR=andor, F_A=fa, F_B=fb))
+    l.key(0, 1)
+    l.run(2 * SR)
+    x = l.run(8 * SR)
+    w, f = int(SR * 0.01), []
+    for i in range(0, len(x) - w, w):
+        zc = np.where((x[i:i + w - 1] < 0) & (x[i + 1:i + w] >= 0))[0]
+        f.append(SR * (len(zc) - 1) / (zc[-1] - zc[0]) if len(zc) > 2 else 0.0)
+    return np.array(f)
+
+
+fa_, fo_ = lfo_pitch(0), lfo_pitch(1)
+lo_, hi_ = np.percentile(fa_, 2), np.percentile(fa_, 98)
+up_and = np.mean(fa_ > (lo_ + hi_) / 2)
+lv_or = [np.mean(abs(fo_ - (lo_ + k * (hi_ - lo_) / 2)) < 0.1 * (hi_ - lo_)) for k in range(3)]   # time near each of the three levels
+check("AND: the voice rests at its own pitch and jumps only while both squares are high (up %.0f %% of the time, a quarter expected; never below %.0f Hz)" % (100 * up_and, lo_),
+      0.15 < up_and < 0.35 and fa_.min() > 0.9 * lo_)
+check("OR / SUM: three levels (0, 1/2, 1: %.0f / %.0f / %.0f %% of the time), little in between" % tuple(100 * v for v in lv_or),
+      min(lv_or) > 0.03 and sum(lv_or) > 0.9)
+
+
+# ---- the drive stage (3.1.AO): more DRIVE gives more bass and less top, as the real one does; the low end reaches the clipper ----
+def band_db(x, a, b):
+    X = np.abs(np.fft.rfft(x * np.hanning(len(x)))) ** 2
+    f = np.fft.rfftfreq(len(x), 1 / SR)
+    return 10 * np.log10(X[(f >= a) & (f < b)].sum() + 1e-30)
+
+
+def driven(drv):
+    l = Lira(DEL_MIX=0, VIBRATO=0, DST_MIX=127, DRV=drv, FAST12=1, FAST34=1, FAST56=1, FAST78=1, MOD12=0, MOD34=0, MOD56=0, MOD78=0)
+    for i in range(8):
+        l.key(i, 1)
+    l.run(2 * SR)
+    return l.run(3 * SR)
+
+
+x0_, x1_ = driven(0), driven(127)
+db_b, db_h = band_db(x1_, 20, 200) - band_db(x0_, 20, 200), band_db(x1_, 3000, 20000) - band_db(x0_, 3000, 20000)
+check("DRIVE full: more bass (%+.1f dB below 200 Hz) and no more top (%+.1f dB above 3 kHz)" % (db_b, db_h), db_b > 1.5 and db_h < 0.5)
+check("... finite, bounded, no DC (peak %.2f, mean %.4f)" % (abs(x1_).max(), x1_.mean()),
+      np.all(np.isfinite(x1_)) and abs(x1_).max() < 1.2 and abs(x1_.mean()) < 0.01)
 
 
 # CPU

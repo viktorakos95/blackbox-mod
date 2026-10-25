@@ -560,7 +560,7 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
 {
     const float sr = l->sr, isr = 1.f / sr;
     const float hp3c = 1.f - 3.f * TWO_PI * isr, hp1c = 1.f - 1.f * TWO_PI * isr;
-    const float hp20c = 1.f - 20.f * TWO_PI * isr, hp10c = 1.f - 10.f * TWO_PI * isr;
+    const float hp5c = 1.f - 5.f * TWO_PI * isr, lp120 = clip_(120.f * TWO_PI * isr, 0.f, 1.f);
     const float dc[4] = {hp1c, clip_(5000.f * TWO_PI * isr, 0.f, 1.f), clip_(2800.f * TWO_PI * isr, 0.f, 1.f),
                          clip_(689.f * TWO_PI * isr, 0.f, 1.f)};
     const float lp3k = clip_(3000.f * TWO_PI * isr, 0.f, 1.f), lp150 = clip_(150.f * TWO_PI * isr, 0.f, 1.f);
@@ -629,8 +629,10 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
         float sqa = clip_(1000.f * fcos(l->pa), -1.f, 1.f), sqb = clip_(1000.f * fcos(l->pb), -1.f, 1.f);
         l->sqa_s += 0.35f * (sqa - l->sqa_s);               /* the analog LFO edges are soft */
         l->sqb_s += 0.35f * (sqb - l->sqb_s);
-        float sqsum = (l->sqa_s + l->sqb_s) * 0.5f;
-        float sqr_lfo = andor == 0.f ? l->sqa_s * l->sqb_s : andor * sqsum;
+        /* the squares as logic levels (0 / 1, the edges still soft): AND is high only while both are (gaps, uneven pulses: the simple
+           rhythms), OR / SUM is their analog sum (three levels, 0, 1/2, 1). The delay's square is the AND whatever the switch (manual). */
+        const float qa = 0.5f + 0.5f * l->sqa_s, qb = 0.5f + 0.5f * l->sqb_s, sqand = qa * qb;
+        float sqr_lfo = andor == 0.f ? sqand : andor * (qa + qb) * 0.5f;
         float tri_lfo = ((fabs_(l->pa - 0.5f) * 4.f - 1.f) + (fabs_(l->pb - 0.5f) * 4.f - 1.f)) * 0.5f;
         float fb = l->lfo_b.cur;
         l->pa = wrap1(l->pa + l->lfo_a.cur * dt);
@@ -742,12 +744,17 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
         const float g = l->drv_g.cur, ig = 1.f / clip_(g, 1.f, 2.f), dstm = l->dst.cur, vol = l->vol.cur;
         /* the distortion (build 96, after playing the real one: more drive gave it more bass and body, ours only more edge): the distorted
            signal keeps its level (it was divided by up to 4), a one-pole low-pass after the clipper darkens it as DRIVE rises (6 kHz down to
-           ~2.2 kHz: "a subtle low-pass character", the edges not reaching the output at full brightness), and the output's bass lift grows with
-           DRIVE x MIX (up to about +9 dB below ~150 Hz, the clipped low end filling out as a transistor stage's does) */
+           ~2.2 kHz: "a subtle low-pass character", the edges not reaching the output at full brightness). Since 3.1.AO the bass comes from
+           the circuit, not from a lift that grows with DRIVE: see the master stage below. */
         const float dlpc = clip_((6000.f - 3800.f * l->drv01) * TWO_PI * isr, 0.f, 1.f);
-        const float bodyd = l->bodyc * (1.f + 2.2f * l->drv01 * dstm);
-        const float dvol = vol / (1.f + 0.9f * l->drv01 * dstm);   /* (about half of the rise in level that comes with it taken back: up to -5.6 dB) */
-        const float lfom = delmod == 2 ? (lfowav ? sqsum : tri_lfo) : 0.f;
+        const float bodyd = l->bodyc;
+        /* the drive stage: an op-amp whose gain is set by the DRIVE pot in its feedback, with a capacitor across it and the big electrolytic
+           (100 uF, the one a builder found reversed and the distortion dead) in its ground leg. The electrolytic lets the full gain reach
+           the bass; the feedback capacitor's corner falls as the pot's resistance (the gain) rises, gain x bandwidth constant: ~9 kHz at
+           DRIVE 0, ~3 kHz at noon, ~300 Hz at full. So more DRIVE drives the low end ever harder than the top: more bass, not more fizz. */
+        const float tbias = ptanh(0.3f), gm1 = g - 1.f, fcd = 1.f - fexp2(-(9000.f * 1.442695f * TWO_PI) * isr / (gm1 > 1.f ? gm1 : 1.f));
+        const float dvol = vol / (1.f + 0.5f * l->drv01 * dstm);   /* (some of the rise in level that comes with it taken back, up to -3.5 dB: DRIVE gets bigger, as the real one does) */
+        const float lfom = delmod == 2 ? (lfowav ? sqand : tri_lfo) : 0.f;
         float k_ratio[2], d0[2], depth[2];
         for (int i = 0; i < 2; i++) {
             lira_line *ln = &l->line[i];
@@ -831,14 +838,21 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
             lop(&l->loop_lp, pw, lp3k);                       /* op-amp / PT2399 overload and the loop's filter */
             float dly = ddg != 0.f ? u + dm * ddg * (pw - u) : u;
 
-            /* master: drive -> tanh (+ positive spike) -> mix with dry -> tanh -> tilt -> volume */
-            float t = ptanh(hip(&l->hp1, dly * g, hp20c)), pw31 = 0.f;
-            if (t > 0.f) {
-                float t2 = t * t, t4 = t2 * t2, t8 = t4 * t4, t16 = t8 * t8;
-                pw31 = t16 * t8 * t4 * t2 * t;
+            /* master: EQ stage -> drive -> biased tanh (+ positive spike) -> mix with dry -> tanh -> tilt -> volume.
+               3.1.AO, the circuit's bass: the delay's output is coupled in with a big capacitor (5 Hz; the stages before were cut at 20 and
+               10 Hz) and the EQ stage between the delay and the distortion lifts the bass (+3.5 dB below ~120 Hz) for the clean and the
+               driven signal alike, so the low end is what hits the clipper hardest: more DRIVE saturates the bass first and fills out the low
+               mids instead of the top. The clipper is a transistor stage, not a symmetric one: biased (even harmonics, and the difference
+               tones of the voices, the "roar", which a 5 Hz coupling after it keeps). */
+            float q = hip(&l->hp1, dly, hp5c);
+            q += 0.5f * lop(&l->eqlf, q, lp120);
+            float tc = ptanh(q + gm1 * lop(&l->dgl, q, fcd) + 0.3f), t = tc - tbias, pw31 = 0.f;     /* (no offset at rest) */
+            if (tc > 0.f) {
+                float t2 = tc * tc, t4 = t2 * t2, t8 = t4 * t4, t16 = t8 * t8;
+                pw31 = t16 * t8 * t4 * t2 * tc;
             }
-            float dist = lop(&l->dlp, hip(&l->hp2, t + pw31 * 0.25f, hp10c), dlpc) * ig;
-            float yv = ptanh(dly * (1.f - dstm) + (dly * 0.1f + dist) * dstm);
+            float dist = lop(&l->dlp, hip(&l->hp2, t + pw31 * 0.25f, hp5c), dlpc) * ig;
+            float yv = ptanh(q * (1.f - dstm) + (q * 0.1f + dist) * dstm);
             tfb_s = hip(&l->hp3, yv, hp3c);
             /* bass lifted a little, highs softer (manual) */
             float yt = ptanh(lop(&l->hf, yv + bodyd * lop(&l->lf, yv, lp150), lp9k)) * dvol;

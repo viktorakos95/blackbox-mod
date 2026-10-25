@@ -30,7 +30,7 @@ one place (`#define`s at the top of `lira.c`) so they can be changed after liste
 | Eight independent vibrato generators, each voice with its own rate and depth, hard-wired; some rates "a tad slow". | Manual; SoS |
 | Low-level bleed from the voices reaches the output even with delay and distortion out; level differences between voices; crosstalk between voice pairs; constant low rumble and high whine with nothing touched. | SoS; manual; lyraeight.blog (search excerpt) |
 | The higher a voice is tuned, the less sensitive it is to FM. A modulating voice is always also in the mix. | Manual step 2; ModWiggler (search excerpt) |
-| The Hyper LFO edges are soft when the two LFOs are added ("gradient"). | Manual; SoS |
+| The Hyper LFO edges are soft when the two LFOs are added ("gradient"). AND: "FREQ A is multiplied by FREQ B, which is the logical operation AND. Both operations are conducted on a square waveform." The delay's square "is taken from the AND synthesis formula". | Manual; SoS |
 | Output response: bass boosted a little, highs softer. | Manual |
 | Distortion: last in the chain (after the delay), DRIVE = amount, MIX = clean / distorted. Keeps its low-frequency weight under heavy drive, a subtle low-pass character, smooth at high DRIVE and MIX. A 100 uF electrolytic sits in the distortion circuit (a builder fitted it backwards). No schematic is published. | Manual V2.1; FutureMusic and Sinesquares reviews; Mod Wiggler DIY thread (search excerpts) |
 
@@ -46,20 +46,26 @@ one place (`#define`s at the top of `lira.c`) so they can be changed after liste
    envelope closes. Hold follows the sourced thresholds (slow voices from 0.5, FAST from 0.7 of the knob).
 3. **No output VCA**: closed voices leak into the mix (rising with pitch), voices bleed into their neighbours' timing node
    (shared-supply coupling, the 4093s share a rail).
-4. **FM is an additive deviation in Hz** proportional to the modulation and to the voice's timing capacitor (the geometric middle
-   of its TUNE range): the higher a voice is tuned the less it is modulated, as the manual says, and a low voice can be
-   pushed to a stall.
+4. **FM follows the plugin's relative law** (since 3.1.w), f x (1 + mod): the same relative spread at any tuning. The additive law in Hz
+   read from the DIY notes (below) was tried first and dropped: low voices stalled and high ones barely moved.
 5. **Eight independent vibratos**, 3.5-6.5 Hz from the BOM's resistor values, shuffled among the voices per unit.
 6. **Delay**: the PT2399 is modelled as a fixed 44,000-entry memory clocked at the VCO rate: delay = 44000 / sample-rate steps.
    Above ~0.92 s the memory is clocked below the audio rate, and the input goes through an adaptive 1-bit delta codec, so long
    delays get the real chip's coarse sampling, aliasing and noise instead of a clean tap. SELF/LFO modulate the clock, not a
    tap position. The two lines share one feedback loop. The plugin's compressor/expander are gone (they are not in the hardware);
    the loop saturates like op-amps/PT2399 overload.
-7. **Output**: bass lift and soft top end after the distortion. The distortion (build 96, after a comparison with the real one: more
-   DRIVE gave it more bass and body, the model only more edge): the distorted signal keeps its level (it was divided by up to 4x the drive
-   gain), a one-pole low-pass after the clipper darkens it as DRIVE rises (6 kHz to 2.2 kHz), and the bass lift grows with DRIVE x MIX
-   (0.6 -> about 1.9, i.e. +4 dB -> about +9 dB below ~150 Hz); half of the rise in level is taken back (up to -5.6 dB). Emulator, two low
-   voices: bass +7 dB at full drive, the top 14 dB down; a mid voice at full drive: 5 dB more bass, the top 4 dB lower than before.
+7. **Output** (3.1.AO, a circuit hypothesis from the BOM and builders' notes, no schematic): the delay's output is coupled into the EQ
+   stage at 5 Hz, which lifts the bass (+3.5 dB below ~120 Hz) for the clean and the driven signal alike. The drive stage is an op-amp
+   with the DRIVE pot and a capacitor in its feedback and the 100 uF electrolytic in its ground leg: full gain down to the bass, and the
+   capacitor's corner falls as the pot (the gain) rises, gain x bandwidth constant (~9 kHz at DRIVE 0, ~3 kHz at noon, ~300 Hz at full).
+   The clipper is biased (a transistor stage: even harmonics, difference tones), coupled out at 5 Hz, then the one-pole low-pass of
+   build 96 (6 kHz to 2.2 kHz with DRIVE). After the MIX: a fixed bass lift (0.6, +4 dB below ~150 Hz) and soft top. Up to -3.5 dB of
+   the level rise with DRIVE is taken back. Emulator, eight voices, MIX full, DRIVE 0 -> full: +2.9 dB below 200 Hz, -1.4 dB above 3 kHz
+   (build 96: about +4 dB above 3 kHz).
+8. **Hyper LFO** (3.1.AO): the squares are logic levels 0 / 1 (soft edges). AND = a x b (on only while both are on); OR = (a + b) / 2,
+   three levels. The voices' LFO source is the switch's result, unipolar (it pushes the pitch up from the tuned note); the delay's square
+   is always the AND (manual: "the square is taken from the AND synthesis formula"), its triangle the sum of the two triangles. LINK
+   still uses A's square as +-1, so B's average rate (and its tempo sync) is kept.
 
 ## Assumptions (not documented)
 
@@ -68,7 +74,8 @@ one place (`#define`s at the top of `lira.c`) so they can be changed after liste
   attack time constant (the DIY docs give a resistor range, not the point it is set at).
 - The FM scale: the deviation per unit of modulation is taken as the middle of the voice's tuning range; the real value depends on
   the resistor and the voice's capacitor. The *form* (additive, stalling) follows the docs, the size is a guess.
-- The EQ stage of the board is not modelled separately (the tilt after the distortion stands in for it).
+- The EQ stage's corner and amount (+3.5 dB below ~120 Hz), the drive stage's gain x bandwidth (9 kHz), the clipper's bias (0.3): the
+  topology follows the parts and builders' notes, the values are guesses.
 - Whether the plugin's TUNE-to-Hz table matches the hardware: kept as is.
 
 Not modelled: EXT IN, CV inputs, HOLD GATE (no equivalent on the Blackbox pad), the headphone amp.
