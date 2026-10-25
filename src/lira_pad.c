@@ -215,6 +215,11 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     float sc0, sc1;              /* ... and its fade back (0 sounding .. 1 out), at the start / end of this block */
     float lastl, lastr;          /* the last frame this synth added (a cut dies away from it instead of stepping to 0) */
     uint8_t nv_hold;             /* voices sounding when it went out (dhold was their cost) */
+    int16_t env[4];              /* ENV tab (ids 210..213): FAST attack, FAST release, slow attack, slow release (0..1000, see env_secs) */
+    int16_t vel_amt;             /* ... VELOCITY: how much the velocity counts (214) */
+    uint8_t vel_src, vel_to;     /* ... where it comes from (215: 0 off, 1 the height of the tap on a plate) and what it moves (216: 0 depth, 1 volume) */
+    uint8_t vel[8];              /* each voice's velocity at its last touch (0..255) */
+    uint8_t env_set;             /* the ENV values have been given their defaults (pools made before them start at 0) */
 };
 #define GEV_MAX 1024
 struct gev {                     /* one recorded gesture: when (frames from the bar line), what (a control id, or 300 + voice for a plate, 400 + voice a chord pitch, 500 + stepped id, 600 + action; the layer in bits 11..12) and its value */
@@ -248,6 +253,7 @@ static struct pool *pool(void)
 }
 
 static void fr_boot(void);
+static void env_defaults(struct pg *g);
 static void gstep(struct pool *p, struct pg *g, int n);
 static void apply_sync(struct pg *g, struct slot *s);
 static void gdrop(struct pool *p, struct pg *g, int layer);
@@ -391,6 +397,7 @@ void lira_register(void *table)
     g->btn_on = 0;                                        /* (the page starts with the stock buttons: BTN is switched on by the player) */
     g->tail = 0;
     g->level = 700;
+    env_defaults(g);
     g->tone[0] = 0;                                       /* (mono: the cheaper path until it is opened) */
     g->tone[1] = 400;
     g->tone[2] = 0;
@@ -723,6 +730,91 @@ void lira_mode_set(void *store, unsigned id, int value)
 static int tune_hund(const struct pg *g, int v);
 static void tune_to(struct pg *g, int v, float midi);
 
+/* ---- the ENV tab: knob (0..1000) -> time. FAST attack 2 ms .. 300 ms (default 3 ms, a snap), slow attack 50 ms .. 3 s (0.6 s), the releases a
+   factor 0.2 .. 5 on each voice's own time (1 = as built: FAST ~0.15 s, slow ~3.3 s to 1/e). */
+static float exp2_(float x)
+{
+    int i = (int)x - (x < 0.0f);
+    float f = x - (float)i, p = 1.0f + f * (0.6565f + f * 0.3435f);
+    union { float f; uint32_t u; } v = {p};
+    v.u += (uint32_t)i << 23;
+    return v.f;
+}
+static const float env_lo[4] = {0.002f, 0.2f, 0.05f, 0.2f}, env_oct[4] = {7.2288f, 4.6439f, 5.9069f, 4.6439f};   /* (log2 of the range) */
+static const int16_t env_def[4] = {81, 500, 607, 500};
+static float env_val(const struct pg *g, int i)
+{
+    return env_lo[i] * exp2_(env_oct[i] * (float)g->env[i] * 0.001f);
+}
+
+static void env_defaults(struct pg *g)
+{
+    for (int i = 0; i < 4; i++)
+        g->env[i] = env_def[i];
+    g->vel_amt = 700;
+    g->vel_src = 0;
+    g->vel_to = 0;
+    for (int k = 0; k < 8; k++)
+        g->vel[k] = 255;
+    g->env_set = 1;
+}
+
+static char *put_u(char *p, unsigned v)
+{
+    char d[6];
+    int n = 0;
+    do
+        d[n++] = (char)('0' + v % 10u);
+    while ((v /= 10u) && n < 6);
+    while (n)
+        *p++ = d[--n];
+    return p;
+}
+
+/* An ENV control's value as shown: "3MS", "0.60S", "2.4S", "X1.0" (b >= 8 bytes); 0 if c is not one. */
+int lira_ui_env_text(int c, char *b)
+{
+    struct pool *p = pool();
+    if (!p || c < 210 || c > 213)
+        return 0;
+    float v = env_val(&p->pg, c - 210);
+    char *q = b;
+    if (c == 211 || c == 213) {
+        *q++ = 'X';
+        unsigned t = (unsigned)(v * 10.0f + 0.5f);
+        q = put_u(q, t / 10u);
+        *q++ = '.';
+        *q++ = (char)('0' + t % 10u);
+    } else if (v < 0.1f) {
+        q = put_u(q, (unsigned)(v * 1000.0f + 0.5f));
+        *q++ = 'M';
+        *q++ = 'S';
+    } else if (v < 1.0f) {                               /* 0.10S .. 0.99S */
+        unsigned t = (unsigned)(v * 100.0f + 0.5f);
+        q = put_u(q, t / 100u);
+        *q++ = '.';
+        *q++ = (char)('0' + t / 10u % 10u);
+        *q++ = (char)('0' + t % 10u);
+        *q++ = 'S';
+    } else {
+        unsigned t = (unsigned)(v * 10.0f + 0.5f);
+        q = put_u(q, t / 10u);
+        *q++ = '.';
+        *q++ = (char)('0' + t % 10u);
+        *q++ = 'S';
+    }
+    *q = 0;
+    return 1;
+}
+
+/* A plate touched at a height (0 its bottom .. 1000 its top): the voice's velocity when the source is TAP. */
+void lira_ui_tapvel(int k, int v)
+{
+    struct pool *p = pool();
+    if (p && k >= 0 && k < 8)
+        p->pg.vel[k] = (uint8_t)((v < 0 ? 0 : v > 1000 ? 1000 : v) * 255 / 1000);
+}
+
 int lira_ui_get(int c)
 {
     struct pool *p = pool();
@@ -747,6 +839,14 @@ int lira_ui_get(int c)
         return g->ex[10 + c - 170];
     if (c >= 180 && c < 183)
         return g->tone[c - 180];
+    if (c >= 210 && c < 214)
+        return g->env[c - 210];
+    if (c == 214)
+        return g->vel_amt;
+    if (c == 215)
+        return g->vel_src;
+    if (c == 216)
+        return g->vel_to;
     return c == 120 ? g->level : 0;
 }
 
@@ -780,6 +880,14 @@ void lira_ui_set(int c, int v)
         g->ex[10 + c - 170] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
     else if (c >= 180 && c < 183)
         g->tone[c - 180] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
+    else if (c >= 210 && c < 214)
+        g->env[c - 210] = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
+    else if (c == 214)
+        g->vel_amt = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
+    else if (c == 215)
+        g->vel_src = (uint8_t)(v < 0 ? 0 : v > 1 ? 1 : v);
+    else if (c == 216)
+        g->vel_to = (uint8_t)(v < 0 ? 0 : v > 1 ? 1 : v);
     grec(g, c, lira_ui_get(c));
 }
 
@@ -806,6 +914,10 @@ int lira_ui_default(int c)
         return 1000;
     if (c >= 180 && c < 183)
         return c == 180 ? 0 : c == 181 ? 400 : 0;
+    if (c >= 210 && c < 214)
+        return env_def[c - 210];
+    if (c == 214)
+        return 700;
     return 0;
 }
 
@@ -1130,10 +1242,22 @@ void lira_page_run(float *l, float *r, int n)
             apply_row(g->row, s, 0, g->chord_on ? 2 : 1);
         }
     }
+    if (!g->env_set)
+        env_defaults(g);
+    lira_env(&s->l, env_val(g, 0), env_val(g, 2), env_val(g, 1), env_val(g, 3));   /* (every block, before the notes: a note started now opens with them) */
     for (int k = 0; k < 8; k++)
         if (g->want[k] != g->keyed[k]) {
             g->keyed[k] = g->want[k];
-            lira_key(&s->l, k, g->want[k]);
+            /* the velocity (ENV tab): off = full; TAP = the height of the touch on the plate. DEPTH: the envelope opens that far (and, slow,
+               more slowly), VOL: it opens fully and the voice plays that loud. AMOUNT sets how much of it counts. */
+            float vel = g->vel_src == 1 ? (float)g->vel[k] * (1.0f / 255.0f) : 1.0f, a = (float)g->vel_amt * 0.001f;
+            float x = 1.0f - a * (1.0f - vel);
+            if (g->want[k]) {
+                lira_touch(&s->l, k, g->vel_to == 0 ? x : 1.0f);
+                lira_vgain(&s->l, k, g->vel_to == 1 ? x * x : 1.0f);
+            } else {
+                lira_key(&s->l, k, 0);
+            }
         }
     if ((s->ticks++ & 1) == 0) {
         apply_row(g->row, s, 0, g->chord_on ? 2 : 1);
@@ -1893,7 +2017,24 @@ struct blob_tail {                                       /* after the blob: the 
 };
 #define TAIL_MAGIC 0x314e4f54u
 #define TAIL_SIZE2 12u                                   /* (3.1.AC / AD files had a second tail of 12 bytes after this one: ignored) */
-_Static_assert(sizeof(struct blob) + sizeof(struct blob_tail) + TAIL_SIZE2 <= 1280, "the settings file must fit the pool's buffer");
+struct env_tail {                                        /* after the tail: the ENV tab (build 95; older files end before it and keep the defaults) */
+    uint32_t magic;                                      /* "ENV1" */
+    int16_t env[4], vel_amt;
+    uint8_t vel_src, vel_to;
+    uint32_t crc;
+};
+#define ENV_MAGIC 0x31564e45u
+_Static_assert(sizeof(struct env_tail) != TAIL_SIZE2, "the ENV tail must be told apart from the old second tail by its size");
+_Static_assert(sizeof(struct blob) + sizeof(struct blob_tail) + sizeof(struct env_tail) <= 1280, "the settings file must fit the pool's buffer");
+
+static uint32_t env_crc(const struct env_tail *e)
+{
+    uint32_t h = ENV_MAGIC ^ 0x9e3779b9u;
+    const uint8_t *q = (const uint8_t *)e + 4;
+    for (unsigned i = 0; i < sizeof *e - 8; i++)
+        h = (h ^ q[i]) * 16777619u;
+    return h;
+}
 
 static uint32_t blob_crc(const struct blob *b)
 {
@@ -1967,9 +2108,17 @@ static void lira_save_(void)
     tl->crc = TAIL_MAGIC ^ 0x9e3779b9u;
     for (int i = 0; i < 4; i++)
         tl->crc = (tl->crc ^ (uint16_t)tl->tone[i]) * 16777619u;
+    struct env_tail *et = (struct env_tail *)(p->blob + sizeof *b + sizeof *tl);
+    et->magic = ENV_MAGIC;
+    for (int i = 0; i < 4; i++)
+        et->env[i] = g->env[i];
+    et->vel_amt = g->vel_amt;
+    et->vel_src = g->vel_src;
+    et->vel_to = g->vel_to;
+    et->crc = env_crc(et);
     unsigned bw = 0;
     if (FF_OPEN(p->fil, "bbmod.bin", 0x0au) == 0) {
-        FF_WRITE(p->fil, b, sizeof *b + sizeof *tl, &bw);
+        FF_WRITE(p->fil, b, sizeof *b + sizeof *tl + sizeof *et, &bw);
         FF_CLOSE(p->fil);
     }
 }
@@ -1993,10 +2142,12 @@ static void lira_load_(void)
     unsigned br = 0;
     if (FF_OPEN(p->fil, "bbmod.bin", 1u) != 0)
         return;
-    int rc = FF_READ(p->fil, b, sizeof *b + sizeof(struct blob_tail) + TAIL_SIZE2, &br);
+    int rc = FF_READ(p->fil, b, sizeof *b + sizeof(struct blob_tail) + sizeof(struct env_tail), &br);
     FF_CLOSE(p->fil);
     const struct blob_tail *tl = (const struct blob_tail *)(p->blob + sizeof *b);
-    int has_tail = br == sizeof *b + sizeof *tl || br == sizeof *b + sizeof *tl + TAIL_SIZE2;
+    const struct env_tail *et = (const struct env_tail *)(p->blob + sizeof *b + sizeof *tl);
+    int has_env = br == sizeof *b + sizeof *tl + sizeof *et;
+    int has_tail = br == sizeof *b + sizeof *tl || br == sizeof *b + sizeof *tl + TAIL_SIZE2 || has_env;
     if (rc != 0 || (br != sizeof *b && !has_tail) || b->magic != BLOB_MAGIC || b->ver != 3 || b->nctl != NCTL || b->crc != blob_crc(b))
         return;
     struct pg *g = &p->pg;
@@ -2022,6 +2173,14 @@ static void lira_load_(void)
         if (h == tl->crc)
             for (int i = 0; i < 3; i++)
                 g->tone[i] = tl->tone[i] < 0 ? 0 : tl->tone[i] > 1000 ? 1000 : tl->tone[i];
+    }
+    env_defaults(g);
+    if (has_env && et->magic == ENV_MAGIC && et->crc == env_crc(et)) {
+        for (int i = 0; i < 4; i++)
+            g->env[i] = (int16_t)(et->env[i] < 0 ? 0 : et->env[i] > 1000 ? 1000 : et->env[i]);
+        g->vel_amt = (int16_t)(et->vel_amt < 0 ? 0 : et->vel_amt > 1000 ? 1000 : et->vel_amt);
+        g->vel_src = et->vel_src & 1;
+        g->vel_to = et->vel_to & 1;
     }
     g->chord_on = b->misc[0] & 1;
     g->space = (uint8_t)(b->misc[1] < lira_space_count() ? b->misc[1] : 0);

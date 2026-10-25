@@ -34,4 +34,7 @@ void lira_ui_tune_detent(int v);
 void lira_ui_pitch_set(int v, int h);
 void lira_page_run(float *l, float *r, int n);
 
+int lira_ui_env_text(int c, char *b);       /* an ENV control's value as shown ("3MS", "0.6S", "X1.0"); 0 if c is not one */
+void lira_ui_tapvel(int k, int v);           /* a plate touched at a height (0 bottom .. 1000 top): voice k's velocity for TAP */
+
 #endif

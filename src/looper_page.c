@@ -2071,7 +2071,7 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
             dirty_now(view);
             return;
         }
-        if (P->mode == M_LIRA && x < P->w - 60 && lira_footer_hit(x)) {      /* the page tabs */
+        if (P->mode == M_LIRA && lira_footer_hit(x)) {                         /* the page tabs (five: no STOCK FX at the right any more) */
             dirty_now(view);
             return;
         }

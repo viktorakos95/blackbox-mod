@@ -379,6 +379,19 @@ void lira_touch(lira_t *l, int s, float drive)
 
 void lira_key(lira_t *l, int s, int on) { lira_touch(l, s, on ? 1.f : 0.f); }
 
+void lira_env(lira_t *l, float atk_fast, float atk_slow, float rel_fast, float rel_slow)
+{
+    l->ienv[0] = 1.f / clip_(atk_fast, 0.002f, 1.f);       /* (the envelope steps every LIRA_CR samples: at least 2 ms keeps its step small) */
+    l->ienv[1] = clip_(atk_slow, 0.02f, 10.f);
+    l->ienv[2] = clip_(rel_fast, 0.2f, 10.f);
+    l->ienv[3] = clip_(rel_slow, 0.2f, 10.f);
+}
+
+void lira_vgain(lira_t *l, int s, float g)
+{
+    l->vg[s & 7] = clip_(g, 0.f, 1.f);
+}
+
 int lira_size(void) { return (int)sizeof(lira_t); }
 
 void lira_tone(lira_t *l, float width, float drift)
@@ -394,6 +407,9 @@ void lira_reset(lira_t *l, float sr, int16_t *dl1, int16_t *dl2, int len, uint32
         p[i] = 0;
     l->sr = sr;
     l->bodyc = 0.41f;                                     /* (the bass lift of the original; width and drift are off until a page asks) */
+    lira_env(l, ATTACK_SNAP, ATTACK_TAU * 3.f, 1.f, 1.f);
+    for (int i = 0; i < 8; i++)
+        l->vg[i] = 1.f;
     l->n23 = (int)(0.02322f * sr + 0.5f);
     l->rng = seed ? seed : 0x9e3779b9u;
     l->line[0].buf = dl1;
@@ -668,9 +684,9 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
                 if (vo->follow)
                     gn->ve += (fd - gn->ve) * (1.f - expm_small(dt / (fd > gn->ve ? 0.004f : 0.2f)));
                 else if (dr > gn->ve)                     /* FAST: a snap (3 ms whatever the touch); slow: ~0.6 s at full touch, slower with a light one */
-                    gn->ve += (dr - gn->ve) * (1.f - expm_small(vo->fast ? dt * (1.f / ATTACK_SNAP) : dt * (0.3f + 0.7f * dr) / (ATTACK_TAU * 3.f)));
+                    gn->ve += (dr - gn->ve) * (1.f - expm_small(vo->fast ? dt * l->ienv[0] : dt * (0.3f + 0.7f * dr) / l->ienv[1]));
                 else if (gn->drive == 0.f)
-                    gn->ve *= expm_small(dt / (vo->fast ? gn->t_fast : gn->t_slow));   /* gain = ve^2 */
+                    gn->ve *= expm_small(dt / (vo->fast ? gn->t_fast * l->ienv[2] : gn->t_slow * l->ienv[3]));   /* gain = ve^2 */
                 float f0 = gn->tune.cur;
                 float wander = 0.f;
                 if (driftb > 0.f) {
@@ -679,7 +695,7 @@ static inline __attribute__((always_inline)) void process_(lira_t *l, float *out
                 }
                 vf[o] = f0 * (1.f + vib + ENV_PITCH * (1.f - gn->ve) + wander);
                 vx[o] = vf[o] * gn->kt * isr;            /* the oscillator's time step, before FM */
-                const float ga = fmin_(gn->ve * gn->ve + gh, 1.f);
+                const float ga = fmin_(gn->ve * gn->ve + gh, 1.f) * l->vg[o];
                 vact[o] = ga > 5e-5f || gn->drive > 0.f;   /* a closed oscillator (-86 dB and no touch) is not run and is silent: a voice at rest costs nothing */
                 if (((l->cb + o) & 7) == 0) {            /* slow function of pitch: one oscillator per block, every 8th */
                     gn->leak_f = gn->leak * fexp2(0.5f * flog2(fmax_(f0, 1.f) * 0.001f));

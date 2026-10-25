@@ -112,6 +112,8 @@ typedef struct {
     float *out_r;                 /* the right channel, set by the caller before lira_process (NULL: mono, as the pads use it) */
     float dr[8];                  /* the oscillators' pitch wander, relative */
     float side_lp;                /* the side signal's top-end filter */
+    float ienv[4];                /* the envelope's times (lira_env): 1 / FAST attack s, slow attack s, FAST and slow release (x the voice's own) */
+    float vg[8];                  /* each oscillator's velocity gain (lira_vgain; 1 = full) */
     uint8_t dsync;                /* bit i: delay line i is tempo-synced (set by the page): it keeps its time exactly, no wobble */
 } lira_t;
 
@@ -139,6 +141,10 @@ void lira_delay_sync(lira_t *l, int which, float sec);
 void lira_key(lira_t *l, int sensor /* 0..7 */, int on);
 /* touch with a pressure/velocity: drive 0 = released, 0..1 = how far the envelope opens and how fast */
 void lira_touch(lira_t *l, int sensor, float drive);
+/* The envelope's times: FAST attack (s, a snap at its shortest), slow attack (s, at full touch), FAST and slow release (factors on the
+   voices' own time constants, 1 = as built). */
+void lira_env(lira_t *l, float atk_fast, float atk_slow, float rel_fast, float rel_slow);
+void lira_vgain(lira_t *l, int sensor, float g);  /* the oscillator's level from the velocity (0..1) */
 void lira_process(lira_t *l, float *out, int n);
 /* The page's tone: width = stereo spread of the pairs and the two delay lines (0 = mono, and the right channel is a copy: the cheap path);
    drift = how far each oscillator wanders (up to ~6 cents, a few seconds a turn). */

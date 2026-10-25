@@ -325,6 +325,43 @@ check("... it stays out for 8 blocks (~45 ms)", all(v == 0.0 for v in held), hel
 back = [wave(0.3) for _ in range(10)]
 rb = [math.sqrt(sum(v * v for v in w) / N) for w in back]
 check("... then fades back in over 8 blocks", rb[0] > 0.0 and rb[0] < rb[7] and abs(back[0][0]) < 0.02, rb)
+# the ENV tab: velocity from the height of the tap, the attack time
+def level_after(nb):
+    r = 0.0
+    for _ in range(nb):
+        r = block(0.3)
+    return r
+for k in range(8):
+    e.call("lira_ui_key", k, 0)
+level_after(400)
+e.call("lira_ui_set", 214, 1000)
+e.call("lira_ui_set", 215, 1)                                   # SOURCE: TAP
+e.call("lira_ui_set", 216, 1)                                   # TO: VOL
+e.call("lira_ui_tapvel", 0, 1000)
+e.call("lira_ui_key", 0, 1)
+full = level_after(300)
+e.call("lira_ui_key", 0, 0)
+level_after(400)
+e.call("lira_ui_tapvel", 0, 250)
+e.call("lira_ui_key", 0, 1)
+soft = level_after(300)
+e.call("lira_ui_key", 0, 0)
+level_after(400)
+check("velocity TAP -> VOL: a touch low on the plate plays the voice quieter (a quarter up: about -24 dB)", 0.0 < soft < 0.15 * full, "full %.4f soft %.4f" % (full, soft))
+e.call("lira_ui_set", 215, 0)
+mix0 = rv("lira_ui_get", 19)
+e.call("lira_ui_set", 19, 0)                                    # (no delay: its echoes of the notes before would count)
+level_after(2000)
+early_fast = (e.call("lira_ui_key", 0, 1), level_after(4))[1]
+e.call("lira_ui_key", 0, 0)
+level_after(2000)
+e.call("lira_ui_set", 210, 1000)                                # FAST attack 300 ms
+early_slow = (e.call("lira_ui_key", 0, 1), level_after(4))[1]
+e.call("lira_ui_key", 0, 0)
+level_after(400)
+e.call("lira_ui_set", 210, 81)
+e.call("lira_ui_set", 19, mix0)
+check("FAST attack set to 300 ms: 20 ms in, the voice is far quieter than with the 3 ms snap", early_slow < 0.3 * early_fast, "snap %.4f slow %.4f" % (early_fast, early_slow))
 e.uc.mem_write(0x2405FFE2, struct.pack("<HH", 523, 871))
 check("the CPU readouts are cpu.c's average and worst block", (rv("lira_ui_load", 3), rv("lira_ui_load", 4)) == (52, 87), (rv("lira_ui_load", 3), rv("lira_ui_load", 4)))
 check("the flight recorder in backup SRAM holds this run's peaks", e.r32(0x38800BC0) == 0x46524331 and e.r16(0x38800BC4) >= 840, str((hex(e.r32(0x38800BC0)), e.r16(0x38800BC4))))

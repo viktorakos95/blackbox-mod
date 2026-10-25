@@ -70,9 +70,11 @@ struct lu_spec {
 #define LP_SOUND  1
 #define LP_MIX    2
 #define LP_CHORD  3
-#define LU_TABS   4
+#define LP_ENV    4                                               /* ENV: the envelope's times, the velocity, MIDI (to come) */
+#define LU_TABS   5
 #define LU_TABW   62                                              /* the footer's tabs: 60 px wide every 62 */
-static const char *const lu_tabname[LU_TABS] = {"VOICES", "SOUND", "MIX", "CHORD"};
+static const char *const lu_tabname[LU_TABS] = {"VOICES", "SOUND", "MIX", "CHORD", "ENV"};
+static const uint8_t lu_taborder[LU_TABS] = {LP_VOICES, LP_SOUND, LP_CHORD, LP_MIX, LP_ENV};   /* the footer's order (the pages keep their numbers) */
 static const char *const lu_div[12] = {"OFF", "4 BAR", "2 BAR", "1 BAR", "1/2", "1/4D", "1/4", "1/8D", "1/8", "1/16D", "1/16", "1/16T"};
 static const char *const lu_len[4] = {"1 BAR", "2 BAR", "4 BAR", "8 BAR"};
 static const char *const lu_gst[7] = {"", "ARMED", "REC", "LOOP", "ARMED", "OVR", "STOP"};
@@ -163,6 +165,15 @@ static int lu_specs(int sel, struct lu_spec *o)
         lu_cell(3, 3, &x, &d);                                    /* and the send to the Blackbox's own reverb (FX page: type, size, return) */
         LU_SP(n, 182, x, d, LU_COL, 38, 5, lu_enc_cell[3], LK_KNOB, LU_ACC2, 11, "REVERB");
         n++;
+    } else if (page == LP_ENV) {                                  /* FAST: attack, release | SLOW: attack, release | VELOCITY: amount, source, target | MIDI (to come) */
+        static const uint16_t ids[7] = {210, 211, 212, 213, 214, 215, 216};
+        static const char *const nm[7] = {"ATTACK", "RELEASE", "ATTACK", "RELEASE", "AMT", "SOURCE", "TO"};
+        static const uint8_t pan[7] = {0, 0, 1, 1, 2, 2, 2}, cel[7] = {0, 1, 0, 1, 0, 1, 2};
+        for (int i = 0; i < 7; i++) {
+            lu_cell(pan[i], cel[i], &x, &d);
+            LU_SP(n, ids[i], x, d, LU_COL, 38, 2 + pan[i], lu_enc_cell[cel[i]], i < 5 ? LK_KNOB : LK_BTN, pan[i] == 1 ? LU_ACC2 : LU_ACC1, i < 5 ? 11 : 0, nm[i]);
+            n++;
+        }
     } else {
         static const char *const nm[8] = {"SPACE", "ROOT", "OCT", "SPAN", "CHORD", "TUNE", "SHUFL", "CYCLE"};
         static const uint16_t ids[8] = {140, 141, 142, 143, 150, 153, 151, 152};
@@ -292,6 +303,11 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
                 b[5] = 0;
             }
             text_c(s->x, cy + s->r + 3, s->w, t, hot ? LU_SEL : LU_DIM, 1);
+        } else if (s->id >= 210 && s->id < 214) {                 /* ENV: the time itself, A(ttack) / R(elease) and the value */
+            char t[10];
+            t[0] = (char)((s->id & 1) ? 'R' : 'A');            /* (six characters fit under a knob) */
+            lira_ui_env_text(s->id, t + 1);
+            text_c(s->x, cy + s->r + 3, s->w, t, hot ? LU_SEL : LU_DIM, 1);
         } else if (s->r != 8) {                                   /* (the small level knobs carry no label) */
             text_c(s->x, cy + s->r + 3, s->w, s->name, hot ? LU_SEL : LU_DIM, 1);
         }
@@ -324,6 +340,10 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             st = lira_ui_chord_get(150) ? "ON" : "OFF", on = lira_ui_chord_get(150);
         else if (s->id == 153)
             st = lira_ui_chord_get(153) ? "JUST" : "EQUAL", on = lira_ui_chord_get(153);
+        else if (s->id == 215)
+            st = lira_ui_get(215) ? "TAP" : "OFF", on = lira_ui_get(215);
+        else if (s->id == 216)
+            st = lira_ui_get(216) ? "VOL" : "DEPTH", on = 1;
         else
             on = 0;
         if (on)
@@ -362,7 +382,8 @@ static void draw_lira(void)
     static const char *const ptitle[LU_TABS][4] = {{"PAIR 1-2", "PAIR 3-4", "PAIR 5-6", "PAIR 7-8"},
                                                    {"DELAY", "MOD + SYNC", "LFO + SYNC", "LFO SHAPE"},
                                                    {"OUTPUT", "PITCH", "GESTURE", "FEEL"},
-                                                   {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"}};
+                                                   {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"},
+                                                   {"FAST", "SLOW", "VELOCITY", "MIDI: SOON"}};
     box(1, 1, P->w - 2, TOPBAR, C_BG);
     text(6, 4, "DRONE-8", C_WHITE, 1);
     int last = lira_ui_last(-1);
@@ -383,12 +404,20 @@ static void draw_lira(void)
                     *t++ = 'V';
                     *t++ = (char)('1' + last);
                     q = t;
+                } else if (last >= 210 && last < 214) {             /* (the top bar holds 8 characters: FA / FR / SA / SR and the time) */
+                    static const char ab[4][3] = {"FA", "FR", "SA", "SR"};
+                    *q++ = ab[last - 210][0];
+                    *q++ = ab[last - 210][1];
                 } else {
                     for (const char *t = sp[i].name; *t;)
                         *q++ = *t++;
                 }
                 *q++ = ' ';
-                lu_pct(&q, lira_ui_get(last));
+                if (lira_ui_env_text(last, q))
+                    while (*q)
+                        q++;
+                else
+                    lu_pct(&q, lira_ui_get(last));
                 *q = 0;
             }
     }
@@ -459,7 +488,7 @@ static void lira_footer(const struct lay *L)
 {
     int page = lira_ui_sel(-1) & 15;
     for (int i = 0; i < LU_TABS; i++) {                          /* in the footer CHORD comes before MIX (the pages keep their numbers) */
-        int q = i < 2 ? i : 5 - i;
+        int q = lu_taborder[i];
         frame(LU_X0 + LU_TABW * i, L->foot_y + 2, LU_TABW - 2, FOOT - 3, page == q ? C_WHITE : LU_LINE, 1);
         text_c(LU_X0 + LU_TABW * i, L->foot_y + 4, LU_TABW - 2, lu_tabname[q], page == q ? C_WHITE : LU_DIM, 1);
     }
@@ -477,7 +506,7 @@ static int lira_footer_hit(int x)
     int i = (x - LU_X0) / LU_TABW;
     if (x < LU_X0 || i >= LU_TABS || (x - LU_X0) % LU_TABW >= LU_TABW - 2)
         return 0;
-    lira_page_set(i < 2 ? i : 5 - i, 2);                          /* a new tab: its first panel is the encoder group */
+    lira_page_set(lu_taborder[i], 2);                          /* a new tab: its first panel is the encoder group */
     return 1;
 }
 
@@ -580,6 +609,8 @@ static void lu_press(const struct lu_spec *s, int dir)
         lira_ui_action(2);
     else if (id == 153)
         lira_ui_action(3);
+    else if (id == 215 || id == 216)
+        lira_ui_set(id, !lira_ui_get(id));
 }
 
 /* kind 0 down, 1 move, 2 up; x / d in page pixels. A knob turns by 80 px of travel up or down from where it was touched. */
@@ -631,6 +662,7 @@ static void lira_touch(int kind, int id, int x, int d)
         int px, pd, pw, ph;
         lu_plate_rect(v, &px, &pd, &pw, &ph);
         if (x >= px - 1 && x < px + pw + 1 && d >= pd && d < pd + ph + 4) {
+            lira_ui_tapvel(v, ph > 0 ? 1000 - (d - pd) * 1000 / ph : 1000);   /* (velocity TAP: the top of the plate is full, its bottom soft) */
             if (lira_ui_momentary(0)) {
                 lira_ui_key(v, 1);
                 lira_ui_drag(id, 0, 1, v, 0, 0);

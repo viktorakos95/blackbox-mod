@@ -120,7 +120,8 @@ check("load: the controls, FM source, chord state and waveform come back", got =
 e.call("lira_ui_set", 180, 111)
 e.call("lira_ui_set", 181, 222)
 e.call("lira_save")
-tone_file = disk["bbmod.bin"]
+full_file = disk["bbmod.bin"]
+tone_file = full_file[:-20]                                         # (as a build before the ENV tail wrote it)
 tone = lambda: [get(180), get(181)]
 for c in (180, 181):
     e.call("lira_ui_set", c, 900)
@@ -162,6 +163,18 @@ disk["bbmod.bin"] = good
 e.call("lira_save_thunk", 0x2401F508, 0x24072000)
 check("save thunk: the stock save handler runs with its arguments, then the file is written", order[-1] == ("stock save", 0x2401F508, 0x24072000) and opened[-1][1] == 0x0A, str(order))
 disk["bbmod.bin"] = good
+# the ENV tab (build 95) in a tail after that one: envelope times and velocity
+for c, v in ((210, 300), (211, 800), (212, 100), (213, 900), (214, 250), (215, 1), (216, 1)):
+    e.call("lira_ui_set", c, v)
+e.call("lira_save")
+env = lambda: [get(c) for c in range(210, 217)]
+for c in range(210, 217):
+    e.call("lira_ui_set", c, 0)
+e.call("lira_load")
+check("the ENV tab comes back (attacks, releases, velocity amount, source, target)", env() == [300, 800, 100, 900, 250, 1, 1], str(env()))
+disk["bbmod.bin"] = tone_file
+e.call("lira_load")
+check("a file from before the ENV tab loads with its defaults (FAST attack a 3 ms snap, the rest as built, velocity off)", env() == [81, 500, 607, 500, 700, 0, 0], str(env()))
 e.call("lira_ui_set", 16, 1)
 e.call("lira_load_thunk", 0x2401F508, 0x24072000)
 check("load thunk: the stock load handler runs, then the file is read", order[-1][0] == "stock load" and get(16) == want[0], str(order[-1]))
