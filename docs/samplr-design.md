@@ -767,3 +767,10 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
 - DRONE-8 3 dB louder again (level / 350).
 - The loading guard (build 91) only acts on a long load: 30 or more reads in each of the last two seconds and still reading (a pad opening or
   a pad recording does not count), and takes 8 % instead of 12 %.
+
+## Build 97 (DRONE-8 3.1.AO merged; room in ITCM)
+- Merged the drone branch's 3.1.AO (Hyper LFO AND as a logical AND, the drive stage and bass from the circuit; see its commit and
+  docs/LIRA-analog-notes.md). It grew `lira_process` (ITCM 64,032 of the 65,024 bytes after the empty first 512: about 1 KB left) and
+  costs about 0.6 % more CPU.
+- Munchi's delay (process, granular delay, voice read: ~8 KB) runs from flash again: it only runs when it is the delay type picked, and
+  the move to ITCM (build 90) made no audible difference. ITCM now 56,056 bytes, ~9 KB free for the drone's next steps (MIDI).
