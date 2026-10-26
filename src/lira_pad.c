@@ -211,7 +211,8 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     float wl, wpk;               /* ... its smoothed load (permille) and near misses lately */
     float mf0, mf1;              /* the mute is a fade (0 sounding .. 1 silent): where it was at the start of this block and where it is at the end */
     float dhold;                 /* this synth's share of the audio task (per mille) when it went out: the load with it back is the load now plus this */
-    uint8_t sp_hold;             /* the in-block check: blocks it stays out after a spike (looper_drone_spike) */
+    uint16_t sp_hold;            /* the in-block check: blocks it stays out after a spike (looper_drone_spike) */
+    uint16_t sp_back, sp_quiet;  /* ... how long the next one keeps it out (8, doubled for each one soon after the last, up to ~1 s), blocks since the last */
     float sc0, sc1;              /* ... and its fade back (0 sounding .. 1 out), at the start / end of this block */
     float lastl, lastr;          /* the last frame this synth added (a cut dies away from it instead of stepping to 0) */
     uint8_t nv_hold;             /* voices sounding when it went out (dhold was their cost) */
@@ -1205,11 +1206,27 @@ void lira_page_run(float *l, float *r, int n)
         return;
     }
     /* The in-block check, for spikes (a sequence starting, a grain cloud): if this block cannot hold the synth and what has to run after it, the
-       synth is left out (what it was playing dies away in ~3 ms from its last frame) for at least 8 blocks (~45 ms), then fades back in over 8. */
+       synth is left out (what it was playing dies away in ~3 ms from its last frame) for at least 8 blocks (~45 ms), then fades back in over 8.
+       Spikes that come again soon after it is back (the notes of a keys sequence) keep it out longer each time, 16, 32 ... up to ~1 s, and it
+       comes back more slowly: dips, not a flicker. 3 s without one and it is quick again. */
+    if (g->sp_back < 8) {                        /* (first time: no spike before it) */
+        g->sp_back = 8;
+        g->sp_quiet = 0xffffu;
+    }
     if (g->sp_hold)
         g->sp_hold--;
-    if (g->per && looper_drone_spike((uint32_t)((float)g->dsp * (float)g->per * 0.001f)))
-        g->sp_hold = 8;
+    else if (g->sp_quiet < 0xffffu && ++g->sp_quiet > 1125u)
+        g->sp_back = 8;
+    if (g->per && looper_drone_spike((uint32_t)((float)g->dsp * (float)g->per * 0.001f))) {
+        if (!g->sp_hold && g->sc1 < 1.0f) {                   /* a new one (not while it is still out) */
+            if (g->sp_quiet < 375u && g->sp_back < 384u)
+                g->sp_back = (uint16_t)(g->sp_back * 2u);
+            g->sp_hold = g->sp_back;
+        } else if (g->sp_hold < 8u) {
+            g->sp_hold = 8;
+        }
+        g->sp_quiet = 0;
+    }
     g->sc0 = g->sc1;
     if (g->sp_hold) {
         int nt = n < 144 ? n : 144;
@@ -1227,8 +1244,10 @@ void lira_page_run(float *l, float *r, int n)
         g->sc0 = g->sc1 = 1.0f;
         return;
     }
-    if (g->sc1 > 0.0f)
-        g->sc1 = g->sc1 - 0.125f < 0.0f ? 0.0f : g->sc1 - 0.125f;
+    if (g->sc1 > 0.0f) {                         /* back in over 8 blocks, or as long as it was kept out (up to 48) */
+        float st = 1.0f / (float)(g->sp_back < 48u ? g->sp_back : 48u);
+        g->sc1 = g->sc1 - st < 0.0f ? 0.0f : g->sc1 - st;
+    }
     s->l.shed = g->shed >= 3 ? 2 : g->shed;      /* (while it fades out it runs as at step 2) */
     if (s->clearing) {
         int a = (s->clearing - 1) * (DLEN / CLEAR_STEPS);

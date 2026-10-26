@@ -774,3 +774,11 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
   costs about 0.6 % more CPU.
 - Munchi's delay (process, granular delay, voice read: ~8 KB) runs from flash again: it only runs when it is the delay type picked, and
   the move to ITCM (build 90) made no audible difference. ITCM now 56,056 bytes, ~9 KB free for the drone's next steps (MIDI).
+
+## Build 98 (no drone flicker on a keys sequence)
+- Report on build 97: DRONE-8 with one keys-sequence pad: the meter jumps between nothing and red, and the drone goes on and off with it.
+- The in-block check kept room for the rest of the block after the looper stage at its worst of the last ~2 s (`rpk`, build 91), on top of
+  the note-on spike and the drone's own full cost: three worst cases at once, at every note. `rpk` now lets a single long block go in ~0.1 s
+  (a compressor that is always on still keeps its room).
+- When it does have to leave a block, spikes that come again soon after it is back keep it out longer each time (8, 16, 32 ... up to ~1 s
+  of blocks) and it fades back in more slowly (over as many blocks, up to 48): dips, not a flicker. After 3 s without one it is quick again.

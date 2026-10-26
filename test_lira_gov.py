@@ -325,6 +325,11 @@ check("... it stays out for 8 blocks (~45 ms)", all(v == 0.0 for v in held), hel
 back = [wave(0.3) for _ in range(10)]
 rb = [math.sqrt(sum(v * v for v in w) / N) for w in back]
 check("... then fades back in over 8 blocks", rb[0] > 0.0 and rb[0] < rb[7] and abs(back[0][0]) < 0.02, rb)
+spike[0] = 1
+wave(0.3)
+spike[0] = 0
+out2 = [math.sqrt(sum(v * v for v in wave(0.3)) / N) for _ in range(20)]
+check("another spike soon after it is back: it stays out longer (16 blocks, not 8): dips, not a flicker", all(v == 0.0 for v in out2[:15]) and out2[19] > 0.0, out2)
 # the ENV tab: velocity from the height of the tap, the attack time
 def level_after(nb):
     r = 0.0

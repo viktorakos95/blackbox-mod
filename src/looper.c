@@ -278,7 +278,7 @@ struct dsp {
         float fo[LOOPER_TRACKS];                 /* how far it is faded: 0 not at all (as set), 1 silent */
         uint16_t spike_show;                     /* blocks the top bars' warning still shows that an engine was left out of a block (in-block check) */
         uint32_t t_out;                          /* cycle count when the looper stage ended (0: not this block) */
-        float rpk;                               /* the rest of the block after it (stock output, master compressor, interrupts), per mille: its recent worst, let down over a few seconds */
+        float rpk;                               /* the rest of the block after it (stock output, master compressor, interrupts), per mille: its recent worst, let down in ~0.1 s (one long block is not kept for seconds: a keys sequence made the drone flicker) */
     } gd;
     int16_t ws[5120];                            /* WSOLA: the candidate region, mono */
     float zero[MAXN];
@@ -2152,7 +2152,7 @@ void looper_block_done(uint32_t now)
         uint32_t rc = now - g->t_out;
         if ((float)rc < g->per) {
             float rw = (float)rc * 1000.f / g->per;
-            g->rpk = rw > g->rpk ? rw : g->rpk + (rw - g->rpk) * (1.f / 750.f);
+            g->rpk = rw > g->rpk ? rw : g->rpk + (rw - g->rpk) * (1.f / 40.f);
         }
         g->t_out = 0;
     }
