@@ -282,6 +282,7 @@ struct dsp {
     } gd;
     int16_t ws[5120];                            /* WSOLA: the candidate region, mono */
     float zero[MAXN];
+    float *lo_l, *lo_r;                          /* the looper's tracks' bus when they play on Out 2 / 3 (LOOPER_O_ROUTE), else 0: the stage's own */
     float *sm_l, *sm_r;                          /* SAMPLR's bus when it plays on Out 2 / 3 (looper_stage, LOOPER_O_SOUT), else 0: the stage's own */
 };
 _Static_assert(sizeof(struct dsp) <= 32768, "dsp state must fit in one 32 KB buffer");
@@ -2345,9 +2346,10 @@ static int run(float *bl, float *br, int n)
         }
         guard_track(d, t, CYC - tc0, n);
     }
+    float *ol = d->lo_l ? d->lo_l : bl, *or_ = d->lo_l ? d->lo_r : br;
     for (int i = 0; i < n; i++) {
-        bl[i] += d->out[0][i];
-        br[i] += d->out[1][i];
+        ol[i] += d->out[0][i];
+        or_[i] += d->out[1][i];
     }
     for (int w = 0; w < 2; w++) {                                 /* keep this block's sends for the Blackbox's own delay and reverb nodes */
         for (int i = 0; i < n; i++) {
@@ -2487,6 +2489,9 @@ void looper_stage(uint8_t *obj, void *bufs)
         out_bus(bufs, opt_i(LOOPER_O_SOUT), n, l, r, &dd->sm_l, &dd->sm_r);
         if (dd->sm_l == l)
             dd->sm_l = dd->sm_r = 0;
+        out_bus(bufs, opt_i(LOOPER_O_ROUTE), n, l, r, &dd->lo_l, &dd->lo_r);
+        if (dd->lo_l == l)
+            dd->lo_l = dd->lo_r = 0;
         lira_page_run(dl, dr, n);                  /* the LIRA page's voices, before the looper so SOURCE MIX records them (on Out 1) */
         crash_bc(BC_AUDIO, BCA_STAGE);
         lira_rec_begin(l, r, n);

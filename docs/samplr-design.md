@@ -818,3 +818,9 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
   OUT 1 after a power on). The rows are 14 px now (twelve rows and CLEAR ALL above the footer).
 - SAMPLR's colours: petrol (blue-green slate background, a peach waveform, golden first finger, a raspberry selection, sky-blue second).
 - The markers: 1 px with the dark edge (the arp's current spot 2 px), the grain bracket 1 px.
+
+## Build 103 (LOOPER OUT)
+
+- Looper SETUP: a third output row, LOOPER OUT (OUT 1 / 2 / 3), for the looper's tracks (`LOOPER_O_ROUTE`, the old unused slot; `d->lo_l / lo_r`,
+  set by `out_bus` as for the drone and SAMPLR). The looper's input monitor (MON) stays on Out 1. SOURCE MIX still records Out 1 only.
+  Rows are 13 px now (thirteen rows and CLEAR ALL).

@@ -150,7 +150,7 @@ static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "REC", "FX", "SMPL"
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
 
 #define TAB_W      34
-#define ROW_H      14                      /* SETUP: one option per row (twelve rows and the CLEAR ALL row above the footer) */
+#define ROW_H      13                      /* SETUP: one option per row (thirteen rows and the CLEAR ALL row above the footer) */
 #define OPT_X      84                      /* SETUP: where the choices start */
 #define CHOICE_W   52
 #define SLIDER_W   150
@@ -326,6 +326,7 @@ static const struct optrow rows_setup[] = {
     {"FILTERS", LOOPER_O_SLOPE, 2, {"12 DB", "24 DB", 0, 0}},              /* the looper's and SAMPLR's (12 dB: half the work) */
     {"DRONE OUT", LOOPER_O_DOUT, 3, {"OUT 1", "OUT 2", "OUT 3", 0}},       /* the output DRONE-8 plays on (looper.c out_bus) */
     {"SAMPLR OUT", LOOPER_O_SOUT, 3, {"OUT 1", "OUT 2", "OUT 3", 0}},
+    {"LOOPER OUT", LOOPER_O_ROUTE, 3, {"OUT 1", "OUT 2", "OUT 3", 0}},
 };
 static const struct optrow rows_more[] = {
     {"MONITOR INPUT K1", LOOPER_O_MON, 0, {0, 0, 0, 0}},
@@ -336,7 +337,7 @@ static int opt_rows(void);
 
 static int opt_rows(void)
 {
-    return P->mode == M_MORE ? 2 : 12;
+    return P->mode == M_MORE ? 2 : 13;
 }
 
 static const struct optrow *page_rows(void)
