@@ -38,8 +38,8 @@ e.call("interp_register", 0x24060000, 0xF1, 0, 0, 2, 0)
 regs.clear()
 e.call("rec_input_register", 0x24060000, 0x9A, 0, 0, 4, 0)
 names_ptr, count = regs[0][1], regs[0][2]
-names = [e.cstr(e.r32(names_ptr + 4 * i) & 0xFFFFFFFF) for i in range(6)]
-check("Rec Input list: six names, DRONE and LOOPER added", regs[0][0] == 0x9A and names == ["L+R", "Left", "Right", "Resam", "DRONE", "LOOPER"], str(names))
+names = [e.cstr(e.r32(names_ptr + 4 * i) & 0xFFFFFFFF) for i in range(7)]
+check("Rec Input list: seven names, DRONE, LOOPER and SAMPLR added", regs[0][0] == 0x9A and names == ["L+R", "Left", "Right", "Resam", "DRONE", "LOOPER", "SAMPLR"], str(names))
 
 # the store thunk: r3 = value, r4 = node (+0x58 is the byte the recorder switches on)
 NODE = 0x24070000
@@ -88,7 +88,7 @@ def getbus():
 
 
 # right after boot, with nothing playing: DRONE and LOOPER hand the recorder silence, not the allocator's garbage
-for v in (4, 5):
+for v in (4, 5, 6):
     e.uc.reg_write(UC_ARM_REG_R4, NODE)
     e.call("lira_rec_store_thunk", 0, 0, 0, v)
     setbus(0.7, 0.8)
@@ -112,7 +112,7 @@ for _ in range(60):
     e.call("lira_rec_begin", L, R, N)
     e.uc.mem_write(L, struct.pack(f"<{N}f", *([0.35] * N)))              # the looper adds 0.25 to the left, 0.1 to the right
     e.uc.mem_write(R, struct.pack(f"<{N}f", *([0.2] * N)))
-    e.call("lira_rec_end", L, R, N)
+    e.call("lira_rec_end", 1, L, R, N)
 drone_l = list(struct.unpack(f"<{N}f", bytes(e.uc.mem_read(L, 4)) + bytes(e.uc.mem_read(L + 4, 4 * (N - 1)))))
 for v, name in ((0, "stock choice"),):
     setbus(0.7, 0.8)
@@ -128,6 +128,25 @@ e.call("lira_rec_copy_thunk", BUS, 0)
 l, r = getbus()
 check("LOOPER: the recorder's bus holds what the looper added (the new bus minus the one with the synth in it)",
       abs(l[10] - (0.35 - pre_l)) < 1e-5 and abs(r[10] - (0.2 - pre_r)) < 1e-5, "%.4f %.4f (want %.4f %.4f)" % (l[10], r[10], 0.35 - pre_l, 0.2 - pre_r))
+e.call("lira_rec_begin", L, R, N)                                          # SAMPLR: what it added to a bus (0.05 left, 0.15 right)
+e.uc.mem_write(L, struct.pack(f"<{N}f", *([0.4] * N)))
+e.uc.mem_write(R, struct.pack(f"<{N}f", *([0.6] * N)))
+e.call("lira_rec_begin", L, R, N)
+e.uc.mem_write(L, struct.pack(f"<{N}f", *([0.45] * N)))
+e.uc.mem_write(R, struct.pack(f"<{N}f", *([0.75] * N)))
+e.call("lira_rec_end", 2, L, R, N)
+e.uc.reg_write(UC_ARM_REG_R4, NODE)
+e.call("lira_rec_store_thunk", 0, 0, 0, 6)                                # SAMPLR
+setbus(0.7, 0.8)
+e.call("lira_rec_copy_thunk", BUS, 0)
+l, r = getbus()
+check("SAMPLR: the recorder's bus holds what SAMPLR added (0.05 / 0.15), nothing of the looper's or the 0.7", abs(l[10] - 0.05) < 1e-5 and abs(r[10] - 0.15) < 1e-5, "%.4f %.4f" % (l[10], r[10]))
+e.uc.reg_write(UC_ARM_REG_R4, NODE)
+e.call("lira_rec_store_thunk", 0, 0, 0, 5)
+setbus(0.7, 0.8)
+e.call("lira_rec_copy_thunk", BUS, 0)
+l, r = getbus()
+check("LOOPER is still the looper's own block, not SAMPLR's", abs(l[10] - (0.35 - pre_l)) < 1e-5, "%.4f" % l[10])
 e.uc.reg_write(UC_ARM_REG_R4, NODE)
 e.call("lira_rec_store_thunk", 0, 0, 0, 4)                                # DRONE
 setbus(0.7, 0.8)

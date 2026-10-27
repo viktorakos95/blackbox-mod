@@ -2205,6 +2205,10 @@ void looper_guard_force(int on)                    /* tests: 1 the guard makes n
         DSP()->gd.force = (uint8_t)(on != 0);
 }
 
+void lira_rec_begin(const float *l, const float *r, int n);
+void lira_rec_end(int which, const float *l, const float *r, int n);
+void lira_rec_put(int which, const float *l, const float *r, int n);
+
 static int run(float *bl, float *br, int n)
 {
     struct dsp *d = DSP();
@@ -2324,7 +2328,10 @@ static int run(float *bl, float *br, int n)
     float *snd[4] = {d->acc[0], d->acc[1], d->acc[2], d->acc[3]};
     int dsend = lira_send_add(d->acc[2], d->acc[3], n);
     crash_bc(BC_AUDIO, BCA_SAMPLR);
-    int sends = samplr_run(d->sm_l ? d->sm_l : bl, d->sm_l ? d->sm_r : br, n, snd);
+    float *tl = d->sm_l ? d->sm_l : bl, *tr = d->sm_l ? d->sm_r : br;
+    lira_rec_begin(tl, tr, n);
+    int sends = samplr_run(tl, tr, n, snd);
+    lira_rec_end(2, tl, tr, n);                      /* SAMPLR alone, for the pad recorder's SAMPLR input */
     crash_bc(BC_AUDIO, BCA_TRACKS);          /* SAMPLR first: SOURCE MIX records it, and its sends join the looper's delay and reverb */
     guard_decide(d);                                 /* the player's unmutes, the fades */
     for (int t = 0; t < LOOPER_TRACKS; t++) {
@@ -2346,6 +2353,7 @@ static int run(float *bl, float *br, int n)
         }
         guard_track(d, t, CYC - tc0, n);
     }
+    lira_rec_put(1, d->out[0], d->out[1], n);        /* the tracks alone, for the pad recorder's LOOPER input */
     float *ol = d->lo_l ? d->lo_l : bl, *or_ = d->lo_l ? d->lo_r : br;
     for (int i = 0; i < n; i++) {
         ol[i] += d->out[0][i];
@@ -2442,8 +2450,6 @@ void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, in
 /* Out 1 bus, once per audio block, before the master compressor and the output levels (looper_thunk.S).
  * obj is the compressor stage object; its output index names the Out 1 bus, as in comp_process (comp.c). */
 void lira_page_run(float *l, float *r, int n);
-void lira_rec_begin(const float *l, const float *r, int n);
-void lira_rec_end(const float *l, const float *r, int n);
 
 /* The bus an engine plays on (LOOPER_O_DOUT / SOUT): Out 1 is the stage's own (l, r); Out 2 and Out 3 are the stock buses 1 and 2, which the
  * render sends to their jacks right after this stage (0x08053576..: bus 0 Out 1 and the headphones, 1 Out 2, 2 Out 3; they skip the master
@@ -2494,16 +2500,18 @@ void looper_stage(uint8_t *obj, void *bufs)
             dd->lo_l = dd->lo_r = 0;
         lira_page_run(dl, dr, n);                  /* the LIRA page's voices, before the looper so SOURCE MIX records them (on Out 1) */
         crash_bc(BC_AUDIO, BCA_STAGE);
-        lira_rec_begin(l, r, n);
         uint32_t c_l = *(volatile uint32_t *)0xe0001004u;
         if (!run(l, r, n)) {
             crash_bc(BC_AUDIO, BCA_SAMPLR);
-            samplr_run(DSP()->sm_l ? DSP()->sm_l : l, DSP()->sm_l ? DSP()->sm_r : r, n, 0);
+            float *tl = DSP()->sm_l ? DSP()->sm_l : l, *tr = DSP()->sm_l ? DSP()->sm_r : r;
+            lira_rec_begin(tl, tr, n);
+            samplr_run(tl, tr, n, 0);
+            lira_rec_end(2, tl, tr, n);            /* SAMPLR alone, for the pad recorder's SAMPLR input (the looper's tracks are silent here) */
+            lira_rec_put(1, 0, 0, n);
         }
         crash_bc(BC_AUDIO, BCA_STAGE);
         uint32_t c_y = *(volatile uint32_t *)0xe0001004u - c_l;
         samplr_stage_prof(pre, c_l - c_in, c_y);
-        lira_rec_end(l, r, n);                     /* what the looper added, for the pad recorder's LOOPER input */
         DSP()->gd.t_out = *(volatile uint32_t *)0xe0001004u | 1u;   /* (looper_block_done: what came after) */
         crash_bc(BC_AUDIO, 0);
     }

@@ -824,3 +824,9 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
 - Looper SETUP: a third output row, LOOPER OUT (OUT 1 / 2 / 3), for the looper's tracks (`LOOPER_O_ROUTE`, the old unused slot; `d->lo_l / lo_r`,
   set by `out_bus` as for the drone and SAMPLR). The looper's input monitor (MON) stays on Out 1. SOURCE MIX still records Out 1 only.
   Rows are 13 px now (thirteen rows and CLEAR ALL).
+
+## Build 104 (pad recorder: SAMPLR as an input; LOOPER is the tracks alone)
+
+- The pad recorder's Rec Input list is now L+R / Left / Right / Resam / DRONE / LOOPER / SAMPLR. LOOPER is the looper's tracks alone (it was
+  the looper and SAMPLR together), SAMPLR is SAMPLR alone. Both are captured at the engines, so they record the same whichever output
+  (LOOPER OUT / SAMPLR OUT) they play on. Saved with the project (bbmod.bin misc[9] 0..3). Resam still records the whole Out 1 mix.
