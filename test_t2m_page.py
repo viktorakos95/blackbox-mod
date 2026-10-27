@@ -27,7 +27,7 @@ def check(label, cond, detail=""):
 
 
 FIELDS = ["on", "port", "last_vel", "last_note", "hits", "peak", "blocks", "hit_blk", "looped", "looped_lost", "hist_n", "hist", "ui", "p",
-          "clk"]
+          "clk", "eng"]
 os.makedirs("out/t2m_test", exist_ok=True)
 open("out/t2m_test/off2.c", "w").write(
     '#include <stdio.h>\n#include <stddef.h>\n#include "../../src/t2m_bb.h"\nint main(void){\n'
@@ -260,6 +260,10 @@ check("TRS: input R's TRS output off (USB stays)", e.r8(MEM + O["port"] + 1) == 
 tap(180, 26)
 tap(20, 26)
 check("IN L: back to input L", e.r8(MEM + O["ui"]) == 0)
+tap(293, 26)
+check("ENG: the engine switch goes off", e.r8(MEM + O["eng"]) == 0, e.r8(MEM + O["eng"]))
+tap(293, 26)
+check("ENG: and on again", e.r8(MEM + O["eng"]) == 1)
 
 # ---- OUT rows (d 40, 80; 40 px each): NOTE VEL LEN CHAN / CC CC VAL
 tap(150, 40 + 10)

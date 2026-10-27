@@ -30,7 +30,8 @@ struct t2m_mem {
     uint32_t looped_lost[T2M_INPUTS];/* ... that did not fit (its queue was full) */
     float scan_saved[T2M_INPUTS];    /* SCAN before VEL went fixed (which sets it to 0); restored when VEL goes back to DYN */
     uint8_t hist_n[T2M_INPUTS];      /* the history's write position */
-    uint8_t _r0[2];
+    uint8_t eng;                     /* the engine switch: 0 = nothing runs (no detector, no meters; what sounds is ended), set at boot */
+    uint8_t _r0[1];
     struct t2m_hit hist[T2M_INPUTS][T2M_HIST];
     struct {                         /* the TRIG page (src/t2m_page.c) */
         uint8_t in, row, sheet, last;/* the input shown, the row the knobs turn, the footer's sheet, the value last touched (0xff none) */

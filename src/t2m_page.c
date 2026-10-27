@@ -242,9 +242,9 @@ static int row_h(int foot, int sheet)
 static int cell_x(int w, int c) { return 4 + c * ((w - 8) / 4); }
 static int cell_w(int w) { return (w - 8) / 4 - 3; }
 
-/* switch row buttons: 0 IN L, 1 IN R, 2 ON, 3 TRS, 4 USB, 5 INT (the Blackbox's own MIDI in) */
-static const int16_t sw_x[6] = {4, 46, 100, 150, 192, 234};
-static const int16_t sw_w[6] = {38, 38, 40, 38, 38, 38};
+/* switch row buttons: 0 IN L, 1 IN R, 2 ON, 3 TRS, 4 USB, 5 INT (the Blackbox's own MIDI in), 6 ENG (the whole engine: off = no detector at all) */
+static const int16_t sw_x[7] = {4, 46, 100, 150, 192, 234, 276};   /* (6: ENG, the engine switch) */
+static const int16_t sw_w[7] = {38, 38, 40, 38, 38, 38, 35};
 
 static float db_of(float x)                          /* 20 log10(x) for the meter, rough */
 {
@@ -526,7 +526,7 @@ void t2m_page_draw(int w, int foot)
     }
 
     /* top bar: both inputs at a glance */
-    lp_text(6, 3, "TRIG", C_CYAN, 1);
+    lp_text(6, 3, "TRIG", m->eng ? C_CYAN : C_RED, 1);
     for (int i = 0; i < T2M_INPUTS; i++) {
         p = b;
         *p++ = i ? 'R' : 'L';
@@ -544,11 +544,11 @@ void t2m_page_draw(int w, int foot)
 
     /* switch row (every sheet) */
     int d = TOP + 2;
-    static const char *const sw[6] = {"IN L", "IN R", 0, "TRS", "USB", "INT"};
-    for (int i = 0; i < 6; i++) {
-        int on = i < 2 ? k == i : i == 2 ? m->on[k] : i == 3 ? (m->port[k] & T2M_PORT_TRS) : i == 4 ? (m->port[k] & T2M_PORT_USB) : (m->port[k] & T2M_PORT_INT);
-        const char *s = i == 2 ? (m->on[k] ? "ON" : "OFF") : sw[i];
-        int c = i == 2 && !on ? C_RED : on ? C_CYAN : C_RAIL;
+    static const char *const sw[7] = {"IN L", "IN R", 0, "TRS", "USB", "INT", "ENG"};
+    for (int i = 0; i < 7; i++) {
+        int on = i < 2 ? k == i : i == 2 ? m->on[k] : i == 3 ? (m->port[k] & T2M_PORT_TRS) : i == 4 ? (m->port[k] & T2M_PORT_USB) : i == 5 ? (m->port[k] & T2M_PORT_INT) : m->eng;
+        const char *s = i == 2 ? (m->on[k] ? "ON" : "OFF") : i == 6 ? (m->eng ? "ENG" : "OFF") : sw[i];
+        int c = (i == 2 || i == 6) && !on ? C_RED : on ? C_CYAN : C_RAIL;
         lp_frame(sw_x[i], d, sw_w[i], BAR_H - 4, c, 1);
         lp_text_c(sw_x[i], d + 4, sw_w[i], s, on ? C_WHITE : C_GREY, 1);
     }
@@ -621,13 +621,15 @@ int t2m_page_touch(int x, int d, int w, int foot)
         return -1;
     }
     if (d >= TOP && d < TOP + BAR_H) {
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 7; i++) {
             if (x < sw_x[i] || x >= sw_x[i] + sw_w[i])
                 continue;
             if (i < 2)
                 UI->in = (uint8_t)i;
             else if (i == 2)
                 m->on[k] = !m->on[k];
+            else if (i == 6)
+                m->eng = !m->eng;
             else
                 m->port[k] ^= (uint8_t)(i == 3 ? T2M_PORT_TRS : i == 4 ? T2M_PORT_USB : T2M_PORT_INT);
         }
@@ -746,7 +748,7 @@ uint32_t t2m_page_sig(void)
         h = (h ^ (uint32_t)(int)(db * 0.5f)) * 16777619u;             /* 2 dB steps of the meters */
         h = (h ^ (m->hits[i] + (uint32_t)lit(m, i) * 977u + m->looped[i] * 31u + m->looped_lost[i] * 7u)) * 16777619u;
     }
-    h = (h ^ (uint32_t)(m->on[0] | m->on[1] << 1 | m->port[0] << 2 | m->port[1] << 4 | m->ui.in << 6 | m->ui.row << 7 |
+    h = (h ^ (uint32_t)(m->on[0] | m->on[1] << 1 | m->port[0] << 2 | m->port[1] << 4 | m->eng << 20 | m->ui.in << 6 | m->ui.row << 7 |
                         m->ui.sheet << 9 | m->ui.last << 12)) * 16777619u;
     if (m->ui.sheet == SH_HITS) {                                     /* the history scrolls while it holds a hit */
         int fresh = 0;

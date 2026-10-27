@@ -838,3 +838,9 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
   flash; the drone is ~200 k a block, SAMPLR three tracks ~80 k. It cannot be switched off while the input is on (it has to hear the next hit).
 - `t2m_process` and `t2m_audio` now run from ITCM (zero wait states, no instruction cache misses); the output is the same (the t2m tests are
   unchanged). ITCM: 59,712 of 65,024 bytes.
+
+## Build 106 (Trigger2MIDI engine switch)
+
+- TRIG page switch row: a seventh button, ENG (right end). Off: the detector does not run at all (no level measurement either, the meters fall to
+  nothing, a held note is ended once), the "TRIG" in the top bar turns red. On by default after a boot; not saved. With it off the cost is the clock
+  monitor only (~100 instructions a block).

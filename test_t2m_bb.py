@@ -43,7 +43,7 @@ def check(label, cond, detail=""):
 
 # struct offsets from the header itself (same layout on the host: only 1-, 2- and 4-byte fields)
 FIELDS = ["on", "port", "last_vel", "last_note", "hits", "peak", "blocks", "hit_blk", "looped", "looped_lost", "hist_n", "hist",
-          "ui", "p", "st"]
+          "ui", "p", "st", "eng"]
 os.makedirs("out/t2m_test", exist_ok=True)
 open("out/t2m_test/off.c", "w").write(
     '#include <stdio.h>\n#include <stddef.h>\n#include "../../src/t2m_bb.h"\nint main(void){\n'
@@ -175,6 +175,18 @@ check("input L switched off with a note held: its note-off goes out", on_notes a
 out = feed(sig, silence)
 check("input L off: silent", out == [])
 e.uc.mem_write(MEM + O["on"], b"\x01")
+
+# the engine switch: with a note held, off ends it, then nothing runs (no hits, no level)
+out = feed(sig[:900], silence[:900])
+on_notes = [m for m in msgs(out) if m[0] == 0x90]
+e.uc.mem_write(MEM + O["eng"], b"\x00")
+out = feed(silence[:N], silence[:N])
+check("engine off with a note held: its note-off goes out", on_notes and msgs(out) == [(0x80, 38, 0)], msgs(out))
+out = feed(sig, sig)
+check("engine off: silent, and no level on the meters", out == [] and struct.unpack("<f", e.uc.mem_read(MEM + O["peak"], 4))[0] < 1e-6, out)
+e.uc.mem_write(MEM + O["eng"], b"\x01")
+out = feed(sig, silence)
+check("engine on again: the hits come back", any(m[0] == 0x90 for m in msgs(out)))
 
 # ---- INT: the Blackbox's own MIDI in
 P_ALL = 7
