@@ -830,3 +830,11 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
 - The pad recorder's Rec Input list is now L+R / Left / Right / Resam / DRONE / LOOPER / SAMPLR. LOOPER is the looper's tracks alone (it was
   the looper and SAMPLR together), SAMPLR is SAMPLR alone. Both are captured at the engines, so they record the same whichever output
   (LOOPER OUT / SAMPLR OUT) they play on. Saved with the project (bbmod.bin misc[9] 0..3). Resam still records the whole Out 1 mix.
+
+## Build 105 (Trigger2MIDI's detector in ITCM)
+
+- Measured (`Trigger2MIDI` input L on, which it is by default; 128-frame block, Unicorn instruction counts): ~16 k instructions with silence,
+  ~18 k with signal (about 140 a frame), ~34 k with both inputs on. Roughly 3-4 % of a block (6-7 % with both inputs) with the code running from
+  flash; the drone is ~200 k a block, SAMPLR three tracks ~80 k. It cannot be switched off while the input is on (it has to hear the next hit).
+- `t2m_process` and `t2m_audio` now run from ITCM (zero wait states, no instruction cache misses); the output is the same (the t2m tests are
+  unchanged). ITCM: 59,712 of 65,024 bytes.

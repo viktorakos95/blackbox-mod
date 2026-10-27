@@ -21,6 +21,7 @@ SECTIONS {
     *(.text.play_seg* .text.looper_filter .text.looper_in .text.svf12 .text.svf24 .text.soft .text.crunch .text.frame_at .text.rd_span .text.lpos)
     /* (Munchi's delay runs from flash again since build 97: it only runs when it is the delay type picked, and the drone needed the room) */
     *(.text.filter_process .text.comp_process .text.od_process)
+    *(.text.t2m_process .text.t2m_audio)                         /* (Trigger2MIDI's detector runs every block, from build 105: zero-wait code) */
     . = ALIGN(4);
     __itcm_end = .;
   } > ITCM AT> ITCML
