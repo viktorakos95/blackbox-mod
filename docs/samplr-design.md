@@ -796,3 +796,13 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
 - The leader rule was checked (`test_guard.py`): with DRONE-8's page opened last it keeps no time for SAMPLR or the looper's tracks (they
   have their own checks, after it); it only leaves a block when the stock work before it plus its own cost do not fit (cap 92 %, less the
   room the rest of the block needs lately).
+
+## Build 101 (markers you can see, gesture replays drawn, DRONE-8 eight layers)
+
+- SAMPLR: the arp spots, the grain clouds and the playheads are 2 px lines with a 1 px dark edge each side (`sm_mark`; the arp's current
+  spot 4 px, the grain size bracket 2 px at the top and the bottom), so they stand out from the waveform.
+- What a gesture layer replays is drawn too: its grain clouds, playheads and slices (voices `SM_LBASE` on) and its latched arp spots
+  (owner 0xf0 + layer), in the layer's colour (pink, green, teal). They were never drawn: the loop only went over the fingers.
+- The SAMPLR page is checked for changes every other poke (~9 a second, was ~5) and still only redrawn when something on it moved.
+- DRONE-8: the gesture recorder takes up to 8 layers (was 3; the layer is in bits 11..13 of an event's id; 1024 events in all). While a loop
+  plays, its plates and the knobs it moves (in steps of 1/30 of their travel) are redrawn, only when they change.

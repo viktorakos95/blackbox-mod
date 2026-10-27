@@ -184,7 +184,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t sync_on;             /* which of them were synced at the last tick */
     uint8_t sync[4];             /* tempo sync of LFO A, LFO B, delay 1, delay 2: 0 off, else an index into div_beats */
     uint8_t gmode, rp;           /* gesture recorder: 0 idle, 1 armed for the next bar line, 2 recording the first take, 3 looping, 4 armed to overdub at the loop start, 5 overdubbing; rp = replaying (events are not recorded again) */
-    uint8_t glen_i, glayers;     /* take length (1 2 4 8 bars), layers in the loop (up to 3) */
+    uint8_t glen_i, glayers;     /* take length (1 2 4 8 bars), layers in the loop (up to LAYERS_MAX) */
     uint8_t pend;                /* a STOP (16) or PLAY (17) of the loop waiting for the next bar line */
     uint8_t off;                 /* the engine switch: the synth does not run at all (no modulation, no tail, no delay lines) */
     uint8_t btn_on;              /* the eight round buttons are the voice plates (else they are the stock buttons) */
@@ -223,7 +223,8 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t env_set;             /* the ENV values have been given their defaults (pools made before them start at 0) */
 };
 #define GEV_MAX 1024
-struct gev {                     /* one recorded gesture: when (frames from the bar line), what (a control id, or 300 + voice for a plate, 400 + voice a chord pitch, 500 + stepped id, 600 + action; the layer in bits 11..12) and its value */
+#define LAYERS_MAX 8             /* gesture layers (the layer is kept in bits 11..13 of an event's id) */
+struct gev {                     /* one recorded gesture: when (frames from the bar line), what (a control id, or 300 + voice for a plate, 400 + voice a chord pitch, 500 + stepped id, 600 + action; the layer in bits 11..13) and its value */
     uint32_t t;
     uint16_t id;
     int16_t val;
@@ -989,9 +990,18 @@ unsigned lira_ui_sig(void)
     if (!p)
         return 0;
     const struct pg *g = &p->pg;
-    if (g->gmode < 3 || g->gmode == 6)                   /* (while a loop plays, its plates and knobs are not redrawn: the loop's own gestures would repaint the page all the time; the LEDs show the plates) */
-        for (int k = 0; k < 8; k++)
-            h = h << 1 | g->want[k];
+    for (int k = 0; k < 8; k++)                          /* (the plates are redrawn while a loop plays them too: only when one changes, at most ~19 times a second) */
+        h = h << 1 | g->want[k];
+    if (g->gmode >= 3 && g->gmode != 6) {               /* a loop plays: the knobs it moves are redrawn too (in coarse steps: ~30 a knob's travel) */
+        unsigned kh = 0;
+        for (int i = 0; i < NCTL; i++)
+            kh = kh * 31u + (unsigned)(g->row[i] >> 5);
+        for (int i = 0; i < 18; i++)
+            kh = kh * 31u + (unsigned)(g->ex[i] >> 5);
+        for (int i = 0; i < 4; i++)
+            kh = kh * 31u + (unsigned)(g->mod[i] >> 5);
+        h ^= kh << 9;
+    }
     unsigned prog = g->gmode >= 2 && g->gmode != 6 && g->gtot > 1.0f ? (unsigned)(g->gt * 8.0f / g->gtot) : 0;
     return h | (unsigned)g->momentary << 8 | (unsigned)g->sel << 9 | prog << 20 | (unsigned)g->gmode << 24 | (unsigned)g->off << 28 | (unsigned)g->pend << 29;
 }
@@ -1620,7 +1630,7 @@ void lira_ui_action(int a)
                 g->gtot = bar;
             break;
         case 3:
-            if (g->glayers < 3)
+            if (g->glayers < LAYERS_MAX)
                 g->gmode = 4;                             /* another layer, from the loop start */
             break;
         case 6:                                           /* paused: REC plays on */
@@ -1699,7 +1709,7 @@ static void gdrop(struct pool *p, struct pg *g, int layer)
 {
     unsigned k = 0;
     for (unsigned i = 0; i < g->gn; i++)
-        if (((p->ev[i].id >> 11) & 3) != (unsigned)layer)
+        if (((p->ev[i].id >> 11) & 7) != (unsigned)layer)
             p->ev[k++] = p->ev[i];
     g->gn = (uint16_t)k;
     g->gi = 0;

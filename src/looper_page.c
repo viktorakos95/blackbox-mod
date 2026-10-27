@@ -1187,6 +1187,22 @@ static void sm_button(int x, int by, int w, const char *s, int on)
     text_c(x, by + (SM_BH - 8) / 2, w, s, on ? C_WHITE : C_LIGHT, 1);
 }
 
+static const uint8_t layer_colour[SM_LAYERS] = {C_PINK, C_GREEN, C_TEAL};   /* SAMPLR: what a gesture layer replays */
+
+static int sm_vcol(int f)                                        /* a SAMPLR voice's colour: its finger's, or its gesture layer's */
+{
+    return f < SM_VOICES ? track_colour[f] : f >= SM_LBASE && f < SM_NV ? layer_colour[(f - SM_LBASE) / SM_LFING] : C_WHITE;
+}
+
+/* A marker line on the waveform (an arp spot, a grain cloud, a playhead): w px wide with a 1 px dark edge each side, so it stands out from the wave. */
+static void sm_mark(int wx, int wy, int wh, int x, int w, int col)
+{
+    x -= w / 2;
+    x = x < 1 ? 1 : x > SM_W - w - 1 ? SM_W - w - 1 : x;
+    box(wx + x - 1, wy, w + 2, wh, C_BG);
+    box(wx + x, wy, w, wh, col);
+}
+
 static const uint8_t pool_colour[8] = {0x0b, 0x1a, 0x20, 0x06, 0x0b, 0x1a, 0x20, 0x06};   /* each latched loop has its own colour: slice and playhead */
 static const char *const sm_mode_name[SM_MODES] = {"SLICE", "TAPE", "ARP", "GRAIN", "LOOP"};
 static const char *const sm_q_name[4] = {"Q OFF", "Q 1/4", "Q 1/8", "Q 1/16"};
@@ -1259,7 +1275,7 @@ static void draw_samplr(void)
             int slice = s->mode == SM_SLICER ? sl_c : -1, col = C_WAVE;
             for (int f = 0; f < SM_NV; f++)
                 if (slice >= 0 && (s->v[f].on || s->v[f].env > 0.f) && s->v[f].slice == slice && s->v[f].vmode == SM_SLICER)
-                    col = f < SM_VOICES ? (track_colour[f] == C_YELLOW ? C_LILAC : track_colour[f]) : f >= SM_LTBASE && f < SM_LTBASE + SM_LATV ? pool_colour[f - SM_LTBASE] : col;
+                    col = f < SM_VOICES ? (track_colour[f] == C_YELLOW ? C_LILAC : track_colour[f]) : f >= SM_LTBASE && f < SM_LTBASE + SM_LATV ? pool_colour[f - SM_LTBASE] : f >= SM_LBASE ? sm_vcol(f) : col;
             if (s->mode == SM_LOOP && (fpos < s->lp_a || fpos >= s->lp_b))
                 col = C_GREY;                                         /* outside the loop window */
             box(wx + 2 * c, cy - hi, 2, hi + lo + 1, s->ofill[c] ? col : C_DARK);
@@ -1283,17 +1299,18 @@ static void draw_samplr(void)
             for (int i = 0; i < SM_SPOTS; i++) {
                 if (!s->spot[i].used)
                     continue;
-                int x = s->spot[i].pos / (s->len / SM_W + 1);
-                x = x >= SM_W - 1 ? SM_W - 2 : x;
-                int col = s->spot[i].owner < SM_VOICES ? track_colour[s->spot[i].owner] : C_WHITE;
-                box(wx + x, wy, s->a_last == i ? 3 : 1, wh, col);
+                int x = s->spot[i].pos / (s->len / SM_W + 1), o = s->spot[i].owner;
+                int col = o < SM_NV ? sm_vcol(o) : o >= 0xf0 && o < 0xf0 + SM_LAYERS ? layer_colour[o - 0xf0] : C_WHITE;   /* (0xf0 + L: a layer's latched spot) */
+                sm_mark(wx, wy, wh, x, s->a_last == i ? 4 : 2, col);
             }
         for (int f = SM_LTBASE; f < SM_LTBASE + SM_LATV; f++) {      /* latched slice loops */
             struct smvoice *v = &s->v[f];
             if (v->on && v->vmode == SM_SLICER)
                 vline(wx + (v->ipos / (s->len / SM_W + 1) >= SM_W ? SM_W - 1 : v->ipos / (s->len / SM_W + 1)), wy, wh, pool_colour[f - SM_LTBASE]);
         }
-        for (int f = 0; f < SM_VOICES; f++) {
+        for (int f = 0; f < SM_NV; f++) {                       /* the fingers, and the gesture layers' replayed fingers (SM_LBASE on) */
+            if (f == SM_VOICES)
+                f = SM_LBASE;
             struct smvoice *v = &s->v[f];
             int x = -1;
             if (s->mode == SM_GRAIN && v->g_on)
@@ -1302,11 +1319,13 @@ static void draw_samplr(void)
                 x = v->ipos / (s->len / SM_W + 1);
             if (x >= 0) {
                 x = x >= SM_W ? SM_W - 1 : x;
-                vline(wx + x, wy, wh, s->mode == SM_GRAIN ? track_colour[f] : C_WHITE);
-                if (s->mode == SM_GRAIN) {                        /* the grain size, as a bracket around the centre */
-                    int hw = v->g_size / (s->len / SM_W + 1) / 2;
-                    hline(wx + (x - hw < 0 ? 0 : x - hw), wy + 2, (x + hw >= SM_W ? SM_W - 1 : x + hw) - (x - hw < 0 ? 0 : x - hw) + 1, track_colour[f]);
+                int col = s->mode == SM_GRAIN || f >= SM_LBASE ? sm_vcol(f) : C_WHITE;
+                if (s->mode == SM_GRAIN) {                        /* the grain size, as a bracket around the centre (2 px, top and bottom) */
+                    int hw = v->g_size / (s->len / SM_W + 1) / 2, a = x - hw < 0 ? 0 : x - hw, b = x + hw >= SM_W ? SM_W - 1 : x + hw;
+                    box(wx + a, wy + 1, b - a + 1, 2, col);
+                    box(wx + a, wy + wh - 3, b - a + 1, 2, col);
                 }
+                sm_mark(wx, wy, wh, x, 2, col);
             }
         }
         {                                                         /* left: this track's output level; right: its volume (the first encoder) */
@@ -1829,7 +1848,8 @@ void looper_page_poke(uint8_t *view)
         P->info_on = 0;
         P->sig = 0;
     }
-    if ((P->mode == M_SMPLR && (looper_ticks() & 7)) ? ++P->force >= 40 : (signature() != P->sig || ++P->force >= 40)) {
+    /* (SAMPLR's page is the heaviest to draw: it is looked at every other poke, ~9 a second, and redrawn only when something on it moved) */
+    if ((P->mode == M_SMPLR && (looper_ticks() % 20u)) ? ++P->force >= 40 : (signature() != P->sig || ++P->force >= 40)) {
         dirty(view);
         /* With the stock screen dropped (full screen) nothing else asks the GUI for a draw pass: post our own message,
          * handled in the GUI task by looper_app_msg. One in flight at a time. */

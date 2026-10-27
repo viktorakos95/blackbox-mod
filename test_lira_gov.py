@@ -259,10 +259,11 @@ for _ in range(400):
     if rv("lira_ui_chord_get", 158) == 3:
         break
 check("... and then it is a second layer (3 gestures)", rv("lira_ui_chord_get", 158) == 3 and rv("lira_ui_chord_get", 149) == 2 and rv("lira_ui_chord_get", 159) == 3, (rv("lira_ui_chord_get", 158), rv("lira_ui_chord_get", 149), rv("lira_ui_chord_get", 159)))
-# STOP / PLAY of the loop, and no repaint storm while it plays
+# STOP / PLAY of the loop; while it plays the page follows its plates (repainted only when one changes)
 sig_loop = rv("lira_ui_sig")
+check("while a loop plays, nothing changing leaves the repaint signature as it is", rv("lira_ui_sig") == sig_loop)
 e.call("lira_ui_key", 5, 1)
-check("while a loop plays, a plate changing does not change the repaint signature", rv("lira_ui_sig") == sig_loop, (sig_loop, rv("lira_ui_sig")))
+check("while a loop plays, a plate changing changes the repaint signature (the plates are drawn as the loop plays them)", rv("lira_ui_sig") != sig_loop, (sig_loop, rv("lira_ui_sig")))
 e.call("lira_ui_key", 5, 0)
 e.call("lira_ui_set", 120, 700)
 e.call("lira_ui_action", 15)
