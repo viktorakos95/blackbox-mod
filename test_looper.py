@@ -659,7 +659,7 @@ f = draw(0)
 check("SETUP tab drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f), [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
 ROW0 = 16 + 3                                                  # first row, from the top
 def row(r):
-    return ROW0 + r * 16 + 7
+    return ROW0 + r * 14 + 6
 def optv(i):
     return struct.unpack("<f", e.uc.mem_read(STATE + 164 + 4 * i, 4))[0]
 check("SETUP: LENGTH row choices (FOLLOW / MULT / FREE) and the SYNC row", [hit(84 + 10, row(0))[:2], hit(84 + 52 + 10, row(0))[:2], hit(84 + 104 + 10, row(0))[:2], hit(84 + 10, row(1))[:2]] == [(9, 0), (9, 0), (9, 0), (9, 1)], [hit(84 + 10, row(0)), hit(84 + 62, row(0)), hit(84 + 114, row(0)), hit(94, row(1))])
@@ -680,12 +680,12 @@ check("SETUP: knob 1 turns the loop gain (+10 %)", abs(optv(9) - 0.347) < 0.01, 
 f = draw(0)
 check("SETUP: lit choice boxes and a slider drawn", any(x[2] == 150 and x[3] == 1 for x in f) and any(x[4] == 0x1B and x[2] == 49 for x in f))
 check("SETUP: everything inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
-touch("down", 84 + 10, row(10))
-touch("up", 84 + 10, row(10))
+touch("down", 84 + 10, row(12))
+touch("up", 84 + 10, row(12))
 blocks(3)
 check("SETUP: the first CLEAR ALL press only asks (nothing erased yet)", mode(0) == PLAY, mode(0))
-touch("down", 84 + 10, row(10))
-touch("up", 84 + 10, row(10))
+touch("down", 84 + 10, row(12))
+touch("up", 84 + 10, row(12))
 blocks(2)
 check("SETUP: CLEAR ALL erases the tracks (track 1 was playing)", mode(0) in (CLEARING, EMPTY), mode(0))
 blocks(70)
@@ -704,9 +704,21 @@ check("SETUP: SPEED PITCH choice TAPE (0)", optv(14) == 0.0)
 touch("down", 84 + 60, row(8))
 touch("up", 84 + 60, row(8))
 check("SETUP: SPEED PITCH choice GRAIN (1)", optv(14) == 1.0)
+touch("down", 84 + 52 + 10, row(10))
+touch("up", 84 + 52 + 10, row(10))
+check("SETUP: DRONE OUT choice OUT 2 (1)", optv(5) == 1.0, optv(5))
+touch("down", 84 + 104 + 10, row(11))
+touch("up", 84 + 104 + 10, row(11))
+check("SETUP: SAMPLR OUT choice OUT 3 (2)", optv(6) == 2.0, optv(6))
+f = draw(0)
+check("SETUP: twelve option rows and the CLEAR ALL row fit above the footer", all(x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
+for r_ in (10, 11):
+    touch("down", 84 + 10, row(r_))
+    touch("up", 84 + 10, row(r_))
+check("SETUP: back to OUT 1 for both", optv(5) == 0.0 and optv(6) == 0.0, (optv(5), optv(6)))
 
-touch("down", 84 + 150, row(10))
-touch("up", 84 + 150, row(10))
+touch("down", 84 + 150, row(12))
+touch("up", 84 + 150, row(12))
 f = draw(0)
 check("SETUP: the right end of the last row is no button any more (the crash record view is gone, docs/diagnostics.md)",
       any(x[2] == 150 and x[3] == 1 for x in f))

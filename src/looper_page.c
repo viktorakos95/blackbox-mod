@@ -150,7 +150,7 @@ static const char *const sm_sheet_name[SM_SHEETS] = {"PLAY", "REC", "FX", "SMPL"
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
 
 #define TAB_W      34
-#define ROW_H      16                      /* SETUP: one option per row (ten rows and the CLEAR ALL row above the footer) */
+#define ROW_H      14                      /* SETUP: one option per row (twelve rows and the CLEAR ALL row above the footer) */
 #define OPT_X      84                      /* SETUP: where the choices start */
 #define CHOICE_W   52
 #define SLIDER_W   150
@@ -324,6 +324,8 @@ static const struct optrow rows_setup[] = {
     {"MONITOR INPUT K2", LOOPER_O_MON, 0, {0, 0, 0, 0}},
     {"SPEED PITCH", LOOPER_O_PITCH, 3, {"TAPE", "GRAIN", "SMOOTH", 0}},
     {"FILTERS", LOOPER_O_SLOPE, 2, {"12 DB", "24 DB", 0, 0}},              /* the looper's and SAMPLR's (12 dB: half the work) */
+    {"DRONE OUT", LOOPER_O_DOUT, 3, {"OUT 1", "OUT 2", "OUT 3", 0}},       /* the output DRONE-8 plays on (looper.c out_bus) */
+    {"SAMPLR OUT", LOOPER_O_SOUT, 3, {"OUT 1", "OUT 2", "OUT 3", 0}},
 };
 static const struct optrow rows_more[] = {
     {"MONITOR INPUT K1", LOOPER_O_MON, 0, {0, 0, 0, 0}},
@@ -334,7 +336,7 @@ static int opt_rows(void);
 
 static int opt_rows(void)
 {
-    return P->mode == M_MORE ? 2 : 10;
+    return P->mode == M_MORE ? 2 : 12;
 }
 
 static const struct optrow *page_rows(void)
@@ -1026,13 +1028,13 @@ static void draw_setup(const struct lay *L)
     for (int r = 0; r < OPT_ROWS; r++) {
         const struct optrow *R = &rows[r];
         int d = row_d(L, r);
-        text(6, d + 3, R->name, C_LIGHT, 1);
+        text(6, d + 1, R->name, C_LIGHT, 1);
         if (R->n) {
             int cur = (int)(opt_get(R->opt) + .5f);
             for (int c = 0; c < R->n; c++) {
                 int on = c == cur;
-                frame(OPT_X + c * CHOICE_W, d, CHOICE_W - 3, ROW_H - 4, on ? C_CYAN : C_RAIL, 1);
-                text_c(OPT_X + c * CHOICE_W, d + 3, CHOICE_W - 3, R->c[c], on ? C_WHITE : C_GREY, 1);
+                frame(OPT_X + c * CHOICE_W, d, CHOICE_W - 3, ROW_H - 3, on ? C_CYAN : C_RAIL, 1);
+                text_c(OPT_X + c * CHOICE_W, d + 1, CHOICE_W - 3, R->c[c], on ? C_WHITE : C_GREY, 1);
             }
         } else {
             float v = opt_get(R->opt);
@@ -1048,7 +1050,7 @@ static void draw_setup(const struct lay *L)
             else
                 p = put_pct(p, v);
             *p = 0;
-            text(OPT_X + SLIDER_W + 8, d + 3, b, C_LIGHT, 1);
+            text(OPT_X + SLIDER_W + 8, d + 1, b, C_LIGHT, 1);
         }
     }
     int d = row_d(L, OPT_ROWS);
@@ -1056,8 +1058,8 @@ static void draw_setup(const struct lay *L)
     if (P->mode == M_SETUP) {
         int armed = P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT;
         int done = P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW;
-        frame(OPT_X, d, 110, ROW_H - 4, done ? C_GREEN : C_RED, 1);
-        text_c(OPT_X, d + 3, 110, done ? "CLEARED!" : armed ? "TAP AGAIN" : "CLEAR ALL", done ? C_GREEN : armed ? C_WHITE : C_RED, 1);
+        frame(OPT_X, d, 110, ROW_H - 3, done ? C_GREEN : C_RED, 1);
+        text_c(OPT_X, d + 1, 110, done ? "CLEARED!" : armed ? "TAP AGAIN" : "CLEAR ALL", done ? C_GREEN : armed ? C_WHITE : C_RED, 1);
         float bpm = looper_bpm();
         for (const char *q = "BPM "; *q; q++)
             *p++ = *q;
@@ -1068,7 +1070,7 @@ static void draw_setup(const struct lay *L)
         for (const char *q = looper_running() ? " RUN" : " STOP"; *q; q++)
             *p++ = *q;
         *p = 0;
-        text(OPT_X + 120, d + 3, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
+        text(OPT_X + 120, d + 1, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
     } else {
         /* one diagnostic line: the last button message, the sequencer clock's position and rate, the screens visited */
         for (const char *q = "LAST "; *q; q++)
@@ -1194,7 +1196,7 @@ static int sm_vcol(int f)                                        /* a SAMPLR voi
     return f < SM_VOICES ? track_colour[f] : f >= SM_LBASE && f < SM_NV ? layer_colour[(f - SM_LBASE) / SM_LFING] : C_WHITE;
 }
 
-/* A marker line on the waveform (an arp spot, a grain cloud, a playhead): w px wide with a 1 px dark edge each side, so it stands out from the wave. */
+/* A marker line on the waveform (an arp spot, a grain cloud, a playhead): w px wide (1, 2 for the arp's current spot) with a 1 px dark edge each side, so it stands out from the wave. */
 static void sm_mark(int wx, int wy, int wh, int x, int w, int col)
 {
     x -= w / 2;
@@ -1301,7 +1303,7 @@ static void draw_samplr(void)
                     continue;
                 int x = s->spot[i].pos / (s->len / SM_W + 1), o = s->spot[i].owner;
                 int col = o < SM_NV ? sm_vcol(o) : o >= 0xf0 && o < 0xf0 + SM_LAYERS ? layer_colour[o - 0xf0] : C_WHITE;   /* (0xf0 + L: a layer's latched spot) */
-                sm_mark(wx, wy, wh, x, s->a_last == i ? 4 : 2, col);
+                sm_mark(wx, wy, wh, x, s->a_last == i ? 2 : 1, col);
             }
         for (int f = SM_LTBASE; f < SM_LTBASE + SM_LATV; f++) {      /* latched slice loops */
             struct smvoice *v = &s->v[f];
@@ -1320,12 +1322,12 @@ static void draw_samplr(void)
             if (x >= 0) {
                 x = x >= SM_W ? SM_W - 1 : x;
                 int col = s->mode == SM_GRAIN || f >= SM_LBASE ? sm_vcol(f) : C_WHITE;
-                if (s->mode == SM_GRAIN) {                        /* the grain size, as a bracket around the centre (2 px, top and bottom) */
+                if (s->mode == SM_GRAIN) {                        /* the grain size, as a bracket around the centre (top and bottom) */
                     int hw = v->g_size / (s->len / SM_W + 1) / 2, a = x - hw < 0 ? 0 : x - hw, b = x + hw >= SM_W ? SM_W - 1 : x + hw;
-                    box(wx + a, wy + 1, b - a + 1, 2, col);
-                    box(wx + a, wy + wh - 3, b - a + 1, 2, col);
+                    hline(wx + a, wy + 2, b - a + 1, col);
+                    hline(wx + a, wy + wh - 3, b - a + 1, col);
                 }
-                sm_mark(wx, wy, wh, x, 2, col);
+                sm_mark(wx, wy, wh, x, 1, col);
             }
         }
         {                                                         /* left: this track's output level; right: its volume (the first encoder) */
@@ -1700,18 +1702,18 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx)
 #include "lira_ui.inc"
 
 /* Each page has its own colours, like the DRONE page (lu_theme): dark backgrounds, light labels, soft accents. The Looper is graphite
- * with silver labels (the selection, C_PINK, the DRONE page's orange); SAMPLR warm (espresso, a honey waveform, coral samples, a sky-blue
- * selection: build 99, indigo was too close to the DRONE page).
+ * with silver labels (the selection, C_PINK, the DRONE page's orange); SAMPLR petrol (blue-green slate, a peach waveform, golden samples,
+ * a raspberry selection: build 102; indigo was too close to the DRONE page, build 99's espresso too sepia).
  * TRIG keeps the stock colours. */
 static const struct { uint8_t idx; uint32_t argb; } tint_looper[] = {
     {0x02, 0xff0e0f12}, {0x19, 0xff17191d}, {0x10, 0xff34373e}, {0x09, 0xff787d87}, {0x16, 0xffc4c8d0}, {0x01, 0xff24262c},
     {0x20, 0xfff09a4a}, {0x1b, 0xff7cc8f0}, {0x14, 0xfff0d070}, {0x17, 0xff6fd1b6}, {0x18, 0xffb08cf0}, {0x1a, 0xff2d6a7a},
     {0x06, 0xffe5484d}, {0x0b, 0xff5fcf8f}, {0x0c, 0xffd65a5a}, {0x12, 0xfff2d24a},
 };
-static const struct { uint8_t idx; uint32_t argb; } tint_samplr[] = {   /* warm: espresso, sand labels, a honey waveform, coral samples, a sky-blue selection */
-    {0x02, 0xff120e0b}, {0x19, 0xff1e1814}, {0x10, 0xff43362c}, {0x09, 0xff8f7c6b}, {0x16, 0xffdccbb8}, {0x01, 0xff2a211b},
-    {0x20, 0xff6cc6e0}, {0x1b, 0xfff0b060}, {0x14, 0xfff07f6a}, {0x17, 0xff7fd0b0}, {0x18, 0xffc49ae8}, {0x1a, 0xff7a4a2a},
-    {0x06, 0xffe5484d}, {0x0b, 0xff5fcf8f}, {0x0c, 0xffd65a5a}, {0x1c, 0xffd9a76a}, {0x1e, 0xfff07f6a},
+static const struct { uint8_t idx; uint32_t argb; } tint_samplr[] = {   /* petrol: blue-green slate, a peach waveform, golden samples, a raspberry selection */
+    {0x02, 0xff0b1112}, {0x19, 0xff131c1e}, {0x10, 0xff2c3d40}, {0x09, 0xff6f8487}, {0x16, 0xffc6d6d6}, {0x01, 0xff1b2628},
+    {0x20, 0xffef6f9e}, {0x1b, 0xfff0cc66}, {0x14, 0xff6cc0e8}, {0x17, 0xff7fd8b8}, {0x18, 0xffb89af0}, {0x1a, 0xff2f7f86},
+    {0x06, 0xffe5484d}, {0x0b, 0xff5fcf8f}, {0x0c, 0xffd65a5a}, {0x1c, 0xfff2a07a}, {0x1e, 0xff6cc0e8},
     {0x12, 0xfff2d24a},
 };
 

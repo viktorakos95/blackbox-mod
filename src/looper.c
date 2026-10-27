@@ -282,6 +282,7 @@ struct dsp {
     } gd;
     int16_t ws[5120];                            /* WSOLA: the candidate region, mono */
     float zero[MAXN];
+    float *sm_l, *sm_r;                          /* SAMPLR's bus when it plays on Out 2 / 3 (looper_stage, LOOPER_O_SOUT), else 0: the stage's own */
 };
 _Static_assert(sizeof(struct dsp) <= 32768, "dsp state must fit in one 32 KB buffer");
 
@@ -291,7 +292,7 @@ static inline struct dsp *DSP(void)
     return (struct dsp *)fxbuf(0);
 }
 
-static const float opt_defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 0.f, .4f, .6f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
+static const float opt_defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
 
 /* Replaces the sample pool init call (bl @0x0804c20e): once per boot, after the pool has its memory. */
 /* The audio code that runs every sample is linked to run from ITCM (src/cave.ld): copy it in from its image in flash. First thing at boot,
@@ -2322,7 +2323,7 @@ static int run(float *bl, float *br, int n)
     float *snd[4] = {d->acc[0], d->acc[1], d->acc[2], d->acc[3]};
     int dsend = lira_send_add(d->acc[2], d->acc[3], n);
     crash_bc(BC_AUDIO, BCA_SAMPLR);
-    int sends = samplr_run(bl, br, n, snd);
+    int sends = samplr_run(d->sm_l ? d->sm_l : bl, d->sm_l ? d->sm_r : br, n, snd);
     crash_bc(BC_AUDIO, BCA_TRACKS);          /* SAMPLR first: SOURCE MIX records it, and its sends join the looper's delay and reverb */
     guard_decide(d);                                 /* the player's unmutes, the fades */
     for (int t = 0; t < LOOPER_TRACKS; t++) {
@@ -2442,6 +2443,28 @@ void lira_page_run(float *l, float *r, int n);
 void lira_rec_begin(const float *l, const float *r, int n);
 void lira_rec_end(const float *l, const float *r, int n);
 
+/* The bus an engine plays on (LOOPER_O_DOUT / SOUT): Out 1 is the stage's own (l, r); Out 2 and Out 3 are the stock buses 1 and 2, which the
+ * render sends to their jacks right after this stage (0x08053576..: bus 0 Out 1 and the headphones, 1 Out 2, 2 Out 3; they skip the master
+ * compressor, as a pad routed there does). Waking one zeroes it and marks it live, so the render sends it even with no pad on it. */
+static void out_bus(void *bufs, int o, int n, float *l, float *r, float **ol, float **or_)
+{
+    *ol = l;
+    *or_ = r;
+    if (o < 1 || o > 2)
+        return;
+    uint32_t *b = (uint32_t *)fw_buf_of(bufs, (unsigned)o);  /* (a bus: +0 its capacity in frames, +4 frames this block or 0 when unused, +8 / +12 L / R, +16 silent, +17 stereo) */
+    float *bl = 0, *br = 0;
+    if (b && fw_frames(b) >= n) {
+        fw_stereo(b, &bl, &br);
+        if (b[1] == 0)
+            b[1] = (uint32_t)n;                                 /* (an unused bus counts as silent while it has no frames: 0x0804d8f4) */
+    }
+    if (bl && br) {
+        *ol = bl;
+        *or_ = br;
+    }
+}
+
 void looper_stage(uint8_t *obj, void *bufs)
 {
     if (S->magic != MAGIC || !S->ok)
@@ -2458,13 +2481,19 @@ void looper_stage(uint8_t *obj, void *bufs)
         crash_tick();
         guard_stage(DSP(), c_in, n);
         crash_bc(BC_AUDIO, BCA_DRONE);
-        lira_page_run(l, r, n);                    /* the LIRA page's voices, before the looper so SOURCE MIX records them */
+        float *dl, *dr;
+        out_bus(bufs, opt_i(LOOPER_O_DOUT), n, l, r, &dl, &dr);
+        struct dsp *dd = DSP();
+        out_bus(bufs, opt_i(LOOPER_O_SOUT), n, l, r, &dd->sm_l, &dd->sm_r);
+        if (dd->sm_l == l)
+            dd->sm_l = dd->sm_r = 0;
+        lira_page_run(dl, dr, n);                  /* the LIRA page's voices, before the looper so SOURCE MIX records them (on Out 1) */
         crash_bc(BC_AUDIO, BCA_STAGE);
         lira_rec_begin(l, r, n);
         uint32_t c_l = *(volatile uint32_t *)0xe0001004u;
         if (!run(l, r, n)) {
             crash_bc(BC_AUDIO, BCA_SAMPLR);
-            samplr_run(l, r, n, 0);
+            samplr_run(DSP()->sm_l ? DSP()->sm_l : l, DSP()->sm_l ? DSP()->sm_r : r, n, 0);
         }
         crash_bc(BC_AUDIO, BCA_STAGE);
         uint32_t c_y = *(volatile uint32_t *)0xe0001004u - c_l;
@@ -2673,7 +2702,7 @@ void looper_set_opt(int o, float v)
 {
     if (o < 0 || o >= LOOPER_OPTS || S->magic != MAGIC)
         return;
-    S->opt[o] = o <= LOOPER_O_SLOPE || o == LOOPER_O_ROUTE || o == LOOPER_O_HWBTN || o == LOOPER_O_PITCH ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
+    S->opt[o] = o <= LOOPER_O_SOUT || o == LOOPER_O_ROUTE || o == LOOPER_O_HWBTN || o == LOOPER_O_PITCH ? (float)(int)(v + .5f) : fclampf(v, 0.f, 1.f);
 }
 
 float looper_opt_default(int o)

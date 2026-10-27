@@ -806,3 +806,15 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
 - The SAMPLR page is checked for changes every other poke (~9 a second, was ~5) and still only redrawn when something on it moved.
 - DRONE-8: the gesture recorder takes up to 8 layers (was 3; the layer is in bits 11..13 of an event's id; 1024 events in all). While a loop
   plays, its plates and the knobs it moves (in steps of 1/30 of their travel) are redrawn, only when they change.
+
+## Build 102 (DRONE OUT / SAMPLR OUT, SAMPLR petrol, thinner markers)
+
+- Looper SETUP has two more rows, DRONE OUT and SAMPLR OUT: OUT 1 (the main pair and the headphones, as before), OUT 2 (jacks 3/4) or
+  OUT 3 (jacks 5/6). Found in the render after the looper stage (0x08053576..): the stock buses 0, 1, 2 go to Out 1 (and the
+  headphones), Out 2, Out 3; buses 10 / 11 (the FX returns) are added into bus 0 first. `looper.c out_bus` wakes bus 1 or 2 (zeroed,
+  marked live; an unused bus with no frames is given the block's, or the render would take it as silent) and DRONE-8 / SAMPLR add to it
+  instead of Out 1. On Out 2 / 3 they skip the master compressor (as a pad routed there does), the Looper's SOURCE MIX no longer hears them,
+  and their sends to the delay / reverb still come back on Out 1. The options are the old own delay's slots (5, 6; options are not saved:
+  OUT 1 after a power on). The rows are 14 px now (twelve rows and CLEAR ALL above the footer).
+- SAMPLR's colours: petrol (blue-green slate background, a peach waveform, golden first finger, a raspberry selection, sky-blue second).
+- The markers: 1 px with the dark edge (the arp's current spot 2 px), the grain bracket 1 px.
