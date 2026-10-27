@@ -19,7 +19,8 @@ SECTIONS {
     *(.text.lira_process .text.fexp2*)
     *(.text.samplr_run .text.sample_block_* .text.grain_spawn*)
     *(.text.play_seg* .text.looper_filter .text.looper_in .text.svf12 .text.svf24 .text.soft .text.crunch .text.frame_at .text.rd_span .text.lpos)
-    /* (Munchi's delay runs from flash again since build 97: it only runs when it is the delay type picked, and the drone needed the room) */
+    /* (Munchi's delay runs from flash since build 97, but its reverb and the voice reader, 62 % of its ~106 k instructions a block, are in ITCM again from build 107) */
+    *(.text._ZN7daisysp6Reverb7ProcessEPfS1_ .text._ZN10delayVoice4ReadEPfS0_)
     *(.text.filter_process .text.comp_process .text.od_process)
     *(.text.t2m_process .text.t2m_audio)                         /* (Trigger2MIDI's detector runs every block, from build 105: zero-wait code) */
     . = ALIGN(4);

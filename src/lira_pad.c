@@ -1229,7 +1229,7 @@ void lira_page_run(float *l, float *r, int n)
         g->sp_back = 8;
     if (g->per && looper_drone_spike((uint32_t)((float)g->dsp * (float)g->per * 0.001f))) {
         if (!g->sp_hold && g->sc1 < 1.0f) {                   /* a new one (not while it is still out) */
-            if (g->sp_quiet < 375u && g->sp_back < 384u)
+            if (g->sp_quiet < 375u && g->sp_back < 192u)
                 g->sp_back = (uint16_t)(g->sp_back * 2u);
             g->sp_hold = g->sp_back;
         } else if (g->sp_hold < 8u) {

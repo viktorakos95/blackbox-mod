@@ -1916,9 +1916,9 @@ int looper_soft_threshold(int e)                   /* per mille of the averaged 
     int m = GUARD_SOFT + 15 * below(e) - (crash_loading() ? LOADING_ROOM : 0);   /* (a preset or sample loading: room for the loader, see crash_loading) */
     int we = (S->magic == MAGIC && S->ok) ? (int)DSP()->gd.want_eng1 - 1 : -1;
     if (we >= 0 && we != e && prio(we) > prio(e)) {
-        m -= DSP()->gd.want_share;
-        if (m < 600)
-            m = 600;
+        m -= DSP()->gd.want_share / 2;                 /* (half: it is a request for room, not an order; build 107, the drone was cut at once when SAMPLR's page opened) */
+        if (m < 760)
+            m = 760;
     }
     return m;
 }
@@ -2026,14 +2026,14 @@ static void guard_decide(struct dsp *d)
 }
 
 /* The hard check, for spikes, with no estimates and no memory: how much of the block is used when this engine is about to run (stock voices and
- * effects, DRONE-8, SAMPLR before it) and, if the looper's tracks outrank SAMPLR, the tracks' time kept for them. Past the engine's cap (88 %, +2 % for
+ * effects, DRONE-8, SAMPLR before it) and, if the looper's tracks outrank SAMPLR, the tracks' time kept for them. Past the engine's cap (93 %, +2 % for
  * each engine that ranks below it) there is no time for it in this block: it is left out of it (a ramp to 0, or for the looper's tracks a cheap one)
  * and fades back in when the next blocks have room. A pause by another task cannot fool it: it only looks at the time already gone. */
-/* An engine's in-block cap (per mille of the block): 88 %, +2 % for each engine that ranks below it, but always leaving room for the rest of the
+/* An engine's in-block cap (per mille of the block): 93 %, +2 % for each engine that ranks below it, but always leaving room for the rest of the
  * block after the looper stage as it has been lately (the stock output, the master compressor: it grows with a busy sequence or the compressor on). */
 static int cap_of(const struct guard *g, int e)
 {
-    int cap = 880 + 20 * below(e), room = 1000 - 20 - (int)g->rpk;
+    int cap = 930 + 20 * below(e), room = 1000 - 20 - (int)g->rpk;
     cap = room < cap ? room : cap;
     return cap < 500 ? 500 : cap;
 }

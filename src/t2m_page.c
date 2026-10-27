@@ -285,8 +285,8 @@ static void draw_pads(const struct t2m_mem *m, int w, int d, int bh)
 {
     int bw = (w - 12) / 2;
     for (int k = 0; k < T2M_INPUTS; k++) {
-        int x = 4 + k * (bw + 4), on = m->on[k], l = on && lit(m, k), sel = (m->ui.in & 1) == k;
-        int fc = on ? (k ? C_YELLOW : C_CYAN) : C_RAIL, ink = l ? C_BLACK : on ? C_WHITE : C_GREY;
+        int x = 4 + k * (bw + 4), on = m->on[k] && m->eng, l = on && lit(m, k), sel = (m->ui.in & 1) == k;
+        int fc = on ? (k ? C_YELLOW : C_CYAN) : C_RAIL, ink = l ? C_BLACK : on ? C_WHITE : !m->eng ? C_RED : C_GREY;
         if (l)
             lp_box(x, d, bw, bh, vel_color(m->last_vel[k]));
         lp_frame(x, d, bw, bh, fc, sel ? 2 : 1);
@@ -295,7 +295,9 @@ static void draw_pads(const struct t2m_mem *m, int w, int d, int bh)
         *p = 0;
         lp_text(x + 5, d + 4, b, ink, 1);
         p = b;
-        if (!on)
+        if (!m->eng)
+            p = put_s(p, "ENGINE OFF");
+        else if (!on)
             p = put_s(p, "OFF");
         else if (!m->hits[k])
             p = put_s(p, "READY");
@@ -569,7 +571,7 @@ void t2m_page_draw(int w, int foot)
         lp_text(w - 60, md + 13, b, C_LIGHT, 1);
         lp_text(6, md + 24, "KNOBS", C_REC, 1);                       /* the four knobs are live on this sheet: red */
         lp_text(6 + 6 * 6, md + 24, "ACTIVE", C_REC, 1);
-        lp_text(6, md + 34, "SENSITIVITY THRESHOLD RING GUARD DEAD TIME", C_LIGHT, 1);
+        lp_text(6, md + 34, "SENSITIVITY THRESHOLD", C_LIGHT, 1);        /* (knobs 1 and 2; the guards are on the DETECT sheet) */
         draw_hist(m, w, md + 46, foot - 12);
         return;
     }
@@ -711,6 +713,8 @@ void t2m_page_knob(int knob, int counts)
     if (!steps)
         return;
     int k = UI->in & 1, sheet = UI->sheet < SHEETS ? UI->sheet : 0;
+    if (sheet == SH_HITS && knob > 1)                 /* (the HITS sheet: SENS and THRESH only) */
+        return;
     int v = sheet == SH_HITS ? sheet_vals[0][knob] : sheet_vals[sheet - 1][(UI->row % 3) * 4 + knob];
     if (v == V_NONE)
         return;

@@ -844,3 +844,15 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
 - TRIG page switch row: a seventh button, ENG (right end). Off: the detector does not run at all (no level measurement either, the meters fall to
   nothing, a held note is ended once), the "TRIG" in the top bar turns red. On by default after a boot; not saved. With it off the cost is the clock
   monitor only (~100 instructions a block).
+
+## Build 107 (TRIG: SENS / THRESH only on the front sheet; less cautious guard; Munchi's reverb in ITCM)
+
+- TRIG HITS sheet: only SENS and THRESH are shown and turned (knobs 1, 2); RETRIG (ring guard) and MASK (dead time) stay on the DETECT sheet.
+  With the engine off (ENG) the pads say ENGINE OFF in red instead of READY.
+- The user found that Munchi (the delay type) was the cause of the overload pulses: with it off everything ran smoother. Measured
+  (`test_munchi.py`, `prof_munchi`): ~106 k instructions a 128-frame block (about 830 a frame), more than SAMPLR's three tracks and half the drone's:
+  Reverb::Process 43 %, delayVoice::Read 19 %, munchi_process 18 %, processDelay 18 %. The reverb and the voice reader (3.4 KB) run from ITCM again
+  (63,136 of 65,024 bytes); the output is the same. The rest would not fit (it needs 6.4 KB more than is free).
+- Guard, less cautious: the in-block cap's base 93 % (was 88 %; +2 % per engine below it, always bounded by the room the tail of the block needs
+  lately, which is the real limit); a leader that is held out lowers the marks of the engines below it by half the share it wants (was all of it,
+  floor 760, was 600: opening SAMPLR's page cut the drone at once); the drone stays out at most ~1 s after repeated spikes (was ~2 s).
