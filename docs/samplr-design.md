@@ -782,3 +782,17 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
   (a compressor that is always on still keeps its room).
 - When it does have to leave a block, spikes that come again soon after it is back keep it out longer each time (8, 16, 32 ... up to ~1 s
   of blocks) and it fades back in more slowly (over as many blocks, up to 48): dips, not a flicker. After 3 s without one it is quick again.
+
+## Build 100 (SAMPLR cheaper, same sound; what the drone can and cannot give)
+
+- SAMPLR's output pass (a track's block to the bus, its level, the sends, the emergency tail) had two tests inside the per-sample loop; it
+  is one loop per case now (`out_pass`, inlined with constant flags). The sample reader keeps the scratch buffers' pointers in registers
+  (through `s->sc` they were read again after every store). Three tracks (arp, grain cloud, slicer loop, `tools/prof_samplr.py`): 176 k
+  instructions a 256-frame block before, 162 k after (-8 %). The output of 120 blocks is identical bit for bit (`prof_samplr.py ref`).
+  Unrolling the grain and clearing loops was tried and made it slower: not kept.
+- DRONE-8's engine was profiled and left as it is: its cost is the eight oscillators (~75 %) and the master's four tanh divisions; the two
+  delay lines are ~8 %. Nothing cheaper there gives the same output bit for bit, and a "lighter drone" for spike blocks (one delay line
+  skipped) would save ~4 % at the price of a gap in that line's memory: not done.
+- The leader rule was checked (`test_guard.py`): with DRONE-8's page opened last it keeps no time for SAMPLR or the looper's tracks (they
+  have their own checks, after it); it only leaves a block when the stock work before it plus its own cost do not fit (cap 92 %, less the
+  room the rest of the block needs lately).

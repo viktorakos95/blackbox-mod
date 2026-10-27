@@ -1848,6 +1848,7 @@ static int sample_block(struct sm *s, int32_t ip, float fr, float r, int m)
 
 static int sample_block_(struct sm *s, int32_t ip, float fr, float r, int m)
 {
+    float *const il_ = s->sc->il, *const ir_ = s->sc->ir;          /* (held here: through s->sc they are read again after every store) */
     int mono = s->mono || s->sc->fmono;                          /* (the grains read one channel when SAMPLR has to hold back) */
     int32_t len = s->len;
     float span = r * (float)m;
@@ -1883,7 +1884,7 @@ static int sample_block_(struct sm *s, int32_t ip, float fr, float r, int m)
             if (f < 0 || f >= len) {                              /* outside the sample: silence, for as long as that lasts */
                 int z = f < 0 && -f < m - i ? -f : m - i;
                 for (int q = 0; q < z; q++)
-                    s->sc->il[i + q] = s->sc->ir[i + q] = 0.f;
+                    il_[i + q] = ir_[i + q] = 0.f;
                 i += z;
                 continue;
             }
@@ -1894,15 +1895,15 @@ static int sample_block_(struct sm *s, int32_t ip, float fr, float r, int m)
             vk = vk < 0 ? 0 : vk > k ? k : vk;
             int q = 0;
             for (; q + 8 <= vk; q += 8) {                         /* (eight values at a time: a load-multiple and a store-multiple) */
-                __builtin_memcpy(s->sc->il + i + q, c.L[bi] + o + q, 32);
-                __builtin_memcpy(s->sc->ir + i + q, c.R[bi] + o + q, 32);
+                __builtin_memcpy(il_ + i + q, c.L[bi] + o + q, 32);
+                __builtin_memcpy(ir_ + i + q, c.R[bi] + o + q, 32);
             }
             for (; q < vk; q++) {
-                s->sc->il[i + q] = c.L[bi][o + q];
-                s->sc->ir[i + q] = c.R[bi][o + q];
+                il_[i + q] = c.L[bi][o + q];
+                ir_[i + q] = c.R[bi][o + q];
             }
             for (int z = vk; z < k; z++)
-                s->sc->il[i + z] = s->sc->ir[i + z] = 0.f;
+                il_[i + z] = ir_[i + z] = 0.f;
             i += k;
         }
         return 1;
@@ -1913,7 +1914,7 @@ static int sample_block_(struct sm *s, int32_t ip, float fr, float r, int m)
         if (cnt <= 800) {
             rd_span(&c, lo, cnt, s->sc->xl, mono ? 0 : s->sc->xr);
             const float *xl = s->sc->xl + (ip - lo), *xr = mono ? xl : s->sc->xr + (ip - lo);
-            float *ol = s->sc->il, *or_ = s->sc->ir, p = fr;
+            float *ol = il_, *or_ = ir_, p = fr;
             if (r > 0.f) {                                        /* (p >= 0: a plain truncation is the floor) */
                 if (mono) {
                     for (int i = 0; i < m; i++, p += r) {
@@ -1949,13 +1950,13 @@ static int sample_block_(struct sm *s, int32_t ip, float fr, float r, int m)
         stock_interp_fn fn = s->iq ? STOCK_HIGHQ : STOCK_CUBIC;
         int used;
         float ph = fr;
-        fn(s->sc->xl, 0, 1, &used, &ph, s->sc->il, m, r);
+        fn(s->sc->xl, 0, 1, &used, &ph, il_, m, r);
         if (mono) {
             for (int i = 0; i < m; i++)
-                s->sc->ir[i] = s->sc->il[i];
+                ir_[i] = il_[i];
         } else {
             ph = fr;
-            fn(s->sc->xr, 0, 1, &used, &ph, s->sc->ir, m, r);
+            fn(s->sc->xr, 0, 1, &used, &ph, ir_, m, r);
         }
         return 1;
     }
@@ -1980,8 +1981,8 @@ static int sample_block_(struct sm *s, int32_t ip, float fr, float r, int m)
                 rd_at(&c, f + 1, &l1, &r1);
                 cf = f;
             }
-            s->sc->il[i] = l0 + fa * (l1 - l0);
-            s->sc->ir[i] = r0 + fa * (r1 - r0);
+            il_[i] = l0 + fa * (l1 - l0);
+            ir_[i] = r0 + fa * (r1 - r0);
         }
         return 1;
     }
@@ -2001,8 +2002,8 @@ static int sample_block_(struct sm *s, int32_t ip, float fr, float r, int m)
             sl *= .5f;
             sr *= .5f;
         }
-        s->sc->il[i] = sl;
-        s->sc->ir[i] = sr;
+        il_[i] = sl;
+        ir_[i] = sr;
     }
     return 1;
 }
@@ -2572,6 +2573,7 @@ static int run_voices(struct sm *s, float *bl, float *br, int n)
             s->spot[i].used = 0;
         return 0;
     }
+#pragma GCC unroll 4
     for (int i = 0; i < n; i++)
         bl[i] = br[i] = 0.f;
     int any_spot = 0;
@@ -2687,6 +2689,33 @@ void samplr_block_done(uint32_t now)
         }
         sc->t_end = 0;
     }
+}
+
+/* A track's block to the bus (only a number gets there), the level (a NaN never raises it), with the sends (SEND) and, for the frames
+ * at the end of the block (TAIL), the 16-bit emergency tail. Inlined with constant flags: one loop per case. */
+static inline __attribute__((always_inline)) float out_pass(const float *tl, const float *tr, float *bl, float *br, float **snd, int i0, int i1,
+                                                            float sd, float sr, int16_t *t0, int16_t *t1, float mx, int TAIL, int SEND)
+{
+    float *s0 = SEND ? snd[0] : 0, *s1 = SEND ? snd[1] : 0, *s2 = SEND ? snd[2] : 0, *s3 = SEND ? snd[3] : 0;
+    for (int i = i0; i < i1; i++) {
+        float l = tl[i], r = tr[i], al = __builtin_fabsf(l), ar = __builtin_fabsf(r);
+        mx = __builtin_fmaxf(mx, __builtin_fmaxf(al, ar));
+        l = al < 8.f ? l : 0.f;
+        r = ar < 8.f ? r : 0.f;
+        bl[i] += l;
+        br[i] += r;
+        if (TAIL) {
+            t0[i] = (int16_t)__builtin_arm_ssat((int)(l * 32767.f), 16);
+            t1[i] = (int16_t)__builtin_arm_ssat((int)(r * 32767.f), 16);
+        }
+        if (SEND) {
+            s0[i] += l * sd;
+            s1[i] += r * sd;
+            s2[i] += l * sr;
+            s3[i] += r * sr;
+        }
+    }
+    return mx;
 }
 
 #define SHED_PEAK 940
@@ -2862,26 +2891,12 @@ int samplr_run(float *bl, float *br, int n, float **snd)
          * the end of the block for the emergency tail (16-bit, saturated by the hardware instruction). */
         int tn = n < SM_TAIL ? n : SM_TAIL, ts = n - tn;
         int16_t *t0 = q->tail[0] - ts, *t1 = q->tail[1] - ts;
-        for (int part = 0; part < 2; part++) {
-            int i0 = part ? ts : 0, i1 = part ? n : ts;
-            for (int i = i0; i < i1; i++) {
-                float l = tl[i], r = tr[i], al = __builtin_fabsf(l), ar = __builtin_fabsf(r);
-                mx = __builtin_fmaxf(mx, __builtin_fmaxf(al, ar));
-                l = al < 8.f ? l : 0.f;
-                r = ar < 8.f ? r : 0.f;
-                bl[i] += l;
-                br[i] += r;
-                if (part) {
-                    t0[i] = (int16_t)__builtin_arm_ssat((int)(l * 32767.f), 16);
-                    t1[i] = (int16_t)__builtin_arm_ssat((int)(r * 32767.f), 16);
-                }
-                if (send) {
-                    snd[0][i] += l * sd;
-                    snd[1][i] += r * sd;
-                    snd[2][i] += l * sr;
-                    snd[3][i] += r * sr;
-                }
-            }
+        if (send) {                                               /* (one loop per case: no test inside the per-sample loop) */
+            mx = out_pass(tl, tr, bl, br, snd, 0, ts, sd, sr, t0, t1, mx, 0, 1);
+            mx = out_pass(tl, tr, bl, br, snd, ts, n, sd, sr, t0, t1, mx, 1, 1);
+        } else {
+            mx = out_pass(tl, tr, bl, br, snd, 0, ts, sd, sr, t0, t1, mx, 0, 0);
+            mx = out_pass(tl, tr, bl, br, snd, ts, n, sd, sr, t0, t1, mx, 1, 0);
         }
         pk = mx > pk ? mx : pk;
         q->peak = pk;
