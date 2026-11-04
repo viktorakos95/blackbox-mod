@@ -197,6 +197,22 @@ c.call("_ZN10TurboLight9set_speedEhP13MidiUartClass", turbo, 0, mu)
 check("... and back to 1x (31250, BRR 6400)", c.call("bb_midi_speed") == 31250 and c.e.r32(0x4001140C) == 6400, (c.call("bb_midi_speed"), c.e.r32(0x4001140C)))
 for _ in range(10):
     c.irq("bb_swirq2_isr")
+# ---- a Machinedrum that MCL set to send clock (its default clock source is the MD): set back to follow the Blackbox's clock
+MDO = c.b["MD"]
+c.e.uc.mem_write(MDO + 4, b"\x01")                             # connected
+c.e.uc.mem_write(MDO + 0xB9BD, b"\x00\x01")                   # global.clockIn = 0, clockOut = 1 (what MD.setup() writes with clock source port 1)
+sent0 = len(rg.sent)
+for _ in range(5):
+    c.step(2_000_000)
+    c.tick(5)
+c.irq("bb_swirq2_isr")
+c.side(rg.pump)
+out = bytes(rg.sent[sent0:])
+ci, co = bytes(c.e.uc.mem_read(MDO + 0xB9BD, 2))
+k = out.find(b"\x4d")
+check("MD connected with clock out: MCL's loop sets it to clock in / no clock out and sends the sync setting (0x4D, bit 0 set, bit 5 clear)",
+      ci == 1 and co == 0 and k > 0 and out[k + 1] & 1 and not out[k + 1] & 0x20 and out.startswith(b"\xf0"), (ci, co, out.hex()))
+c.e.uc.mem_write(MDO + 4, b"\x00")
 used = c.call("bb_mcl_isr_stack_used")
 print("     soft-interrupt stack used: %d of 6144 bytes" % used)
 check("the soft interrupts' own stack (6 KB) was used less than 2/3 over MIDI, the clock, the panel", 0 < used < 4096, used)

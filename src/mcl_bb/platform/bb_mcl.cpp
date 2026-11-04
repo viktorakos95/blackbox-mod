@@ -14,6 +14,7 @@
 #include "GUI.h"
 #include "global.h"
 #include "oled.h"
+#include "MD.h"
 
 #include "bb_clock.h"
 #include "bb_midi.h"
@@ -360,6 +361,19 @@ HOOK uint32_t bb_mcl_clk_stat(int which)
     }
 }
 
+/* The Blackbox is the clock master here (bb_clock sends the exact clock and transport to the jack). When MCL connects a Machinedrum it writes the MD's sync
+ * settings from its own clock source setting: with the default (port 1 = the MD) the MD would send clock and ignore the clock it gets, so it would run at its
+ * own tempo. After every pass of MCL's loop: if a connected MD is not set to receive clock (or is set to send it), it is set to clock in, no clock out
+ * (transport in / out as MCL set them). MCL's own setting and config.mcls stay as they are. */
+static void md_follow_blackbox(void)
+{
+    if (!MD.connected || (MD.global.clockIn && !MD.global.clockOut))
+        return;
+    MD.global.clockIn = true;
+    MD.global.clockOut = false;
+    MD.setExternalSync();
+}
+
 /* ---- the task ---- */
 static void mcl_task(void *)
 {
@@ -390,6 +404,7 @@ static void mcl_task(void *)
     for (;;) {
         bb_dbg[9]++;
         loop();
+        md_follow_blackbox();
         if (!bb_midi_owner())
             bb_midi_claim(1);                                      /* (still waiting for an idle moment of the stock transmitter) */
         bb_sleep_ms(1);
