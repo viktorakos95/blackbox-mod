@@ -130,6 +130,7 @@ static void midi_rx_pump(void)
         uint8_t b = (uint8_t)c;
         if (b >= 0xf8 && b <= 0xfc) {
             st_rx_clk++;
+            MidiUart.recvActiveSenseTimer = 0;                     /* (still a sign of life of the device on the jack, as any byte is on MCL's own hardware: peering) */
             continue;                                              /* clock and transport are the Blackbox's (bb_clock): not the jack's */
         }
         st_rx_in++;
