@@ -128,6 +128,24 @@ for byte in (0x90, 0x40, 0x7F, 0xF8, 0xFA, 0xFC, 0x80, 0x40, 0x00):
     c.side(rg.rx, byte)
 c.irq("bb_swirq2_isr")
 check("bytes from the jack reach MCL (6 note bytes), the clock and transport bytes (3) do not", c.call("bb_mcl_midi_stat", 0) - rx0 == 6 and c.call("bb_mcl_midi_stat", 1) - rc0 == 3, (c.call("bb_mcl_midi_stat", 0) - rx0, c.call("bb_mcl_midi_stat", 1) - rc0))
+# ---- while MCL holds its MIDI lock (its blocking sysex waits: peering, kit / pattern requests) the bytes must still move both ways
+LOCK = c.b["_ZN14MidiUartParent16handle_midi_lockE"]
+c.e.uc.mem_write(LOCK, b"\x01")
+c.e.w32(0xE000E204, 0)
+c.call("bb_tim7_isr")
+check("MIDI lock held: the base timer still pends the MIDI soft interrupt (IRQ 44)", c.e.r32(0xE000E204) >> 12 & 1 == 1, hex(c.e.r32(0xE000E204)))
+sent0 = len(rg.sent)
+for byte in (0xF0, 0x00, 0x20, 0x3C, 0x02, 0x00, 0x70, 0x01, 0xF7):    # a status request, the kind peering sends
+    c.call("bb_mcl_midi_put", byte, 0)
+c.irq("bb_swirq2_isr")
+c.side(rg.pump)
+check("... MCL's request goes out to the jack", bytes(rg.sent[sent0:]) == bytes([0xF0, 0x00, 0x20, 0x3C, 0x02, 0x00, 0x70, 0x01, 0xF7]), bytes(rg.sent[sent0:]).hex())
+rx0 = c.call("bb_mcl_midi_stat", 0)
+for byte in (0xF0, 0x00, 0x20, 0x3C, 0x02, 0x00, 0x72, 0x01, 0x05, 0xF7):
+    c.side(rg.rx, byte)
+c.irq("bb_swirq2_isr")
+check("... and the reply from the jack reaches MCL's receive ring (its own task processes it)", c.call("bb_mcl_midi_stat", 0) - rx0 == 10, c.call("bb_mcl_midi_stat", 0) - rx0)
+c.e.uc.mem_write(LOCK, b"\x00")
 
 # ---- the clock: the Blackbox's transport and ticks (bb_clock's hooks) drive MidiClock as a MIDI-clock interrupt would
 stat = lambda w: c.call("bb_mcl_clk_stat", w)

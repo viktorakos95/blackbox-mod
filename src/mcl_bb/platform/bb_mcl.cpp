@@ -212,8 +212,8 @@ extern "C" void bb_base_timer_isr(void)
     } else {
         clk_unlock(lk);
     }
-    if (!MidiUartParent::handle_midi_lock)
-        TRIGGER_SW_IRQ2();
+    TRIGGER_SW_IRQ2();                                             /* always: the bytes must move in and out even while MCL holds its MIDI lock (it does in its
+                                                                      blocking sysex waits: peering, kit / pattern requests); only the processing respects it */
     if (++sub_ms == 5) {
         sub_ms = 0;
         bb_time_tick();
@@ -258,8 +258,9 @@ extern "C" void bb_swirq1_body(void)                               /* the sequen
 extern "C" void bb_swirq2_body(void)                               /* MIDI input, and MCL's output on its way */
 {
     bb_dbg[7]++;
-    midi_rx_pump();
-    handleIncomingMidi();
+    midi_rx_pump();                                                /* (what the UART's interrupt does on MCL's own hardware: no lock) */
+    if (!MidiUartParent::handle_midi_lock)
+        handleIncomingMidi();                                      /* (while MCL holds the lock, its own task processes the input: handleIncomingMidi() in its wait loops) */
     midi_tx_drain();
 }
 
