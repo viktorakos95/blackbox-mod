@@ -340,7 +340,8 @@ uint32_t mcl_page_sig(void)
 {
     const struct mcl_entry *e = mcl_blob();
     bkp_enable();
-    uint32_t m = e && e->abi >= 4 ? e->midi(0) / 3125u + e->midi(1) * 7u + e->midi(2) * 131u : 0u;    /* (the MIDI line under B2 / B3 changes too) */
+    uint32_t m = e && e->abi >= 4 ? e->midi(0) / 3125u + e->midi(1) * 7u + e->midi(2) * 131u + e->midi(3) * 17u + e->midi(4) * 3u + e->midi(5) / 192u * 11u
+                                        + e->midi(6) / 10u * 13u + e->midi(7) * 19u + e->midi(8) * 23u + e->midi(9) * 29u : 0u;    /* (the lines under the tiles change too) */
     return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + m * 977u;
 }
 
@@ -351,8 +352,8 @@ void mcl_page_draw(int w, int foot_y)
     const struct mcl_entry *e = mcl_blob();
     const uint8_t *fb = e ? e->fb() : 0;
     int x0 = mcl_x0(w);
-    char midi[16], err[16];              /* under B2: the jack's speed (TurboMIDI factor) and bytes received; under B3: receive errors (a MIDI IN too slow for the speed) */
-    midi[0] = err[0] = 0;
+    char midi[16], err[16], d0[16], d3[16], d4[16];              /* under B2: the jack's speed (TurboMIDI factor) and bytes received; under B3: receive errors (a MIDI IN too slow for the speed) */
+    midi[0] = err[0] = d0[0] = d3[0] = d4[0] = 0;
     if (e && e->abi >= 4 && e->midi(0)) {                    /* (0 until the MIDI layer is up) */
         uint32_t x10 = (e->midi(0) * 10u + 15625u) / 31250u, rx = e->midi(1);
         char *p = put_uint(midi, x10 / 10u);
@@ -371,6 +372,28 @@ void mcl_page_draw(int w, int foot_y)
             p = put_uint(p, rx / 1000000u);
             *p++ = 'M';
         }
+        *p = 0;
+        /* (diagnostics of the clock chain, while tempo / transport are checked on the unit) B1: bb_clock's state and the sequencer stamps used;
+           B4: the tempo it sends and its beats; SHIFT: MCL's clock state and 16th counter, and whether the Blackbox's transport is seen running */
+        p = d0;
+        *p++ = 'S';
+        p = put_uint(p, e->midi(3));
+        *p++ = ' ';
+        *p++ = 'A';
+        p = put_uint(p, e->midi(4) % 10000u);
+        *p = 0;
+        p = put_uint(d3, e->midi(6) / 10u);
+        *p++ = ' ';
+        *p++ = 'B';
+        p = put_uint(p, e->midi(5) / 192u % 10000u);
+        *p = 0;
+        p = d4;
+        *p++ = 'M';
+        p = put_uint(p, e->midi(7));
+        *p++ = ' ';
+        p = put_uint(p, e->midi(8) % 1000u);
+        *p++ = ' ';
+        *p++ = e->midi(9) ? 'R' : '-';
         *p = 0;
         uint32_t ne = e->midi(2);
         p = put_uint(err, ne < 9999u ? ne : 9999u);
@@ -407,7 +430,8 @@ void mcl_page_draw(int w, int foot_y)
         lp_box(4 + i * tw + 1, MCL_TILE_Y + 1, tw - 3, MCL_TILE_H - 2, on ? 0x1b : 0x01);
         lp_frame(4 + i * tw, MCL_TILE_Y, tw - 1, MCL_TILE_H, on ? 0x0f : 0x10, 1);
         lp_text_c(4 + i * tw, MCL_TILE_Y + 10, tw - 1, name[i], on ? 0x0e : 0x0f, 2);
-        lp_text_c(4 + i * tw, MCL_TILE_Y + 32, tw - 1, i == 1 && midi[0] ? midi : i == 2 && err[0] ? err : role[i], on ? 0x0e : 0x16, 1);
+        const char *t = i == 1 && midi[0] ? midi : i == 2 && err[0] ? err : i == 0 && d0[0] ? d0 : i == 3 && d3[0] ? d3 : i == 4 && d4[0] ? d4 : role[i];
+        lp_text_c(4 + i * tw, MCL_TILE_Y + 32, tw - 1, t, on ? 0x0e : 0x16, 1);
     }
 }
 

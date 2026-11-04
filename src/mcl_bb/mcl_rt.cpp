@@ -24,6 +24,7 @@ __attribute__((weak)) int bb_mcl_active(void) { return 0; }
 __attribute__((weak)) const uint8_t *bb_mcl_fb(void) { return 0; }
 __attribute__((weak)) uint32_t bb_mcl_frames(void) { return 0; }
 __attribute__((weak)) uint32_t bb_mcl_start(uint32_t) { return 1; }
+__attribute__((weak)) uint32_t bb_mcl_clk_stat(int) { return 0; }
 __attribute__((weak)) void bb_mcl_page_input(uint32_t, int32_t, int32_t) {}
 }
 
@@ -424,7 +425,8 @@ struct mcl_entry {
     const uint8_t *(*fb)(void);                       /* the 128x32 screen (bb_ui.h); null while the runtime is not up */
     uint32_t (*sig)(void);                            /* draws it; a hash that changes with the picture (0 while the runtime is not up) */
     void (*input)(uint32_t kind, int32_t a, int32_t b);     /* encoders and buttons from the page, GUI task */
-    uint32_t (*midi)(uint32_t which);                 /* abi 4, the jack for the page: 0 speed (bit/s), 1 bytes received, 2 receive errors (framing + noise + overrun) */
+    uint32_t (*midi)(uint32_t which);                 /* abi 4, the jack for the page: 0 speed (bit/s), 1 bytes received, 2 receive errors (framing + noise + overrun);
+                                                         3..9 the clock chain (diagnostics, page_midi) */
 };
 static int ready(void)
 {
@@ -450,7 +452,16 @@ static uint32_t page_midi(uint32_t which)
     switch (which) {
     case 0: return bb_midi_speed();
     case 1: return bb_midi_stat(0);
-    default: return bb_midi_stat(6) + bb_midi_stat(7) + bb_midi_stat(8);
+    case 2: return bb_midi_stat(6) + bb_midi_stat(7) + bb_midi_stat(8);
+    /* (diagnostics of the clock chain, while tempo / transport are checked on the unit) */
+    case 3: return (uint32_t)bb_clock_sync_state();               /* bb_clock: 0 internal, 1 listening, 2 one clock, 3 locked, 4 lost */
+    case 4: return bb_clock_seq_stat(0);                          /* stamps of the Blackbox's sequencer used */
+    case 5: return bb_clock_ticks();                              /* 192-PPQN ticks sent */
+    case 6: return bb_clock_bpm_x10();
+    case 7: return bb_mcl_clk_stat(0);                            /* MCL's MidiClock: 0 paused, 1 starting, 2 started */
+    case 8: return bb_mcl_clk_stat(3);                            /* MCL's 16th counter */
+    case 9: return bb_clock_seq_stat(2);                          /* the Blackbox's transport seen running */
+    default: return 0;
     }
 }
 #if defined(M3_TEST) || defined(M4_TEST) || defined(M5_TEST) || defined(COMPACT_LABEL)
