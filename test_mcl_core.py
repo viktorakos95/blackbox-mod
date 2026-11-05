@@ -128,6 +128,17 @@ for byte in (0x90, 0x40, 0x7F, 0xF8, 0xFA, 0xFC, 0x80, 0x40, 0x00):
     c.side(rg.rx, byte)
 c.irq("bb_swirq2_isr")
 check("bytes from the jack reach MCL (6 note bytes), the clock and transport bytes (3) do not", c.call("bb_mcl_midi_stat", 0) - rx0 == 6 and c.call("bb_mcl_midi_stat", 1) - rc0 == 3, (c.call("bb_mcl_midi_stat", 0) - rx0, c.call("bb_mcl_midi_stat", 1) - rc0))
+# ---- the sequencer's notes: MCLSeq::seq() writes them into a side channel (seq_tx1..4) that the output must drain too, between two messages of the main stream
+sent0 = len(rg.sent)
+for byte in (0xB0, 0x10):                                        # the start of a message in the main stream ...
+    c.call("bb_mcl_midi_put", byte, 0)
+for byte in (0x99, 0x24, 0x64):                                  # ... a note in the side channel ...
+    c.call("bb_mcl_midi_put_side", byte)
+c.call("bb_mcl_midi_put", 0x40, 0)                               # ... and the rest of the message
+c.irq("bb_swirq2_isr")
+c.side(rg.pump)
+out = bytes(rg.sent[sent0:])
+check("the sequencer's side channel reaches the jack (the note), and not inside a message of the main stream", out == bytes([0xB0, 0x10, 0x40, 0x99, 0x24, 0x64]) or out == bytes([0x99, 0x24, 0x64, 0xB0, 0x10, 0x40]), out.hex())
 # ---- while MCL holds its MIDI lock (its blocking sysex waits: peering, kit / pattern requests) the bytes must still move both ways
 LOCK = c.b["_ZN14MidiUartParent16handle_midi_lockE"]
 c.e.uc.mem_write(LOCK, b"\x01")

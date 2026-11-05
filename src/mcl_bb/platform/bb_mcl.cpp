@@ -141,39 +141,33 @@ static void midi_rx_pump(void)
     }
 }
 
+/* MCL's output to the jack, in the order its UART interrupt sends it on its own hardware (MidiUart::desktop_egress): real-time bytes first, then the
+ * sequencer's side channel (seq_tx1..4: MCLSeq::seq() writes its notes there and points txRb_sidechannel at it) but only between two messages of the
+ * main stream, then the main stream. F8 / FA / FB / FC are dropped: bb_clock sends the Blackbox's clock and transport. */
 static void midi_tx_drain(void)
 {
-    volatile RingBuffer<> *rt = MidiUart.txRb_realtime;
-    while (rt->rd != rt->wr) {                                    /* real-time bytes first; F8 is bb_clock's */
-        uint8_t b = rt->buf[rt->rd];
-        if (b < 0xf8 || b > 0xfc) {                                /* (clock and transport out are bb_clock's) */
-            if (!bb_midi_tx_rt(b))
-                break;                                             /* the FIFO is full: try again at the next pass */
-            st_tx_out++;
-        } else {
-            st_tx_clk++;
-        }
-        rt->rd = (uint16_t)(rt->rd + 1u == rt->len ? 0 : rt->rd + 1u);
-    }
-    volatile RingBuffer<> *tx = MidiUart.txRb;
     uint8_t tmp[64];
-    uint32_t free_bytes = bb_midi_tx_free();
-    for (;;) {
+    for (int guard = 0; guard < 128; guard++) {
+        uint32_t free_bytes = bb_midi_tx_free();
+        uint32_t cap = free_bytes < sizeof tmp ? free_bytes : (uint32_t)sizeof tmp;
+        if (!cap)
+            break;                                                 /* the jack's ring is full: the rest waits for the next pass */
+        size_t k = MidiUart.desktop_egress(tmp, cap);
+        if (!k)
+            break;
         uint32_t n = 0;
-        while (n < sizeof tmp && n < free_bytes && tx->rd != tx->wr) {
-            uint8_t b = tx->buf[tx->rd];
-            tx->rd = (uint16_t)(tx->rd + 1u == tx->len ? 0 : tx->rd + 1u);
+        for (size_t i = 0; i < k; i++) {
+            uint8_t b = tmp[i];
             if (b >= 0xf8 && b <= 0xfc) {
                 st_tx_clk++;
-                continue;                                          /* MCL's own start / stop / forwards in the stream: the Blackbox's transport is the master */
+                continue;
             }
             tmp[n++] = b;
         }
-        if (!n)
-            break;
-        bb_midi_tx(tmp, n);
-        st_tx_out += n;
-        free_bytes -= n;
+        if (n) {
+            bb_midi_tx(tmp, n);
+            st_tx_out += n;
+        }
     }
 }
 
@@ -346,6 +340,15 @@ HOOK void bb_mcl_midi_put(uint32_t b, uint32_t realtime)
     else
         MidiUart.sendRaw((uint8_t)b);
     TRIGGER_SW_IRQ2();
+}
+
+/* a byte into a side channel of MCL's output, the way MCLSeq::seq() hands its notes over (tests) */
+static uint8_t side_buf[64];
+static RingBuffer<> side_ring(side_buf, sizeof side_buf);
+HOOK void bb_mcl_midi_put_side(uint32_t b)
+{
+    side_ring.put_h_isr((uint8_t)b);
+    MidiUart.txRb_sidechannel = &side_ring;
 }
 
 /* the clock as MCL sees it (diagnostics and tests): 0 state (0 paused, 1 starting, 2 started), 1 div192th_counter, 2 div96th_counter, 3 div16th_counter, 4 interpolation, 5 transport bytes queued for MCL */
