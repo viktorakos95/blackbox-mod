@@ -139,6 +139,17 @@ c.irq("bb_swirq2_isr")
 c.side(rg.pump)
 out = bytes(rg.sent[sent0:])
 check("the sequencer's side channel reaches the jack (the note), and not inside a message of the main stream", out == bytes([0xB0, 0x10, 0x40, 0x99, 0x24, 0x64]) or out == bytes([0x99, 0x24, 0x64, 0xB0, 0x10, 0x40]), out.hex())
+# ---- MCL's port 2: a keyboard on the USB host port / Trigger2MIDI INT, as the stock code takes them from its software MIDI-in queue
+MGRQ = 0x24002E88
+c.e.w32(MGRQ + 0x4B60, 0)
+c.e.w32(MGRQ + 0x4B64, 2)
+c.e.uc.mem_write(MGRQ + 0x4660, bytes([0x91, 0x40, 0x7F, 0, 3, 0xF8, 0, 0, 0, 1]))
+x0, k0 = c.call("bb_mcl_midi_stat", 4), c.call("bb_mcl_midi_stat", 5)
+c.call("mcl_softq_take", MGRQ + 0x4B60)
+c.call("mcl_softq_take", MGRQ + 0x4B60)
+c.irq("bb_swirq2_isr")
+check("USB host / Trigger2MIDI INT messages reach MCL's port 2 (3 note bytes), a clock byte among them is dropped (the Blackbox is the master)",
+      c.call("bb_mcl_midi_stat", 4) - x0 == 3 and c.call("bb_mcl_midi_stat", 5) - k0 == 1, (c.call("bb_mcl_midi_stat", 4) - x0, c.call("bb_mcl_midi_stat", 5) - k0))
 # ---- while MCL holds its MIDI lock (its blocking sysex waits: peering, kit / pattern requests) the bytes must still move both ways
 LOCK = c.b["_ZN14MidiUartParent16handle_midi_lockE"]
 c.e.uc.mem_write(LOCK, b"\x01")

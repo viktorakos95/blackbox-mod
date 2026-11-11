@@ -8,8 +8,8 @@ set -e
 M=$(realpath "$1"); G=$(realpath "$2"); O=$(realpath -m "$3"); shift 3; mkdir -p "$O"
 INC=$(cd "$M"; for d in src/platform/desktop src/platform/desktop_common src src/mcl include src/resources/rp2040 $(find src/mcl -type d | grep -vE "/tools(/|$)"); do echo -n "-I$M/$d "; done)
 CPU="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"
-printf '#define VERSION_STR "T5.00"\n' > "$O/defs.h"
-COMMON="$CPU -Os -ffunction-sections -fdata-sections -w -DARDUINO=10800 -DPLATFORM_DESKTOP=1 -DVERSION=5000 -include $O/defs.h $PLAT_INC -I$G $INC $*"
+printf '#define VERSION_STR "%s"\n' "${MCL_VERSION_STR:-T5.00}" > "$O/defs.h"
+COMMON="$CPU -Os -ffunction-sections -fdata-sections -w -DARDUINO=10800 -DPLATFORM_DESKTOP=1 -DVERSION=${MCL_VERSION:-5000} -include $O/defs.h $PLAT_INC -I$G $INC $*"
 cd "$M"
 find src/mcl src/resources/rp2040 -name '*.cpp' | grep -vE "/(tools|Tests)/|Drivers/TBD" | xargs -P8 -I{} sh -c \
   'arm-none-eabi-g++ '"$COMMON"' -fno-exceptions -fno-rtti -fpermissive -std=gnu++17 -c {} -o '"$O"'/$(echo {} | tr / _).o'

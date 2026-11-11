@@ -157,6 +157,25 @@ r.isr(0x20)                                                      # a clean byte
 check("receive errors counted once per interrupt: framing, noise, overrun; a clean byte counts none",
       (r.call("bb_midi_stat", 6) - fe0, r.call("bb_midi_stat", 7) - ne0, r.call("bb_midi_stat", 8) - ore0) == (1, 1, 1))
 
+# --- the stock software MIDI-in queue (USB host devices, Trigger2MIDI INT): copied for MCL's port 2 as the stock code takes it
+SQ_RD, SQ_WR, SQ_E = MGR + 0x4B60, MGR + 0x4B64, MGR + 0x4660
+check("the read-index advance at 0x080449c4 is a bl to mcl_softq_take", target(0x080449C4) == ("bl", b["mcl_softq_take"]), target(0x080449C4))
+e.w32(SQ_RD, 7)
+e.w32(SQ_WR, 9)
+e.uc.mem_write(SQ_E + 5 * 7, bytes([0x90, 0x3C, 0x64, 0, 3]))
+e.uc.mem_write(SQ_E + 5 * 8, bytes([0xC1, 0x05, 0, 0, 2]))
+n0 = r.call("bb_midi_stat", 9)
+r.call("mcl_softq_take", SQ_RD)
+r.call("mcl_softq_take", SQ_RD)
+got = []
+while True:
+    v = r.call("bb_midi_ext_get")
+    if v == 0xFFFFFFFF:
+        break
+    got.append(v)
+check("software queue: both messages copied in order with their lengths (note on, program change), the stock read index advanced twice",
+      got == [0x90, 0x3C, 0x64, 0xC1, 0x05] and e.r32(SQ_RD) == 9 and r.call("bb_midi_stat", 9) - n0 == 2, (got, e.r32(SQ_RD)))
+
 # --- TurboMIDI: the jack's speed
 e.w32(U, e.r32(U) | 0x0D)                                        # UE, RE, TE as the stock init leaves them
 e.w32(U + 0x1C, 0x40 | 0x80)                                     # TC, TXE: the line is idle

@@ -103,7 +103,7 @@ HOOK void bb_mcl_guard(void)
 }
 
 /* ---- MIDI between MCL's MidiUart and bb_midi ---- */
-static volatile uint32_t st_rx_in, st_rx_clk, st_tx_out, st_tx_clk;     /* MIDI bytes: into MCL, clock / transport dropped from the jack, out to the jack, clock / transport dropped from MCL's output */
+static volatile uint32_t st_rx_in, st_rx_clk, st_tx_out, st_tx_clk, st_ext_in, st_ext_clk;     /* MIDI bytes: into MCL, clock / transport dropped from the jack, out to the jack, clock / transport dropped from MCL's output */
 static volatile uint8_t xq[8];                                    /* transport bytes (FA / FB / FC) from bb_clock on their way to MCL's receive ring */
 static volatile uint8_t xq_wr, xq_rd;
 
@@ -138,6 +138,16 @@ static void midi_rx_pump(void)
         uint32_t lk = clk_lock();                                  /* (the transport side also writes this ring, from the clock interrupt) */
         MidiUart.desktop_ingress(&b, 1);
         clk_unlock(lk);
+    }
+    /* MCL's port 2: what the Blackbox takes from its software MIDI-in queue (a keyboard on the USB host port, Trigger2MIDI's INT output) */
+    for (guard = 0; guard < 256 && (c = bb_midi_ext_get()) >= 0; guard++) {
+        uint8_t b = (uint8_t)c;
+        if (b >= 0xf8 && b <= 0xfc) {
+            st_ext_clk++;
+            continue;                                              /* (the Blackbox is the clock master here too) */
+        }
+        st_ext_in++;
+        MidiUart2.desktop_ingress(&b, 1);
     }
 }
 
@@ -321,13 +331,16 @@ extern "C" void bb_mcl_clk_tick(uint32_t ticks)
         TRIGGER_SW_IRQ1();
 }
 
-/* MIDI between MCL and the jack (diagnostics and tests): 0 bytes into MCL, 1 clock / transport bytes from the jack dropped, 2 bytes out, 3 clock / transport bytes of MCL's output dropped */
+/* MIDI between MCL and the jack (diagnostics and tests): 0 bytes into MCL, 1 clock / transport bytes from the jack dropped, 2 bytes out, 3 clock / transport bytes of MCL's output dropped,
+   4 / 5 bytes into MCL's port 2 (USB host, Trigger2MIDI INT) / clock and transport bytes of those dropped */
 HOOK uint32_t bb_mcl_midi_stat(int which)
 {
     switch (which) {
     case 0: return st_rx_in;
     case 1: return st_rx_clk;
     case 2: return st_tx_out;
+    case 4: return st_ext_in;
+    case 5: return st_ext_clk;
     default: return st_tx_clk;
     }
 }

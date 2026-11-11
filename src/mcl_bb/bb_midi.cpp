@@ -47,7 +47,9 @@ static volatile uint8_t rt[16];
 static volatile uint32_t rt_wr, rt_rd;
 static volatile uint32_t st_rx, st_rx_drop, st_tx, st_tx_rej, st_redirect, st_rt_rej;
 static volatile uint32_t st_fe, st_ne, st_ore;  /* receive errors seen by the interrupt: framing, noise, overrun (a too-slow MIDI IN optocoupler shows as FE / NE at TurboMIDI speeds) */
-static uint32_t uart_clk, cur_bps;             /* USART6's kernel clock (from the stock 31250 baud set-up), the speed now */
+static uint32_t uart_clk, cur_bps;
+static volatile uint8_t ext_ring[256];          /* messages the Blackbox takes from its software MIDI-in queue (USB host devices, Trigger2MIDI's INT output): for MCL's port 2 */
+static volatile uint32_t ext_wr, ext_rd, st_ext, st_ext_drop;             /* USART6's kernel clock (from the stock 31250 baud set-up), the speed now */
 
 /* entered from patched stock code, or the API MCL calls: the linker must keep them */
 #define HOOK __attribute__((section(".hook"), used))
@@ -70,6 +72,7 @@ HOOK void bb_midi_init(void)
     owner = want = filter_clock = 0;
     st_rx = st_rx_drop = st_tx = st_tx_rej = st_redirect = st_rt_rej = 0;
     st_fe = st_ne = st_ore = 0;
+    ext_wr = ext_rd = st_ext = st_ext_drop = 0;
     cur_bps = 31250u;
     uart_clk = (U_CR1 & CR1_OVER8) ? 0u : (U_BRR & 0xffffu) * 31250u;    /* (16x oversampling, what the stock init sets: BRR = clock / baud) */
     ready = READY_MAGIC;
@@ -197,8 +200,47 @@ HOOK uint32_t bb_midi_stat(int which)
     case 6: return st_fe;
     case 7: return st_ne;
     case 8: return st_ore;
+    case 9: return st_ext;
+    case 10: return st_ext_drop;
     default: return st_redirect;
     }
+}
+
+/* Replaces the read-index advance (bl 0x08040bac at 0x080449c4) of the stock "next incoming message" function when it takes a message from its
+ * software queue (mgr + 0x4660 + 5 n, read index mgr + 0x4b60): the USB host's MIDI packets end up there (converted in the render), and so does
+ * Trigger2MIDI's INT output. The entry about to be taken (status, d1, d2, -, length) is copied into a small ring for MCL's port 2 first; the stock
+ * code takes it as before. Runs in the render task (one consumer: MCL's MIDI soft interrupt); full ring = the message is dropped and counted. */
+HOOK void mcl_softq_take(volatile uint32_t *rd)
+{
+    if (ready == READY_MAGIC) {
+        const volatile uint8_t *e = (const volatile uint8_t *)rd - 0x4b60u + 0x4660u + 5u * (*rd & 0xffu);
+        uint32_t n = e[4];
+        if (e[0] >= 0x80u && n >= 1u && n <= 3u) {
+            uint32_t w = ext_wr;
+            if (sizeof ext_ring - (w - ext_rd) >= n) {
+                for (uint32_t k = 0; k < n; k++)
+                    ext_ring[(w + k) & (sizeof ext_ring - 1u)] = e[k];
+                __asm volatile("dmb" ::: "memory");
+                ext_wr = w + n;
+                st_ext++;
+            } else {
+                st_ext_drop++;
+            }
+        }
+    }
+    ((void (*)(volatile uint32_t *))0x08040badu)(rd);              /* the stock increment */
+}
+
+/* next byte of those messages (-1 = none); one consumer */
+HOOK int bb_midi_ext_get(void)
+{
+    uint32_t r = ext_rd;
+    if (r == ext_wr)
+        return -1;
+    uint8_t b = ext_ring[r & (sizeof ext_ring - 1u)];
+    __asm volatile("dmb" ::: "memory");
+    ext_rd = r + 1u;
+    return b;
 }
 
 HOOK uint32_t mcl_tx_hook(uint32_t port, const uint8_t *buf, uint32_t len)

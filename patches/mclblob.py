@@ -11,6 +11,8 @@ image; src/mcl_bb/mcl_blob.ld). Two more bytes of the stock image change:
       0x08044dfc  entry of the stock send function (port, buf, len) -> mcl_tx_hook (stock code unless MCL has claimed the port);
       0x08040118  vector for IRQ 54 (TIM6, unused by the stock firmware) -> mcl_tim6_isr (M4, the clock);
       0x0804015c  vector 71 (USART6): 0x080462e5 -> mcl_usart6_isr (sends MCL's TX bytes, passes everything else to the stock handler).
+  - M8, MCL's port 2: 0x080449c4, the read-index advance of the stock software MIDI-in queue (USB host devices, Trigger2MIDI INT) -> mcl_softq_take
+    (copies the message for MCL, then does the stock increment).
 Not combined with `mclpad` (the pad test covers the same flash range).
 """
 import os
@@ -39,6 +41,8 @@ PATCHES = [
     (0x08040118, struct.pack("<I", 0x08040315), struct.pack("<I", bsym["mcl_tim6_isr"] | 1)),      # vector 70 = IRQ 54 (TIM6): was a `b .` stub
     (end, b"", b"\xff" * (BLOB_ORG - end) + blob),
 ]
+if "mcl_softq_take" in bsym:                                           # the stock software MIDI-in queue (USB host, Trigger2MIDI INT): copied for MCL's port 2
+    PATCHES.append((0x080449C4, bl(0x080449C4, 0x08040BAC), bl(0x080449C4, bsym["mcl_softq_take"])))
 # M8, MCL itself: the base timer (IRQ 55, TIM7) and three soft interrupts (IRQ 30, 44, 45), vectors that point at `b .` stubs in the stock firmware (checked below)
 for irq, name in ((55, "bb_tim7_isr"), (30, "bb_swirq1_isr"), (44, "bb_swirq2_isr"), (45, "bb_swirq3_isr")):
     if name in bsym:
