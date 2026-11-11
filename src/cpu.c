@@ -61,8 +61,10 @@ struct cpu_state {
 
 /* Flash window test (see pad_text below): build id set by patches/mclpad.py, 0 in normal builds. */
 const volatile uint32_t mclpad_on = 0;
-#define PAD_BASE  ((const volatile uint32_t *)0x08140000u)
-#define PAD_WORDS 65536u
+const volatile uint32_t mclpad_base = 0x08140000u;   /* the pad's range, also set by patches/mclpad.py */
+const volatile uint32_t mclpad_words = 65536u;
+#define PAD_BASE  ((const volatile uint32_t *)mclpad_base)
+#define PAD_WORDS mclpad_words
 #define PAD_ST    ((volatile uint32_t *)0x38800910u)
 #define PAD_NONE  0xffffffffu
 
@@ -134,8 +136,8 @@ static char *put_uint(char *p, unsigned v)
 }
 
 /*
- * Flash window test (MCL port, gate for milestone M2). patches/mclpad.py appends 256 KB of a known word pattern at
- * 0x08140000..0x08180000 (past the window tested so far) and sets mclpad_on to a build id. Only then, the first time a label is
+ * Flash window test (MCL port, gate for milestone M2). patches/mclpad.py appends a known word pattern (by default 256 KB at
+ * 0x08140000..0x08180000; MCLPAD_END=0x081E0000 for the next window: mclpad_base / mclpad_words are patched to match) and sets mclpad_on to a build id. Only then, the first time a label is
  * composed after power-up, the whole pad is read back once (65,536 words, a few ms in the GUI task, never in the audio task) and the
  * label shows " POK" if every word matched, else " Fxxxx" (hex index of the first wrong word). The label is built once at boot and not
  * rewritten by the meter, so the result has to be there when it is built. Result in backup SRAM (0x38800910: id, -, first bad word),
@@ -171,7 +173,7 @@ static char *pad_text(char *p)
     *p++ = ' ';
     if (bad != PAD_NONE) {
         *p++ = 'F';
-        for (int sh = 12; sh >= 0; sh -= 4)
+        for (int sh = PAD_WORDS > 0x10000u ? 16 : 12; sh >= 0; sh -= 4)      /* (5 hex digits for a pad past 256 KB) */
             *p++ = "0123456789abcdef"[(bad >> sh) & 15];
     } else {
         *p++ = 'P';

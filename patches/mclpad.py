@@ -10,7 +10,9 @@ import zlib
 from thumb import ROOT, symbols
 
 BASE, STOCK_END = 0x08040000, 0x080F1E78
-PAD_BASE, PAD_END = 0x08140000, 0x08180000
+PAD_BASE = int(os.environ.get("MCLPAD_BASE", "0x08140000"), 16)
+PAD_END = int(os.environ.get("MCLPAD_END", "0x08180000"), 16)          # MCLPAD_END=0x081E0000: the next window (0x081E0000 and up stay untouched)
+assert PAD_END <= 0x081E0000 and PAD_BASE < PAD_END
 M = 0xFFFFFFFF
 
 cave = open(os.path.join(ROOT, "out", "cave.bin"), "rb").read()
@@ -28,9 +30,11 @@ def pad_word(i):                      # same as pad_word() in src/cpu.c
 
 pad = b"".join(pad_word(i).to_bytes(4, "little") for i in range((PAD_END - PAD_BASE) // 4))
 gap = b"\xff" * (PAD_BASE - end)
-build_id = (zlib.crc32(cave) ^ 0x4D504144) & M or 1
+build_id = (zlib.crc32(cave) ^ 0x4D504144 ^ PAD_END) & M or 1
 
 PATCHES = [
     (sym["mclpad_on"], bytes(4), build_id.to_bytes(4, "little")),
+    (sym["mclpad_base"], (0x08140000).to_bytes(4, "little"), PAD_BASE.to_bytes(4, "little")),
+    (sym["mclpad_words"], (65536).to_bytes(4, "little"), ((PAD_END - PAD_BASE) // 4).to_bytes(4, "little")),
     (end, b"", gap + pad),
 ]
