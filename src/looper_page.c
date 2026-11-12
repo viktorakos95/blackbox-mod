@@ -140,6 +140,7 @@ enum { P_NONE, P_REC, P_MUTE, P_FADER, P_DIAL, P_SLIDER };
 enum { Z_NONE, Z_REC, Z_FADER, Z_PAN, Z_REV, Z_MUTE, Z_TAB, Z_FX, Z_HALF, Z_OPTC, Z_SLIDER, Z_CLEAR, Z_UNDO, Z_SEL, Z_DBG };
 enum { M_MAIN, M_FX, M_SETUP, M_MORE, M_SMPLR, M_TRIG, M_LIRA, M_MCL, MODES };   /* M_TRIG: Trigger2MIDI (src/t2m_page.c), tab 6; M_LIRA: the LIRA-8 page (lira_ui.inc), tab 7; M_MCL: the MCL screen (mcl_page_* in src/cpu.c), tab 8 */
 void mcl_page_draw(int w, int foot_y);
+void mcl_page_foot(int w, int foot_y);
 void mcl_page_down(int id, int x, int d, int w, int foot_y);
 void mcl_page_up(int id);
 void mcl_page_knob(int knob, int counts);
@@ -390,7 +391,7 @@ int looper_page_hit(int x, int d, int *track, float *val)
             return Z_OPTC;
         }
         if (P->mode == M_LIRA || P->mode == M_MCL)
-            return Z_NONE;                                        /* (MCL: no tabs, no sheets: only the STOCK FX button above) */
+            return Z_NONE;                                        /* (MCL: no tabs, no sheets: its footer is the clock, mcl_page_down) */
         if (P->mode == M_SMPLR || P->mode == M_TRIG) {            /* the sheets (track >= 10 tells Z_TAB apart) */
             int sh = (x - 3) / 60;
             if (x >= 3 && sh < (P->mode == M_TRIG ? 4 : SM_SHEETS) && (x - 3) % 60 < 58) {
@@ -1155,7 +1156,7 @@ static void draw_footer(const struct lay *L)
         x0 = P->w;
     }
     if (P->mode == M_MCL) {
-        text(3, L->foot_y + 4, "MCL   KNOBS 1-4 = ENCODERS", C_CYAN, 1);
+        mcl_page_foot(P->w, L->foot_y);                           /* the clock (src/cpu.c) */
         x0 = P->w;
     }
     if (P->mode == M_SMPLR) {                                     /* SAMPLR is a page of its own: SONG opens it, MIX goes to the Looper; the footer picks the sheet */
@@ -1720,6 +1721,9 @@ static const struct { uint8_t idx; uint32_t argb; } tint_looper[] = {
     {0x20, 0xfff09a4a}, {0x1b, 0xff7cc8f0}, {0x14, 0xfff0d070}, {0x17, 0xff6fd1b6}, {0x18, 0xffb08cf0}, {0x1a, 0xff2d6a7a},
     {0x06, 0xffe5484d}, {0x0b, 0xff5fcf8f}, {0x0c, 0xffd65a5a}, {0x12, 0xfff2d24a},
 };
+static const struct { uint8_t idx; uint32_t argb; } tint_mcl[] = {     /* MCL: a MegaCommand's silver panel and its dark printing (src/cpu.c mcl_page_draw) */
+    {0x1c, 0xffb9bcc1}, {0x1e, 0xff2b2d31},
+};
 static const struct { uint8_t idx; uint32_t argb; } tint_samplr[] = {   /* petrol: blue-green slate, a peach waveform, golden samples, a raspberry selection */
     {0x02, 0xff0b1112}, {0x19, 0xff131c1e}, {0x10, 0xff2c3d40}, {0x09, 0xff6f8487}, {0x16, 0xffc6d6d6}, {0x01, 0xff1b2628},
     {0x20, 0xffef6f9e}, {0x1b, 0xfff0cc66}, {0x14, 0xff6cc0e8}, {0x17, 0xff7fd8b8}, {0x18, 0xffb89af0}, {0x1a, 0xff2f7f86},
@@ -1733,7 +1737,7 @@ static const struct { uint8_t idx; uint32_t argb; } tint_samplr[] = {   /* petro
  * are written into the CLUT, for as long as the page shows, and the stock ones (the firmware's table) put back as soon as a stock screen
  * draws (solo.c looper_fill_blocked -> looper_page_clut_stock) or the page is left. Only while the DMA2D is idle, with
  * interrupts off so that no transfer starts in between; otherwise the next draw tries again. P->_r6[1]: the colours in
- * the CLUT now (0 stock, 1 Looper, 2 SAMPLR, 3 DRONE-8). */
+ * the CLUT now (0 stock, 1 Looper, 2 SAMPLR, 3 DRONE-8, 4 MCL). */
 #define DMA2D_CR      (*(volatile uint32_t *)0x52001000u)
 #define DMA2D_FGPFCCR (*(volatile uint32_t *)0x5200101cu)
 #define DMA2D_BGPFCCR (*(volatile uint32_t *)0x52001024u)
@@ -1745,14 +1749,15 @@ static const uint8_t clut_idx[] = {0x01, 0x02, 0x06, 0x09, 0x0b, 0x0c, 0x0f, 0x1
 
 static int clut_theme(void)
 {
-    return P->mode == M_LIRA ? 3 : P->mode == M_SMPLR ? 2 : P->mode < M_SMPLR ? 1 : 0;
+    return P->mode == M_MCL ? 4 : P->mode == M_LIRA ? 3 : P->mode == M_SMPLR ? 2 : P->mode < M_SMPLR ? 1 : 0;
 }
 
 static void clut_write(int theme)
 {
-    const uint32_t *t = theme == 3 ? (const uint32_t *)lu_theme : theme == 2 ? (const uint32_t *)tint_samplr : (const uint32_t *)tint_looper;
-    int n = theme == 3 ? LU_NTHEME : theme == 2 ? (int)(sizeof tint_samplr / sizeof tint_samplr[0]) :
-            theme == 1 ? (int)(sizeof tint_looper / sizeof tint_looper[0]) : 0;
+    const uint32_t *t = theme == 4 ? (const uint32_t *)tint_mcl : theme == 3 ? (const uint32_t *)lu_theme :
+                        theme == 2 ? (const uint32_t *)tint_samplr : (const uint32_t *)tint_looper;
+    int n = theme == 4 ? (int)(sizeof tint_mcl / sizeof tint_mcl[0]) : theme == 3 ? LU_NTHEME :
+            theme == 2 ? (int)(sizeof tint_samplr / sizeof tint_samplr[0]) : theme == 1 ? (int)(sizeof tint_looper / sizeof tint_looper[0]) : 0;
     uint32_t v[sizeof clut_idx];
     for (unsigned k = 0; k < sizeof clut_idx; k++) {
         v[k] = PAL_STOCK[clut_idx[k]];
@@ -2126,7 +2131,7 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
     if (P->mode == M_MCL) {
         struct lay L;
         layout(0, &L);
-        if (d < L.foot_y) {
+        if (d < L.foot_y + FOOT) {                                /* (the footer line too: the clock) */
             mcl_page_down(id, x, d, P->w, L.foot_y);
             dirty_now(view);
             return;

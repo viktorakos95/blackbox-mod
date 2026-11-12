@@ -11,6 +11,7 @@ take its code from there (`git show b68a4bf:src/looper_page.c`, `git show b68a4b
 | SAMPLR measuring views (tap the top bar: P D L S shares, MAX, the last over-budget block W P D L S R with N, inside SAMPLR R G B M) | SAMPLR top bar | `draw_sm_top`, `sm_touch` (`s->sc->prof`) |
 | Crash record (why the unit last restarted; SEEN / CLEAR) | Looper SETUP, tap the BPM box | `draw_setup` (`DBG_VIEW`), `looper_page_down` (`Z_DBG`) |
 | "RESTART: SEE SETUP" | Looper footer | `draw_footer` (`crash_pending()`) |
+| The restart record over MCL's screen (TAP HERE TO CLEAR), MIDI speed / bytes / errors under B2 / B3 | MCL page | `src/cpu.c` `mcl_page_draw` (`restart_unseen()`, `crash_line()`) before the MegaCommand layout |
 | `SHED n`, audio load `avg/peak Dn` | DRONE-8 top bar (MIX tab) | `lira_ui.inc`, top bar (`lira_ui_load`) |
 | STOCK FX button (the Blackbox's own FX page) on SAMPLR, TRIG and DRONE-8 (the Looper's pages keep it, and INFO + FX) | footer, right end | `draw_footer`, `looper_page_hit` (track 94) |
 

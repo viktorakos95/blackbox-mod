@@ -15,6 +15,7 @@
 #include "global.h"
 #include "oled.h"
 #include "MD.h"
+#include "MCL.h"
 
 #include "bb_clock.h"
 #include "bb_midi.h"
@@ -390,6 +391,36 @@ static void md_follow_blackbox(void)
     MD.setExternalSync();
 }
 
+/* ---- the page's shortcuts (the Blackbox's GUI task asks, MCL's task opens the page between two passes of its loop: MCL's pages are not
+ * thread safe). A shortcut to the page that shows goes back to the grid. 0 chromatic (MCL's pitch sequencer), 1 the Machinedrum's delay,
+ * 2 its reverb, 3 the mixer. ---- */
+static const PageIndex shortcut_page[4] = {SEQ_PTC_PAGE, FX_PAGE_A, FX_PAGE_B, MIXER_PAGE};
+static volatile uint8_t shortcut_want = 0xff;
+
+HOOK void bb_mcl_shortcut(uint32_t n)
+{
+    if (n < 4)
+        shortcut_want = (uint8_t)n;
+}
+
+HOOK uint32_t bb_mcl_shortcut_now(void)
+{
+    PageIndex p = mcl.currentPage();
+    for (uint32_t i = 0; i < 4; i++)
+        if (p == shortcut_page[i])
+            return i;
+    return 255;
+}
+
+static void shortcut_apply(void)
+{
+    uint8_t n = shortcut_want;
+    if (n >= 4)
+        return;
+    shortcut_want = 0xff;
+    mcl.setPage(mcl.currentPage() == shortcut_page[n] ? GRID_PAGE : shortcut_page[n]);
+}
+
 /* ---- the task ---- */
 static void mcl_task(void *)
 {
@@ -421,6 +452,7 @@ static void mcl_task(void *)
         bb_dbg[9]++;
         loop();
         md_follow_blackbox();
+        shortcut_apply();
         if (!bb_midi_owner())
             bb_midi_claim(1);                                      /* (still waiting for an idle moment of the stock transmitter) */
         bb_sleep_ms(1);
