@@ -157,8 +157,17 @@ ins = next(Cs(CS_ARCH_ARM, CS_MODE_THUMB).disasm(img[0x0804428C - 0x08040000:0x0
 check("main()'s call at 0x0804428c goes to cpu_boot", ins.mnemonic == "bl" and int(ins.op_str.lstrip("#"), 16) == e.sym["cpu_boot"], ins.op_str)
 called = []
 e.stub(0x08046340, lambda: called.append(1))
-magic0 = e.r32(0x2405FFD0)
-e.call("cpu_boot")
-check("cpu_boot clears the state's magic (it was set) and calls the stock function", magic0 != 0 and e.r32(0x2405FFD0) == 0 and called == [1], (hex(magic0), hex(e.r32(0x2405FFD0)), called))
+RSR, REC = 0x580244D0, 0x38800B38
+res = []
+for rsr, rec in (((1 << 23) | (1 << 22) | (1 << 21), 0), ((1 << 24) | (1 << 22), 0), ((1 << 26) | (1 << 22), 0), (0, 1 << 24), (0, (1 << 23) | (1 << 22)), (0, None)):
+    e.w32(0x2405FFD0, 0x43505532)
+    e.w32(RSR, rsr)
+    e.uc.mem_write(REC, struct.pack("<IHHI", 0x31435243 if rec is not None else 0, 1, 0, rec or 0))
+    e.call("cpu_boot")
+    res.append(e.r32(0x2405FFD0))
+W = 0x4D524157
+check("cpu_boot: power-on -> magic 0; software reset, watchdog -> WARM; flags already taken by the crash recorder -> its record decides; no flags at all -> 0",
+      res == [0, W, W, W, 0, 0], [hex(v) for v in res])
+check("... and calls the stock function each time", called == [1] * 6, called)
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

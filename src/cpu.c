@@ -78,7 +78,7 @@ struct mcl_ui {
     uint8_t down[4];            /* the tile each touch id holds (index + 1), 0 = none */
     uint16_t mask;              /* tiles shown pressed */
     int16_t acc[4];             /* knob counts below one detent */
-    uint16_t pad;
+    uint16_t off;               /* 1: MCL was not started this run (the Blackbox restarted without a power-on, see cpu_boot); a tap on its page starts it */
 };
 #define UI ((volatile struct mcl_ui *)0x38800930u)
 
@@ -95,17 +95,26 @@ struct mcl_entry {
     uint32_t (*midi)(uint32_t which);    /* abi 4, the MIDI jack: 0 speed (bit/s), 1 bytes received, 2 receive errors */
 };
 const volatile uint32_t mcl_entry = 0;
-static const struct mcl_entry *mcl_blob(void)
+static const struct mcl_entry *mcl_image(void)       /* the blob, whether or not it runs */
 {
     const struct mcl_entry *e = (const struct mcl_entry *)mcl_entry;
     return e && e->magic == 0x424c434du && (e->abi == 3 || e->abi == 4) ? e : 0;
 }
+static const struct mcl_entry *mcl_blob(void)        /* the blob, if it was started this run (its state in SDRAM is the last run's otherwise) */
+{
+    bkp_enable();
+    return UI->off ? 0 : mcl_image();
+}
+
+#define WARM 0x4d524157u         /* M->magic from cpu_boot: this boot followed a reset that was not a power-on */
+#define RSR_POR (1u << 23)       /* RCC_RSR PORRSTF */
 
 static void start(void)
 {
     DEMCR |= 1u << 24;           /* TRCENA */
     DWT_LAR = 0xc5acce55u;       /* unlock (Cortex-M7) */
     DWT_CTRL |= 1u;              /* CYCCNTENA */
+    int warm = M->magic == WARM;
     M->armed = 0;
     M->status = STATUS_NONE;
     M->sum = 0;
@@ -120,10 +129,13 @@ static void start(void)
         ((volatile uint32_t *)UI)[i] = 0;     /* the MCL page's state (backup SRAM is not cleared by a reset) */
     for (unsigned i = 0; i < 5; i++)
         ((volatile uint32_t *)0x38800940u)[i] = 0;   /* seqfix.c's stamps for MCL's tempo follower (stale cycle counts from the last run would look fresh) */
-    const struct mcl_entry *e = mcl_blob();
+    const struct mcl_entry *e = mcl_image();
     if (e) {
         bkp_enable();
-        e->boot();
+        if (warm)
+            UI->off = 1;             /* not after a restart that was not a power-on: if MCL caused it, starting it again could restart the Blackbox over and over */
+        else
+            e->boot();
     }
 }
 
@@ -246,7 +258,13 @@ static void report(void)
  * that calls in run start() as at power-up. */
 void cpu_boot(void)
 {
-    M->magic = 0;
+    uint32_t rsr = *(volatile uint32_t *)0x580244d0u;                 /* RCC_RSR, unless the crash recorder already read and cleared it this boot */
+    if (!rsr) {
+        bkp_enable();
+        if (*(volatile uint32_t *)0x38800b38u == 0x31435243u)          /* then its record has this boot's flags */
+            rsr = *(volatile uint32_t *)0x38800b40u;
+    }
+    M->magic = rsr && !(rsr & RSR_POR) ? WARM : 0;                   /* (no flags at all: treated as a power-on) */
     ((void (*)(void))0x08046341u)();
 }
 
@@ -375,7 +393,7 @@ uint32_t mcl_page_sig(void)
     const struct mcl_entry *e = mcl_blob();
     bkp_enable();
     uint32_t m = e && e->abi >= 4 ? e->midi(0) / 3125u + e->midi(1) * 7u + e->midi(2) * 131u : 0u;    /* (the MIDI line under B2 / B3 changes too) */
-    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + m * 977u + (uint32_t)restart_unseen() * 0x9e3779b9u;
+    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + m * 977u + (uint32_t)(restart_unseen() + 2u * UI->off) * 0x9e3779b9u;
 }
 
 void mcl_page_draw(int w, int foot_y)
@@ -432,14 +450,16 @@ void mcl_page_draw(int w, int foot_y)
             }
         }
     }
-    if (restart_unseen()) {                                   /* the crash recorder's record of an unexpected restart (src/crash.c), over MCL's screen until it is tapped */
+    if (UI->off || restart_unseen()) {                        /* the crash recorder's record of an unexpected restart (src/crash.c), over MCL's screen until it is tapped */
         char line[56];
         int row = 0;
         lp_box(x0, MCL_TOP, MCL_W, MCL_H, 0x0e);
-        for (int i = 0; i < 16 && row < 13; i++)
+        if (UI->off)
+            lp_text_c(x0, MCL_TOP + 2 + row++ * 11, MCL_W, "MCL IS OFF: THE BLACKBOX RESTARTED", 0x0c, 1);
+        for (int i = 0; i < 16 && row < 12; i++)
             if (crash_line(i, line, (int)sizeof line))
                 lp_text_c(x0, MCL_TOP + 2 + row++ * 11, MCL_W, line, 0x0f, 1);
-        lp_text_c(x0, MCL_TOP + MCL_H - 11, MCL_W, "TAP HERE TO CLEAR", 0x0c, 1);
+        lp_text_c(x0, MCL_TOP + MCL_H - 11, MCL_W, UI->off ? "TAP HERE TO START MCL" : "TAP HERE TO CLEAR", 0x0c, 1);
     }
     lp_frame(x0 - 3, MCL_TOP - 3, MCL_W + 6, MCL_H + 6, 0x10, 1);
     int tw = mcl_tile_w(w);
@@ -461,6 +481,16 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
     (void)foot_y;
     int tw = mcl_tile_w(w), i = (x - 4) / tw;
     bkp_enable();
+    if (UI->off && d >= MCL_TOP && d < MCL_TOP + MCL_H) {               /* a tap on the 'MCL is off' record: seen, and MCL starts */
+        const struct mcl_entry *m = mcl_image();
+        crash_clear();
+        UI->off = 0;
+        if (m) {
+            m->boot();
+            m->gui();                                                   /* (its task starts from here, as from a label constructor at power-on) */
+        }
+        return;
+    }
     if (restart_unseen() && d >= MCL_TOP && d < MCL_TOP + MCL_H) {       /* a tap on the restart record: seen */
         crash_clear();
         return;

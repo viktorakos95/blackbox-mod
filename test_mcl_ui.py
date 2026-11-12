@@ -192,5 +192,31 @@ entry("mcl_page_knob", 7, 100)
 entry("mcl_page_knob", -1, 100)
 check("bad knob numbers are ignored", screen()[3][8:11] == " -4")
 
+# --- a boot after a reset that was not a power-on (cpu_boot left M->magic = WARM): MCL is not started, its page says so; a tap starts it
+boots, guis = [], []
+e.stub(r.b["mcl_boot"], lambda: boots.append(1))
+e.stub(r.b["bb_rt_gui"], lambda: guis.append(1))
+e.uc.mem_write(REC, struct.pack("<IHHI", 0x31435243, 6, 1, (1 << 24) | (1 << 22)) + bytes([0, 2, 0, 0, 0, 0]) + bytes(0x60))
+e.w32(0x2405FFD0, 0x4D524157)
+r.boot()
+check("warm boot: start() runs, MCL is not booted, the page state says off, no GUI call into the blob", boots == [] and guis == [] and e.r8(0x3880093E) == 1, (boots, guis, e.r8(0x3880093E)))
+calls = draw()
+texts = [c[5] for c in calls if c[0] == "lp_text_c"]
+check("... the page: 'MCL IS OFF', the restart's reason, 'TAP HERE TO START MCL'; no picture from the last run",
+      "MCL IS OFF: THE BLACKBOX RESTARTED" in texts and any(t.startswith("LAST RESTART") for t in texts) and "TAP HERE TO START MCL" in texts
+      and not [c for c in calls if c[0] == "lp_box" and c[4] in (2, 3)], texts[:4])
+sig_off = entry("mcl_page_sig")
+entry("mcl_page_down", 1, 4 + 2 * tw + 5, TILE_Y + 5, W, FOOT)
+entry("mcl_page_knob", 2, 100)
+check("... tiles and knobs do nothing while it is off", boots == [] and e.r16(0x38800934) == 0, e.r16(0x38800934))
+entry("mcl_page_up", 1)
+entry("mcl_page_down", 3, x0 + 40, TOP + 40, W, FOOT)
+check("a tap on the screen: MCL booted and its task started once, page state on, record seen",
+      boots == [1] and guis == [1] and e.r8(0x3880093E) == 0 and e.r8(REC + 13) == 3, (boots, guis, e.r8(0x3880093E), e.r8(REC + 13)))
+check("... the page signature changed", entry("mcl_page_sig") != sig_off)
+e.w32(0x2405FFD0, 0)
+r.boot()
+check("power-on boot (magic 0): MCL booted", boots == [1, 1] and e.r8(0x3880093E) == 0, boots)
+
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)
