@@ -431,3 +431,6 @@ The looper branch keeps its ITCM image at 0x08170000..0x08180000, inside what th
   The only software reset in the whole image (stock, cave, blob, ITCM) is `crash_reset`. So these restarts were faults whose record was lost. The reason: the backup SRAM has no MPU region, so it is write-back cacheable under the default map, and the data cache is on. The fault handler's record stayed in the cache and SYSRESETREQ dropped it.
 
   **Fix (m9h):** `crash_reset` cleans the whole data cache by set / way before the reset. Expected next: a HARD / BUS / USAGE FAULT record with PC / LR.
+- **m9h on the unit (the first full record):** BUS FAULT, CFSR 0x00008200 (a precise data bus error, BFAR valid), address 0x2304E9C0 (no memory there), SP 0xC3FC7858. That SP is inside MCL's task stack (`bb_mcl_stack` 0xC3FC3978..0xC3FC7978), only 0x120 bytes below its top. So it is MCL's task, shallow in its call chain, reading through a bad pointer. RAN 19 s, RAM fine, no SD fails, GUI was painting.
+
+  PC / LR were 0 because `in_ram()` did not accept the SDRAM. Fixed in m9i (0xC0000000..0xC4000000). The ELFs of m9i are kept in `out/merged-m9i/` so its PC can be looked up.

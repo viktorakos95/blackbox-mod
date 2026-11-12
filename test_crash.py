@@ -191,5 +191,14 @@ check("the allocator's halt message call goes to crash_oom_thunk", img[o:o + 4] 
 check("SysTick (vector 15) goes through crash_systick_thunk", struct.unpack("<I", img[0x3C:0x40])[0] == (e.sym["crash_systick_thunk"] | 1))
 check("the SD driver's read goes to the retrying wrapper with a 1000-tick wait; writes stay stock", img[0x080CFC24 - 0x08040000:0x080CFC2C - 0x08040000] == struct.pack("<2I", e.sym["crash_sd_read"] | 1, 0x080459E9) and img[0x08045998 - 0x08040000:][:4] == bytes.fromhex("40f2e832") and img[0x08045A0E - 0x08040000:][:4] == bytes.fromhex("41f28832"))
 
+# a fault in a task whose stack is in the SDRAM (MCL's task): its frame is read too
+SFR = 0xC0100000
+e.uc.mem_write(SFR, struct.pack("<8I", 1, 2, 3, 4, 5, 0x08133335, 0x08144444, 0x01000000) + struct.pack("<4I", 0x08155551, 0x08166661, 0x08177771, 0))
+e.call("crash_record", SFR, 0xFFFFFFFD, 5)
+e.w32(RSR, 1 << 24)
+e.call("crash_boot")
+L = lines()
+check("a bus fault with the frame in the SDRAM (MCL's task): its PC, LR and callers are recorded", L[0] == "LAST RESTART: SOFTWARE / BUS FAULT" and L[1] == "PC 08144444  LR 08133335" and L[4] == "STK 08155551 08166661 08177771", L[:5])
+
 print("failures:", fails)
 sys.exit(1 if fails else 0)

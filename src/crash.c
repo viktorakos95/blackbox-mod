@@ -110,7 +110,7 @@ _Static_assert(0x38800b38u + sizeof(struct rec) <= 0x38800b98u, "the record must
 static int in_ram(uint32_t a)
 {
     return (a >= 0x20000000u && a < 0x2001ffe0u) || (a >= 0x24000000u && a < 0x2407ffe0u) || (a >= 0x30000000u && a < 0x30047fe0u) ||
-           (a >= 0x38000000u && a < 0x3800ffe0u);
+           (a >= 0x38000000u && a < 0x3800ffe0u) || (a >= 0xc0000000u && a < 0xc3ffffe0u);     /* (SDRAM: MCL's task has its stack there) */
 }
 
 static void fill_common(volatile struct rec *r)
