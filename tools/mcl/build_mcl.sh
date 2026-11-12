@@ -6,6 +6,12 @@ set -e
 cd "$(dirname "$0")/../.."
 : "${MCL_DIR:?set MCL_DIR to the MCL checkout}" "${MCL_GFX:?set MCL_GFX to the Adafruit-GFX checkout}"
 M=$(realpath "$MCL_DIR"); G=$(realpath "$MCL_GFX"); O=out/mclobj; P=out/mclplat
+# fixes the MCL checkout needs to build for a non-AVR platform (tools/mcl/fork-patches, e.g. the 5.02+ branch's Euclidean step page): applied once,
+# skipped when already in the checkout. They belong upstream in the fork; this keeps the Blackbox build working until they are there.
+for f in tools/mcl/fork-patches/*.patch; do
+  [ -f "$f" ] || continue
+  if git -C "$M" apply --check "$(realpath "$f")" 2>/dev/null; then git -C "$M" apply "$(realpath "$f")"; fi
+done
 PLAT="$(realpath src/mcl_bb/platform/common)"
 # MCL's version as its own firmware builds have it (the checkout's platformio.ini, env:common: -DVERSION=5002 -DVERSION_STR=\"5.02\")
 MCL_VERSION=$(sed -n 's/.*-DVERSION=\([0-9][0-9]*\).*/\1/p' "$M/platformio.ini" | head -1); MCL_VERSION=${MCL_VERSION:-5000}
@@ -13,7 +19,7 @@ MCL_VERSION_STR=$(sed -n 's/.*-DVERSION_STR=\\"\([^\\]*\)\\".*/\1/p' "$M/platfor
 export MCL_VERSION MCL_VERSION_STR
 # the core is compiled against the Blackbox platform headers (locks, soft-interrupt triggers, buffer sizes, MidiUart), not MCL's desktop ones; it is rebuilt
 # whenever those headers change (or a core was built without them)
-STAMP="$PLAT $M $MCL_VERSION $MCL_VERSION_STR $(cat "$PLAT"/*.h | sha1sum | cut -c1-16)"
+STAMP="$PLAT $M $(git -C "$M" rev-parse HEAD 2>/dev/null) $(git -C "$M" diff 2>/dev/null | sha1sum | cut -c1-8) $MCL_VERSION $MCL_VERSION_STR $(cat "$PLAT"/*.h | sha1sum | cut -c1-16)"   # (MCL's commit too: another branch or a pull rebuilds the core)
 if [ ! -f $O/defs.h ] || [ -n "$MCL_REBUILD" ] || [ "$(cat $O/plat 2>/dev/null)" != "$STAMP" ]; then
   rm -f $O/*.o; PLAT_INC="-I$PLAT" tools/mcl/mcl_size.sh "$M" "$G" "$O" >/dev/null; echo "$STAMP" > $O/plat
 fi
