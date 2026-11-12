@@ -127,8 +127,28 @@ static void fill_common(volatile struct rec *r)
 }
 
 /* Tests stub this one out (the emulator cannot reset). */
+/* The backup SRAM has no MPU region of its own: the default map makes it write-back cacheable, and the stock firmware runs with the
+ * data cache on. A record written by a fault handler stays in the cache, and the reset drops it (user, m9g: "SOFTWARE / NO FAULT",
+ * faults 0: crash_reset is the only software reset in the image, so the record was written and lost). So the whole data cache is
+ * cleaned to memory first, by set and way (as the stock start-up invalidates it). */
+static void dcache_clean_all(void)
+{
+    *(volatile uint32_t *)0xe000ed84u = 0;                         /* CSSELR: level 1 data cache */
+    __asm volatile("dsb");
+    uint32_t ccsidr = *(volatile uint32_t *)0xe000ed80u;
+    uint32_t sets = (ccsidr >> 13) & 0x7fffu, ways = (ccsidr >> 3) & 0x3ffu;
+    do {
+        uint32_t w = ways;
+        do {
+            *(volatile uint32_t *)0xe000ef6cu = (sets << 5) | (w << 30);       /* DCCSW (32-byte lines, 4 ways) */
+        } while (w--);
+    } while (sets--);
+    __asm volatile("dsb\n isb" ::: "memory");
+}
+
 void __attribute__((noipa)) crash_reset(void)          /* (noipa: the callers must not assume it never returns, for the tests) */
 {
+    dcache_clean_all();
     __asm volatile("dsb");
     SCB_AIRCR = 0x05fa0004u;                                      /* SYSRESETREQ */
     __asm volatile("dsb");

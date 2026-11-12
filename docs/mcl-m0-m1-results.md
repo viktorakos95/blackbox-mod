@@ -426,3 +426,8 @@ The looper branch keeps its ITCM image at 0x08170000..0x08180000, inside what th
   **Fix (m9g):** `cpu_boot` reads the reset flags: `RCC_RSR`, or the crash record when the recorder has already taken them. After a power-on it starts MCL as before. After any other reset `start()` leaves MCL off (`UI->off`; every call into the blob is skipped). The MCL page then shows "MCL IS OFF: THE BLACKBOX RESTARTED", the record (reason, fault registers) and "TAP HERE TO START MCL". A tap boots MCL and starts its task. The loop can't happen any more, and the reason is on screen.
 
   **Still open:** what restarts the Blackbox.
+- **m9g on the unit:** tapping "start" restarted the Blackbox once, and the second tap started MCL. Later the Blackbox restarted by itself. The record said "SOFTWARE / NO FAULT", RSR 0x01460000, faults 0, lag A 0 B 5, no SD fails, RAN 70 s, RAM min 377 KB.
+
+  The only software reset in the whole image (stock, cave, blob, ITCM) is `crash_reset`. So these restarts were faults whose record was lost. The reason: the backup SRAM has no MPU region, so it is write-back cacheable under the default map, and the data cache is on. The fault handler's record stayed in the cache and SYSRESETREQ dropped it.
+
+  **Fix (m9h):** `crash_reset` cleans the whole data cache by set / way before the reset. Expected next: a HARD / BUS / USAGE FAULT record with PC / LR.
