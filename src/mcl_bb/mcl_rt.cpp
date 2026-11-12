@@ -26,6 +26,8 @@ __attribute__((weak)) uint32_t bb_mcl_frames(void) { return 0; }
 __attribute__((weak)) uint32_t bb_mcl_start(uint32_t) { return 1; }
 __attribute__((weak)) uint32_t bb_mcl_clk_stat(int) { return 0; }
 __attribute__((weak)) void bb_mcl_page_input(uint32_t, int32_t, int32_t) {}
+__attribute__((weak)) void bb_mcl_shortcut(uint32_t) {}
+__attribute__((weak)) uint32_t bb_mcl_shortcut_now(void) { return 255; }
 }
 
 extern "C" {
@@ -417,7 +419,7 @@ extern "C" char *mcl_status_text(char *p, uint32_t room)
 
 struct mcl_entry {
     uint32_t magic;                                   /* "MCLB" */
-    uint32_t abi;                                     /* 3: boot, status(p, room), gui(), compact; then the page: fb(), sig(), input(); 4: midi() */
+    uint32_t abi;                                     /* 3: boot, status(p, room), gui(), compact; then the page: fb(), sig(), input(); 4: midi(); 5: input() kinds 4 / 5 (the clock), 6 (page shortcuts), midi(10) */
     uint32_t (*boot)(void);
     char *(*status)(char *, uint32_t);
     void (*gui)(void);
@@ -437,10 +439,36 @@ static int ready(void)
 static int mcl_drawn(void) { return bb_mcl_active() && bb_mcl_frames() != 0; }
 static const uint8_t *page_fb(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_fb() : bb_ui_fb(); }
 static uint32_t page_sig(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_frames() * 2654435761u + 1u : bb_ui_sig(); }
+/* The page's clock (abi 5): kind 4 = the source a (0 the Blackbox's sequencer, 1 MCL's own tempo running, 2 MCL's own tempo stopped) at tempo b,
+ * kind 5 = the own tempo b (1/10 BPM). MCL hears start / stop through bb_clock's transport hook, as from the sequencer. */
+static void page_clock(uint32_t kind, int32_t a, int32_t b)
+{
+    uint32_t bpm = b < 300 ? 300u : b > 3000 ? 3000u : (uint32_t)b;
+    if (kind == 5) {
+        if (bb_clock_sync_state() == 0 && bb_clock_running())
+            bb_clock_tempo(bpm);
+        return;
+    }
+    bb_clock_stop(bb_clock_running());                            /* (FC to MCL and the jack only if something was running) */
+    if (a == 0)
+        bb_clock_sync_seq();
+    else if (a == 1)
+        bb_clock_start(bpm, 1);
+}
 static void page_input(uint32_t kind, int32_t a, int32_t b)
 {
     if (!ready())
         return;
+    if (kind == 4 || kind == 5) {
+        if (bb_mcl_active())
+            page_clock(kind, a, b);
+        return;
+    }
+    if (kind == 6) {                                              /* a shortcut: 0 chromatic, 1 delay, 2 reverb, 3 mixer (bb_mcl.cpp opens it in MCL's task) */
+        if (bb_mcl_active() && a >= 0 && a < 4)
+            bb_mcl_shortcut((uint32_t)a);
+        return;
+    }
     if (bb_mcl_active()) {
         if (mcl_drawn())
             bb_mcl_page_input(kind, a, b);
@@ -461,6 +489,7 @@ static uint32_t page_midi(uint32_t which)
     case 7: return bb_mcl_clk_stat(0);                            /* MCL's MidiClock: 0 paused, 1 starting, 2 started */
     case 8: return bb_mcl_clk_stat(3);                            /* MCL's 16th counter */
     case 9: return bb_clock_seq_stat(2);                          /* the Blackbox's transport seen running */
+    case 10: return bb_mcl_shortcut_now();                        /* the shortcut whose page MCL shows (255: none) */
     default: return 0;
     }
 }
@@ -469,4 +498,4 @@ static uint32_t page_midi(uint32_t which)
 #else
 #define COMPACT 0u
 #endif
-extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 4, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input, page_midi};
+extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 5, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input, page_midi};
