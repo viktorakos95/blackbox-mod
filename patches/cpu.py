@@ -21,4 +21,6 @@ PATCHES = [
     hook(0x080C54F8, 0x080A3DEC, "cpu_label_a"),
     hook(0x080AEAB6, 0x080C3B98, "cpu_text_b"),
     hook(0x080C72A4, 0x080C3B98, "cpu_text_c"),
+    # main(), the last call before the tasks are made: every boot (a watchdog or software reset keeps the RAM), so start() runs again
+    hook(0x0804428C, 0x08046340, "cpu_boot"),
 ]

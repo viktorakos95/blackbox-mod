@@ -240,6 +240,16 @@ static void report(void)
     }
 }
 
+/* Replaces the last call in main() before the tasks are made (bl 0x08046340 @0x0804428c): once per boot, whatever the reset. The state in M
+ * (and the MCL blob's, in SDRAM) survives a reset that is not a power cycle (watchdog, software, brown-out): start() keyed on M->magic alone then
+ * never ran again, so MCL was not booted (its page showed the last picture of the run before). Clearing the magic here makes the first task
+ * that calls in run start() as at power-up. */
+void cpu_boot(void)
+{
+    M->magic = 0;
+    ((void (*)(void))0x08046341u)();
+}
+
 /* Replaces the audio task's queue wait (bl @0x080414e4). */
 int cpu_wait(void *queue, void *item, uint32_t ticks, int peek)
 {
@@ -348,6 +358,15 @@ void lp_text_c(int x, int d, int w, const char *s, int color, int scale);
 
 static int mcl_tile_w(int w) { return (w - 8) / MCL_TILES; }
 
+/* A restart that was not a plain power-on, not looked at yet: crash_pending() (a fault, out of memory, a watchdog) or any other reset
+ * (software, brown-out, reset pin) the crash recorder put a record together for at boot (its record: magic, boots, faults, rsr, kind, state). */
+static int restart_unseen(void)
+{
+    volatile const uint8_t *rec = (volatile const uint8_t *)0x38800b38u;
+    uint32_t magic = *(volatile const uint32_t *)rec, rsr = *(volatile const uint32_t *)(rec + 8);
+    return crash_pending() || (magic == 0x31435243u && rec[13] == 2 && rsr && !(rsr & (1u << 23)));
+}
+
 static int mcl_x0(int w) { return (w - MCL_W) / 2; }
 static int mcl_sc(int v) { return v * MCL_SN / MCL_SD; }
 
@@ -356,7 +375,7 @@ uint32_t mcl_page_sig(void)
     const struct mcl_entry *e = mcl_blob();
     bkp_enable();
     uint32_t m = e && e->abi >= 4 ? e->midi(0) / 3125u + e->midi(1) * 7u + e->midi(2) * 131u : 0u;    /* (the MIDI line under B2 / B3 changes too) */
-    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + m * 977u + (uint32_t)crash_pending() * 0x9e3779b9u;
+    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + m * 977u + (uint32_t)restart_unseen() * 0x9e3779b9u;
 }
 
 void mcl_page_draw(int w, int foot_y)
@@ -413,7 +432,7 @@ void mcl_page_draw(int w, int foot_y)
             }
         }
     }
-    if (crash_pending()) {                                    /* the crash recorder's record of an unexpected restart (src/crash.c), over MCL's screen until it is tapped */
+    if (restart_unseen()) {                                   /* the crash recorder's record of an unexpected restart (src/crash.c), over MCL's screen until it is tapped */
         char line[56];
         int row = 0;
         lp_box(x0, MCL_TOP, MCL_W, MCL_H, 0x0e);
@@ -442,7 +461,7 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
     (void)foot_y;
     int tw = mcl_tile_w(w), i = (x - 4) / tw;
     bkp_enable();
-    if (crash_pending() && d >= MCL_TOP && d < MCL_TOP + MCL_H) {        /* a tap on the restart record: seen */
+    if (restart_unseen() && d >= MCL_TOP && d < MCL_TOP + MCL_H) {       /* a tap on the restart record: seen */
         crash_clear();
         return;
     }

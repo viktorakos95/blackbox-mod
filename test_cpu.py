@@ -150,5 +150,15 @@ e.uc.mem_write(STATE, b"\xa5" * 36)
 e.call(0x0809AD74, APP, ADDR, INFO)
 check("before anything is measured: version + free SDRAM + looper status", e.cstr(INFO) == V + " 3M L-", e.cstr(INFO))
 
+# --- every boot (a watchdog or software reset keeps the RAM): main()'s last call before the tasks clears the magic, so start() runs again
+from capstone import CS_ARCH_ARM, CS_MODE_THUMB, Cs
+img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+cave/BLACKBOX.bin", "rb").read()
+ins = next(Cs(CS_ARCH_ARM, CS_MODE_THUMB).disasm(img[0x0804428C - 0x08040000:0x0804428C - 0x08040000 + 4], 0x0804428C))
+check("main()'s call at 0x0804428c goes to cpu_boot", ins.mnemonic == "bl" and int(ins.op_str.lstrip("#"), 16) == e.sym["cpu_boot"], ins.op_str)
+called = []
+e.stub(0x08046340, lambda: called.append(1))
+magic0 = e.r32(0x2405FFD0)
+e.call("cpu_boot")
+check("cpu_boot clears the state's magic (it was set) and calls the stock function", magic0 != 0 and e.r32(0x2405FFD0) == 0 and called == [1], (hex(magic0), hex(e.r32(0x2405FFD0)), called))
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

@@ -148,6 +148,16 @@ texts = [c[5] for c in calls if c[0] == "lp_text_c"]
 check("a tap on the screen clears it (gone from the page)", not any(t.startswith("LAST RESTART") for t in texts) and "TAP HERE TO CLEAR" not in texts, texts[:4])
 entry("mcl_page_up", 3)
 
+crec2 = struct.pack("<IHHI", 0x31435243, 4, 1, 1 << 24) + bytes([0, 2, 0, 0, 0, 0])      # a software reset: no fault, no watchdog
+e.uc.mem_write(REC, crec2 + bytes(0x60))
+calls = draw()
+texts = [c[5] for c in calls if c[0] == "lp_text_c"]
+check("a software reset (no fault, no watchdog) also shows its record", any(t.startswith("LAST RESTART") for t in texts), texts[:3])
+e.uc.mem_write(REC, struct.pack("<IHHI", 0x31435243, 5, 1, 1 << 23) + bytes([0, 2, 0, 0, 0, 0]) + bytes(0x60))
+calls = draw()
+texts = [c[5] for c in calls if c[0] == "lp_text_c"]
+check("... a plain power-on does not", not any(t.startswith("LAST RESTART") for t in texts), texts[:3])
+
 sig_a = entry("mcl_page_sig")
 check("page signature depends on the picture", sig_a == entry("mcl_page_sig"))
 # a tile touch: x in tile 0, d in the tile row
