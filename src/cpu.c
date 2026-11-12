@@ -16,6 +16,9 @@
  */
 #include <stdint.h>
 
+void samplr_block_done(uint32_t now);      /* samplr.c: the MAX readout's rest of the block (a no-op until the looper's memory is up) */
+void looper_block_done(uint32_t now);      /* looper.c: the budget guard's rest of the block (a no-op until the looper's memory is up) */
+
 #define FN(addr) ((addr) | 1u)
 
 typedef int (*receive_fn)(void *queue, void *item, uint32_t ticks, int peek);
@@ -241,6 +244,8 @@ int cpu_wait(void *queue, void *item, uint32_t ticks, int peek)
     if (M->magic != MAGIC)
         start();
     uint32_t idle_from = DWT_CYCCNT, busy = idle_from - M->woke;
+    samplr_block_done(idle_from);                            /* (SAMPLR's MAX readout: what came after the looper stage) */
+    looper_block_done(idle_from);                            /* (the looper's budget guard: the same) */
     int got = fw_receive(queue, item, ticks, peek);
     uint32_t now = DWT_CYCCNT, period = now - M->woke;
     if (got != 1) {

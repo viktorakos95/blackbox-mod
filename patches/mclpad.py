@@ -13,6 +13,8 @@ BASE, STOCK_END = 0x08040000, 0x080F1E78
 PAD_BASE = int(os.environ.get("MCLPAD_BASE", "0x08140000"), 16)
 PAD_END = int(os.environ.get("MCLPAD_END", "0x08180000"), 16)          # MCLPAD_END=0x081E0000: the next window (0x081E0000 and up stay untouched)
 assert PAD_END <= 0x081E0000 and PAD_BASE < PAD_END
+itcm = os.path.exists(os.path.join(ROOT, "out", "itcm.bin"))           # cave.py has filled 0xFF up to the ITCM image at 0x081D0000: the pad goes over that fill
+assert not itcm or PAD_END <= 0x081D0000, "the pad would overwrite the ITCM image"
 M = 0xFFFFFFFF
 
 cave = open(os.path.join(ROOT, "out", "cave.bin"), "rb").read()
@@ -36,5 +38,5 @@ PATCHES = [
     (sym["mclpad_on"], bytes(4), build_id.to_bytes(4, "little")),
     (sym["mclpad_base"], (0x08140000).to_bytes(4, "little"), PAD_BASE.to_bytes(4, "little")),
     (sym["mclpad_words"], (65536).to_bytes(4, "little"), ((PAD_END - PAD_BASE) // 4).to_bytes(4, "little")),
-    (end, b"", gap + pad),
+    (PAD_BASE, b"\xff" * len(pad), pad) if itcm else (end, b"", gap + pad),
 ]

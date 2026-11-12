@@ -24,11 +24,13 @@ int looper_page_draw(uint8_t *view, uint8_t *cell, uint8_t *ctx);
 void looper_page_poke(uint8_t *view);
 void looper_page_enter(uint8_t *view);
 void looper_page_leave(uint8_t *view);
+void looper_page_clut_stock(void);
 void looper_page_down(uint8_t *view, const int *pt, int id);
 void looper_page_move(uint8_t *view, const int *pt, int id);
 void looper_page_up(uint8_t *view, const int *pt, int id);
 void looper_page_want(int tab);
 int looper_page_tab(void);
+int looper_page_last(void);
 void looper_page_goto(uint8_t *view, int tab);
 
 #define FN(addr) ((addr) | 1u)
@@ -266,7 +268,7 @@ void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
     ensure();
     int cur = app[APP_SCREEN], next = SCREEN_MIXER;
     if (cur == SCREEN_MUTE && S->looper && S->view && looper_page_tab() >= 5) {
-        looper_page_goto(S->view, 0);                  /* from the SMPLR or TRIG page MIX goes to the Looper's own first page */
+        looper_page_goto(S->view, 0);                  /* from the SMPLR, TRIG or LIRA page MIX goes to the Looper's own first page */
         return;
     }
     if (cur == SCREEN_MIXER) {
@@ -286,9 +288,18 @@ void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
     fw_set_screen(app, next, a, b);
 }
 
-/* Replaces the set-screen call in the SONG button handler (screen 0x2d). SONG has three pages: SAMPLR, TRIG (Trigger2MIDI), then the
- * stock song screen. The button opens the Looper page on its SMPLR tab (or switches to that tab when the page is up), pressed
- * again goes to TRIG, and once more to the stock song screen. */
+/* Replaces the set-screen call in the first button's handler (stock screen 2): PAD is the stock pads screen again (the DRONE-8 page lives on SONG). */
+void solo_pad_pressed(uint8_t *app, int computed, int a, int b)
+{
+    (void)computed;
+    ensure();
+    fw_set_screen(app, 2, a, b);
+}
+
+/* Replaces the set-screen call in the SONG button handler (screen 0x2d). SONG cycles forward through the pages: Looper (MAIN), SAMPLR,
+ * TRIG (Trigger2MIDI), DRONE-8, then the stock song screen, and round to the Looper again. From any other stock screen (the pads ...)
+ * it opens the page that was open last; from one of the Looper's other tabs (FX, SETUP, MORE) it first goes back to MAIN. (BACK goes to the previous page where it
+ * has no use of its own: on TRIG; the Looper, SAMPLR and DRONE-8 pages use BACK themselves.) */
 void solo_song_pressed(uint8_t *app, int computed, int a, int b)
 {
     (void)computed;
@@ -297,18 +308,33 @@ void solo_song_pressed(uint8_t *app, int computed, int a, int b)
     if (!looper_ready()) {
         fw_set_screen(app, 0x2d, a, b);
     } else if (cur == SCREEN_MUTE && S->looper && S->view) {
-        int tab = looper_page_tab();
-        if (tab == 7)
-            fw_set_screen(app, 0x2d, a, b);            /* SAMPLR -> TRIG -> MCL -> the stock song screen */
-        else if (tab == 6)
-            looper_page_goto(S->view, 7);
+        int tab = looper_page_tab();                   /* 0..3 the Looper's tabs, 5 SAMPLR, 6 TRIG, 7 DRONE-8, 8 MCL */
+        if (tab == 8)
+            fw_set_screen(app, 0x2d, a, b);            /* MCL -> the stock song screen */
         else
-            looper_page_goto(S->view, tab == 5 ? 6 : 5);
+            looper_page_goto(S->view, tab == 7 ? 8 : tab == 6 ? 7 : tab == 5 ? 6 : tab == 0 ? 5 : 0);
     } else {
         S->looper_pending = 1;
-        looper_page_want(5);
+        looper_page_want(cur == 0x2d ? 0 : looper_page_last());   /* from the stock song screen the round goes on (the Looper); from anywhere else: the page opened last */
         fw_set_screen(app, SCREEN_MUTE, a, b);
     }
+}
+
+/* Open one of the pages (a tab of looper_page_goto) from a stock screen: BACK on the stock song screen opens DRONE-8. */
+void solo_open_page(uint8_t *app, int tab)
+{
+    ensure();
+    if (!looper_ready())
+        return;
+    S->looper_pending = 1;
+    looper_page_want(tab);
+    fw_set_screen(app, SCREEN_MUTE, 0, 0);
+}
+
+/* BACK on the Looper's MAIN page: the stock song screen (what the page replaced). */
+void solo_song_screen(uint8_t *app)
+{
+    fw_set_screen(app, 0x2d, 0, 0);
 }
 
 /* Replaces the GUI's call to the mixer view's set-mode on every mixer (re)show. */
@@ -460,7 +486,11 @@ int looper_fill_blocked(void *fb, int color, const uint16_t *r)
 {
     (void)fb;
     (void)color;
-    if (GUARD_DRAW == DRW1 || !page_visible())
+    if (!page_visible()) {
+        looper_page_clut_stock();                          /* a stock screen draws: its own colours on the display again */
+        return 0;
+    }
+    if (GUARD_DRAW == DRW1)
         return 0;
     int x = r[4], w = r[2];
     if (w > 0 && (x + w <= 32 || x >= 288)) {

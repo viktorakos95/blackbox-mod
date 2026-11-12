@@ -16,13 +16,13 @@ enum { LOOPER_EV_REC_DOWN, LOOPER_EV_REC_UP, LOOPER_EV_MUTE_DOWN, LOOPER_EV_MUTE
  * comes next; -1..1), SCRM jumps between slices of the loop (left: random, right: a repeating sequence; -1..1), PTCH
  * shifts the pitch without changing the speed (-1..1 = -24..+24 semitones). */
 enum { LOOPER_P_FILT, LOOPER_P_RES, LOOPER_P_CRUNCH, LOOPER_P_DRIVE, LOOPER_P_SEND_D, LOOPER_P_SEND_R,
-       LOOPER_P_STAB, LOOPER_P_RPT, LOOPER_P_SPEED, LOOPER_P_DROP, LOOPER_P_TRIM, LOOPER_P_STUT, LOOPER_P_SCRM, LOOPER_P_PTCH, LOOPER_PARAMS };
+       LOOPER_P_STAB, LOOPER_P_RPT, LOOPER_P_SPEED, LOOPER_P_WOB, LOOPER_P_TRIM, LOOPER_P_STUT, LOOPER_P_SCRM, LOOPER_P_PTCH, LOOPER_PARAMS };
 
 /* Global options (looper_set_opt): the first five and LOOPER_O_ROUTE are choices (whole numbers), the rest amounts 0..1.
- * QUANT: 0 = 1/4, 1 = 1/8, 2 = 1/16, 3 = 1 bar. ROUTE: 0 = the Blackbox's own delay and reverb, 1 = the looper's own.
+ * QUANT: 0 = 1 bar, 1 = 1/4, 2 = 1/8, 3 = 1/16. ROUTE, DTIME, DFB, DRET, RSIZE, RRET: the looper's own delay and reverb are gone (the sends always go to the Blackbox's own); the slots stay, unused.
  * GAIN: the loop's make-up gain, 1 + 3 x amount (0 .. +12 dB). */
-enum { LOOPER_O_LEN, LOOPER_O_SYNC, LOOPER_O_QUANT, LOOPER_O_SRC, LOOPER_O_DTIME,
-       LOOPER_O_DFB, LOOPER_O_DRET, LOOPER_O_RSIZE, LOOPER_O_RRET, LOOPER_O_GAIN, LOOPER_O_ROUTE, LOOPER_O_FULL, LOOPER_O_HWBTN, LOOPER_O_MON, LOOPER_O_PITCH, LOOPER_OPTS };      /* HWBTN: STOP / PLAY: 0 = the looper only, 1 = the sequencer too (REC is always the looper's); MON: the input is monitored through the looper (0 = off); PITCH: 0 = tape (speed changes pitch), 1 = keep the pitch (granular) for SPEED and HALF */
+enum { LOOPER_O_LEN, LOOPER_O_SYNC, LOOPER_O_QUANT, LOOPER_O_SRC, LOOPER_O_SLOPE,
+       LOOPER_O_DOUT, LOOPER_O_SOUT, LOOPER_O_RSIZE, LOOPER_O_RRET, LOOPER_O_GAIN, LOOPER_O_ROUTE, LOOPER_O_FULL, LOOPER_O_HWBTN, LOOPER_O_MON, LOOPER_O_PITCH, LOOPER_OPTS };      /* DOUT / SOUT: the output DRONE-8 / SAMPLR play on, 0 = Out 1 (the main pair and the headphones), 1 = Out 2, 2 = Out 3 (the old own delay's slots); SLOPE: the looper's and SAMPLR's filters, 0 = 12 dB (one stage, the default), 1 = 24 dB (the old delay time's slot); HWBTN: STOP / PLAY: 0 = the looper only, 1 = the sequencer too (REC is always the looper's); MON: the input is monitored through the looper (0 = off); ROUTE: the output the looper's tracks play on (as DOUT / SOUT); PITCH: 0 = tape (speed changes pitch), 1 = keep the pitch (granular) for SPEED and HALF */
 enum { LOOPER_ROUTE_STOCK, LOOPER_ROUTE_OWN };
 enum { LOOPER_LEN_FOLLOW, LOOPER_LEN_MULT, LOOPER_LEN_FREE };      /* LOOPER_O_LEN */
 enum { LOOPER_SRC_INPUT, LOOPER_SRC_MIX };                         /* LOOPER_O_SRC */
@@ -32,7 +32,7 @@ enum { LOOPER_T_PLAY, LOOPER_T_STOP };
 struct looper_info {
     int mode, muted, reversed, latched, undo, undo_kind, armed, half, first;       /* undo_kind: what UNDO would do next: 0 nothing, 1 take the last pass off, 2 delete the loop */
     float level, pan, filt, res, crunch, drive, send_d, send_r;
-    float stab, rpt, speed, drop, trim, stut, scrm, ptch;
+    float stab, rpt, speed, wob, trim, stut, scrm, ptch;
     float progress;                               /* playhead 0..1; while a first take records: fraction of the memory */
 };
 
@@ -44,6 +44,8 @@ void looper_set_param(int track, int param, float v);   /* LOOPER_P_*: filt and 
 float looper_get_param(int track, int param);
 void looper_set_opt(int opt, float v);
 float looper_get_opt(int opt);
+float looper_opt_default(int opt);
+int looper_overload_level(void);                   /* the top bars' warning: 0 fine, 1 near the first fade, 2 something held out, 3 spikes */                 /* what a double tap puts back */
 void looper_clear_all(void);
 void looper_track(int track, struct looper_info *out);
 float looper_progress(void);                     /* master loop playhead 0..1 (0 = none), or first-take fill */

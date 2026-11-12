@@ -18,6 +18,18 @@ def bl(at, target):
     return struct.pack("<HH", h1, h2)
 
 
+def bw(at, target):
+    """B.W (T4) from `at` to Thumb code `target`: a tail call, LR untouched."""
+    off = (target & ~1) - (at + 4)
+    assert -(1 << 24) <= off < (1 << 24) and off % 2 == 0, f"B.W out of range {at:#x}->{target:#x}"
+    s = (off >> 24) & 1
+    i1, i2 = (off >> 23) & 1, (off >> 22) & 1
+    j1, j2 = (1 - i1) ^ s, (1 - i2) ^ s
+    h1 = 0xF000 | (s << 10) | ((off >> 12) & 0x3FF)
+    h2 = 0x9000 | (j1 << 13) | (j2 << 11) | ((off >> 1) & 0x7FF)
+    return struct.pack("<HH", h1, h2)
+
+
 def word(v):
     return struct.pack("<I", v)
 

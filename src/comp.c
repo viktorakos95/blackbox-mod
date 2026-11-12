@@ -134,12 +134,13 @@ static inline __attribute__((always_inline)) float exp2f_fast(float x)
     return v.f;
 }
 
-static float computer(const struct model *m, float level_db)
+/* slope = 1 / ratio - 1 (-1 for a limiter), kdiv = slope / (2 knee): worked out once a block, not per sample (no divisions in the loop) */
+static inline __attribute__((always_inline)) float computer(const struct model *m, float slope, float kdiv, float level_db)
 {
-    float over = level_db - m->thresh, slope = m->ratio > 0.0f ? 1.0f / m->ratio - 1.0f : -1.0f;
+    float over = level_db - m->thresh;
     if (m->knee > 0.0f && 2.0f * over > -m->knee && 2.0f * over < m->knee) {
         float k = over + 0.5f * m->knee;
-        return slope * k * k / (2.0f * m->knee);
+        return kdiv * k * k;
     }
     return over > 0.0f ? slope * over : 0.0f;
 }
@@ -148,6 +149,8 @@ static void process(const struct model *m, float *l, float *r, int n)
 {
     float gr = S->gr, ms = S->ms;
     uint32_t pos = S->la_pos;
+    float slope = m->ratio > 0.0f ? 1.0f / m->ratio - 1.0f : -1.0f, kdiv = m->knee > 0.0f ? slope / (2.0f * m->knee) : 0.0f;
+    float dry = (1.0f - m->mix) / m->pre;
     for (int i = 0; i < n; i++) {
         float xl = l[i] * m->pre, xr = r[i] * m->pre;
         float level;
@@ -159,7 +162,7 @@ static void process(const struct model *m, float *l, float *r, int n)
             float a = xl < 0.0f ? -xl : xl, b = xr < 0.0f ? -xr : xr;
             level = 6.0206f * log2f_fast((a > b ? a : b) + 1e-9f);   /* 20 log10 */
         }
-        float target = computer(m, level);
+        float target = computer(m, slope, kdiv, level);
         if (target < gr)
             gr = target + m->att * (gr - target);
         else
@@ -176,8 +179,8 @@ static void process(const struct model *m, float *l, float *r, int n)
         }
         float yl = dl * g, yr = dr * g;
         if (m->mix < 1.0f) {
-            yl = m->mix * yl + (1.0f - m->mix) * dl / m->pre;
-            yr = m->mix * yr + (1.0f - m->mix) * dr / m->pre;
+            yl = m->mix * yl + dry * dl;
+            yr = m->mix * yr + dry * dr;
         }
         yl = yl > CEILING ? CEILING : yl < -CEILING ? -CEILING : yl;
         yr = yr > CEILING ? CEILING : yr < -CEILING ? -CEILING : yr;

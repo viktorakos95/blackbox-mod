@@ -6,6 +6,7 @@ the GUI hit test, fill / outline / text drawing (recorded), the stock view and a
 NOT checked: the real pool's behaviour around claimed blocks, how the page looks (font size, which knob index is
 which), CPU on the real chip (hardware).
 """
+import os
 import struct
 import sys
 
@@ -99,6 +100,8 @@ def boot():
     e.call("looper_boot", ENGINE, count=200_000_000)
     e.uc.mem_write(STATE + 164 + 9 * 4, struct.pack("<f", 0.0))       # loop make-up gain off: unity, as the checks expect
     e.uc.mem_write(STATE + 164 + 11 * 4, struct.pack("<f", 0.0))      # not full screen: the geometry the checks expect
+    e.uc.mem_write(STATE + 164 + 1 * 4, struct.pack("<f", 0.0))       # SYNC off and QUANT 1/16: what the checks assume (the defaults are SYNC on, 1 BAR)
+    e.uc.mem_write(STATE + 164 + 2 * 4, struct.pack("<f", 3.0))
 
 
 def block(l, r=None, base=0.0):
@@ -385,13 +388,43 @@ def draw(cell=0):
     return list(fills)
 
 
+def snap(name):
+    """LOOPER_PNG=<dir>: the last draw as a picture, in the colours the DMA2D's CLUT holds (stock where it holds nothing)."""
+    import os
+    out = os.environ.get("LOOPER_PNG")
+    if not out:
+        return
+    from PIL import Image
+    fw = open("firmware/BLACKBOX-3.1.9.bin", "rb").read()
+    pal = []
+    for i in range(0x24):
+        c = e.r32(0x52001400 + 4 * i) & 0xFFFFFFFF
+        pal.append(c if c else struct.unpack("<I", fw[0x080F1D80 - 0x08040000 + 4 * i:][:4])[0])
+    im = Image.new("RGB", (320, 240))
+    px = im.load()
+    rgb = lambda c: ((pal[c] >> 16) & 255, (pal[c] >> 8) & 255, pal[c] & 255)
+    for x, y, w, h, c, _ in fills:
+        for yy in range(max(0, 240 - y - h), min(240, 240 - y)):
+            for xx in range(max(0, x), min(320, x + w)):
+                px[xx, yy] = rgb(c)
+    for x, y, c in pixels:
+        if 0 <= x < 320 and 0 <= 239 - y < 240:
+            px[x, 239 - y] = rgb(c)
+    os.makedirs(out, exist_ok=True)
+    im.resize((640, 480), Image.NEAREST).save(os.path.join(out, name + ".png"))
+
+
 f = draw(5)
 check("only the first cell draws the page; the others draw nothing and skip the stock draw", not f and not pixels and not celldraw)
 f = draw(0)
 # page: 224 high (cells y 0..224), top edge 224, y up, 314 wide from x 3 (320 screen, 3 px margins); 77 px columns
 # split by hairlines. Column 0's record box: a 1 px outline at x 7, 71 wide, top edge at d = 19
 title0 = [x for x in f if x[2] == 71 and x[3] == 1]
+snap("main")
 check("page painted: background first, then top bar, columns, footer", f[0][:4] == (3, 0, 314, 224) and f[0][4] == 0x02, f[:1])
+check("the Looper's colours are in the DMA2D's CLUT (what the display shows)",
+      e.r32(0x52001400 + 4 * 0x02) & 0xFFFFFFFF == 0xFF0E0F12 and e.r32(0x52001800 + 4 * 0x16) & 0xFFFFFFFF == 0xFFC4C8D0,
+      hex(e.r32(0x52001400 + 4 * 0x02) & 0xFFFFFFFF))
 check("track 1's record box (empty = dark grey outline) sits under the top row: x 7, y = 224 - 19 - 1 = 204",
       any(x[:4] == (7, 204, 71, 1) and x[4] == 0x10 for x in f), title0[:3])
 check("four columns of 78 px pitch across the whole width (record boxes at x 7, 85, 163, 241)",
@@ -512,8 +545,8 @@ def knob(i, counts, msg_id=0x32):
 
 
 level(0, 0.5)
-knob(0, -800)
-check("knob 1 turns track 1's fader (800 counts = 10 % of the travel: gain 0.5 -> 0.367)", abs(tr(0, O_LEVEL, "f") - 0.36667) < 1e-4, tr(0, O_LEVEL, "f"))
+knob(1, -800)                                                   # the top-left encoder: the row's first (as on DRONE-8)
+check("the top-left encoder turns track 1's fader (800 counts = 10 % of the travel: gain 0.5 -> 0.367)", abs(tr(0, O_LEVEL, "f") - 0.36667) < 1e-4, tr(0, O_LEVEL, "f"))
 knob(3, 1600)
 check("knob 4 turns track 4's pan while PAN is selected", abs(tr(3, O_PAN, "f") - 0.4) < 1e-5, tr(3, O_PAN, "f"))
 knob(0, 100, msg_id=0x63)
@@ -536,8 +569,8 @@ button(0, msg_id=0xC)
 check("INFO (message 0xc) is swallowed and switches SHIFT on", appmsg == [(0xF9, 5)] and e.r8(PAGE + 7) == 1, (appmsg, e.r8(PAGE + 7)))
 button(2)
 check("other buttons pass through once INFO is known", appmsg[-1] == (0xF9, 2), appmsg)
-knob(1, 800)
-check("INFO on: knob 2 turns the pan, not the level", abs(tr(1, O_PAN, "f") - 0.2) < 1e-5 and tr(1, O_LEVEL, "f") == 1.0, (tr(1, O_PAN, "f"), tr(1, O_LEVEL, "f")))
+knob(2, 800)
+check("INFO on: the top-right encoder turns track 2's pan, not the level", abs(tr(1, O_PAN, "f") - 0.2) < 1e-5 and tr(1, O_LEVEL, "f") == 1.0, (tr(1, O_PAN, "f"), tr(1, O_LEVEL, "f")))
 touch("down", 100, 30)
 touch("up", 100, 30)
 check("INFO on: a record box tap is a MUTE press, not a REC press", evs(1)[2:4] == [1, 1] and evs(1)[:2] == [1, 1], evs(1))
@@ -626,7 +659,7 @@ f = draw(0)
 check("SETUP tab drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f), [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
 ROW0 = 16 + 3                                                  # first row, from the top
 def row(r):
-    return ROW0 + r * 22 + 8
+    return ROW0 + r * 13 + 6
 def optv(i):
     return struct.unpack("<f", e.uc.mem_read(STATE + 164 + 4 * i, 4))[0]
 check("SETUP: LENGTH row choices (FOLLOW / MULT / FREE) and the SYNC row", [hit(84 + 10, row(0))[:2], hit(84 + 52 + 10, row(0))[:2], hit(84 + 104 + 10, row(0))[:2], hit(84 + 10, row(1))[:2]] == [(9, 0), (9, 0), (9, 0), (9, 1)], [hit(84 + 10, row(0)), hit(84 + 62, row(0)), hit(84 + 114, row(0)), hit(94, row(1))])
@@ -647,32 +680,53 @@ check("SETUP: knob 1 turns the loop gain (+10 %)", abs(optv(9) - 0.347) < 0.01, 
 f = draw(0)
 check("SETUP: lit choice boxes and a slider drawn", any(x[2] == 150 and x[3] == 1 for x in f) and any(x[4] == 0x1B and x[2] == 49 for x in f))
 check("SETUP: everything inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
-touch("down", 84 + 10, row(7))
-touch("up", 84 + 10, row(7))
+touch("down", 84 + 10, row(13))
+touch("up", 84 + 10, row(13))
 blocks(3)
 check("SETUP: the first CLEAR ALL press only asks (nothing erased yet)", mode(0) == PLAY, mode(0))
-touch("down", 84 + 10, row(7))
-touch("up", 84 + 10, row(7))
+touch("down", 84 + 10, row(13))
+touch("up", 84 + 10, row(13))
 blocks(2)
 check("SETUP: CLEAR ALL erases the tracks (track 1 was playing)", mode(0) in (CLEARING, EMPTY), mode(0))
 blocks(70)
 check("...and they end up empty", all(mode(t) == EMPTY for t in range(4)))
-tab(4)
 f = draw(0)
-check("MORE tab shows its rows and the diagnostic lines", len(pixels) > 300, (len(pixels),))
-check("MORE tab drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
-touch("down", 84 + 100, row(2))
-touch("move", 84 + 112, row(2))
-touch("up", 84 + 112, row(2))
-check("MORE: dragging the DLY FB slider to 112 / 150 px = 75 %", abs(optv(5) - 0.75) < 0.01, optv(5))
-knob(3, -800)
-check("MORE: knob 4 turns the reverb return (60 % - 10 %)", abs(optv(8) - 0.5) < 0.01, optv(8))
-touch("down", 84 + 10, row(0))
-touch("up", 84 + 10, row(0))
-check("MORE: FX ROUTE choice STOCK (0)", optv(10) == 0.0)
-touch("down", 84 + 60, row(0))
-touch("up", 84 + 60, row(0))
-check("MORE: FX ROUTE choice OWN (1)", optv(10) == 1.0)
+check("SETUP page also holds the monitor and pitch rows", len(pixels) > 300, (len(pixels),))
+touch("down", 84 + 100, row(7))
+touch("move", 84 + 112, row(7))
+touch("up", 84 + 112, row(7))
+check("SETUP: dragging the MONITOR INPUT slider to 112 / 150 px = 75 %", abs(optv(13) - 0.75) < 0.01, optv(13))
+knob(1, -800)
+check("SETUP: knob 2 turns the monitor level (75 % - 10 %)", abs(optv(13) - 0.65) < 0.01, optv(13))
+touch("down", 84 + 10, row(8))
+touch("up", 84 + 10, row(8))
+check("SETUP: SPEED PITCH choice TAPE (0)", optv(14) == 0.0)
+touch("down", 84 + 60, row(8))
+touch("up", 84 + 60, row(8))
+check("SETUP: SPEED PITCH choice GRAIN (1)", optv(14) == 1.0)
+touch("down", 84 + 52 + 10, row(10))
+touch("up", 84 + 52 + 10, row(10))
+check("SETUP: DRONE OUT choice OUT 2 (1)", optv(5) == 1.0, optv(5))
+touch("down", 84 + 104 + 10, row(11))
+touch("up", 84 + 104 + 10, row(11))
+check("SETUP: SAMPLR OUT choice OUT 3 (2)", optv(6) == 2.0, optv(6))
+touch("down", 84 + 52 + 10, row(12))
+touch("up", 84 + 52 + 10, row(12))
+check("SETUP: LOOPER OUT choice OUT 2 (1)", optv(10) == 1.0, optv(10))
+touch("down", 84 + 10, row(12))
+touch("up", 84 + 10, row(12))
+f = draw(0)
+check("SETUP: thirteen option rows and the CLEAR ALL row fit above the footer", all(x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
+for r_ in (10, 11):
+    touch("down", 84 + 10, row(r_))
+    touch("up", 84 + 10, row(r_))
+check("SETUP: back to OUT 1 for both", optv(5) == 0.0 and optv(6) == 0.0, (optv(5), optv(6)))
+
+touch("down", 84 + 150, row(13))
+touch("up", 84 + 150, row(13))
+f = draw(0)
+check("SETUP: the right end of the last row is no button any more (the crash record view is gone, docs/diagnostics.md)",
+      any(x[2] == 150 and x[3] == 1 for x in f))
 
 opt_sync_off = struct.pack("<f", 0.0)
 for off in (164, 168, 176, 164 + 40):
@@ -743,7 +797,7 @@ check("... the FX button again: the FX2 page (still the FX tab)", e.r8(PAGE + 76
 blocks(30)
 button(6)
 check("... and once more: back to MAIN", e.r8(PAGE + 76) == 0 and not appmsg)
-# the stock FX page: INFO + FX (on MAIN), and the footer's STOCK FX button
+# the stock FX page (Looper only): INFO + FX (on MAIN), and the footer's STOCK FX button
 blocks(30)
 button(0, msg_id=0xC)
 check("INFO switches SHIFT on (MAIN tab)", e.r8(PAGE + 7) == 1, e.r8(PAGE + 7))
@@ -872,9 +926,10 @@ learn(5, 0xF9, 2)                                # PLAY
 check("BACK, STOP and PLAY learnt (slots 3 4 5)", e.r8(PAGE + 99) == 1 and e.r8(PAGE + 100) == 1 and e.r8(PAGE + 101) == 1)
 e.uc.mem_write(PAGE + 89, b"\x02")                # select track 3
 before = list(e.uc.mem_read(STATE + T0 + TSIZE * 2 + 8, 7))
+screens.clear()
 press(0xF9, 0)
 after = list(e.uc.mem_read(STATE + T0 + TSIZE * 2 + 8, 7))
-check("BACK: an undo event for the selected track (3), swallowed", after[6] == before[6] + 1 and not appmsg, (before, after, appmsg))
+check("BACK on the Looper's MAIN tab: the stock song screen, no undo, swallowed", screens == [0x2d] and after[6] == before[6] and not appmsg, (screens, before, after, appmsg))
 press(0xF9, 2)
 blocks(2)
 check("PLAY / PAUSE: the looper only (HW STOP PLAY = LOOPER)", appmsg == [], appmsg)
@@ -1039,10 +1094,11 @@ e.stub(0x08074A00, pcm_stub)
 e.stub(0x08074CE8)
 e.call("looper_page_goto", VIEW, 5)
 f = draw(0)
+snap("samplr")
 check("SMPLR page: no footer tabs (a page of its own), nothing is drawn outside the screen",
       not any(x[2] == 34 and x[3] == 1 and x[1] <= 14 for x in f) and all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f),
       [x for x in f if not (x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224)][:3])
-cols = [x for x in f if x[2] == 2 and x[4] == 0x16]
+cols = [x for x in f if x[2] == 2 and x[4] == 0x1c]
 check("SMPLR tab: 150 waveform columns of 2 px, growing along the ramp", len(cols) == 150 and cols[-1][3] > cols[10][3], (len(cols), cols[:1], cols[-1:]))
 check("SMPLR tab: slice lines (grey)", sum(1 for x in f if x[2] == 1 and x[4] == 0x09) >= 15)
 import subprocess as _sp
@@ -1107,7 +1163,14 @@ e.call("samplr_track", 0, count=50_000_000)
 e.call("looper_page_goto", VIEW, 0)
 check("SMPLR: leaving the tab releases the voices", True)
 
-# ---- page order: MIX opens the Looper first, SONG opens SMPLR first
+if os.environ.get("LOOPER_PNG"):
+    for tab, name in ((1, "fx"), (3, "setup"), (6, "trig"), (0, "main2")):
+        e.call("looper_page_goto", VIEW, tab)
+        draw(0)
+        snap(name)
+    e.call("looper_page_goto", VIEW, 0)
+
+# ---- page order: MIX opens the Looper first; SONG cycles Looper MAIN -> SMPLR -> TRIG -> DRONE-8 -> the stock song screen
 e.uc.mem_write(APP + 0x8CA4, b"\x25")
 screens.clear()
 e.call("solo_mix_pressed", APP, 0, 0, 0)
@@ -1117,21 +1180,50 @@ check("... and the page opens on MAIN", e.r8(PAGE + 76) == 0, e.r8(PAGE + 76))
 e.uc.mem_write(APP + 0x8CA4, b"\x25")
 screens.clear()
 e.call("solo_song_pressed", APP, 0, 0, 0)
-check("SONG from another screen: the mute screen again, for the SMPLR tab", screens == [0x2F], screens)
+check("SONG from another screen: the mute screen again, for the Looper's MAIN tab", screens == [0x2F], screens)
 e.call("solo_set_mode", VIEW, 1)
-check("... and the page opens on SMPLR (mode 4)", e.r8(PAGE + 76) == 4, e.r8(PAGE + 76))
+check("... and the page opens on MAIN (mode 0)", e.r8(PAGE + 76) == 0, e.r8(PAGE + 76))
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
 screens.clear()
 e.call("solo_song_pressed", APP, 0, 0, 0)
-check("SONG again on the SMPLR page: the TRIG page (Trigger2MIDI), no screen change", screens == [] and e.r8(PAGE + 76) == 5, (screens, e.r8(PAGE + 76)))
+check("SONG on MAIN: the SMPLR page, no screen change", screens == [] and e.r8(PAGE + 76) == 4, (screens, e.r8(PAGE + 76)))
 e.call("solo_song_pressed", APP, 0, 0, 0)
-check("SONG once more on the TRIG page: the MCL page, no screen change", screens == [] and e.r8(PAGE + 76) == 6, (screens, e.r8(PAGE + 76)))
+check("SONG again: the TRIG page (Trigger2MIDI)", screens == [] and e.r8(PAGE + 76) == 5, (screens, e.r8(PAGE + 76)))
 e.call("solo_song_pressed", APP, 0, 0, 0)
-check("SONG once more on the MCL page: the stock song screen (0x2d)", screens == [0x2D], screens)
-e.call("looper_page_goto", VIEW, 0)
+e.call("looper_page_tab")
+check("SONG again: the DRONE-8 page (tab 7)", screens == [] and e.uc.reg_read(A.UC_ARM_REG_R0) == 7, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
+e.call("solo_song_pressed", APP, 0, 0, 0)
+e.call("looper_page_tab")
+check("SONG again: the MCL page (tab 8)", screens == [] and e.uc.reg_read(A.UC_ARM_REG_R0) == 8, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
+e.call("solo_song_pressed", APP, 0, 0, 0)
+check("SONG once more: the stock song screen (0x2d)", screens == [0x2D], screens)
+e.uc.mem_write(APP + 0x8CA4, b"\x02")                              # the pads
 screens.clear()
 e.call("solo_song_pressed", APP, 0, 0, 0)
-check("SONG on another tab of the page: switches to SMPLR without leaving the screen", screens == [] and e.r8(PAGE + 76) == 4, (screens, e.r8(PAGE + 76)))
+e.call("solo_set_mode", VIEW, 1)
+e.call("looper_page_tab")
+check("SONG from the pads: back to the page opened last (DRONE-8)", screens == [0x2F] and e.uc.reg_read(A.UC_ARM_REG_R0) == 7, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
+e.uc.mem_write(APP + 0x8CA4, b"\x2d")
+screens.clear()
+e.call("solo_song_pressed", APP, 0, 0, 0)
+e.call("solo_set_mode", VIEW, 1)
+e.call("looper_page_tab")
+check("SONG on the stock song screen: the round goes on to the Looper", screens == [0x2F] and e.uc.reg_read(A.UC_ARM_REG_R0) == 0, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
+e.uc.mem_write(APP + 0x8CA4, b"\x2d")
+screens.clear()
+blocks(30)
+press(0xF9, 0)                                                  # (BACK was learned as 0xf9:0 above)
+e.call("solo_set_mode", VIEW, 1)
+e.call("looper_page_tab")
+check("BACK on the stock song screen: the previous page of the round, DRONE-8", screens == [0x2F] and e.uc.reg_read(A.UC_ARM_REG_R0) == 7, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
+e.uc.mem_write(APP + 0x8CA4, b"\x2f")
+e.call("looper_page_goto", VIEW, 1)
+screens.clear()
+e.call("solo_song_pressed", APP, 0, 0, 0)
+check("SONG on the Looper's FX tab: back to MAIN first", screens == [] and e.r8(PAGE + 76) == 0, (screens, e.r8(PAGE + 76)))
+e.call("solo_song_pressed", APP, 0, 0, 0)
+check("... and the next press goes on to SMPLR", screens == [] and e.r8(PAGE + 76) == 4, (screens, e.r8(PAGE + 76)))
+e.call("looper_page_goto", VIEW, 5)
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
 screens.clear()
 e.call("solo_mix_pressed", APP, 0, 0, 0)

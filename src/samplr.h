@@ -8,6 +8,7 @@
 #define SM_ARPV   4              /* voices of the arpeggiator's own notes (after the fingers') */
 #define SM_LAYERS 3              /* gesture overdub layers */
 #define SM_LFING  4              /* fingers per layer */
+#define SM_TAIL   64             /* frames kept of a track's last block (1.3 ms): the emergency fade plays them backwards */
 #define SM_LATV   8              /* voices for latched slice loops (not tied to a finger) */
 #define SM_LTBASE (SM_VOICES + SM_ARPV)
 #define SM_LBASE  (SM_LTBASE + SM_LATV)
@@ -52,7 +53,7 @@ struct smvoice {
     uint8_t _a[3];
     /* granular cloud */
     uint8_t g_on;
-    uint8_t _g[3];
+    uint8_t gcnt, _g[2];                    /* grains sounding (kept by grain_spawn and grains(): nothing scans for them) */
     int32_t g_centre, g_size;
     float g_acc, g_warp, g_warp2, g_env;     /* g_warp: smooth random walk of the scan / pan (WARP spray); g_env: the cloud's own attack / release (it keeps spawning while it fades) */
     uint8_t g_seq, _gs[3];                  /* step of the pitch pattern */
@@ -137,6 +138,11 @@ struct sm {
     uint8_t iq, _iq[3];                     /* interpolation: 0 the stock cubic (float), 1 the stock HighQ (double), 2 SAMPLR's own with a low-pass above 1x */
     struct smscr *sc;                       /* the scratch shared by the tracks */
     uint8_t tno, _tn[3];
+    float gcost;                            /* what a block of this track takes, averaged (cycles): the return of a faded track needs to know */
+    float gfd;                              /* the guard's fade for this track: 0 sounding .. 1 out */
+    uint8_t gfade, gmu;                     /* fading out for lack of time; out (not rendered; its gestures and sequences keep their time) */
+    uint16_t tailn;                         /* frames in tail (the end of the last block this track played; 0 none) */
+    int16_t tail[2][SM_TAIL];               /* ... for the emergency fade: played backwards it joins the last sample without a jump */
 };
 
 /* Scratch every track uses in turn (the audio task renders one voice at a time; the transient search runs in the GUI task): the head of effect block 9. */
@@ -145,11 +151,27 @@ struct smscr {
     float xl[800], xr[800];                 /* a contiguous copy of the source for the stock interpolator */
     float oenv[SM_OWIN];                    /* transient search scratch (GUI task only) */
     float mixl[256], mixr[256];             /* one track's output before its filter and sends */
-    uint8_t cur, shed, fmono, flin;               /* the track the page shows; how much SAMPLR holds back because the audio task is near its limit (0..3) */
-    float ld, pk;                           /* how much of its block the audio task has used: smoothed, and the recent worst (per mille) */
+    uint8_t cur, shed, fmono, flin;               /* the track the page shows; how much SAMPLR holds back because the block's time left is short (0..5, see samplr_run) */
+    float ld, pk;                           /* unused (the old load governor; the budget in samplr_run replaced it) */
     uint32_t shed_t;
     double prev;                            /* the clock position of the previous block (for the grid lines) */
     uint8_t syncb, _sx[3];                  /* unused (was BLOCK / EXACT: grid lines are always at their exact frame) */
+    uint32_t pr, pg, pb, pm;                /* cycles this report: voices (render), grains, reading + interpolating (inside both), the mix and the track strips */
+    uint16_t shr, shg, shb, shm;            /* the last report of those, per mille of the audio block period */
+    uint32_t pp, pd, pl, last_sdur;             /* cycles this report: the audio task before the looper stage (stock voices, effects, the synths), the looper's run without SAMPLR, SAMPLR's last call */
+    uint16_t shp, shd, shl;                      /* their last report (per mille of the block period) */
+    uint8_t prof, _pf[3];                   /* the top bar: 0 V G, 1 P D L S (before the stage / the LIRA synth / looper / SAMPLR), 2 the same, worst of each, 3 R G B M (inside SAMPLR), 4 the worst whole block and its parts; tap it */
+    uint32_t xp, xd, xlp, xrest;            /* the worst block this report of pp, pd, pl and of the rest (after the looper stage to the end of the block) (cycles) */
+    uint16_t shxp, shxd, shxl, shxr;        /* their last report (per mille of the block period) */
+    uint32_t cp, cd, cl, cs;                /* this block's parts: before the stage, the LIRA synth, the looper, SAMPLR (cycles) */
+    uint32_t wt, wp, wd, wl, ws, wr;        /* the worst whole block this report (cycles): its total and its parts (wr: the rest after the stage) */
+    uint16_t shw[6];                        /* their last report (per mille): total, P, D, L, S, R */
+    uint32_t d1;                            /* cycles per mille of the block period (from the last report) */
+    uint16_t ovn, ov[6];                    /* blocks over 100 % since power-on, and the last one's total and parts (per mille), held */
+    uint32_t t_end;                         /* the cycle count at the end of the looper stage this block (0: not reached) */
+    uint16_t gcool, gcalm;                  /* the guard's track fades: blocks before the next may start; blocks in a row with room for one to return */
+    uint8_t gout, _go[3];                   /* tracks out (fading or out) */
+    uint8_t smute, mtop, mshown, _m;        /* out of time: a track left out of this block; any such block this report; the last report's */
     uint16_t gnow, gacc;                    /* grains sounding across all the tracks (last block / this block so far) */
 };
 
@@ -160,6 +182,17 @@ int samplr_track_now(void);
 void samplr_stop_all(void);                 /* silence every track: loops, takes, latches, sequences, clouds */
 int samplr_others_active(void);             /* another track than the shown one sounds, loops or records */
 int samplr_track_info(int t);               /* bits: 1 has a sample, 2 loop running, 4 recording, 8 armed, 16 sounding */
+void samplr_stage_prof(uint32_t pre, uint32_t lira, uint32_t run_all);
+void samplr_block_done(uint32_t now);       /* from cpu.c: the audio task has finished its block (the rest after the looper stage) */
+unsigned looper_load_avg(void);             /* looper.c: the whole task's load (per mille) averaged over ~0.5 s */
+unsigned looper_load_peak(void);
+uint32_t samplr_last_cycles(void);
+int samplr_held(void);                       /* a quality step or tracks faded out */          /* the last block of SAMPLR (cycles) */            /* ... its peaks that come in runs of blocks, held a few seconds */
+int looper_soft_threshold(int e);           /* looper.c: the per mille of the averaged load that starts engine e's fade (1 = SAMPLR) */
+int looper_over_cap(int e);                 /* looper.c: 1 if the time already used in this block leaves no room for engine e (the hard check for spikes; 1 = SAMPLR) */
+void looper_guard_want(int e, int share);   /* looper.c: the leader, held out by the guard, says what it would add (per mille): the engines below give way */
+int looper_page_leader(void);               /* looper_page.c: the engine whose page was opened last (0 looper, 1 SAMPLR, 2 DRONE-8, 3 none yet) */
+int looper_guard_level(void);               /* looper.c: the looper's guard level, worst in the last second (0 = everything) */   /* from looper_stage: cycles before it, in the LIRA page's synth, and in run() (SAMPLR's included) */
 int samplr_run(float *bl, float *br, int n, float **snd);   /* snd: the looper's four send buses (delay L R, reverb L R) or 0; returns 1 if a send was fed */
 int looper_grid_exact(float beats, float sph, int n);   /* in looper.c: the same grid at its exact frame */
 double looper_clock_now(void);

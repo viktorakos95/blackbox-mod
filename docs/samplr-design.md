@@ -350,3 +350,509 @@ takes three overdub layers.
 - Report: at !4 the readout showed C 70/90, 75/100, 74/89, 78/86 - averages of 70-78 %. The "recent worst block over 96 %" rule counted a single spike (a pad starting, a sample load) as
   stress and stepped up every 16 blocks for as long as it was remembered. Now the spikes are counted (blocks over 95 %, a count that fades over ~50 blocks): above 2 steps up, the
   smoothed load over 85 % steps up as before; stepping down needs the smoothed load under 78 % (was 70) and no recent spikes, for ~2 s. One spike every 100 blocks does nothing.
+
+## Build 32 (looper: no own delay / reverb, GRAIN by default, REC walks the tracks)
+- The looper's own delay and reverb are gone: the FX ROUTE option and the OWN DLY / RVB sliders (MORE tab), the engine (run_fx, the delay line, the reverb) and the tail logic. The sends of
+  the tracks (and of SAMPLR) always go to the Blackbox's own delay and reverb nodes. The option slots stay in the enum, unused. MORE is MONITOR INPUT (K1) and SPEED PITCH.
+- SPEED PITCH starts on GRAIN (keep the pitch) instead of TAPE.
+- The hardware REC button on the Looper page: a tap that ENDS a take (the selected track is recording or overdubbing) selects the next track (1-2-3-4-1...), so REC, REC, REC...
+  records in the four tracks in turn.
+- SAMPLR tests that used the own route now check that the stock delay / reverb nodes are handed the send (`looper_fx_inject`).
+
+## Build 33 (merged with the other agents' branches; looper defaults)
+- Merged into this branch: `happy-mccarthy` (which contains `intelligent-knuth`: Trigger2MIDI = looper-page tab 6 TRIG, the MIDI clock monitor `clkmon`, the CLK sheet, the sequencer-time findings, the MCL
+  port plan) and `lucid-faraday` (DRONE-8 / LIRA page and pad engine). Conflicts were only in the page tab plumbing: modes are MAIN FX SETUP MORE SMPLR(5) TRIG(6) LIRA(7); the LIRA
+  page is reached by the first button's second press (`solo_pad_pressed`, tab 7), TRIG by the third SONG page (tab 6). Combined build:
+  `python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper clkmon lira lirarec lirasave cave`. All suites pass (test_mclpad needs its own padded image).
+- Their finding that matters here (already merged in the code): the sequencer clock is 960 ticks a beat, measured on the unit - my 3840 was wrong - and the SAMPLR BLOCK sync mode was
+  removed by them (EXACT only). Everything of this branch's sync from build 31 on follows their version.
+- Looper defaults: SYNC on, QUANT 1 BAR, and the QUANT choices are listed 1 BAR, 1/4, 1/8, 1/16 (option values 0..3 in that order; they were 1/4 1/8 1/16 1 BAR). The test fixtures set
+  SYNC off / QUANT 1/16 after boot for the old checks; one test checks the fresh defaults.
+
+## Build 35 (where the time goes)
+- Report: arp + slicer + grain + gesture records reach !3 (C 85/100, S ~42), and the DRONE-8 alone takes C 90/100: the two machines cannot run together as they are.
+- Tap the top bar of the SAMPLR page: V / G are replaced by R, G, B, M = percent of the audio block spent in the voices (render), the grains, reading + interpolating the sample (inside both),
+  and the mix + track strips (`pr pg pb pm` in the scratch, DWT cycles around the calls, updated once a second). Tap again to go back. The numbers say what to optimize on the unit itself
+  (the emulator counts instructions, not memory waits).
+
+## Builds 36-38 (stage profile, priorities)
+- 36: tap the SAMPLR top bar for P D L S (stock + effects before the looper stage, DRONE-8 / LIRA, looper, SAMPLR), again for R G B M, again for V G. Reports: SAMPLR 2-5 % with samples
+  loading; the looper 38-55 % with four tracks and effects, the stock part 15-30 %, DRONE-8 18-25 %.
+- 37: the looper leaves out a track's filter when it is off and faded out (its state restarts from rest).
+- 38: SAMPLR yields first: its governor sheds from 70 % (was 85 %), recovers under 64 %, and has a sixth step (6 grains in all), so it backs off before DRONE-8's own governor (75 %)
+  mutes its note. A safety valve in the looper, read from SAMPLR's shed level: from step 2 the second filter stage is left out, from step 3 the drive.
+
+## Build 39 (the looper's play loop optimized, nothing removed)
+- `play_seg` / `mod_read` (src/looper.c) kept every per-frame state in the effect memory (`struct dsp`, a pool buffer = SDRAM), and every store through it made the compiler reload all
+  settings and state each frame. Now: the filter, drive and crunch state and the play head's state (`struct mrs`: speed, stutter, scrambler, grains, wow, drop) are copied into locals
+  once a block and back after; frames are read as one 32-bit word through a pointer kept per 32 KB half buffer (the grains too, one per grain); the grain window is worked out every 8
+  frames (it steps there) instead of read from a table in SDRAM per frame; the plain read is skipped when the play head replaces it; wow / flutter and the DROP gain are skipped while
+  their knobs are at 0; sends are skipped at 0. The loop is compiled at -O2 (the cave is -Os).
+- Same sound: 9 scenarios (filter LP / HP with Res, drive, crunch, sends, SPEED, PTCH, STAB, reverse / half, overdub) match the build-38 output within 2e-6 (float rounding).
+- Emulator, 4 tracks, per 256-frame block (`tools/prof_mem.py`), build 38 -> 39: plain 136k -> 106k instructions, filter 268k -> 200k, filter + drive 375k -> 259k, SPEED (grains)
+  517k -> 408k, SPEED + filter + drive 756k -> 561k. Accesses to the effect memory (SDRAM) in the play loop: 15-30 k -> about 2 k a block (the track reads themselves not counted).
+  On the unit the gain should be larger than the instruction counts say if SDRAM accesses are slow (the hardware L % was about 10x the emulator's instruction share): to be measured (L).
+- Stack: play_seg's frame is 512 bytes (the old seg with it inlined: about 216); WSOLA's search arrays are int16 now (448 -> 320). Deepest looper chain with SMOOTH: about 1 KB.
+
+## Build 40 (the worst block)
+- Report on build 39: four loops with some effects C 94 / 100, L 57; with a DRONE-8 note C 77 / 100, P 18 D 18 L 35 S 1, and it stutters. The average leaves room; the peak does not:
+  some blocks run over. (Facts from clock-findings.md that the numbers above did not use: core 399 MHz, 128-frame blocks; the emulator figures are per 256 frames = two blocks.)
+- The top bar now cycles V G -> P D L S (average) -> MAX P D L S (the worst single block of each stage in the last second, percent of one block period; S = SAMPLR's own peak)
+  -> R G B M. The worst-block numbers say which stage spikes when it stutters.
+
+## Build 41 (clamps, DROP, the rest of the block)
+- Reports on build 40: four loops with everything on C 85 / 95, MAX P 38 D 1 L 51 S 1, a few more effects C 90 / 100, MAX P 40 L 56: no stutter, knobs smoother than before.
+  With a DRONE-8 note: C 79 / 100, MAX P 30 D 21 L 35 S 1, stutters. The worst blocks of the four stages add up to 87 only, so part of the peak is after the looper stage.
+- The soft clipper's clamp (looper filter limit, filter pre-drive, drive; the pad filter in filter.c and the pad overdrive in od.c) and the 16-bit saturation use the FPU's
+  vminnm / vmaxnm instead of compare-and-select branches. DROP's repeating pattern is worked out once a step, not every frame. Output bit-identical to build 40 (13 looper
+  scenarios incl. everything on, both DROP modes, stutter + scrambler). Emulator, 4 tracks everything on: 763k -> 707k instructions per 256 frames.
+- DRONE-8 (lira.c): the same min / max helpers as builtins and lira_process at -O2: bit-identical (1, 3, 8 keys), but only 398k -> 395k per 256 frames. Its cost is the
+  model itself (8 oscillators always run: the silent ones still drive the FM buses and the supply coupling), about 1500 instructions a frame. `tools/prof_lira.py`.
+- MAX screen: R = the worst block of the rest of the task after the looper stage (stock output, the master compressor, interrupts), from cpu.c's wait hook (`samplr_block_done`).
+- Merged after build 41: the DRONE-8 branch's 3.1.AA (engine ~30 % fewer instructions, per-sample state in locals, the same VMINNM / VMAXNM helpers; its governor also reads
+  the whole task's load from cpu.c and steps down over 80 % / blocks over 87-88 %). lira.c is theirs as is (their file-wide -O2 pragma keeps loop patterns from becoming libc
+  calls; the per-function -O2 of build 41 was dropped), `tools/prof_lira.py` is theirs. Order under load: SAMPLR and the looper's extras from 70 %, then DRONE-8 from 80 %.
+
+## Build 43 (a budget for every block: who gives way, in what order)
+- Reports on build 42: no stutter from DRONE-8 any more, but it cut out while the looper or SAMPLR (grains) played; SAMPLR + looper stuttered at C 97 / 100 with no `!`
+  shown; looper + pads / sequences stuttered; SAMPLR stuck at `!4` after the other tracks stopped. The wish: never a broken sound; rather something not used at all.
+- Why: inside the looper stage SAMPLR runs before the looper's tracks, so its governor never saw the looper (often 35-55 %), and the build-38 valve in the looper
+  was driven by that governor. SAMPLR's governor also counted its own cost: heavy granular plus the stock work stayed over its 64 % release line for good.
+  DRONE-8's governor (3.1.AA) counted SAMPLR's and the looper's time too, and muted itself for them.
+- The order now: stock pads and sequences (never touched), DRONE-8, SAMPLR, the looper's tracks. Each block:
+  - looper.c `guard_decide`, just before the tracks: the time used so far is known (stock, DRONE-8, SAMPLR); the tracks' cost is predicted from what they have
+    switched on (`track_model`: instructions fitted to the emulator's levels of the everything-on case, a SMOOTH grain search when it falls in this block) times the
+    cycles per instruction the unit showed lately (measured per track, worst lately); the rest of the task after the looper stage is its recent worst. Budget 90 % of
+    the block period. The best level that fits is used in this block: 0 everything, 1 one filter stage and no drive, 2 no grains (SPEED / PTCH like tape), 3 no filter or
+    crunch, 4 the tracks fade out within the block (play heads keep running). One level better after ~1 s (400 blocks) in which it fitted with a quarter to spare.
+  - samplr.c, at the top of `samplr_run`: its recent worst block against the time left if the looper's tracks gave up everything. Over 85 %: one shed step at once
+    (not every 16 blocks); over all of it: this block is not played (sequencers and gestures keep time), and it stays out until a fifth is spare (`!M` on the bar).
+    Back one level after ~1 s in which that level's remembered cost (fading over seconds) would have fitted with a quarter spare: its own cost no longer holds it back.
+    The old smoothed-load governor is gone.
+  - lira_pad.c `govern`: the whole task's load minus what SAMPLR and the looper's tracks took (`looper_yield_permille`): they give way within the block, so only the
+    stock work and the synth itself can make it step down.
+- SAMPLR top bar: `!n` SAMPLR's shed, `!M` SAMPLR left blocks out in the last second, `L!n` the looper's level (worst in the last second).
+- Tests: test_guard.py (new: levels in order with less room, the sound goes on at each, the fade-out in one block, back one level a second with a fade-in, a spike
+  acts in the same block); test_samplr.py's governor checks rewritten for the budget. NOT checked: the real cycle counts (the model's constants are emulator figures;
+  the cycles per instruction are learned on the unit, starting at 2.5).
+
+## Build 44 (the looper gives way by fading whole tracks)
+- Report on build 43: "L!2 no grains (SPEED and PTCH act like tape) is musically weird; fade out and fade in makes more sense musically than the rest". The order asked
+  for: 3 first, then 2, then 1, then 4.
+- The looper's guard no longer changes how a track sounds. When the tracks do not fit, whole tracks fade out in the order 3, 2, 1, 4, as many as it takes once they are
+  silent (a fading track still costs ~85 %, so the count comes from the state after the fade, not during it). The fade takes four blocks (~11 ms), the track computed a
+  little cheaper meanwhile (one filter stage, no drive); with no time even for that, the ones going go at once (a ramp within the block, the cheapest computation).
+  Their play heads keep running. Back one at a time the other way round (4, 1, 2, 3), ~1 s apart with a quarter to spare, fading in over ~100 ms (37 blocks).
+- `L!n` on the SAMPLR bar: how many tracks were out in the last second. test_guard.py rewritten for this.
+- SAMPLR's own steps (linear interpolation, mono, fewer grains) are unchanged; it leaves blocks out (`!M`) only when it alone does not fit.
+
+## Build 45 (fades to mute from the real load; a hard limit per track)
+- Reports on build 44: the looper alone with four tracks muted tracks (not fading: stopping), and never came back from L!4; a track only came back after most
+  of its knobs were set back; DRONE-8 + granular stuttered. Wishes: whatever is removed fades out; a removed track shows muted; the same on SAMPLR if possible.
+- Why: the guard learned the unit's speed only from tracks that played, as a recent worst that decayed slowly; spikes (interrupts during a track) made the
+  looper look far more expensive than it is, and with all tracks out nothing was measured again, so it never came back. The fade was ~11 ms: a stop.
+- Now (looper.c, the guard above run):
+  - Fades come from the real load: the whole task's worst block in each half second (looper_block_done, the same figure as C). At 94 % or more one track fades
+    out over ~0.75 s at full quality (3, then 2, 1, 4; a track the player unmuted in the last ~3 s goes last), then it is muted for real: the page shows it
+    muted and the player unmutes it when they want it (nothing comes back by itself; no knob has to move). One at a time, ~1 s apart. If the load drops while a
+    track fades (a worst-of-the-last-~50-blocks under 84 %), the fade turns back and it fades in again.
+  - The hard limit, in the block: before each track, what it took lately as set (per track, following the knobs through track_model) against the time left up
+    to 97 % of the block minus what comes after the looper. A track that does not fit is cut in that block (a ramp to 0, computed as cheaply as possible; with
+    no time even for that, not played) and muted. Only for spikes.
+  - `L!n` = tracks muted (or fading) by the guard, `c` after it if one had to be cut.
+- SAMPLR (samplr_run): the hard limit is per track now (each track's recent worst block, `gcost`): a track that does not fit is left out of that block (`!M`);
+  its quality steps (`!n`) and their recovery as in build 43. SAMPLR has no track mute yet, so its tracks are not faded / muted like the looper's.
+- Tests: test_guard.py rewritten (room: nothing; near the limit: track 3 fades over ~0.75 s, then muted, only that one; the next after a pause; turns back when
+  the load drops; nothing comes back by itself; the player unmutes; the one just unmuted goes last; a block with no time left cuts and mutes, ramp to 0).
+
+## Build 46 (the page opened last leads; everything that goes, fades)
+- Wishes after build 45: the page you open wins; whatever is removed or added back (voices, effects, grains, tracks) fades smoothly.
+- The leader: `looper_page.c` remembers which of the three pages (Looper, SAMPLR, DRONE-8) was opened last (`P->lead`; TRIG leaves it; none yet = 3). Priority in looper.c `prio()`:
+  DRONE-8 3, SAMPLR 2, looper 1, and the leader +4. Each engine leaves out of its own load the time of the engines that rank below it (DRONE-8's governor:
+  `looper_yield_permille`), and keeps time for the ones above it (SAMPLR's budget `looper_budget_left_samplr` minus the looper tracks' estimate when the looper leads).
+  The looper's fade mark is staggered by rank: 94 % for the engine that gives way first, +1.5 % per engine below it (`looper_soft_threshold`), SAMPLR's the same.
+  The top bar shows `>L`, `>S` or `>D`.
+- Fades:
+  - DRONE-8 (lira_pad.c): the mute at step 3 is a fade now. The synth runs as at step 2 while its output ramps down over ~0.5 s (`fade_step`, `mute_ramp`), stops when
+    silent, and fades in over ~0.3 s when the step goes down (page and pad paths). Its delay lines (lira.c) come and go over ~40 ms: each line's weight in the wet sum and
+    the wet's share of the output are smoothed, a line that is not heard is not run. At rest the output is bit-identical to before.
+  - SAMPLR (samplr.c): when the whole task's worst block in the last half second reaches its mark and the quality steps are used (shed >= 2), one track fades out over
+    ~0.75 s (not the shown one until there is no other; highest number first) and is then out (not rendered; gestures and sequences keep time). Back one at a time
+    after ~1 s with the load 12 % under the mark and its remembered cost fitting, fading in over ~0.4 s. `x<n>` on the top bar = tracks out.
+  - The emergency (a spike with no time left in the block): SAMPLR plays the track's last block backwards with a ramp to 0 (each track keeps its last block as 16-bit,
+    `tail`), which joins the last sample without a jump; the track then stays out and returns as above. The looper's cut is always a ramp in the block (the cheapest
+    computation, even if that overshoots the block by a few per cent).
+  - The looper's own removal (build 45): 0.75 s fade, then muted, shown muted; the player unmutes.
+- Tests: test_guard.py (leader: threshold 97 % when the looper leads, SAMPLR keeps time for the looper's tracks, equal budgets otherwise), test_lira_gov.py (the mute is a
+  fade: no block loses more than 40 % of the one before; the delay lines going make no jump; the synth fades back in), test_samplr.py (the emergency tail, the guard's
+  fades and return, the fade-in). NOT checked: the real cycle counts; which page the person means to lead (the last opened is a guess).
+
+## Build 47 (simpler: slow marks on an averaged load, a stateless check for spikes)
+- Reports on build 46: three looper tracks muted at once with no fade while the Looper page (the leader) was open and DRONE-8 played; the drone stopped fast and its voices
+  came and went; with the Looper page open the drone stopped, on the DRONE page everything played (so no real overload); SAMPLR showed little cost yet did not sound
+  (tracks out), came back only when the looper had removed all four; even three fingers of grain on SAMPLR alone gave !5; stutter again with SAMPLR + stock pads;
+  SAMPLR seemed not to send to delay and reverb any more; "I don't think all these work together".
+- Why: the measures were wrong. The window-worst block (build 46) is dominated by pauses of other tasks (the screen, the SD card, a sample loading on the first touch:
+  a block that is 100 % full while nothing is wrong), and the cost estimates (a track's recent worst, SAMPLR's recent worst) were inflated by the same pauses, so every
+  engine saw "no time left" and cut or shed. DRONE-8's old marks (75-88 % of the block, from the first governor) were far under where the unit really starts to stutter
+  (C 90/100 played fine with four loops; C 94-97 did not).
+- Now:
+  - One measure for everything gradual: the whole task's load (what C shows) averaged over ~0.5 s (`wema`, looper.c). Each engine has a mark on it,
+    `looper_soft_threshold(e)`: 92 % for the engine that gives way first, +1.5 % for each engine ranking below it (so 92 / 93.5 / 95 %); the engine whose page
+    was opened last ranks highest (see build 46). Nothing looks at an engine's own cost any more.
+  - DRONE-8 (lira_pad.c): one decision, no half-states: at its mark (no more often than every ~0.8 s) it fades out over ~1.5 s (running as at step 2 meanwhile),
+    and it comes back, fading in over ~1 s, when the load with its own share added back is 3 % under the mark (and ~1.3 s have passed). Its delay lines fade
+    over ~150 ms. Stock work alone using more than 96 % of the block before the looper stage is the one quick case. A load that swings (granular SAMPLR) does not
+    move the average: the old governor, which followed the smoothed instantaneous load at 75-88 %, made the drone's voices come and go.
+  - SAMPLR (samplr.c): the quality steps (1-5) follow the average: a step when it is within 2 % of the mark, no more often than every ~0.5 s; one back at 7 % under,
+    every ~1 s. With the quality used (step >= 3) and the average at the mark, whole tracks fade out over ~1 s (the shown one last), one at a time, 3 s apart; they
+    come back by themselves, fading in over ~0.6 s, when the load with the track's share added is 3 % under the mark.
+  - The looper (looper.c): at its mark one track fades out over ~1 s and is muted (shown); a muted track comes back by itself (fading in, one at a time, the last to
+    go first) when the load with its share is 3 % under the mark, and at once when the Looper page is opened (leader). The player can unmute at any time.
+  - The check for spikes has no estimates and no memory (`looper_over_cap`): when the time already used in the block (stock work, DRONE-8, SAMPLR) plus, for SAMPLR,
+    the looper tracks' time if they outrank it, passes the engine's cap (88 %, +2 % per engine below it), the engine's tracks are left out of that block with a ramp to
+    0 (SAMPLR: the last block played backwards; the looper: the cheapest computation) and fade back in over the next blocks that have room. Nothing is muted for good.
+- Tests: test_guard.py (33), test_lira_gov.py (52: a swinging load does not move it, spikes do not count, hysteresis, leader), test_samplr.py (203: the steps follow
+  the average and nothing else, the hard check, sends at steps 0 / 3 / 5 and in the cut block, fades and returns, return on becoming leader).
+- Sends: no code path was found that stops SAMPLR's sends; they are tested at every step now. A faded-out track sends nothing, of course (its sends are post-fader):
+  that is what "SAMPLR runs but does not sound" was.
+
+## Build 48 (SAMPLR about a third cheaper; the slicer's tap-toggled loops are gone)
+- Report on build 47: three tracks (an arp, a grain cloud, the slicer in LOOP mode) took SAMPLR to !4 / !5 with the looper muted and the drone off.
+- `tools/prof_samplr.py` (new): that scenario under Unicorn, instructions by function / by line (`lines`, with a -g cave build), and `ref FILE` to record 120 blocks of output
+  for before / after comparisons. 271 k -> 177 k instructions per 256-frame block (-35 %), output equal within float rounding (3.8e-6 on a peak of 18):
+  - my own emergency tail was 14 % of it (a float to 16-bit conversion with branches per sample): one pass now (peak, the NaN guard, the mix, the sends) with the hardware
+    saturating store (`__builtin_arm_ssat`), and only the last 64 frames of a block are kept (`SM_TAIL`; the backwards fade is 64 frames, 1.3 ms);
+  - the grain accumulate loop: the stereo position is folded into the two level ramps, restrict pointers (17 instructions a sample, the compiler's own unrolling did not help);
+  - samples outside the sample's range are zero-filled in runs, not one by one; the plain sample copy moves eight values at a time (load-multiple / store-multiple);
+  - a count of sounding grains per voice (`gcnt`, kept by grain_spawn / grains()) replaces two scans of every voice's grains per track and block.
+- The slicer in LOOP play mode has no LATCH any more (`lat_of`): a loop plays while the finger is down; taps no longer start loops that go on by themselves or stop them
+  (the 8 latched loop voices of build 10 are unused). The LATCH button is not shown in that state. LATCH still works in the slicer's GATE / ONE modes and in the other modes.
+
+## Build 49 (gentle: slow fades, a leader that must stay a while)
+- Report on build 48: better; SAMPLR as before or a little better; SAMPLR + drone fine; SAMPLR + drone + looper: things came and went but not smoothly, and a page that was
+  opened became the winner at once and switched things off; the drone did not seem to lead on its own page when the CPU was short; the worst stutter left is SAMPLR (multi-touch,
+  recording, arp ...) plus a lot of stock pads (an old project, effects, knobs).
+- Leader: a page leads only after it has stayed open ~5 s (`looper_page_leader`: `lead` is the last page, `lead_eff` follows it after 1900 blocks); nothing is restored or
+  removed because a page was opened (the "come back at once" of build 46 is gone for all three engines); a tab that is only passed through changes nothing.
+- Fades, all at no CPU or RAM cost (constants): out ~2 s (looper tracks, SAMPLR tracks), ~2.5 s (the drone); in ~2.5 s for all three; the looper's removed tracks and the
+  drone wait ~2 s of room before they come back.
+- SAMPLR's quality steps come every ~0.5 s, every ~0.15 s when the load is 2.5 % over its mark (stock pads piling on).
+- Not changed: the stock engine (pads, their effects) is never touched. With SAMPLR busy and many stock pads the unit can still run out of time for a moment (the check for spikes
+  makes SAMPLR's tracks duck for those blocks); the figures show where the limit is: SAMPLR with 3 busy tracks costs about 30 % of a block (177 k instructions a 256-frame
+  block in the emulator), a heavy stock project 50-70 %.
+
+## Build 50
+
+- **WOB replaces DROP** (looper effect knob 11): bipolar, one cycle per beat, phase from the loop position. Left = tremolo (TRM), right = auto-pan (PAN). One smoothed LFO per sample, no random numbers, no extra buffers; cheaper than DROP. Depth changes ramp over the block.
+- **SONG round**: Looper MAIN -> SAMPLR -> TRIG -> DRONE-8 -> stock song screen -> Looper MAIN. From a looper FX/SETUP/MORE tab SONG first returns to MAIN. From any other stock screen SONG opens Looper MAIN. MCL is left out until its branch is merged.
+- **PAD** is the stock pad screen only (DRONE-8 no longer lives there).
+- **BACK** = previous page on TRIG only (-> SAMPLR). Looper (undo/erase), SAMPLR (gesture undo) and DRONE-8 (other voices) keep BACK for their own function.
+- Merged 3.1.AB (DRONE-8 optimisation from the LIRA branch).
+
+## Build 51
+
+Per-page tint (palette entries swapped only while the page draws, then put back; no extra CPU/RAM): Looper = silver-grey (bg 25272b, rail 4c4f56), SAMPLR = lighter blue-grey (bg 1d2130) with a pale mint waveform (palette 0x1c, `C_WAVE`), TRIG stock, DRONE-8 unchanged.
+
+## Build 53
+
+BACK (physical) = one step back: Looper FX/FX2/SETUP/MORE -> MAIN (on MAIN: undo, as before); SAMPLR -> its PLAY sheet, then Looper MAIN (the gesture undo is gone from the button); TRIG -> sheet 1, then SAMPLR; DRONE-8 -> TRIG (the voice-bank swap is gone from BACK; INFO still steps the encoders). New drone build merged.
+
+## Build 54
+
+The Looper's MORE tab is gone: SETUP now holds all nine option rows (MONITOR INPUT on K2, SPEED PITCH added; rows are 18 px) plus CLEAR ALL. The debug line of MORE is dropped. Tabs: MAIN FX FX2 SETUP.
+
+## Build 56
+
+- The leader waits no more: an engine that is the leader and held out (DRONE-8 shed, SAMPLR tracks out) publishes what it would add (`looper_guard_want`, in `struct guard`); the engines ranking below it have their marks lowered by that much (not below 60 %), so they give way and it comes back. Before, the load stayed under the lower engines' marks and the leader came back only when everything else was removed.
+- A page leads after ~2.6 s (was 5 s).
+- The averaged load rises with ~0.25 s (falls with ~0.5 s); SAMPLR's quality steps start 4 % earlier (mark - 6 %), so grains that are added quickly are thinned before the load reaches the fade mark.
+- SAMPLR: track 2's samples in lilac (palette 0x1e while the page draws), no yellow.
+- DRONE-8 3.1.AE merged. Profile (tools/prof_lira.py, full scenario): mono 16.5 %, WIDTH 0.8 17.0 %, DRIFT free: the stereo width costs 0.5 % of a block.
+
+## Build 57
+
+DRONE-8 3.1.AF merged (PAN: each oscillator its own random place). BACK on the Looper's MAIN tab now goes to the stock song screen (the undo is gone from the button); with the other pages: FX/FX2/SETUP -> MAIN, SAMPLR -> PLAY sheet -> Looper MAIN, TRIG -> sheet 1 -> SAMPLR, DRONE-8 -> TRIG. The round: SONG forward, BACK backward, both through the stock song screen.
+
+## Build 58
+
+DRONE-8 (latest) merged. Tints stronger: Looper bg 30333a / lines 6a6e78, SAMPLR bg 262c47 / lines 4b5580, and every yellow on the SAMPLR page (palette 0x14) is lilac. Verified in the emulator that the palette entries hold the tint at the moment of each fill.
+
+## Build 59
+
+- WOB is one auto-pan: the knob is its speed (left slow, 1 cycle in 4 beats; right fast, 2 a beat), the depth goes the other way (0.9 slow .. 0.35 fast); the phase runs on from block to block, so turning the knob changes only the speed; in step with the loop when it switches on.
+- Pad recorder: Rec Input gains SAMPLR (SAMPLR alone; LOOPER stays looper + SAMPLR). `lira_rec_sm_begin/end` around SAMPLR's run, `rec[3]`.
+- DRONE-8 page: REVERB knob in the SPACE panel (id 182, tone[2], saved in the settings tail): the drone's block times the knob joins the looper's reverb sends, which the stock reverb node takes (the FX page's type / size / return). The page opens with BTN off and gentler Feedback 30 %, Dly Mix 35 %, Drive 45 %.
+- The PAUSE label in the footer shows only on the Looper's pages.
+
+## Build 60
+
+The looper's spike cut (looper_over_cap -> guard_fit) is in two halves: the block that has no room plays the track at the cheap level with a ramp to half level (fo = 0.5), the next block takes it from half to 0 (cheap, whatever the load: `cut2`), then the usual ~2.5 s fade-in. A cut that took 5 ms now takes ~10 ms with no extra rendering beyond one cheap block.
+
+## Build 62
+
+Build 59-61 did not boot on the unit (58 did). The pad recorder's Rec Input list had grown to 7 entries (SAMPLR added); the stock registration is the prime suspect, so the list is back to 6 (L+R, Left, Right, Resam, DRONE, LOOPER = looper + SAMPLR) and the SAMPLR-alone source is gone. Open until confirmed on the unit.
+
+Confirmed on the unit: build 62 boots. The cause of the 59-61 boot loop was the seven-entry Rec Input list (the stock registration takes six at most). Do not add entries to that list; a SAMPLR-alone source would need another way in (e.g. a SAMPLR switch deciding whether LOOPER includes it).
+
+## Build 63: the crash recorder (step 1 of the stability task)
+
+src/crash.c, src/crash_thunk.S, patches/crash.py (apply with `cave`; the full set is now `... looper clkmon lira lirarec lirasave crash cave`).
+- The four fault vectors (hard, memory, bus, usage) go to crash_fault: the exception frame (PC, LR, xPSR, r0, r12, four words above it), CFSR / HFSR / MMFAR / BFAR and the breadcrumbs go to backup SRAM 0x38800b38, then an immediate reset (the stock handlers spin until the watchdog).
+- The stock allocator's out-of-memory path (message call @0x08044452, then it halts) goes to crash_oom_thunk: the size asked for and the caller.
+- Every run keeps a live block at 0x38800b20: breadcrumbs per task (audio: stage / drone / SAMPLR / looper tracks / recorder fill / input; GUI: message / paint; file: save / load), audio blocks since boot, free SDRAM low point and last value, averaged load and its peak. A restart without a fault (watchdog, power) still leaves these.
+- crash_boot (from looper_boot) reads and clears RCC_RSR and puts the last run's record together.
+- Shown on the Looper's SETUP page: tap the box at the right end of the last row (BPM). The footer of the Looper pages says RESTART: SEE SETUP while a restart record has not been looked at; SEEN / CLEAR in the record's view marks it seen.
+- Resolve PC / LR / STK with `arm-none-eabi-addr2line -f -e cave.elf ADDR` for addresses in the cave (>= 0x080F1E78) against that build's cave.elf; stock addresses with disasm.py.
+
+## Build 64: the watchdog, measured
+
+First records from the unit (two restarts, drone recording onto a pad + browsing): WINDOW WDG / NO FAULT, no breadcrumb (no task in our code), RAM MIN 874 KB (not out of memory), load 60-80 %, after 123-156 s.
+The stock firmware's watchdog: WWDG1 (prescaler 128, counter 0x7f: ~0.3 s), refreshed only from the audio block (0x0804cb1c -> check 0x08046994), and only while stamp A (0x080469c4, from eight places: 0x08072bde 0x08072c96 0x080740f4 0x080743f2 0x08074402 0x080744cc 0x08091dfe 0x08092b6a) and stamp B (0x080469ca, the GUI's update at 0x080a2258) are within 3749 blocks (20 s). So the restart is either the audio blocks stopping for ~0.3 s, or loop A / the GUI not running for 20 s.
+Build 64 hooks the check and both stamps (crash_wd, crash_stamp_a, crash_stamp_b): DWT time of each, the lags, A's call site. The next record says which side stopped: "AFTER AUDIO: GUI +n MS LOOP A +n MS" (how long the others went on after the last audio block) and "LAG A n B n".
+
+## Build 65: where the stalled loop is
+
+Build 64's record from the unit: WINDOW WDG, LAG A 3874 B 1, A last at 0x08074402, the GUI ran to the end (-5 ms), RAM MIN 874 KB, load 75 % (peak 82 %). So the audio stopped refreshing the watchdog because loop A had not checked in for 20 s. Loop A is the stock sample loader task: a queue (0x08088756, no wait) and a 128-entry command ring (0x080740b4: types 1 / 4 / 8, loads through 0x080721f8), stamping before each command. Its last stamp at 0x08074402 means a call after it (0x080740b4 with an empty ring, 0x08073740, 0x080721f8, 0x08092f5c, 0x08040bac) did not come back for 20 s: either it was starved of CPU (the audio task at 75-82 % and the GUI above it) or it waited on something.
+Build 65 samples loop A's saved PC and LR (its FreeRTOS TCB, pxCurrentTCB 0x2401f2a8, seen when it stamps) every 64 blocks once it is 2 s late (backup SRAM 0x38800390); the record shows the three latest. The same PC in all three with LR in a queue / semaphore wait = blocked; PCs moving through SD / file code = starved.
+
+## Build 66: what the loader waits on
+
+Build 65's record: LAG A 3873 (B 3), A's last stamp 0x080740f4 (the command ring, before a command), and all 81 samples (~27 s) at the same place: PC 0x08088926 = the yield in FreeRTOS xQueueReceive (0x08088756; also used for semaphores), LR stale. So the loader is not starved: it is blocked, waiting on a queue / semaphore, for 20 s and more. xQueueReceive's callers: 0x080414e4, 0x080743e8 (the loader's own poll, no wait), 0x08087b16 and 0x08087c46 (the CMSIS-OS wrappers).
+Build 66 also keeps the latest sample's r4 (the queue / semaphore) and the first five odd code addresses above its frame (the call chain), shown as OBJ / CALLERS.
+
+## Build 67: the restart's cause, and a first fix
+
+Build 66's record (Rec Input Resam, so not our DRONE source): the loader waits in osMessageGet (0x08087c4b) called from 0x080459a7, which is the stock SD driver's read (sd_diskio, 0x08045974): start the DMA read (BSP_SD_ReadBlocks_DMA), then wait up to 5000 ms for the completion message from BSP_SD_ReadCpltCallback (0x08045aec). A transfer that fails sends nothing (there is no error message), so each failed read costs 5 s; the loader's FatFs calls (0x08084131, 0x080844f5) above it kept reading, and 4 failed reads made the 20 s. The user's note fits: when it is about to restart, the browser does not list the files (the directory reads fail).
+So the cause is SD transfers failing under the load (likely the SDMMC's DMA not getting the memory bus in time while our engines and the pads use it), and the stock driver turning each failure into a 5 s hang.
+Build 67 (patches/crash.py, crash.c sd_try): the driver table's read / write (0x080cfc24 / 0x080cfc28) go to crash_sd_read / crash_sd_write, which try up to four times; before a retry the driver's queue is drained (a late completion must not be taken for the retry's) and the HAL must be READY within 200 ms (else give up). The waits are 500 ms (movw at 0x08045998 / 0x08045a0e). Each failure is counted with the HAL state and error code and the SDMMC STA / DCTRL / IDMACTRL (backup SRAM 0x38800940), shown as SD FAILS / RETRIED OK / GAVE UP / LAST ... ERR.
+
+## Build 68: is the RTOS clock running?
+
+Build 67's record: SD FAILS 0 (no read ever came back, not even as a failure), yet the loader sat ~28 s in the same osMessageGet whose timeout was now 500 ms (chain: crash_sd_read 0x0811c247 -> SD_read 0x08045975 -> 0x080459a7 -> osMessageGet). A 500 ms wait that does not end in 28 s means its timeout never expired: either the FreeRTOS tick (xTickCount 0x2401f1a4) was not advancing, or the scheduler was held suspended (uxSchedulerSuspended 0x2401f180) the whole time, while the GUI and the audio kept running.
+Build 68 samples both in every audio block (crash_wd): ticks a second, the longest run of blocks with the scheduler suspended, IPSR (is the audio code in an interrupt), and at the longest suspension the running task's TCB and (in an interrupt) the interrupted task's PC. Shown as TICKS/S ... SUSPENDED MAX ... and SUSP AT PC ... TCB.
+
+## Build 69: the loader is starved; who has the CPU, and a guard against it
+
+Build 68's record: TICKS/S 501 (the RTOS tick runs: 2 ms ticks), SUSPENDED MAX 0 (the scheduler was never held), IRQ 0 (the audio code runs in a task, not an interrupt), LAG A 3874, SD FAILS 0. So the loader's 500 ms wait did time out, the loader became ready, and then it never got the CPU again for 20 s: its saved PC stays where it was switched out. It is starved by the tasks above it (the audio task at ~75 % plus the GUI and whatever else), and that is why the stock watchdog restarts the unit (the stock firmware alone leaves it enough time).
+Build 69:
+- Measures who has the CPU: the SysTick vector (15) goes through crash_systick_thunk, which counts the running task (audio / GUI / loader / other) each tick; the shares of the last full 1000 ticks are shown (CPU AUDIO n% GUI n% LOADER n% OTHER n%). Backup SRAM 0x38800fe0..0x38801000 (the page state must now stay below 0xe0; it uses 196 bytes).
+- Guards against it: crash_starve() is 1 when the loader has not checked in for 7 s and 2 at 12 s (the watchdog acts at 20 s). At 1 every engine's mark drops by 25 % (they fade), the drone sheds, our pages stop repainting; at 2 looper_over_cap says no room for the looper's tracks and SAMPLR's (left out at once) until the loader checks in again.
+
+## Build 70: which task, and is the loader ready or waiting?
+
+Build 69's record (it restarted with one SAMPLR track added; one test with the same load and no SAMPLR survived): CPU AUDIO 37 % GUI 4 % LOADER 5 % OTHER 52 %, LOAD 46 % (peak 96 %), LAG A 3874, SD FAILS 0, TICKS/S 502, never suspended. So the loader is not simply starved by the audio task: something else (or the idle task) had half the CPU, and the loader's 500 ms wait still did not end. The loader got 5 %, so it did run; maybe a different task stamps loop A, or the wait is not the one we think.
+Build 70: the SysTick profile keeps the three busiest tasks of each half second by TCB and shows their FreeRTOS names (TCB+0x34) and shares; the loader's TCB is read for its priority and the lists its state item and event item are on (ready / delayed / suspended: +0x14, +0x28). The fault-register lines are left out of the view when there was no fault (room for these).
+
+## Build 71
+
+Build 70 showed the CPU shares of the current run (the window kept being refilled after the restart). Now crash_boot freezes the last run's last full window at 0x388003f0 (prof_r) and the view shows that. User note on 70: harder to make it restart; it took everything plus the Munchi delay.
+
+## Build 72: the cause, and a repair
+
+Build 71's record: CPU IDLE 42 %, audioTask 48 %, defaultTask 2 %, rest 6 %; LOADER PRIO 3 ON 0x2401F258 EV 0. vTaskSwitchContext (0x08088ff4) picks the highest set bit of uxTopReadyPriority (0x2401f1a0, CLZ) among pxReadyTasksLists (0x2401f21c, 7 lists of 20 bytes); 0x2401F258 is the priority-3 ready list. So the loader was READY (on its ready list, on no event list) while the CPU was 42 % idle and the tick ran: its priority's bit was missing from uxTopReadyPriority, so the scheduler never picked it again. That state is impossible in a healthy FreeRTOS (the bit is cleared only when the list empties); it is the classic damage from an interrupt that calls the RTOS (a FromISR call) at a priority more urgent than configMAX_SYSCALL_INTERRUPT_PRIORITY (0x50 here: the PendSV handler's BASEPRI) racing with the kernel. More load, more interrupts in flight: more often.
+Build 72:
+- Repair: every audio block (crash_wd), with interrupts off, any ready list with tasks and no bit gets its bit back (counted: SCHED REPAIRS NOW n (PRIO p)).
+- The debug view lists enabled interrupts with a priority more urgent than 0x50 (IRQ<5: n/prio ...), live: the likely culprit.
+- The SD retry wrappers of build 67 are gone again (they never fired; the SD card was not the cause) and the cave was full: the SD driver is the stock one.
+
+## Build 73
+
+Build 72's records: (1) the loader hang again (LOADER PRIO 3 ON the priority-3 ready list, EV 0, CPU idle 43 %), with "REPAIRS NOW 0" (that was the new run's count: a display bug). Since the bit check did not save it, the ready list's item count is likely broken too (a count of 0 makes the kernel clear the bit, and then the bit-only check saw "empty"). (2) A different restart: the loader never late, the audio task inside our looper tracks at the end, CPU audioTask 62 % pcmStream 8 % idle 26 %; its lag / timing lines were all 0 because the boot copy required the block period to be measured (fixed: only the ms figures need it). IRQ<5: 28/0 52/0 71/0 (TIM2, UART4, USART6 at priority 0, more urgent than BASEPRI 0x50; their handlers are the stock HAL ones; a static search found no direct RTOS call from them, the HAL's callbacks go through pointers).
+Build 73: the repair walks each ready list's links (up to 16 items, RAM only, must end at its xListEnd) and sets the count to what the links say and the bit when there is a task; the loader's sample records its list's bit and count (BIT / N); the repairs of the run that ended are kept at boot (REPAIRS LAST n NOW m).
+
+## Build 74
+
+Build 73's record: the loader in a normal timed wait this time (LOADER P3 ON 0x2401F208 = a delayed list, EV 0x2401EF7C = the SD queue's waiting list at 0x2401EF58 + 0x24; BIT 0 N 0: nothing for the ready-list repair to do), yet never woken in 20 s with the tick running. The kernel wakes delayed tasks when xTickCount reaches xNextTaskUnblockTime (0x2401f188, kept by prvResetNextTaskUnblockTime 0x08088a18 / prvAddCurrentTaskToDelayedList 0x08088a44; pxDelayedTaskList 0x2401f1f0, pxOverflowDelayedTaskList 0x2401f1ec). Either that time is damaged, or the task sits on the overflow list.
+Build 74: the loader's sample records its wake time, xNextTaskUnblockTime, xTickCount and both list pointers (WAKE / NEXT / TICK, DLY / OVF; the call-chain words gave way to these); and every block, with interrupts off, xNextTaskUnblockTime is brought back to the current delayed list's first wake time when it is later (only ever earlier: always safe), counted with the other repairs (PRIO 9).
+
+## Build 75: the kernel tick
+
+Build 74's three records (restarts after 191-271 s, REPAIRS LAST 0): two with the loader on the priority-3 ready list (BIT 1 N 1: bookkeeping right, it just was not run) and one in a delayed wait; in all three WAKE 00002E0F and TICK 00001A87 (WAKE - TICK = 5000, the SD driver's 5 s wait), NEXT 0x1BC8..0x1CE4, while TICKS/S showed 501. A tick of 0x1A87 (~6800) at the moment of every sample, after ~190 s of running (~95000 expected at 500/s), and the same value in three runs: the kernel tick is not what it should be (stuck, running far slower, or jumping back), and with it every timed wait in the system. The loader's 5 s wait never ends because the tick never reaches its wake time.
+Build 75: a ring of seven tick readings, one every 64 audio blocks (~2.4 s in all), and a count of backward jumps, frozen at boot and shown as TICKS ... BACK n. (The loader's PC history is cut to the latest sample to make room; the cave has 76 bytes left.)
+
+## Build 76: a recorder bug, corrected
+
+Build 75's tick ring: 0x10352 .. 0x10752 in steps of ~170 (500 a second, as it should be after 135 s), BACK 0. So the kernel tick is fine, and the WAKE / NEXT / TICK / DLY values (identical in every record) were not from the crashed run: right after every boot the loader is "late" for a while (the unit starting up), and the sampler overwrote the live sample fields (the object, the callers, the loader's lists, BIT / N) about 13 s into the new run. Those lines in builds 66-75 showed the new boot, not the crash; the conclusions drawn from them (the SD queue, "ready but never scheduled", the delayed wait) are withdrawn. What stands from frozen fields: the loader sits at PC 0x08088926 (the yield in xQueueReceive: a queue / semaphore / mutex wait) for 20 s while the tick runs, CPU 23-43 % idle, so its wait is for something that never comes (an infinite wait, or a give that never happens).
+Build 76: no samples in the first 30 s after a boot (the last run's stay); the sample keeps the waited-on object (r4) and the callers again (OBJ ... callers), and the loader line (ON / EV / BIT / N) is the crashed run's.
+
+## Build 77: the cause, from a valid record
+
+Build 76's record (the crashed run's own sample, after its first 30 s): the loader waits in SD_read's osMessageGet (callers 0x08087c4b <- 0x080459a7 SD_read <- FatFs 0x08084131 / 0x080844f5), on a delayed list (a timed wait) and on the SD queue's waiting list (EV 0x2401ef7c = queue 0x2401ef58 + 0x24); tick fine (501 a second). The stock driver's wait is 5000 ticks, ~10 s at this kernel's real tick rate, and a read that never completes sends no message: two such reads in the loader's first folder scan are 20 s, and the stock watchdog restarts the unit. (User: once the folders have been listed it is hard to make it restart.)
+Build 77: the read's wait is 1000 ticks (~2 s) and a failed read is tried again up to three times (crash_sd_read in the driver table, queue drained, HAL idle within 400 ticks before a retry); writes stay stock (build 67 patched writes too and the recorder said "not ready to record"). Shown as SD READ FAILS n OK AGAIN n GAVE UP n HAL-state-error/SDMMC-STA. To make room in the cave: the tick ring, the "after audio" ms line and the suspension PC are gone.
+
+## Build 78
+
+Build 77's record: SD READ FAILS 0 (the read never returned, not even as a failure, with its wait now 1000 ticks); the loader in SD_read's osMessageGet (callers 0x08087a5d 0x08087c4b 0x080459a7 0x08045975 and our crash_sd_read), READY on its priority-3 list (ON 0x2401f258, EV 0, BIT 1 N 1), the CPU 30 % idle. A ready priority-3 task with its bit set and the idle task running is only possible if the scheduler picks a higher priority whose list holds a task of a lower priority (e.g. the idle task linked on a higher ready list): it "runs that priority" and gets the idle task.
+Build 78: every block each clean ready list is walked, and a task whose own priority (TCB +0x2c) is not the list's is moved to the end of its own list (counts, links, container, bits; counted as repair PRIO 10 + p); the loader's sample records the ready lists (RL: bits 0-6 lists with tasks, 8-14 lists holding a task of another priority, 16-22 uxTopReadyPriority).
+
+## Build 79: the cause, and the fix
+
+Build 78's record: the loader in a timed wait on the SD queue (ON a delayed list, EV the SD queue), RL 0x0041.. (no ready list holding a task of another priority), SD READ FAILS 0, CPU 31 % idle. Build 77's had it READY on its list. So the loader runs: it wakes, waits again, wakes; no read ever fails. It is making progress, slowly: the first folder scan is one loader job of many SD reads, and the loader checks in with the stock watchdog (stamp A) only between jobs. Under heavy load, with a pad recording to the same card, the scan takes over 20 s and the watchdog restarts the unit. That also fits: only the first listing is at risk (afterwards the folders are cached), it gets worse with load and recording, the CPU has idle time (the loader waits on the card, not on the CPU), and no read fails.
+Build 79: a read that works in the loader's task (pxCurrentTCB = the TCB seen at its stamps) checks in for it (stamp A = the block count). A loader that is really stuck still trips the watchdog (a stuck read never works). Counted as READS n in the SD line. The starvation guard of build 69 (fades when the loader was 7 s late) is removed: it was built on the starvation theory, and the cave needed the room.
+
+## Build 80: step 2 begins (the peaks)
+
+Build 79 confirmed on the unit: no restart; the first folder listing under load is slow but finishes.
+Removed (built on theories that the records later ruled out, and they ran every block with interrupts off): the ready-list bit / count / wrong-priority repairs and the next-unblock repair. The SD read retry and the loader's check-in on a successful read stay.
+Peaks: the SAMPLR top bar has a fifth view (tap it until W shows): the worst whole audio block of the last second (W, % of the block) with its own parts: P the audio task before the looper stage (stock voices, pads, effects), D the DRONE-8 page, L the looper's tracks, S SAMPLR, R the rest of the block after the stage (stock output stage, master effects, interrupts). The existing MAX view gives the worst of each part separately (often from different blocks); W gives the one block that came closest to the limit, so we see what it was made of.
+
+## Build 81
+
+User: the glitches come with W around 107, but the numbers are hard to catch (not always on the page). The W view now holds the last block over 100 % since power-on (N: how many) with its parts, until the next one: N n W P D L S R. Look at it any time after a glitch.
+
+## Build 82: SAMPLR's runs of heavy blocks
+
+tools/peaks.py (the prof_samplr.py scenario, instructions per block; PEAK_LINES=1 with a -g build for source lines): the arp + grain cloud + slicer scene is not flat. A synced cloud starts all its grains on the same step (here 12 at once), they sound together for ~8 blocks (~40 ms) at ~3.6x the quiet cost, then nothing for ~15 blocks: median 106 k instructions a block, 380-400 k in a run. The mixing loop is already ~17 instructions a frame a grain and the copy at normal pitch ~6: nothing to win there. The DRONE-8 engine is flat (400 blocks within 0.3 %). The quality steps followed only the ~0.5 s average (~55 % in such a scene), which never sees a 40 ms run: the runs went over 100 % with the steps at 0.
+Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the last 4 blocks (a run, not one block the screen or the SD card held up), held, let down over a few seconds. SAMPLR also takes a quality step when that reaches 94 % (no more often than every ~0.3 s), and goes back only when it is under 84 % and the average is low as before. The steps are the existing ones (1: grains linear, 2: and mono, ...). To make room in the cave, the crash recorder's restart investigation lines (loader samples, RTOS tick / suspension, ready-list) are gone; the restart record, LAG, SD and CPU lines stay.
+
+## Build 90 (the per-sample code runs from ITCM)
+- Build 89's probe on the unit: `TCM I0 D40 0-127`. The stock firmware never touches ITCM (64 KB of zero-wait code memory at 0x00000000); it does use
+  DTCM (40 of 128 KB, spread over all of it), which is left alone.
+- The functions that run every sample are linked to run from ITCM (src/cave.ld): DRONE-8's engine (`lira_process`), SAMPLR (`samplr_run`, its block
+  reader, grain spawn), the looper's play loop and its filter / drive / crunch helpers and input stage, Munchi (process, granular delay, voice read),
+  the pad filter, compressor and overdrive: 62 KB. Their image is stored in flash at 0x08170000 (the top of the MCL window; the blob's window is
+  0x08120000..0x08170000 now) and looper_boot copies it in first thing (the pool init it hooks runs in the engine's constructor, before any audio).
+  Calls between flash and ITCM go through the linker's veneers; stock hooks into moved functions go through `*_flash` entries (src/itcm_thunk.S).
+- Same code, same sound: only where it runs changed. What it saves (flash wait states and instruction cache misses: the hot code was ~190 KB of
+  flash for a 16 KB cache) can only be seen on the unit. The main cave shrank from 188 KB to 126 KB.
+
+## Build 91 (room for the block's tail, room for the loader)
+- Report on build 90: installs and runs, feels the same; sequences and the compressor still push it; loading presets / samples while machines run
+  (the looper most) is very slow, files do not show, the preset list stops at a random folder; with everything stopped browsing is normal.
+- The in-block caps (looper_over_cap, looper_drone_spike) were fixed (88 %, +2 % for each engine ranking below): they assumed the rest of the block
+  after the looper stage (stock output, the master compressor) fits in what is left. Now that rest is measured every block (looper_stage stamps its
+  end, looper_block_done sees the task finish), its recent worst is held (`gd.rpk`, let down over a few seconds) and every cap leaves room for it.
+- The compressor's loop has no divisions left (1 / ratio, the knee's divisor and the dry share are worked out once a block).
+- Loading: each SD read of the stock loader waits for the audio task to finish its block, so the less of the block the engines take, the faster it
+  loads (build 78's record: 31 % idle, the loader waiting on the card). crash.c stamps the loader's last read that worked; while it has read in the
+  last ~0.5 s (`crash_loading`), every engine's mark on the averaged load is 12 % lower (LOADING_ROOM): they give way in their usual order (fades,
+  SAMPLR's steps) and come back after the load.
+
+## Build 92 (DRONE-8: meter, attack, level, coming back)
+- The overload warning sits at the right end of the DRONE-8 top bar like on the other pages (the six switches moved 10 px left).
+- FAST's attack is a snap (3 ms, whatever the touch); the slow attack is 1.5x slower (~0.6 s time constant at full touch).
+- The output is 3 dB louder (level / 500): it sat under the other machines.
+- Coming back as the leader: the others gave way by its share only, so the load settled right at the line where it comes back and it stayed out
+  (while SAMPLR, below it, had already gone). Now they give way by its share + 8 %; and its return check no longer counts its old share as if
+  it were still running (the share before the synth + its share < 90 %).
+
+## Build 93 (DRONE-8: no click on the snap, coming back with fewer voices)
+- The envelope's gain was worked out once per 16-sample control block and held: a 3 ms attack rose in nine steps, which clicked. It glides
+  per sample now (each oscillator keeps the last block's gain terms, `pga` / `pgb`).
+- Coming back: it waited for room for its whole share when it went out (`dhold`), even with fewer voices held now. The share is scaled to the
+  voices that would sound now (about a third of it is the delay lines and the output stage, there with any number of voices): `back_cost`.
+- (Report: "release got faster". The release times are unchanged; with the slower attack a short press opens a voice less far, so its release
+  starts lower and is gone sooner.)
+
+## Build 94 (the pads' own cost: a keys sequence alone overloaded it)
+- Report: a keys sequence (HighQ, the pad filter on, no chord) overloads the unit on its own; stock 3.1.9 handles anything.
+- Emulator, per voice per 128 frames (stereo): our 24 dB filter took 6.6 k instructions (11.7 k with Res past noon, the drive); the stock 12 dB
+  biquad it replaces is about 2.5 k. A keys sequence of 15-20 voices: 100-230 k instructions a block on top of stock, 10-20 % of it.
+- The filter is one pass over a channel now (drive, Butterworth stage, resonant stage per sample; before: three passes, each sample stored and
+  read back between them), one loop per case (LP / HP, clean / driven: no test inside). Same arithmetic in the same order (test_filter's
+  reference model still matches). 6.6 k -> 6.2 k, 11.7 k -> 9.8 k.
+- The pad's Interp (asked by the filter, every read kernel call, the overdrive) walks the pad's settings list each time; it is kept for the
+  rest of the block per pad (backup SRAM 0x38800fc8: pad, cpu.c's wake stamp, value). A keys sequence's voices share one pad: one lookup a block.
+- Idle machines (looper stage with nothing recorded, SAMPLR empty): ~7 k instructions a 128-frame block, under 1 %.
+
+## Build 95 (filters 12 dB by default, the DRONE-8 ENV tab, a gentler loading guard)
+- Pads: a Slope setting under Fidelity (new parameter 0x1cf, "12 dB" / "24 dB", xml "filterslope"), 12 dB by default (also for presets made
+  before it): the resonant stage alone, half the work of the two-stage filter (emulator: a stereo voice, 128 frames). The looper's tracks and
+  SAMPLR: SETUP FILTERS 12 DB / 24 DB (the old delay time's option slot, LOOPER_O_SLOPE), 12 dB by default. (SETUP rows 16 px to fit.)
+- DRONE-8 ENV tab (fifth): FAST attack 2 ms .. 300 ms (3 ms), FAST release x0.2 .. x5 (as built), slow attack 50 ms .. 3 s (0.6 s), slow
+  release x0.2 .. x5; VELOCITY: AMT, SOURCE (OFF / TAP = the height of the touch on a plate: top full, bottom soft), TO (DEPTH: the envelope
+  opens that far / VOL: the voice plays that loud); MIDI: the panel waits for it. Saved in a tail of bbmod.bin ("ENV1"; older files: defaults).
+  The engine takes the times every block before the notes (lira_env) and a gain per oscillator (lira_vgain).
+- DRONE-8 3 dB louder again (level / 350).
+- The loading guard (build 91) only acts on a long load: 30 or more reads in each of the last two seconds and still reading (a pad opening or
+  a pad recording does not count), and takes 8 % instead of 12 %.
+
+## Build 97 (DRONE-8 3.1.AO merged; room in ITCM)
+- Merged the drone branch's 3.1.AO (Hyper LFO AND as a logical AND, the drive stage and bass from the circuit; see its commit and
+  docs/LIRA-analog-notes.md). It grew `lira_process` (ITCM 64,032 of the 65,024 bytes after the empty first 512: about 1 KB left) and
+  costs about 0.6 % more CPU.
+- Munchi's delay (process, granular delay, voice read: ~8 KB) runs from flash again: it only runs when it is the delay type picked, and
+  the move to ITCM (build 90) made no audible difference. ITCM now 56,056 bytes, ~9 KB free for the drone's next steps (MIDI).
+
+## Build 98 (no drone flicker on a keys sequence)
+- Report on build 97: DRONE-8 with one keys-sequence pad: the meter jumps between nothing and red, and the drone goes on and off with it.
+- The in-block check kept room for the rest of the block after the looper stage at its worst of the last ~2 s (`rpk`, build 91), on top of
+  the note-on spike and the drone's own full cost: three worst cases at once, at every note. `rpk` now lets a single long block go in ~0.1 s
+  (a compressor that is always on still keeps its room).
+- When it does have to leave a block, spikes that come again soon after it is back keep it out longer each time (8, 16, 32 ... up to ~1 s
+  of blocks) and it fades back in more slowly (over as many blocks, up to 48): dips, not a flicker. After 3 s without one it is quick again.
+
+## Build 100 (SAMPLR cheaper, same sound; what the drone can and cannot give)
+
+- SAMPLR's output pass (a track's block to the bus, its level, the sends, the emergency tail) had two tests inside the per-sample loop; it
+  is one loop per case now (`out_pass`, inlined with constant flags). The sample reader keeps the scratch buffers' pointers in registers
+  (through `s->sc` they were read again after every store). Three tracks (arp, grain cloud, slicer loop, `tools/prof_samplr.py`): 176 k
+  instructions a 256-frame block before, 162 k after (-8 %). The output of 120 blocks is identical bit for bit (`prof_samplr.py ref`).
+  Unrolling the grain and clearing loops was tried and made it slower: not kept.
+- DRONE-8's engine was profiled and left as it is: its cost is the eight oscillators (~75 %) and the master's four tanh divisions; the two
+  delay lines are ~8 %. Nothing cheaper there gives the same output bit for bit, and a "lighter drone" for spike blocks (one delay line
+  skipped) would save ~4 % at the price of a gap in that line's memory: not done.
+- The leader rule was checked (`test_guard.py`): with DRONE-8's page opened last it keeps no time for SAMPLR or the looper's tracks (they
+  have their own checks, after it); it only leaves a block when the stock work before it plus its own cost do not fit (cap 92 %, less the
+  room the rest of the block needs lately).
+
+## Build 101 (markers you can see, gesture replays drawn, DRONE-8 eight layers)
+
+- SAMPLR: the arp spots, the grain clouds and the playheads are 2 px lines with a 1 px dark edge each side (`sm_mark`; the arp's current
+  spot 4 px, the grain size bracket 2 px at the top and the bottom), so they stand out from the waveform.
+- What a gesture layer replays is drawn too: its grain clouds, playheads and slices (voices `SM_LBASE` on) and its latched arp spots
+  (owner 0xf0 + layer), in the layer's colour (pink, green, teal). They were never drawn: the loop only went over the fingers.
+- The SAMPLR page is checked for changes every other poke (~9 a second, was ~5) and still only redrawn when something on it moved.
+- DRONE-8: the gesture recorder takes up to 8 layers (was 3; the layer is in bits 11..13 of an event's id; 1024 events in all). While a loop
+  plays, its plates and the knobs it moves (in steps of 1/30 of their travel) are redrawn, only when they change.
+
+## Build 102 (DRONE OUT / SAMPLR OUT, SAMPLR petrol, thinner markers)
+
+- Looper SETUP has two more rows, DRONE OUT and SAMPLR OUT: OUT 1 (the main pair and the headphones, as before), OUT 2 (jacks 3/4) or
+  OUT 3 (jacks 5/6). Found in the render after the looper stage (0x08053576..): the stock buses 0, 1, 2 go to Out 1 (and the
+  headphones), Out 2, Out 3; buses 10 / 11 (the FX returns) are added into bus 0 first. `looper.c out_bus` wakes bus 1 or 2 (zeroed,
+  marked live; an unused bus with no frames is given the block's, or the render would take it as silent) and DRONE-8 / SAMPLR add to it
+  instead of Out 1. On Out 2 / 3 they skip the master compressor (as a pad routed there does), the Looper's SOURCE MIX no longer hears them,
+  and their sends to the delay / reverb still come back on Out 1. The options are the old own delay's slots (5, 6; options are not saved:
+  OUT 1 after a power on). The rows are 14 px now (twelve rows and CLEAR ALL above the footer).
+- SAMPLR's colours: petrol (blue-green slate background, a peach waveform, golden first finger, a raspberry selection, sky-blue second).
+- The markers: 1 px with the dark edge (the arp's current spot 2 px), the grain bracket 1 px.
+
+## Build 103 (LOOPER OUT)
+
+- Looper SETUP: a third output row, LOOPER OUT (OUT 1 / 2 / 3), for the looper's tracks (`LOOPER_O_ROUTE`, the old unused slot; `d->lo_l / lo_r`,
+  set by `out_bus` as for the drone and SAMPLR). The looper's input monitor (MON) stays on Out 1. SOURCE MIX still records Out 1 only.
+  Rows are 13 px now (thirteen rows and CLEAR ALL).
+
+## Build 104 (pad recorder: SAMPLR as an input; LOOPER is the tracks alone)
+
+- The pad recorder's Rec Input list is now L+R / Left / Right / Resam / DRONE / LOOPER / SAMPLR. LOOPER is the looper's tracks alone (it was
+  the looper and SAMPLR together), SAMPLR is SAMPLR alone. Both are captured at the engines, so they record the same whichever output
+  (LOOPER OUT / SAMPLR OUT) they play on. Saved with the project (bbmod.bin misc[9] 0..3). Resam still records the whole Out 1 mix.
+
+## Build 105 (Trigger2MIDI's detector in ITCM)
+
+- Measured (`Trigger2MIDI` input L on, which it is by default; 128-frame block, Unicorn instruction counts): ~16 k instructions with silence,
+  ~18 k with signal (about 140 a frame), ~34 k with both inputs on. Roughly 3-4 % of a block (6-7 % with both inputs) with the code running from
+  flash; the drone is ~200 k a block, SAMPLR three tracks ~80 k. It cannot be switched off while the input is on (it has to hear the next hit).
+- `t2m_process` and `t2m_audio` now run from ITCM (zero wait states, no instruction cache misses); the output is the same (the t2m tests are
+  unchanged). ITCM: 59,712 of 65,024 bytes.
+
+## Build 106 (Trigger2MIDI engine switch)
+
+- TRIG page switch row: a seventh button, ENG (right end). Off: the detector does not run at all (no level measurement either, the meters fall to
+  nothing, a held note is ended once), the "TRIG" in the top bar turns red. On by default after a boot; not saved. With it off the cost is the clock
+  monitor only (~100 instructions a block).
+
+## Build 107 (TRIG: SENS / THRESH only on the front sheet; less cautious guard; Munchi's reverb in ITCM)
+
+- TRIG HITS sheet: only SENS and THRESH are shown and turned (knobs 1, 2); RETRIG (ring guard) and MASK (dead time) stay on the DETECT sheet.
+  With the engine off (ENG) the pads say ENGINE OFF in red instead of READY.
+- The user found that Munchi (the delay type) was the cause of the overload pulses: with it off everything ran smoother. Measured
+  (`test_munchi.py`, `prof_munchi`): ~106 k instructions a 128-frame block (about 830 a frame), more than SAMPLR's three tracks and half the drone's:
+  Reverb::Process 43 %, delayVoice::Read 19 %, munchi_process 18 %, processDelay 18 %. The reverb and the voice reader (3.4 KB) run from ITCM again
+  (63,136 of 65,024 bytes); the output is the same. The rest would not fit (it needs 6.4 KB more than is free).
+- Guard, less cautious: the in-block cap's base 93 % (was 88 %; +2 % per engine below it, always bounded by the room the tail of the block needs
+  lately, which is the real limit); a leader that is held out lowers the marks of the engines below it by half the share it wants (was all of it,
+  floor 760, was 600: opening SAMPLR's page cut the drone at once); the drone stays out at most ~1 s after repeated spikes (was ~2 s).

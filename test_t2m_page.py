@@ -27,7 +27,7 @@ def check(label, cond, detail=""):
 
 
 FIELDS = ["on", "port", "last_vel", "last_note", "hits", "peak", "blocks", "hit_blk", "looped", "looped_lost", "hist_n", "hist", "ui", "p",
-          "clk"]
+          "clk", "eng"]
 os.makedirs("out/t2m_test", exist_ok=True)
 open("out/t2m_test/off2.c", "w").write(
     '#include <stdio.h>\n#include <stddef.h>\n#include "../../src/t2m_bb.h"\nint main(void){\n'
@@ -68,7 +68,8 @@ MSG = 0x2403A000
 
 
 def knob(i, counts):
-    """As test_looper.py: knob i (track i's), counts; the left encoders arrive swapped."""
+    """The row's i-th value: the encoders top-left, top-right, bottom-left, bottom-right (as on DRONE-8); the left encoders arrive swapped."""
+    i = (1, 2, 0, 3)[i]
     i = i ^ 1 if i < 2 else i
     e.uc.mem_write(MSG, struct.pack("<H", 0x32) + bytes(10) + struct.pack("<h", i) + bytes(2) + struct.pack("<h", counts))
     e.call("looper_view_msg", VIEW, MSG)
@@ -92,11 +93,13 @@ e.call("solo_mix_pressed", APP, 0, 0, 0)
 check("MIX on the TRIG page goes to the Looper's MAIN tab", screens == [] and e.r8(PAGE + 76) == 0, (screens, e.r8(PAGE + 76)))
 e.call("looper_page_goto", VIEW, 5)
 e.call("solo_song_pressed", APP, 0, 0, 0)
-check("SONG from SAMPLR again TRIG, then the MCL page, then the stock song screen (0x2d)", e.r8(PAGE + 76) == 5, e.r8(PAGE + 76))
+check("SONG from SAMPLR again TRIG, then DRONE-8, then MCL, then the stock song screen (0x2d)", e.r8(PAGE + 76) == 5, e.r8(PAGE + 76))
 e.call("solo_song_pressed", APP, 0, 0, 0)
-check("... the MCL page (mode 6, tab 7), no screen change", screens == [] and e.r8(PAGE + 76) == 6, (screens, e.r8(PAGE + 76)))
 e.call("looper_page_tab")
-check("looper_page_tab reports MCL as 7", e.uc.reg_read(A.UC_ARM_REG_R0) == 7)
+check("... then the DRONE-8 page (tab 7), no screen change", screens == [] and e.uc.reg_read(A.UC_ARM_REG_R0) == 7, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
+e.call("solo_song_pressed", APP, 0, 0, 0)
+e.call("looper_page_tab")
+check("... then the MCL page (tab 8), no screen change", screens == [] and e.uc.reg_read(A.UC_ARM_REG_R0) == 8, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
 e.call("solo_song_pressed", APP, 0, 0, 0)
 check("... the stock song screen", screens == [0x2D], screens)
 
@@ -236,6 +239,10 @@ f = picture("detect_floor")
 check("... and the cell shows it", inside(f))
 knob(2, 40 * 120)
 check("FLOOR up stops at -40 dB", fl(O["p_floor_db"]) == -40.0)
+tap(192, 134 + 10)
+tap(192, 134 + 10)
+check("a fast double tap on NOISE FLOOR: back to the patch's -60 dB", fl(O["p_floor_db"]) == -60.0, fl(O["p_floor_db"]))
+knob(2, 40 * 120)
 knob(2, -40 * 20)
 check("... back to the patch's -60 dB", fl(O["p_floor_db"]) == -60.0, fl(O["p_floor_db"]))
 touch("down", 3 + 120 + 10, 216)
@@ -256,6 +263,10 @@ check("TRS: input R's TRS output off (USB stays)", e.r8(MEM + O["port"] + 1) == 
 tap(180, 26)
 tap(20, 26)
 check("IN L: back to input L", e.r8(MEM + O["ui"]) == 0)
+tap(293, 26)
+check("ENG: the engine switch goes off", e.r8(MEM + O["eng"]) == 0, e.r8(MEM + O["eng"]))
+tap(293, 26)
+check("ENG: and on again", e.r8(MEM + O["eng"]) == 1)
 
 # ---- OUT rows (d 40, 80; 40 px each): NOTE VEL LEN CHAN / CC CC VAL
 tap(150, 40 + 10)

@@ -47,9 +47,10 @@ def set_interp(v, row=PAD_ROW, col=PAD_COL, sat=0):
     """The app's record of the pad (what the screen shows and presets save)."""
     store = APP_PADS + row * 0xF0 + col * 0x30
     arr = ARR + (row * 4 + col) * 0x40
-    e.uc.mem_write(arr, struct.pack("<HHI", 0x8B, 0, 0) + struct.pack("<HHI", 0xF1, 0, v) + struct.pack("<HHI", 0xDB, 0, sat))
+    e.uc.mem_write(arr, struct.pack("<HHI", 0x8B, 0, 0) + struct.pack("<HHI", 0xF1, 0, v) + struct.pack("<HHI", 0xDB, 0, sat) +
+                   struct.pack("<HHI", 0x1CF, 0, 1))                        # (Slope 24 dB: the model below is the two-stage filter)
     e.w32(store + 4, arr)
-    e.uc.mem_write(store + 10, struct.pack("<H", 3))
+    e.uc.mem_write(store + 10, struct.pack("<H", 4))
 
 
 def setup(knob, res=0.0, interp=0):
@@ -286,7 +287,7 @@ reset()
 setup(0.0, interp=7 + 1)
 l, _ = run(sine(997), pad=0)
 check("no Interp location passed: no crunch", all(abs(p - q) < 1e-7 for p, q in zip(l, sine(997))))
-for v, name in ((0, "Normal"), (1, "HighQ"), (14, "a value past the list")):
+for v, name in ((0, "Normal"), (1, "HighQ"), (15, "a value past the list")):   # 14 is LIRA (lira_pad.c)
     reset()
     setup(0.0, interp=v)
     l, _ = run(sine(997))
@@ -351,19 +352,23 @@ def page(addr):
     return ids
 
 
-check("Sample pad page: Saturation, Interp, then the rest", page(0x080EFD38) == [0xDB, 0xF1, 0x93, 0x95, 0x62, 0xA0, 0xC4, 0x6A, 0xD0, 0xF5], [hex(v) for v in page(0x080EFD38)])
-check("Multisample pad page: same", page(0x080EFBD0) == [0xDB, 0xF1, 0x93, 0x95, 0x62, 0xA0, 0xF5, 0xC4, 0x6A], [hex(v) for v in page(0x080EFBD0)])
-check("Slicer pad page: same (Interp added)", page(0x080EF900) == [0xDB, 0xF1, 0x93, 0x95, 0x62, 0xC4, 0xA1, 0x6A, 0xF5], [hex(v) for v in page(0x080EF900)])
-check("Clip pad page: same (Interp added)", page(0x080EFA68) == [0xDB, 0xF1, 0x93, 0x95, 0x62, 0xC4, 0xA1, 0x6A, 0xF5], [hex(v) for v in page(0x080EFA68)])
+check("Sample pad page: Saturation, Interp, Slope, then the rest", page(0x080EFD38) == [0xDB, 0xF1, 0x1CF, 0x93, 0x95, 0x62, 0xA0, 0xC4, 0x6A, 0xD0, 0xF5], [hex(v) for v in page(0x080EFD38)])
+check("Multisample pad page: same", page(0x080EFBD0) == [0xDB, 0xF1, 0x1CF, 0x93, 0x95, 0x62, 0xA0, 0xF5, 0xC4, 0x6A], [hex(v) for v in page(0x080EFBD0)])
+check("Slicer pad page: same (Interp added)", page(0x080EF900) == [0xDB, 0xF1, 0x1CF, 0x93, 0x95, 0x62, 0xC4, 0xA1, 0x6A, 0xF5], [hex(v) for v in page(0x080EF900)])
+check("Clip pad page: same (Interp added)", page(0x080EFA68) == [0xDB, 0xF1, 0x1CF, 0x93, 0x95, 0x62, 0xC4, 0xA1, 0x6A, 0xF5], [hex(v) for v in page(0x080EFA68)])
 
 # --- Interp list
 seen = {}
-e.stub(0x0808C0D8, lambda: seen.update(names=e.arg(3), count=e.r32(e.uc.reg_read(UC_ARM_REG_SP)), param=e.arg(1), label=e.cstr(e.arg(2)), xml=e.cstr(e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 4))))
+e.stub(0x0808C0D8, lambda: e.arg(1) == 0xF1 and seen.update(names=e.arg(3), count=e.r32(e.uc.reg_read(UC_ARM_REG_SP)), param=e.arg(1), label=e.cstr(e.arg(2)), xml=e.cstr(e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 4))))
+e.stub(0x0808C12C)                               # LIRA's controls (test_lira_pad.py checks them)
+e.stub(0x0804436C, value=0)                      # LIRA's memory: none here, LIRA stays off
+e.uc.mem_map(0x38800000, 0x1000)                 # backup SRAM
+e.uc.mem_map(0x58024000, 0x1000)                 # RCC + PWR
 e.w32(STACK, 2)
 e.w32(STACK + 4, 0x080CC794)
 e.call("interp_register", 0x24001000, 0xF1, 0, 0x080EB7E0)
 names = [e.cstr(e.r32(seen["names"] + 4 * i)) for i in range(seen["count"])]
-check("Fidelity list: Normal, HighQ, SP1200, SP-12, S950, MPC60, SP Raw, 16k .. 2k", names == ["Normal", "HighQ", "SP1200", "SP-12", "S950", "MPC60", "SP Raw", "16k", "12k", "10k", "8k", "6k", "4k", "2k"] and seen["param"] == 0xF1, names)
+check("Fidelity list: Normal, HighQ, SP1200, SP-12, S950, MPC60, SP Raw, 16k .. 2k, DRONE-8", names == ["Normal", "HighQ", "SP1200", "SP-12", "S950", "MPC60", "SP Raw", "16k", "12k", "10k", "8k", "6k", "4k", "2k", "DRONE-8"] and seen["param"] == 0xF1, names)
 
 check("label reads 'Fidelity:', xml name stays 'interpqual'", seen["label"] == "Fidelity:" and seen["xml"] == "interpqual", (seen["label"], seen["xml"]))
 
@@ -446,5 +451,62 @@ set_interp(0, sat=1000)
 reset()
 l = run(sine(997))[0]
 check("Saturation in Normal Fidelity: no drive here (the warm saturation in od.c handles it)", all(abs(p - q) < 1e-7 for p, q in zip(l, sine(997))))
+# Slope (0x1cf, per pad): 12 dB = the resonant stage alone
+def db(x):
+    return 20 * math.log10(max(x, 1e-9))
+
+
+def set_slope(v, row=PAD_ROW, col=PAD_COL):
+    store = APP_PADS + row * 0xF0 + col * 0x30
+    arr = ARR + (row * 4 + col) * 0x40
+    e.uc.mem_write(arr, struct.pack("<HHI", 0x8B, 0, 0) + struct.pack("<HHI", 0xF1, 0, 1) + struct.pack("<HHI", 0xDB, 0, 0) + struct.pack("<HHI", 0x1CF, 0, v))
+    e.w32(store + 4, arr)
+    e.uc.mem_write(store + 10, struct.pack("<H", 4))
+
+
+def level_at(hz, slope):
+    reset()
+    setup(-0.5, 0.0, 1)
+    set_slope(slope)
+    for k in range(6):
+        out, _ = run(sine(hz, 256, 256 * k))
+    return max(abs(v) for v in out)
+
+
+cut_hz = curve(0x08060640, 0.5)
+l24, l12 = level_at(cut_hz * 8, 1), level_at(cut_hz * 8, 0)      # (0 = 12 dB, the default; 1 = 24 dB)
+check("Slope 12 dB (the default): three octaves above the cutoff it lets through far more than 24 dB (about -36 vs -72 dB of a 4-pole)",
+      db(l12 / 0.5) > db(l24 / 0.5) + 20 and db(l12 / 0.5) < -20, (round(db(l12 / 0.5), 1), round(db(l24 / 0.5), 1)))
+from unicorn import UC_HOOK_CODE
+cnt = [0]
+hk = e.uc.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: cnt.__setitem__(0, cnt[0] + 1))
+work = []
+for sl in (1, 0):
+    reset()
+    setup(-0.5, 0.5, 1)
+    set_slope(sl)
+    run(sine(200, 128), sine(200, 128))
+    cnt[0] = 0
+    run(sine(200, 128, 128), sine(200, 128, 128))
+    work.append(cnt[0])
+e.uc.hook_del(hk)
+check("... and costs about half (instructions for a stereo voice, 128 frames: 24 dB / 12 dB)", work[1] < 0.6 * work[0], work)
+set_slope(0)
+
+# the pad's Interp is looked up once a block per pad (a keys sequence: one pad, many voices)
+lookups = []
+e.stub(0x08093E9C, lambda: (lookups.append(e.arg(1)), e.uc.reg_write(UC_ARM_REG_R0, 1)))   # (Interp = HighQ for every lookup)
+e.w32(0x2405FFD0, 0x43505532)
+e.w32(0x2405FFD4, 1000)
+setup(-0.5, 0.5, 1)
+lookups.clear()
+for _ in range(4):
+    run(sine(200, 64), sine(200, 64))
+check("one block, four voices of the same pad: the Interp is looked up once", lookups.count(0xF1) == 1, lookups)
+e.w32(0x2405FFD4, 2000)
+run(sine(200, 64), sine(200, 64))
+check("... and again in the next block (a change on the screen is seen a block later at most)", lookups.count(0xF1) == 2, lookups)
+e.w32(0x2405FFD0, 0)
+
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

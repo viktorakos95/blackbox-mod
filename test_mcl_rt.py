@@ -61,7 +61,7 @@ def boot(e):
 # --- layout of the image
 blob = open("out/mcl.bin", "rb").read()
 check("blob sits at 0x08120000, entry table first", image[BLOB - BASE:BLOB - BASE + len(blob)] == blob and bsym["mcl_entry_table"] == BLOB)
-check("blob fits the proven window (ends below 0x08180000)", BLOB + len(blob) <= 0x08180000, hex(BLOB + len(blob)))
+check("blob fits below the ITCM image (ends below 0x081D0000)", BLOB + len(blob) <= 0x081D0000, hex(BLOB + len(blob)))
 cave_end = 0x080F1E78 + len(open("out/cave.bin", "rb").read())
 check("main cave ends below the blob; 0xFF between", cave_end <= BLOB and image[cave_end - BASE:BLOB - BASE] == b"\xff" * (BLOB - cave_end), hex(cave_end))
 d = [i for i in range(len(stock)) if stock[i] != image[i]]

@@ -12,5 +12,5 @@ def hook(at, stock, name):
 
 PATCHES = [
     hook(0x08059AB6, 0x0807081C, "od_process_a"), # sample pads (stands aside in a Fidelity machine mode)
-    hook(0x08068B12, 0x0807081C, "od_process"),   # clip / slicer pads
+    hook(0x08068B12, 0x0807081C, "od_process_flash"),   # clip / slicer pads
 ]

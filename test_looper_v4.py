@@ -98,6 +98,8 @@ def boot():
     e.call("looper_boot", ENGINE, count=200_000_000)
     e.uc.mem_write(STATE + 164 + 9 * 4, struct.pack("<f", 0.0))
     e.uc.mem_write(STATE + 164 + 11 * 4, struct.pack("<f", 0.0))
+    e.uc.mem_write(STATE + 164 + 1 * 4, struct.pack("<f", 0.0))               # SYNC off and QUANT 1/16: what the checks assume (the defaults are SYNC on, 1 BAR)
+    e.uc.mem_write(STATE + 164 + 2 * 4, struct.pack("<f", 3.0))
 
 
 def block(l, r=None, base=0.0):
@@ -296,6 +298,7 @@ blocks(5)
 def med(v):
     d = sorted(abs(y - x) for x, y in zip(v, v[1:]) if abs(y - x) < 0.1)
     return d[len(d) // 2]
+opt(O_PITCH, 0)                                   # (GRAIN is the default now)
 ev(0, HALF)
 blocks(5)
 tape = med(flat2(20))
@@ -346,7 +349,7 @@ check("clear all: every track empty, no master loop", all(mode(t) == EMPTY for t
 # ---------------------------------------------------------------- sync: quantized start / stop, bars, transport restart
 boot()
 opt(O_SYNC, 1)
-opt(O_QUANT, 2)                                 # 1/16: 6000 frames at the default 120 bpm
+opt(O_QUANT, 3)                                 # 1/16: 6000 frames at the default 120 bpm
 ev(0, REC_DOWN)
 started = None
 for i in range(40):
@@ -387,7 +390,7 @@ blocks(70)
 # rounding up: released short of the bar line, recording runs on to it; and the grid itself
 boot()
 opt(O_SYNC, 1)
-opt(O_QUANT, 1)                                 # 1/8: 12000 frames
+opt(O_QUANT, 2)                                 # 1/8: 12000 frames
 ev(0, REC_DOWN)
 for _ in range(400):
     block([0.2] * N)
@@ -405,7 +408,7 @@ opt(O_SYNC, 0)
 # ---------------------------------------------------------------- the first loop recorded with sync, then sync off
 boot()
 opt(O_SYNC, 1)
-opt(O_QUANT, 2)
+opt(O_QUANT, 3)
 ev(0, REC_DOWN)
 blocks(400, 0.2)
 ev(0, REC_UP)
@@ -537,7 +540,7 @@ boot()
 opt(O_LEN, 0)
 hold(0, 200, tone)
 opt(O_SYNC, 1)
-opt(O_QUANT, 2)                                  # 1/16: 6000 frames = 23.4 blocks
+opt(O_QUANT, 3)                                  # 1/16: 6000 frames = 23.4 blocks
 opt(O_LEN, 2)
 blocks(7)
 ev(1, REC_DOWN); blocks(2)
@@ -599,13 +602,18 @@ tcmd(0)
 blocks(3)
 check("PLAY after STOP: plays from the start", 0 < st(POS) <= 4 * N, st(POS))
 
+# defaults of a fresh boot: SYNC on, QUANT 1 BAR, SPEED PITCH GRAIN
+lay_pool()
+e.uc.mem_write(0xC0000000, b"\x11" * 0x100)
+e.call("looper_boot", ENGINE, count=200_000_000)
+check("defaults: SYNC on, QUANT 1 BAR (0), SPEED PITCH GRAIN (1)", opt_get(O_SYNC) == 1.0 and opt_get(O_QUANT) == 0.0 and opt_get(O_PITCH) == 1.0, (opt_get(O_SYNC), opt_get(O_QUANT), opt_get(O_PITCH)))
+
 # stock route: sends are handed to the FX nodes' buses instead of the looper's own effects
 boot()
 hold(0, 60, tone)
 param(0, P_SD, 1.0)
 param(0, P_SR, 0.5)
 blocks(3)
-check("route STOCK (default): the looper's own delay is silent, the sends are kept for the stock nodes", opt_get(O_ROUTE) == 0.0 if False else True)
 INJ = []
 BUSFX = 0x30020000
 e.stub(0x0805F37C, lambda: None, value=0x30038300)
@@ -617,11 +625,6 @@ for which in (0, 1):
     check(f"... and the bus is not silent (node {which})", any(abs(v) > 1e-4 for v in l))
 e.call("looper_fx_inject", OBJ, BUFSET, 0)
 check("once per block per effect", e.uc.reg_read(A.UC_ARM_REG_R0) == 0)
-opt(O_ROUTE, 1)
-blocks(1)
-e.call("looper_fx_inject", OBJ, BUFSET, 1)
-check("route OWN: nothing is injected", e.uc.reg_read(A.UC_ARM_REG_R0) == 0)
-opt(O_ROUTE, 0)
 
 # the filter switches on and off without a click
 boot()
@@ -669,7 +672,7 @@ def cblock(n, l=0.0):
 
 boot()
 opt(O_SYNC, 1)
-opt(O_QUANT, 2)                                  # the grid is exact sequencer ticks: 1/16 = 240 (this fixture's clock runs 40 units a block)
+opt(O_QUANT, 3)                                  # the grid is exact sequencer ticks: 1/16 = 240 (this fixture's clock runs 40 units a block)
 CLKPOS[0] = 50000 + 7
 cblock(4)
 ev(0, REC_DOWN)
@@ -736,6 +739,7 @@ vals = sorted(set(round(v, 5) for v in cr[0]))
 check("crunch: few distinct levels and held samples", len(vals) < 40 and any(cr[0][i] == cr[0][i + 1] for i in range(0, N - 1)), (len(vals)))
 param(0, P_CRUNCH, 0.0)
 blocks(2)
+opt(O_PITCH, 0)
 ev(0, HALF)
 blocks(2)
 check("half speed set", tr(0, T_HALF) == 1)
@@ -768,6 +772,7 @@ def slope(v):
     m = sorted(abs(x) for x in d)
     return (m[len(m) // 2] if m else 0.0), sum(d) / max(1, len(d))
 
+opt(O_PITCH, 0)
 blocks(5)
 base_abs, base_sgn = slope(flat(4))
 check("blooper: plain loop first (rising saw)", base_sgn > 0 and base_abs > 0, (base_abs, base_sgn))
@@ -838,20 +843,33 @@ param(0, P_PTCH, 0.0)
 blocks(30)
 sa, ss = slope(flat(4))
 check("PTCH off: back to the loop", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
-param(0, P_DROP, -0.6)
-quiet = 0
-for _ in range(1200):
-    _, o = block([0.0] * N)
-    if max(abs(x) for x in o[0]) < 0.02:
-        quiet += 1
-check("DROP (random): some blocks are silent, not all", 5 < quiet < 1100, quiet)
+def wob_levels(nb):
+    ls, rs = [], []
+    for _ in range(nb):
+        _, o = block([0.0] * N)
+        ls.append((sum(x * x for x in o[0]) / N) ** .5)
+        rs.append((sum(x * x for x in o[1]) / N) ** .5)
+    return ls, rs
+param(0, P_DROP, 0.0)
+blocks(60)
+off_l, off_r = wob_levels(180)                         # (180 blocks = three passes of the 60-block loop: the same places in the loop each time)
+check("WOB off: the level is the loop's own", max(off_l) > 0.05, max(off_l))
+param(0, P_DROP, -0.8)
+blocks(60)
+ls, rs = wob_levels(180)
+rl = [a / b if b > 1e-9 else 1.0 for a, b in zip(ls, off_l)]
+rr = [a / b if b > 1e-9 else 1.0 for a, b in zip(rs, off_r)]
+slow_min = min(rl)
+check("WOB left (slow, wide auto-pan): left and right swing against each other",
+      min(rl) < 0.5 and min(rr) < 0.5 and max(rl) > 0.9 and any(a < 0.5 < 0.9 < b for a, b in zip(rl, rr)) and any(b < 0.5 < 0.9 < a for a, b in zip(rl, rr)), (min(rl), max(rl), min(rr), max(rr)))
 param(0, P_DROP, 0.8)
-quiet = 0
-for _ in range(300):
-    _, o = block([0.0] * N)
-    if max(abs(x) for x in o[0]) < 0.02:
-        quiet += 1
-check("DROP (pattern): some blocks are silent, not all", 10 < quiet < 290, quiet)
+blocks(60)
+ls, rs = wob_levels(180)
+rl = [a / b if b > 1e-9 else 1.0 for a, b in zip(ls, off_l)]
+rr = [a / b if b > 1e-9 else 1.0 for a, b in zip(rs, off_r)]
+check("WOB right (fast, narrow auto-pan): still swings against each other, but less deep than the slow one",
+      slow_min + 0.2 < min(rl) < 0.8 and max(rl) > 0.9 and any(a < b - 0.1 for a, b in zip(rl, rr)) and any(b < a - 0.1 for a, b in zip(rl, rr)), (slow_min, min(rl), max(rl), min(rr), max(rr)))
+param(0, P_DROP, 0.0)
 param(0, P_DROP, 0.0)
 blocks(60)
 param(0, P_STAB, 1.0)
@@ -875,27 +893,7 @@ check("RPT 10 %: an overdub pass fades the old loop to about half (time based)",
 # ---------------------------------------------------------------- sends
 param(0, P_SD, 1.0)
 param(0, P_SR, 0.0)
-opt(O_DRET, 0.0)
-opt(O_RRET, 0.0)
 blocks(5)
-_, dry = block([0.0] * N)
-opt(O_DRET, 1.0)
-opt(O_DTIME, 0)
-acc = 0.0
-nz = 0
-for _ in range(200):
-    _, o = block([0.0] * N)
-    acc += sum(abs(v) for v in o[0])
-check("delay send: the wet signal is added when the return is up", acc > 1.0 and all(v == v and abs(v) < 4 for v in o[0]), acc)
-param(0, P_SD, 0.0)
-opt(O_DRET, 0.0)
-param(0, P_SR, 1.0)
-opt(O_RRET, 1.0)
-acc = 0.0
-for _ in range(100):
-    _, o = block([0.0] * N)
-    acc += sum(abs(v) for v in o[0])
-check("reverb send: a tail is added and stays finite", acc > 1.0 and all(v == v and abs(v) < 4 for v in o[0]), acc)
 param(0, P_SR, 0.0)
 mute = 0
 ev(0, MUTE_DOWN); ev(0, MUTE_UP)

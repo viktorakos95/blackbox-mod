@@ -242,9 +242,9 @@ static int row_h(int foot, int sheet)
 static int cell_x(int w, int c) { return 4 + c * ((w - 8) / 4); }
 static int cell_w(int w) { return (w - 8) / 4 - 3; }
 
-/* switch row buttons: 0 IN L, 1 IN R, 2 ON, 3 TRS, 4 USB, 5 INT (the Blackbox's own MIDI in) */
-static const int16_t sw_x[6] = {4, 46, 100, 150, 192, 234};
-static const int16_t sw_w[6] = {38, 38, 40, 38, 38, 38};
+/* switch row buttons: 0 IN L, 1 IN R, 2 ON, 3 TRS, 4 USB, 5 INT (the Blackbox's own MIDI in), 6 ENG (the whole engine: off = no detector at all) */
+static const int16_t sw_x[7] = {4, 46, 100, 150, 192, 234, 276};   /* (6: ENG, the engine switch) */
+static const int16_t sw_w[7] = {38, 38, 40, 38, 38, 38, 35};
 
 static float db_of(float x)                          /* 20 log10(x) for the meter, rough */
 {
@@ -285,8 +285,8 @@ static void draw_pads(const struct t2m_mem *m, int w, int d, int bh)
 {
     int bw = (w - 12) / 2;
     for (int k = 0; k < T2M_INPUTS; k++) {
-        int x = 4 + k * (bw + 4), on = m->on[k], l = on && lit(m, k), sel = (m->ui.in & 1) == k;
-        int fc = on ? (k ? C_YELLOW : C_CYAN) : C_RAIL, ink = l ? C_BLACK : on ? C_WHITE : C_GREY;
+        int x = 4 + k * (bw + 4), on = m->on[k] && m->eng, l = on && lit(m, k), sel = (m->ui.in & 1) == k;
+        int fc = on ? (k ? C_YELLOW : C_CYAN) : C_RAIL, ink = l ? C_BLACK : on ? C_WHITE : !m->eng ? C_RED : C_GREY;
         if (l)
             lp_box(x, d, bw, bh, vel_color(m->last_vel[k]));
         lp_frame(x, d, bw, bh, fc, sel ? 2 : 1);
@@ -295,7 +295,9 @@ static void draw_pads(const struct t2m_mem *m, int w, int d, int bh)
         *p = 0;
         lp_text(x + 5, d + 4, b, ink, 1);
         p = b;
-        if (!on)
+        if (!m->eng)
+            p = put_s(p, "ENGINE OFF");
+        else if (!on)
             p = put_s(p, "OFF");
         else if (!m->hits[k])
             p = put_s(p, "READY");
@@ -526,7 +528,7 @@ void t2m_page_draw(int w, int foot)
     }
 
     /* top bar: both inputs at a glance */
-    lp_text(6, 3, "TRIG", C_CYAN, 1);
+    lp_text(6, 3, "TRIG", m->eng ? C_CYAN : C_RED, 1);
     for (int i = 0; i < T2M_INPUTS; i++) {
         p = b;
         *p++ = i ? 'R' : 'L';
@@ -544,11 +546,11 @@ void t2m_page_draw(int w, int foot)
 
     /* switch row (every sheet) */
     int d = TOP + 2;
-    static const char *const sw[6] = {"IN L", "IN R", 0, "TRS", "USB", "INT"};
-    for (int i = 0; i < 6; i++) {
-        int on = i < 2 ? k == i : i == 2 ? m->on[k] : i == 3 ? (m->port[k] & T2M_PORT_TRS) : i == 4 ? (m->port[k] & T2M_PORT_USB) : (m->port[k] & T2M_PORT_INT);
-        const char *s = i == 2 ? (m->on[k] ? "ON" : "OFF") : sw[i];
-        int c = i == 2 && !on ? C_RED : on ? C_CYAN : C_RAIL;
+    static const char *const sw[7] = {"IN L", "IN R", 0, "TRS", "USB", "INT", "ENG"};
+    for (int i = 0; i < 7; i++) {
+        int on = i < 2 ? k == i : i == 2 ? m->on[k] : i == 3 ? (m->port[k] & T2M_PORT_TRS) : i == 4 ? (m->port[k] & T2M_PORT_USB) : i == 5 ? (m->port[k] & T2M_PORT_INT) : m->eng;
+        const char *s = i == 2 ? (m->on[k] ? "ON" : "OFF") : i == 6 ? (m->eng ? "ENG" : "OFF") : sw[i];
+        int c = (i == 2 || i == 6) && !on ? C_RED : on ? C_CYAN : C_RAIL;
         lp_frame(sw_x[i], d, sw_w[i], BAR_H - 4, c, 1);
         lp_text_c(sw_x[i], d + 4, sw_w[i], s, on ? C_WHITE : C_GREY, 1);
     }
@@ -569,7 +571,7 @@ void t2m_page_draw(int w, int foot)
         lp_text(w - 60, md + 13, b, C_LIGHT, 1);
         lp_text(6, md + 24, "KNOBS", C_REC, 1);                       /* the four knobs are live on this sheet: red */
         lp_text(6 + 6 * 6, md + 24, "ACTIVE", C_REC, 1);
-        lp_text(6, md + 34, "SENSITIVITY THRESHOLD RING GUARD DEAD TIME", C_LIGHT, 1);
+        lp_text(6, md + 34, "SENSITIVITY THRESHOLD", C_LIGHT, 1);        /* (knobs 1 and 2; the guards are on the DETECT sheet) */
         draw_hist(m, w, md + 46, foot - 12);
         return;
     }
@@ -610,34 +612,36 @@ void t2m_page_draw(int w, int foot)
 }
 
 /* A touch at x / d (page coordinates) above the footer. */
-void t2m_page_touch(int x, int d, int w, int foot)
+int t2m_page_touch(int x, int d, int w, int foot)
 {
     struct t2m_mem *m = t2m_mem();
     if (!m)
-        return;
+        return -1;
     int k = UI->in & 1, sheet = UI->sheet < SHEETS ? UI->sheet : 0;
     if (sheet == SH_CLK) {                            /* anywhere on the CLK sheet: start the numbers again */
         m->clk.reset = 1;
-        return;
+        return -1;
     }
     if (d >= TOP && d < TOP + BAR_H) {
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 7; i++) {
             if (x < sw_x[i] || x >= sw_x[i] + sw_w[i])
                 continue;
             if (i < 2)
                 UI->in = (uint8_t)i;
             else if (i == 2)
                 m->on[k] = !m->on[k];
+            else if (i == 6)
+                m->eng = !m->eng;
             else
                 m->port[k] ^= (uint8_t)(i == 3 ? T2M_PORT_TRS : i == 4 ? T2M_PORT_USB : T2M_PORT_INT);
         }
-        return;
+        return -1;
     }
     if (sheet == SH_HITS) {                           /* a tap on a pad shows that input */
         int pd = TOP + BAR_H + 2;
         if (d >= pd && d < pd + 50)
             UI->in = (uint8_t)(x >= w / 2 ? 1 : 0);
-        return;
+        return -1;
     }
     for (int r = 0; r < 3; r++) {
         int rd = rows_top(sheet) + r * row_h(foot, sheet);
@@ -645,9 +649,43 @@ void t2m_page_touch(int x, int d, int w, int foot)
             continue;
         UI->row = (uint8_t)r;
         int c = (x - 4) / ((w - 8) / 4), v = c < 4 ? sheet_vals[sheet - 1][r * 4 + c] : V_NONE;
-        if (v != V_NONE)
+        if (v != V_NONE) {
             UI->last = (uint8_t)v;
+            return v;
+        }
     }
+    return -1;
+}
+
+/* A value back to the patch's default (a double tap on it). */
+void t2m_page_reset(int v)
+{
+    struct t2m_mem *m = t2m_mem();
+    if (!m || v == V_NONE)
+        return;
+    int k = UI->in & 1;
+    const t2m_params *d = t2m_defaults();
+    t2m_params q = m->p[k];
+    switch (v) {
+    case V_SENS: q.sens = d->sens; break;
+    case V_THRESH: q.thresh = d->thresh; break;
+    case V_RETRIG: q.retrig = d->retrig; break;
+    case V_MASK: q.mask_ms = d->mask_ms; break;
+    case V_SCAN: q.scan_ms = d->scan_ms; break;
+    case V_STRICT: q.strict_db = d->strict_db; break;
+    case V_SPEED: q.speed_ms = d->speed_ms; break;
+    case V_CURVE: q.curve = d->curve; break;
+    case V_NOTE: q.note_on = d->note_on; q.note = d->note; break;
+    case V_VEL: q.vel_mode = d->vel_mode; q.vel_fixed = d->vel_fixed; if (q.scan_ms == 0.f) q.scan_ms = m->scan_saved[k]; break;
+    case V_LEN: q.len_mode = d->len_mode; q.len_ms = d->len_ms; break;
+    case V_CHAN: q.channel = d->channel; break;
+    case V_CC: q.cc_on = d->cc_on; q.cc_num = d->cc_num; break;
+    case V_CCVAL: q.cc_mode = d->cc_mode; q.cc_fixed = d->cc_fixed; break;
+    case V_BLEED: q.spec_strict = d->spec_strict; break;
+    case V_RANGE: q.spec_range = d->spec_range; break;
+    case V_FLOOR: q.floor_db = d->floor_db; break;
+    }
+    m->p[k] = q;
 }
 
 void t2m_page_sheet(int sheet)
@@ -664,7 +702,7 @@ int t2m_page_sheet_now(void)
     return m && UI->sheet < SHEETS ? UI->sheet : 0;
 }
 
-/* Knob 0..3 (the Looper page's order: track 1 .. 4) turns the shown row's value 0..3. */
+/* Knob 0..3 (the position in the row: the page maps the encoders top-left, top-right, bottom-left, bottom-right) turns the shown row's value 0..3. */
 void t2m_page_knob(int knob, int counts)
 {
     struct t2m_mem *m = t2m_mem();
@@ -675,6 +713,8 @@ void t2m_page_knob(int knob, int counts)
     if (!steps)
         return;
     int k = UI->in & 1, sheet = UI->sheet < SHEETS ? UI->sheet : 0;
+    if (sheet == SH_HITS && knob > 1)                 /* (the HITS sheet: SENS and THRESH only) */
+        return;
     int v = sheet == SH_HITS ? sheet_vals[0][knob] : sheet_vals[sheet - 1][(UI->row % 3) * 4 + knob];
     if (v == V_NONE)
         return;
@@ -712,7 +752,7 @@ uint32_t t2m_page_sig(void)
         h = (h ^ (uint32_t)(int)(db * 0.5f)) * 16777619u;             /* 2 dB steps of the meters */
         h = (h ^ (m->hits[i] + (uint32_t)lit(m, i) * 977u + m->looped[i] * 31u + m->looped_lost[i] * 7u)) * 16777619u;
     }
-    h = (h ^ (uint32_t)(m->on[0] | m->on[1] << 1 | m->port[0] << 2 | m->port[1] << 4 | m->ui.in << 6 | m->ui.row << 7 |
+    h = (h ^ (uint32_t)(m->on[0] | m->on[1] << 1 | m->port[0] << 2 | m->port[1] << 4 | m->eng << 20 | m->ui.in << 6 | m->ui.row << 7 |
                         m->ui.sheet << 9 | m->ui.last << 12)) * 16777619u;
     if (m->ui.sheet == SH_HITS) {                                     /* the history scrolls while it holds a hit */
         int fresh = 0;

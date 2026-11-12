@@ -30,7 +30,8 @@ struct t2m_mem {
     uint32_t looped_lost[T2M_INPUTS];/* ... that did not fit (its queue was full) */
     float scan_saved[T2M_INPUTS];    /* SCAN before VEL went fixed (which sets it to 0); restored when VEL goes back to DYN */
     uint8_t hist_n[T2M_INPUTS];      /* the history's write position */
-    uint8_t _r0[2];
+    uint8_t eng;                     /* the engine switch: 0 = nothing runs (no detector, no meters; what sounds is ended), set at boot */
+    uint8_t _r0[1];
     struct t2m_hit hist[T2M_INPUTS][T2M_HIST];
     struct {                         /* the TRIG page (src/t2m_page.c) */
         uint8_t in, row, sheet, last;/* the input shown, the row the knobs turn, the footer's sheet, the value last touched (0xff none) */
@@ -49,7 +50,9 @@ void t2m_seq(const void *seq, uint32_t lo, int32_t hi);   /* the stock sequencer
 
 /* the TRIG page (src/t2m_page.c), drawn and touched by src/looper_page.c */
 void t2m_page_draw(int w, int foot);
-void t2m_page_touch(int x, int d, int w, int foot);
+int t2m_page_touch(int x, int d, int w, int foot);          /* the value touched (a V_ code), else -1 */
+void t2m_page_reset(int v);                                  /* that value back to its default (a double tap) */
+const t2m_params *t2m_defaults(void);
 void t2m_page_knob(int knob, int counts);
 void t2m_page_sheet(int sheet);
 int t2m_page_sheet_now(void);        /* the sheet shown */

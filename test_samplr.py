@@ -508,14 +508,18 @@ check("loop: the slice repeats with its own length (1024 frames)", abs(o[5000] -
 touch(2, 0, 0, 0)
 play(3)
 check("loop: silent after the lift", max(abs(x) for x in play(20)[0]) < 1e-4)
-e.call("samplr_cycle", 2)                                      # latch on
+e.call("samplr_cycle", 2)                                      # latch on: in the slicer's LOOP mode it does not count (no loops that go on by themselves, no tap toggles)
 touch(0, 0, 5 * 64 + 10, 100)
 touch(2, 0, 0, 0)
 play(40)
-check("loop + latch: keeps looping after the lift", max(abs(x) for x in play()[0]) > 0.05)
-e.call("samplr_cycle", 2)                                      # latch off: the loop stops
-play(30)
-check("latch off stops the loop", max(abs(x) for x in play()[0]) < 1e-4)
+check("loop + latch: LATCH does not apply in LOOP mode: the loop ends with the finger", max(abs(x) for x in play()[0]) < 1e-4)
+touch(0, 0, 5 * 64 + 10, 100)                                  # a tap while another... a second tap does not toggle anything
+touch(2, 0, 0, 0)
+touch(0, 0, 8 * 64 + 10, 100)
+touch(2, 0, 0, 0)
+play(40)
+check("... and taps add and remove no loops", max(abs(x) for x in play()[0]) < 1e-4)
+e.call("samplr_cycle", 2)                                      # latch off again
 setb(OFF["qi"], 3)                                             # Q 1/16 = 6000 frames: a repeat on every grid line
 touch(0, 0, 5 * 64 + 10, 100)
 rec = []
@@ -607,31 +611,9 @@ check("gesture: CLR stops and clears", e.r8(SMP + OFF["g_layers"]) == 0 and e.r8
 play(40)
 check("gesture: silent after CLR", max(abs(x) for x in play(5)[0]) < 1e-4)
 
-# per-mode LATCH and tap-to-toggle slice loops
+# per-mode LATCH (the slicer's LOOP mode has none: no loops that go on by themselves)
 e.call("samplr_set_mode", 0)
 setb(OFF["qi"], 0)
-setb(OFF["loopm"], 1)
-e.call("samplr_cycle", 2)                                      # latch on for the slicer only
-check("latch is per mode: the slicer's bit only", e.r8(SMP + OFF["latchm"]) == 1, e.r8(SMP + OFF["latchm"]))
-touch(0, 0, 5 * 64 + 10, 100)                                  # tap slice 5
-touch(2, 0, 0, 0)
-touch(0, 0, 8 * 64 + 10, 100)                                  # the same finger taps slice 8: a second loop
-touch(2, 0, 0, 0)
-o = []
-for _ in range(30):
-    o += play()[0]
-loud = max(abs(x) for x in o[-1024:])
-touch(0, 1, 5 * 64 + 10, 100)                                  # another finger taps slice 5 again: only that loop stops
-touch(2, 1, 0, 0)
-play(30)
-o2 = []
-for _ in range(20):
-    o2 += play()[0]
-check("two latched loops, then a tap on one stops just that one (the other keeps going)", loud > 0.1 and 0.05 < max(abs(x) for x in o2[-1024:]) < loud * 0.95, (loud, max(abs(x) for x in o2[-1024:])))
-touch(0, 2, 8 * 64 + 10, 100)                                  # a third finger taps slice 8: stops it too
-touch(2, 2, 0, 0)
-play(30)
-check("... and a tap on the other stops it as well", max(abs(x) for x in play(5)[0]) < 1e-4)
 e.call("samplr_set_mode", 2)
 touch(0, 0, 300, 0)
 touch(2, 0, 0, 0)
@@ -663,7 +645,7 @@ check("release 80 ms: the tail runs past the slice end", tail > 0.01, tail)
 setb(OFF["rel"], 0)
 play(30)
 
-# a take that starts with a finger already down, and one that keeps a latched slice loop
+# a take that starts with a finger already down
 def gwait(cond, limit=420):
     k = 0
     while not cond() and k < limit:
@@ -686,36 +668,6 @@ check("take with a finger already down: the slice plays from the very start of t
 e.call("samplr_gest", 3)
 play(40)
 
-e.call("samplr_set_mode", 0)
-setb(OFF["loopm"], 1)
-e.call("samplr_cycle", 2)                                      # slicer latch on
-e.call("samplr_gest", 0)
-gwait(lambda: e.r8(SMP + OFF["g_run"]) == 1)
-play(49)
-touch(0, 0, 8 * 64 + 10, 100)                                  # a tap starts a latched loop at about block 50
-touch(2, 0, 0, 0)
-play(150)
-touch(0, 1, 8 * 64 + 10, 100)                                  # and a tap stops it at about block 200
-touch(2, 1, 0, 0)
-gwait(lambda: e.r8(SMP + OFF["g_layers"]) == 1)
-pas = []
-for b in range(750):                                           # two passes of the loop
-    pas.append(max(abs(x) for x in play()[0]))
-def active(lo, hi, off):
-    return all(pas[off + b] > 0.02 for b in range(lo, hi))
-def quiet(lo, hi, off):
-    return all(pas[off + b] < 1e-4 for b in range(lo, hi))
-# find the loop start of the first pass from the first sound
-first = next(b for b, v in enumerate(pas) if v > 0.02)
-base = first - 52 if first >= 52 else first
-check("a recorded latched loop plays on its own: sounding between its start and stop", all(pas[first + 10 + k] > 0.02 for k in range(0, 120)), first)
-check("... and is stopped by the recorded second tap", all(pas[first + 170 + k] < 1e-4 for k in range(0, 60)), first)
-second = next(b for b in range(first + 200, 750) if pas[b] > 0.02)
-check("... and starts again in the next pass of the loop (375 blocks later)", abs(second - first - 375) < 8, (first, second))
-e.call("samplr_cycle", 2)
-setb(OFF["loopm"], 0)
-e.call("samplr_gest", 3)
-play(60)
 
 # GRAIN: scan drift, pitch pattern, contour, warp spray; a mode switch ends the old mode's latch
 VOFF = struct_offsets(["v"])["v"]
@@ -763,12 +715,8 @@ play(80)
 e.call("samplr_gest", 3)
 setb(OFF["g_bars"], 1)
 e.call("samplr_set_mode", 0)
-setb(OFF["loopm"], 1)
-e.call("samplr_cycle", 2)                                      # slicer latch on
-touch(0, 0, 8 * 64 + 10, 100)                                  # a latched loop is already playing...
-touch(2, 0, 0, 0)
 play(20)
-e.call("samplr_gest", 0)                                       # ... when REC is pressed
+e.call("samplr_gest", 0)                                       # REC is pressed
 gwait(lambda: e.r8(SMP + OFF["g_run"]) == 1)
 vol_of = lambda: struct.unpack("<f", e.uc.mem_read(SMP + OFF["vol"], 4))[0]
 p1 = []
@@ -784,11 +732,7 @@ for b in range(375):
     o = play()[0]
     p2.append(max(abs(x) for x in o))
     vols.append(vol_of())
-check("a latched loop that played when the take began is in the take (it plays on in the next pass)", sum(1 for v in p2[10:60] if v > 0.02) > 40, p2[10:20])
-check("... and not doubled by the live one", max(p2[10:60]) < 1.4 * max(p1[10:60]), (max(p2[10:60]), max(p1[10:60])))
 check("the recorded encoder turn comes back: the volume is 1 early in the pass and has dropped after block 100", vols[50] > 0.9 and vols[200] < 0.2, (vols[50], vols[200], v_end))
-e.call("samplr_cycle", 2)
-setb(OFF["loopm"], 0)
 e.uc.mem_write(SMP + OFF["vol"], struct.pack("<f", 1.0))
 e.call("samplr_gest", 3)
 play(60)
@@ -1032,13 +976,12 @@ e.call("samplr_set_mode", 0)
 e.call("samplr_tracks")
 check("tracks: the memory holds six", e.uc.reg_read(A.UC_ARM_REG_R0) == 6, e.uc.reg_read(A.UC_ARM_REG_R0))
 SMP0 = SMP
-e.call("samplr_set_mode", 0)
-setb(OFF["loopm"], 1)
-setb(OFF["latchm"], 1)
-touch(0, 0, 3 * 64 + 10, 100)
+e.call("samplr_set_mode", 1)                                   # TAPE with LATCH: the hold goes on after the lift
+setb(OFF["latchm"], 2)
+touch(0, 0, 400, 100)
 touch(2, 0, 0, 0)
 play(8)
-check("tracks: track 0 has a latched slice loop", max(abs(x) for x in play()[0]) > 0.05)
+check("tracks: track 0 has a latched tape hold", max(abs(x) for x in play()[0]) > 0.05)
 e.call("samplr_track", 1, count=50_000_000)
 e.call("samplr")
 SMP = e.uc.reg_read(A.UC_ARM_REG_R0)
@@ -1055,11 +998,11 @@ e.call("samplr_track", 0, count=50_000_000)
 e.call("samplr")
 back = e.uc.reg_read(A.UC_ARM_REG_R0)
 SMP = SMP0
-check("tracks: back on track 0 (slicer, latched)", back == SMP0 and sm(OFF["mode"], "B") == 0 and sm(OFF["latchm"], "B") == 1)
-e.call("samplr_cycle", 2)                                      # LATCH off: the loop ends
+check("tracks: back on track 0 (tape, latched)", back == SMP0 and sm(OFF["mode"], "B") == 1 and sm(OFF["latchm"], "B") == 2)
+e.call("samplr_cycle", 2)                                      # LATCH off: the hold ends
 play(10)
-check("tracks: LATCH off on track 0 ends its loop", max(abs(x) for x in play()[0]) < 1e-3)
-setb(OFF["loopm"], 0)
+check("tracks: LATCH off on track 0 ends its hold", max(abs(x) for x in play()[0]) < 1e-3)
+e.call("samplr_set_mode", 0)
 
 # a take on track 1 goes on replaying while track 0 is shown
 e.call("samplr_track", 1, count=50_000_000)
@@ -1114,8 +1057,6 @@ check("loop: RESET gives the whole sample back", sm(OFF["lp_a"], "i") == 0 and s
 e.call("samplr_set_mode", 0)
 
 # FX: filter and the sends into the looper's delay and reverb; the level meter
-O_ROUTE = 10
-opt(O_ROUTE, 1)
 e.call("samplr_set_slices", 16)
 touch(0, 0, 3 * 64 + 10, 100)
 dry = [max(abs(x) for x in play()[0]) for _ in range(2)]
@@ -1130,32 +1071,34 @@ play(8)
 setb(OFF["fx_f"], 0)
 check("fx filter: the low pass takes the start of a note down", flv[1] < 0.6 * dry[1], (dry, flv))
 play(6)
-nsl = max(max(abs(x) for x in play()[0]) for _ in range(120))
-check("fx: no send, no echo", nsl < 1e-3, nsl)
+e.stub(0x0805F37C, lambda: None, value=0x30038300)
+e.call("looper_fx_inject", OBJ, BUFSET, 0)
+check("fx: no send, nothing is handed to the stock delay", e.uc.reg_read(A.UC_ARM_REG_R0) == 0)
 setb(OFF["fx_sd"], 100)
 touch(0, 0, 3 * 64 + 10, 100)
-play(8)
+play(2)
+e.call("looper_fx_inject", OBJ, BUFSET, 0)
+check("fx delay send: the stock delay node gets the note's send (and the reverb node does not)", e.uc.reg_read(A.UC_ARM_REG_R0) == 1)
+play(1)
+e.call("looper_fx_inject", OBJ, BUFSET, 1)
+sd_rv = e.uc.reg_read(A.UC_ARM_REG_R0)
 touch(2, 0, 0, 0)
 play(6)
-echo = max(max(abs(x) for x in play()[0]) for _ in range(150))
-check("fx delay send: an echo of the note arrives", echo > 0.01, echo)
 setb(OFF["fx_sd"], 0)
-play(300)
 setb(OFF["fx_sr"], 100)
 touch(0, 0, 3 * 64 + 10, 100)
-play(8)
+play(2)
+e.call("looper_fx_inject", OBJ, BUFSET, 1)
+check("fx reverb send: the stock reverb node gets it", e.uc.reg_read(A.UC_ARM_REG_R0) == 1)
 touch(2, 0, 0, 0)
 play(6)
-tail = max(max(abs(x) for x in play()[0]) for _ in range(40))
-check("fx reverb send: a tail", tail > 0.003, tail)
 setb(OFF["fx_sr"], 0)
-play(400)
-opt(O_ROUTE, 0)
-e.call("samplr_fx_knob", 1, 200)
-check("fx: encoder 2 raises the delay send (a step per 20 counts)", e.r8(SMP + OFF["fx_sd"]) == 10, e.r8(SMP + OFF["fx_sd"]))
+play(10)
+e.call("samplr_fx_knob", 3, 200)
+check("fx: the row's 4th (bottom-right encoder) raises the delay send (a step per 20 counts)", e.r8(SMP + OFF["fx_sd"]) == 10, e.r8(SMP + OFF["fx_sd"]))
 e.call("samplr_fx_knob", 2, 100)
-e.call("samplr_fx_knob", 3, 60)
-check("fx: encoder 3 is the reverb send, encoder 4 the resonance", e.r8(SMP + OFF["fx_sr"]) == 5 and e.r8(SMP + OFF["fx_r"]) == 53, (e.r8(SMP + OFF["fx_sr"]), e.r8(SMP + OFF["fx_r"])))
+e.call("samplr_fx_knob", 1, 60)
+check("fx: the 3rd is the reverb send, the 2nd the resonance (FILT RES REV DLY)", e.r8(SMP + OFF["fx_sr"]) == 5 and e.r8(SMP + OFF["fx_r"]) == 53, (e.r8(SMP + OFF["fx_sr"]), e.r8(SMP + OFF["fx_r"])))
 setb(OFF["fx_sr"], 0)
 setb(OFF["fx_r"], 50)
 a0_ = e.r8(SMP + OFF["atk"])
@@ -1223,10 +1166,9 @@ setb(OFF["rel"], 32)
 e.call("samplr_set_mode", 0)
 
 # PANIC / STOP twice: whatever other tracks still play on (latched things have no stop of their own) ends
-e.call("samplr_set_mode", 0)
-setb(OFF["loopm"], 1)
-setb(OFF["latchm"], 1)
-touch(0, 0, 3 * 64 + 10, 100)
+e.call("samplr_set_mode", 1)
+setb(OFF["latchm"], 2)
+touch(0, 0, 300, 100)
 touch(2, 0, 0, 0)
 e.call("samplr_track", 1, count=50_000_000)
 e.call("samplr")
@@ -1288,35 +1230,244 @@ touch(2, 0, 0, 0)
 play(6)
 e.call("samplr_trans", 0)
 e.uc.mem_write(SHED, b"\x00")
-# a loaded task makes it shed by itself (how much of its block the audio task has used when SAMPLR is done), and it comes back
-def busy(frac):
+# the guard (looper.c + samplr_run). The emulator's cycle counter does not run, so the test writes what the guard reads: the block period, the time already
+# used when SAMPLR starts (the wake-up count) and the whole task's load averaged over ~0.5 s (wema).
+def dsp_off(field):
+    src = '#include "src/looper.c"\nchar o_x[__builtin_offsetof(struct dsp, %s)];\n' % field
+    out = subprocess.run(["arm-none-eabi-gcc", "-I.", "-Isrc", "-mcpu=cortex-m7", "-mthumb", "-mfloat-abi=hard", "-mfpu=fpv5-d16", "-ffreestanding", "-S", "-x", "c", "-", "-o", "-"],
+                         input=src, capture_output=True, text=True, check=True).stdout.splitlines()
+    return int([l.split()[1] for l in out if l.strip().startswith(".space")][0])
+FXB = e.r32(ENGINE + 0x1C * (FIRST + 5 * PER) + 4) & 0xFFFFFFFF
+G_PER, G_WEMA = FXB + dsp_off("gd.per"), FXB + dsp_off("gd.wema")
+SMUTE = SC + scr_off("smute")
+GOUT = SC + scr_off("gout")
+PB = 2_000_000
+def gset(used, wema):
+    e.uc.mem_write(G_PER, struct.pack("<f", float(PB)))
+    e.uc.mem_write(G_WEMA, struct.pack("<f", float(wema)))
     dwt = struct.unpack("<I", e.uc.mem_read(0xE0001004, 4))[0]
-    e.uc.mem_write(0x2405ffd4, struct.pack("<I", (dwt - int(frac * 2_000_000)) & 0xffffffff))
-e.uc.mem_write(SMP + OFF["t_per"], struct.pack("<I", 2_000_000))
-for _ in range(60):
-    busy(0.97)
-    play()
-check("governor: sheds when the task has used 97 % of its block", e.r8(SHED) >= 1, e.r8(SHED))
-top = e.r8(SHED)
-for _ in range(30):
-    busy(0.82)
-    play(10)
-check("governor: and holds in the band between (82 %)", e.r8(SHED) == top, (e.r8(SHED), top))
-for _ in range(30):
-    busy(0.20)
-    play(100)
-check("governor: and comes back when it is quiet again", e.r8(SHED) == 0, e.r8(SHED))
-e.uc.mem_write(SMP + OFF["t_per"], struct.pack("<I", 0))
+    e.uc.mem_write(0x2405ffd4, struct.pack("<I", (dwt - int(used * PB)) & 0xffffffff))
+GMU = SMP + struct_offsets(["gmu"])["gmu"]
+GFD = SMP + struct_offsets(["gfd"])["gfd"]
+def gfd():
+    return struct.unpack("<f", e.uc.mem_read(GFD, 4))[0]
+def stepsof(wema, nb):
+    gset(0.30, wema)
+    for _ in range(nb):
+        gset(0.30, wema)
+        play()
+    return e.r8(SHED)
+e.uc.mem_write(SHED, b"\x00")
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))
+touch(0, 0, 3 * 64 + 10, 100)
+o = play(4)
+check("(setup: the slice sounds)", max(abs(v) for v in o[0]) > 1e-3, max(abs(v) for v in o[0]))
+check("quality steps: the whole task at 40 % (SAMPLR alone, three fingers): no step, however long", stepsof(400, 600) == 0, e.r8(SHED))
+check("... at 80 %: none either", stepsof(800, 600) == 0, e.r8(SHED))
+e.call("looper_page_set_leader", 3)                    # (no page leads: the mark is 93.5 %)
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))
+n1 = stepsof(950, 120)
+check("... at the mark (93.5 %, 2 % under it): not at once (a step takes ~0.5 s)", n1 == 0, n1)
+n2 = stepsof(950, 120)
+check("... then one step", n2 == 1, n2)
+n3 = stepsof(950, 1100)
+check("... and on, a step every ~0.5 s, up to 5 and no further", n3 == 5, n3)
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))
+n4 = stepsof(600, 100)
+check("room again: not at once (~1 s a step)", n4 == 5, n4)
+n5 = stepsof(600, 300)
+check("... one step back", n5 == 4, n5)
+n6 = stepsof(600, 2000)
+check("... and all the way back", n6 == 0, n6)
+# the peaks (looper_load_peak): runs of heavy blocks, as a synced grain cloud's, held ~2 s; a single slow block is not one
+G_WPK = FXB + dsp_off("gd.wpk")
+def blk_done(w):
+    e.uc.mem_write(G_PER, struct.pack("<f", float(PB)))
+    e.uc.mem_write(0x2405ffd4, struct.pack("<I", 0))
+    e.call("looper_block_done", int(w * PB / 1000))
+def peak():
+    e.call("looper_load_peak")
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+e.uc.mem_write(G_WPK, struct.pack("<f", 0.0))
+for w in [300] * 8 + [990] + [300] * 8:
+    blk_done(w)
+check("peaks: one slow block (the screen, the SD card) is not a peak", peak() < 320, peak())
+for w in [990] * 8:
+    blk_done(w)
+p1 = peak()
+for w in [300] * 188:
+    blk_done(w)
+p2 = peak()
+check("... a run of 8 heavy blocks is (99 %), and it is held: a second later it is still above 80 %", p1 >= 985 and 800 < p2 < 990, (p1, p2))
+def stepspk(pk, nb):
+    for _ in range(nb):
+        gset(0.30, 400)
+        e.uc.mem_write(G_WPK, struct.pack("<f", float(pk)))
+        play()
+    return e.r8(SHED)
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))
+q1 = stepspk(900, 300)
+check("quality steps: the average at 40 %, peaks at 90 %: no step", q1 == 0, q1)
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))
+q2 = stepspk(950, 70)
+check("... peaks at 95 %: a step (in ~0.3 s), though the average is low", q2 == 1, q2)
+q3 = stepspk(880, 1000)
+check("... peaks at 88 %: no step back (only under 84 %)", q3 == 1, q3)
+q4 = stepspk(800, 400)
+check("... peaks at 80 %: back", q4 == 0, q4)
+# a pause by another task in SAMPLR's own time does not count: its own cost is not looked at
+gset(0.30, 400)
+touch(0, 0, 3 * 64 + 10, 100)
+play(3)
+check("(SAMPLR's own cost is not what the steps follow)", e.r8(SHED) == 0, e.r8(SHED))
+# the hard check, for a spike: the time already used leaves no room (stock work, the looper's tracks' time kept when they outrank SAMPLR)
+touch(2, 0, 0, 0)
+play(8)
+e.call("samplr_set_mode", 1)                           # TAPE with LATCH: the hold sounds on by itself
+setb(OFF["latchm"], 2)
+touch(0, 0, 400, 100)
+touch(2, 0, 0, 0)
+play(8)
+o = play(4)
+pk0 = max(abs(v) for v in o[0])
+gset(0.97, 400)
+o = play()
+x = o[0]
+check("hard check: no room in this block: the track is out of it, the last block played backwards with a ramp to 0 (no jump at the start, none at the end)",
+      e.r8(SMUTE) == 1 and max(abs(v) for v in x) > 1e-4 and abs(x[-1]) < 0.02 * max(abs(v) for v in x), (e.r8(SMUTE), max(abs(v) for v in x), x[-1]))
+check("... nothing is muted for good: it comes back through a fade-in", e.r8(GMU) == 0 and gfd() >= 0.99, (e.r8(GMU), gfd()))
+gset(0.30, 400)
+fi = []
+for _ in range(560):
+    gset(0.30, 400)
+    fi.append(max(abs(v) for v in play()[0]))
+check("... with room again it fades in over ~2.5 s: the first block is quiet, then it reaches its level",
+      fi[0] < 0.35 * max(fi) and max(fi) > 0.5 * pk0 and gfd() == 0.0, (fi[0], max(fi), pk0, gfd()))
+check("... no step was taken for it (the quality is not touched by a spike)", e.r8(SHED) == 0, e.r8(SHED))
+# the sends to the stock delay and reverb at every quality step and while a track fades or is cut
+e.call("samplr_stop_all")
+setb(OFF["latchm"], 0)
+e.call("samplr_set_mode", 0)
+play(6)
+setb(OFF["fx_sd"], 100)
+setb(OFF["fx_sr"], 100)
+for st_ in (0, 3, 5):
+    e.uc.mem_write(SHED, bytes([st_]))
+    e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))
+    touch(2, 0, 0, 0)
+    play(3)
+    touch(0, 0, 3 * 64 + 10, 100)
+    gset(0.30, 500)
+    play(2)
+    e.call("looper_fx_inject", OBJ, BUFSET, 0)
+    r_d = e.uc.reg_read(A.UC_ARM_REG_R0)
+    play(1)
+    e.call("looper_fx_inject", OBJ, BUFSET, 1)
+    r_r = e.uc.reg_read(A.UC_ARM_REG_R0)
+    check("sends: at quality step %d the stock delay and reverb nodes get the track's send" % st_, r_d == 1 and r_r == 1, (r_d, r_r))
+e.uc.mem_write(SHED, b"\x00")
+touch(2, 0, 0, 0)
+play(8)
+e.call("samplr_set_mode", 1)
+setb(OFF["latchm"], 2)
+touch(0, 0, 400, 100)                                   # a latched tape hold sounds on by itself
+touch(2, 0, 0, 0)
+gset(0.30, 500)
+play(130)
+gset(0.97, 500)
+play(1)                                                 # (cut by the hard check: the backwards tail carries the sends too)
+e.call("looper_fx_inject", OBJ, BUFSET, 0)
+check("sends: the block where the track is cut still hands the delay node its send (the tail carries it)", e.uc.reg_read(A.UC_ARM_REG_R0) == 1, e.uc.reg_read(A.UC_ARM_REG_R0))
+setb(OFF["fx_sd"], 0)
+setb(OFF["fx_sr"], 0)
+gset(0.30, 400)
+e.call("samplr_stop_all")
+setb(OFF["latchm"], 0)
+e.call("samplr_set_mode", 0)
+play(150)
 
-# one spike now and then (a pad starting) is not a reason to hold back
-e.uc.mem_write(SMP + OFF["t_per"], struct.pack("<I", 2_000_000))
-for _ in range(10):
-    busy(0.99)
+# the guard's fades: the whole task's averaged load at SAMPLR's mark and the quality steps used. Two tracks sound: the shown one (0) and track 1; track 1
+# goes first, the shown one last.
+touch(2, 0, 0, 0)
+play(3)
+e.call("samplr_set_mode", 1)                           # TAPE with LATCH on both tracks: two holds that sound on by themselves
+setb(OFF["latchm"], 2)
+touch(0, 0, 400, 100)
+touch(2, 0, 0, 0)
+play(8)
+SMP_A = SMP
+e.call("samplr_track", 1, count=50_000_000)
+e.call("samplr")
+SMP_B = e.uc.reg_read(A.UC_ARM_REG_R0)
+e.call("samplr_set_mode", 1)
+e.uc.mem_write(SMP_B + OFF["latchm"], b"\x02")
+SMP = SMP_B
+touch(0, 0, 700, 100)
+touch(2, 0, 0, 0)
+play(8)
+e.call("samplr_track", 0, count=50_000_000)
+SMP = SMP_A
+play(8)
+def level():
+    return max(abs(x) for x in play()[0])
+check("(setup: two tracks sound, track 0 shown)", level() > 0.05, level())
+GMU_B, GFD_B, GFADE_B = SMP_B + struct_offsets(["gmu"])["gmu"], SMP_B + struct_offsets(["gfd"])["gfd"], SMP_B + struct_offsets(["gfade"])["gfade"]
+GMU_A = SMP_A + struct_offsets(["gmu"])["gmu"]
+def load(w):
+    gset(0.30, w)
+e.uc.mem_write(SHED, b"\x02")
+e.uc.mem_write(SC + scr_off("shed_t"), struct.pack("<I", sm(OFF["tick"], "I")))
+for _ in range(60):
+    load(990)
     play()
-    busy(0.30)
-    play(99)
-check("governor: a single near miss every 100 blocks does not shed", e.r8(SHED) == 0, e.r8(SHED))
-e.uc.mem_write(SMP + OFF["t_per"], struct.pack("<I", 0))
+check("guard fades: quality steps first (nothing fades before step 3)", e.r8(GMU_B) == 0 and e.r8(GFADE_B) == 0 and e.r8(GOUT) == 0, (e.r8(GMU_B), e.r8(GFADE_B), e.r8(SHED)))
+for _ in range(600):
+    load(990)
+    play()
+check("... then, at the mark and with the quality used (step 5), track 1 (not the shown one) starts to fade", e.r8(GFADE_B) == 1 or e.r8(GMU_B) == 1, (e.r8(GFADE_B), e.r8(GMU_B), e.r8(SHED)))
+lv = []
+for _ in range(60):
+    load(990)
+    lv.append(level())
+check("... slowly (over ~1 s)", lv[0] > 0.02, (lv[0], lv[-1]))
+for _ in range(400):
+    load(990)
+    play()
+    if e.r8(GMU_B) == 1:
+        break
+load(990)
+check("... then it is out (not rendered), the shown track plays on", e.r8(GMU_B) == 1 and e.r8(GMU_A) == 0 and level() > 0.02, (e.r8(GMU_B), e.r8(GMU_A)))
+check("... and the bar says how many are out", e.r8(GOUT) >= 1, e.r8(GOUT))
+for _ in range(1500):
+    load(990)
+    play()
+check("still at the mark: the shown track goes after a long pause", e.r8(GMU_A) == 1, e.r8(GMU_A))
+for _ in range(2000):
+    load(500)
+    play()
+check("the load goes down: the faded tracks come back by themselves (one at a time, fading in)", e.r8(GMU_A) == 0 and e.r8(GMU_B) == 0, (e.r8(GMU_A), e.r8(GMU_B)))
+for _ in range(300):
+    load(500)
+    play()
+check("... and the fade-ins are over", struct.unpack("<f", e.uc.mem_read(GFD_B, 4))[0] == 0.0, struct.unpack("<f", e.uc.mem_read(GFD_B, 4))[0])
+e.call("looper_page_set_leader", 3)
+e.uc.mem_write(SHED, b"\x00")
+load(0)
+e.call("samplr_stop_all")                              # (back to how the tests after this expect it)
+for base_ in (SMP_A, SMP_B):
+    e.uc.mem_write(base_ + OFF["loopm"], b"\x00")
+    e.uc.mem_write(base_ + OFF["latchm"], b"\x00")
+    e.uc.mem_write(base_ + OFF["mode"], b"\x00")
+    e.uc.mem_write(base_ + struct_offsets(["gmu"])["gmu"], b"\x00")
+    e.uc.mem_write(base_ + struct_offsets(["gfd"])["gfd"], struct.pack("<f", 0.0))
+    e.uc.mem_write(base_ + struct_offsets(["gfade"])["gfade"], b"\x00")
+play(40)
+SMP = SMP_A
+e.uc.mem_write(G_PER, struct.pack("<f", 0.0))
+e.uc.mem_write(G_WEMA, struct.pack("<f", 0.0))
+e.uc.mem_write(SHED, b"\x00")
+touch(2, 0, 0, 0)
+play(6)
 
 # shed 4: the grains in all are capped (4), however many fingers and however dense
 e.call("samplr_set_mode", 3)
@@ -1388,5 +1539,26 @@ cuts = [cut(i) for i in range(ns + 1)]
 check("transients: four bursts give five slices", ns == 5, (ns, cuts))
 check("transients: each slice point sits just before its burst, never inside it", all(b_ - 200 < c <= b_ for c, b_ in zip(cuts[1:5], (2000, 6000, 10000, 14000))), cuts)
 check("transients: first point 0, last point the end", cuts[0] == 0 and cuts[ns] == LENF, cuts)
+
+# the worst whole block: samplr_stage_prof gives this block's parts, samplr_block_done its rest; the block with the biggest total keeps its parts
+def u32(a):
+    return struct.unpack("<I", e.uc.mem_read(a, 4))[0]
+e.uc.mem_write(SC + scr_off("wt"), bytes(4))
+for pre, lira, run_all, sdur, rest in ((1000, 200, 900, 300, 100), (3000, 500, 1500, 700, 400), (2000, 100, 600, 200, 50)):
+    e.uc.mem_write(SC + scr_off("last_sdur"), struct.pack("<I", sdur))
+    e.call("samplr_stage_prof", pre, lira, run_all)
+    t_end = u32(SC + scr_off("t_end"))
+    e.call("samplr_block_done", (t_end + rest) & 0xffffffff)
+W = [u32(SC + scr_off(n)) for n in ("wt", "wp", "wd", "wl", "ws", "wr")]
+check("the worst whole block is kept with its own parts (stock before, drone, looper, SAMPLR, the rest)", W == [3000 + 500 + 800 + 700 + 400, 3000, 500, 800, 700, 400], W)
+
+e.uc.mem_write(SC + scr_off("d1"), struct.pack("<I", 10))           # 10 cycles per mille: a block is 10000 cycles
+n0 = struct.unpack("<H", e.uc.mem_read(SC + scr_off("ovn"), 2))[0]
+for pre, lira, run_all, sdur, rest in ((6000, 2000, 2500, 1500, 800), (1000, 100, 200, 100, 50)):    # 113 %, then 13 %
+    e.uc.mem_write(SC + scr_off("last_sdur"), struct.pack("<I", sdur))
+    e.call("samplr_stage_prof", pre, lira, run_all)
+    e.call("samplr_block_done", (u32(SC + scr_off("t_end")) + rest) & 0xffffffff)
+ov = struct.unpack("<7H", e.uc.mem_read(SC + scr_off("ovn"), 14))
+check("a block over 100 % is held with its parts (per mille) and counted; a later normal block leaves it", ov == (n0 + 1, 1130, 600, 200, 100, 150, 80), ov)
 
 print(f"\n{fails} failure(s)")

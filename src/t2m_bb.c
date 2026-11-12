@@ -55,6 +55,11 @@ static const t2m_params defaults = {
     .cc_on = 0, .cc_num = 1, .cc_mode = 0, .cc_fixed = 100, .channel = 1,
 };
 
+const t2m_params *t2m_defaults(void)
+{
+    return &defaults;
+}
+
 void t2m_boot(void)
 {
     bkp_enable();
@@ -78,6 +83,7 @@ void t2m_boot(void)
     m->ui.last = 0xff;
     clkmon_boot(&m->clk);                       /* the cycle counter and the clock monitor's interrupt block */
     m->on[0] = 1;                               /* input L on, R off */
+    m->eng = 1;
     R->mem = m;
     R->magic = MAGIC;
 }
@@ -165,14 +171,15 @@ void t2m_audio(const float *l, const float *r, int frames)
     for (int k = 0; k < T2M_INPUTS; k++) {
         t2m_state *t = &m->st[k];
         float pk = 0.f, g = m->p[k].sens;
-        for (int i = 0; i < frames; i++) {
-            float x = in[k][i] * g;
-            x = x < 0.f ? -x : x;
-            pk = x > pk ? x : pk;
-        }
+        if (m->eng)                                                     /* (engine off: no level either) */
+            for (int i = 0; i < frames; i++) {
+                float x = in[k][i] * g;
+                x = x < 0.f ? -x : x;
+                pk = x > pk ? x : pk;
+            }
         m->peak[k] = pk > m->peak[k] * 0.9f ? pk : m->peak[k] * 0.9f;   /* for the page's meter */
         uint8_t ch = (uint8_t)((m->p[k].channel - 1) & 15);
-        if (!m->on[k]) {
+        if (!m->on[k] || !m->eng) {
             if (t->held >= 0 || t->n_offs) {                            /* switched off: end what sounds */
                 if (m->p[k].note_on) {
                     if (t->held >= 0)
