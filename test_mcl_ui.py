@@ -5,6 +5,7 @@ Checked: the screen text (decoded back from the frame buffer with the font), but
 accumulation, release of a tile on the right touch id, blit geometry (runs inside the frame, 2x), refusal while the runtime is down, signature changes.
 NOT checked (hardware only): how the real page looks, touch feel, knob counts per detent.
 """
+import struct
 import sys
 
 from mcl_rig import clock_rig
@@ -97,7 +98,7 @@ check("bad encoder / button numbers are ignored", screen()[3].endswith("B0000"))
 rec = []
 for name in ("lp_box", "lp_frame", "lp_text_c"):
     n = name
-    e.stub(e.sym[n], lambda n=n: rec.append((n,) + tuple(e.arg(i) for i in range(4))))
+    e.stub(e.sym[n], lambda n=n: rec.append((n,) + tuple(e.arg(i) for i in range(4)) + ((e.cstr(e.arg(3)),) if n == "lp_text_c" else ())))
 W, FOOT = 314, 224
 
 
@@ -133,6 +134,19 @@ texts = [e.cstr(c[4]) for c in calls if c[0] == "lp_text_c"]
 import re
 check("under B2: the MIDI jack's speed and bytes received ('1X <n>'); under B3: receive errors ('0 ERR')",
       any(re.fullmatch(r"1X \d+", t) for t in texts) and "0 ERR" in texts, texts)
+
+# --- the crash recorder's record of an unexpected restart: shown over MCL's screen, a tap on the screen clears it
+REC = 0x38800B38
+crec = struct.pack("<IHHI", 0x31435243, 3, 1, 0) + bytes([1, 2, 1, 0, 0, 0]) + struct.pack("<5I", 0x08100001, 0x08100003, 0x01000000, 0x2401F000, 0xFFFFFFF9)
+e.uc.mem_write(REC, crec + bytes(0x60))
+calls = draw()
+texts = [c[5] for c in calls if c[0] == "lp_text_c"]
+check("a restart record shows over MCL's screen (its first line, the hint to clear it)", any(t.startswith("LAST RESTART") for t in texts) and "TAP HERE TO CLEAR" in texts, texts[:4])
+entry("mcl_page_down", 3, x0 + 40, TOP + 40, W, FOOT)
+calls = draw()
+texts = [c[5] for c in calls if c[0] == "lp_text_c"]
+check("a tap on the screen clears it (gone from the page)", not any(t.startswith("LAST RESTART") for t in texts) and "TAP HERE TO CLEAR" not in texts, texts[:4])
+entry("mcl_page_up", 3)
 
 sig_a = entry("mcl_page_sig")
 check("page signature depends on the picture", sig_a == entry("mcl_page_sig"))

@@ -16,6 +16,8 @@
  */
 #include <stdint.h>
 
+#include "crash.h"
+
 void samplr_block_done(uint32_t now);      /* samplr.c: the MAX readout's rest of the block (a no-op until the looper's memory is up) */
 void looper_block_done(uint32_t now);      /* looper.c: the budget guard's rest of the block (a no-op until the looper's memory is up) */
 
@@ -354,7 +356,7 @@ uint32_t mcl_page_sig(void)
     const struct mcl_entry *e = mcl_blob();
     bkp_enable();
     uint32_t m = e && e->abi >= 4 ? e->midi(0) / 3125u + e->midi(1) * 7u + e->midi(2) * 131u : 0u;    /* (the MIDI line under B2 / B3 changes too) */
-    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + m * 977u;
+    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + m * 977u + (uint32_t)crash_pending() * 0x9e3779b9u;
 }
 
 void mcl_page_draw(int w, int foot_y)
@@ -411,6 +413,15 @@ void mcl_page_draw(int w, int foot_y)
             }
         }
     }
+    if (crash_pending()) {                                    /* the crash recorder's record of an unexpected restart (src/crash.c), over MCL's screen until it is tapped */
+        char line[56];
+        int row = 0;
+        lp_box(x0, MCL_TOP, MCL_W, MCL_H, 0x0e);
+        for (int i = 0; i < 16 && row < 13; i++)
+            if (crash_line(i, line, (int)sizeof line))
+                lp_text_c(x0, MCL_TOP + 2 + row++ * 11, MCL_W, line, 0x0f, 1);
+        lp_text_c(x0, MCL_TOP + MCL_H - 11, MCL_W, "TAP HERE TO CLEAR", 0x0c, 1);
+    }
     lp_frame(x0 - 3, MCL_TOP - 3, MCL_W + 6, MCL_H + 6, 0x10, 1);
     int tw = mcl_tile_w(w);
     for (int i = 0; i < MCL_TILES; i++) {
@@ -431,6 +442,10 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
     (void)foot_y;
     int tw = mcl_tile_w(w), i = (x - 4) / tw;
     bkp_enable();
+    if (crash_pending() && d >= MCL_TOP && d < MCL_TOP + MCL_H) {        /* a tap on the restart record: seen */
+        crash_clear();
+        return;
+    }
     if (!e || !e->fb() || x < 4 || i >= MCL_TILES || d < MCL_TILE_Y || d >= MCL_TILE_Y + MCL_TILE_H)
         return;
     UI->down[id & 3] = (uint8_t)(i + 1);
