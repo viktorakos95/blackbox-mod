@@ -243,5 +243,13 @@ fsck = subprocess.run(["fsck.vfat", "-n", "out/sd/core-after.img"], capture_outp
 check("fsck.vfat: the volume is clean after MCL's writes", fsck.returncode == 0, fsck.stdout[-300:])
 ls = subprocess.run(["mdir", "-/", "-i", "out/sd/core-after.img", "::/MCL"], capture_output=True, text=True).stdout
 check("mtools reads the tree back: Projects with the new project, config.mcls", "Projects" in ls and "config.mcls".upper() in ls.upper() and "project000" in ls.lower(), ls[-400:])
+# --- m9h / m9i on the unit: a stray mcl_cfg.load_mode (69, from the card) indexed past the grid load page's 3-entry label table: bus fault in strcpy
+try:
+    c.call("_ZN12GridLoadPage14md_popup_titleEhb", c.b["grid_load_page"], 69, 0)
+    ok = True
+except Exception as ex:
+    ok = repr(ex)
+check("grid load page: a load mode out of range (69) is shown as MANUAL, no fault (fork patch 0002)", ok is True, ok)
+
 print("FAIL" if fails else "ALL PASS", fails)
 sys.exit(1 if fails else 0)

@@ -434,3 +434,13 @@ The looper branch keeps its ITCM image at 0x08170000..0x08180000, inside what th
 - **m9h on the unit (the first full record):** BUS FAULT, CFSR 0x00008200 (a precise data bus error, BFAR valid), address 0x2304E9C0 (no memory there), SP 0xC3FC7858. That SP is inside MCL's task stack (`bb_mcl_stack` 0xC3FC3978..0xC3FC7978), only 0x120 bytes below its top. So it is MCL's task, shallow in its call chain, reading through a bad pointer. RAN 19 s, RAM fine, no SD fails, GUI was painting.
 
   PC / LR were 0 because `in_ram()` did not accept the SDRAM. Fixed in m9i (0xC0000000..0xC4000000). The ELFs of m9i are kept in `out/merged-m9i/` so its PC can be looked up.
+- **m9i on the unit:** BUS FAULT, PC 0x08178012 (`strcpy`), LR 0x08147083 (`GridLoadPage::md_popup_title`), address 0x2304E9C0, again in MCL's task. `copy_load_mode_label` indexes a 3-entry table with `mcl_cfg.load_mode - LOAD_MANUAL`, with no check. The table entry at mode 69 is 0x2304E9C0, so `mcl_cfg.load_mode` was 69.
+
+  Nothing in MCL's own code sets such a value: the encoder is 1..3 and the keys give 1..3. So it came in with the config: `config.mcls`, or a project's config copied by `apply_project_config`. The user's card is from the MegaCommand.
+
+  **Fix (m9j):** fork patch `0002-load-mode-bounds.patch`.
+  - The label falls back to MANUAL for a value out of range.
+  - `GridLoadPage::init`, `MCLSd::load_init` and `apply_project_config` repair a stray `load_mode` to MANUAL.
+  - `test_mcl_core.py` calls `md_popup_title` with 69. Without the patch the emulator faults like the unit did; with it, it passes.
+
+  **Still open:** whether other config fields from the card are also out of range. If this was memory corruption rather than a bad file, it will show up elsewhere.
