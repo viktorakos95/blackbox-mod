@@ -13,6 +13,11 @@ for f in tools/mcl/fork-patches/*.patch; do
   if git -C "$M" apply --check "$(realpath "$f")" 2>/dev/null; then git -C "$M" apply "$(realpath "$f")"; fi
 done
 PLAT="$(realpath src/mcl_bb/platform/common)"
+# MCL's resource tables (menus, options, machine names) regenerated with our toolchain and flags, so they match the checkout's code
+# (its committed rp2040 tables can be stale: the 5.02+ branch regenerated only the AVR ones, and the menus showed wrong labels)
+MCLRES_INC=$(cd "$M"; for d in src src/mcl include $(find src/mcl -type d | grep -vE "/tools(/|$)"); do echo -n "-I$M/$d "; done)
+MCLRES_FLAGS="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -fdata-sections -w -DARDUINO=10800 -DPLATFORM_DESKTOP=1 -std=gnu++17 -fpermissive -I$PLAT -I$G $MCLRES_INC" \
+  python3 tools/mcl/gen_resources.py "$M" out/mclres > out/mclres.log 2>&1 || { tail -20 out/mclres.log; exit 1; }
 # MCL's version as its own firmware builds have it (the checkout's platformio.ini, env:common: -DVERSION=5002 -DVERSION_STR=\"5.02\")
 MCL_VERSION=$(sed -n 's/.*-DVERSION=\([0-9][0-9]*\).*/\1/p' "$M/platformio.ini" | head -1); MCL_VERSION=${MCL_VERSION:-5000}
 MCL_VERSION_STR=$(sed -n 's/.*-DVERSION_STR=\\"\([^\\]*\)\\".*/\1/p' "$M/platformio.ini" | head -1); MCL_VERSION_STR=${MCL_VERSION_STR:-T5.00}
