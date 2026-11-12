@@ -332,16 +332,22 @@ void lp_box(int x, int d, int w, int h, int color);
 void lp_frame(int x, int d, int w, int h, int color, int th);
 void lp_text_c(int x, int d, int w, const char *s, int color, int scale);
 
-#define MCL_SCALE   2
-#define MCL_TOP     20
-#define MCL_TILE_Y  (MCL_TOP + 64 * MCL_SCALE + 10)
-#define MCL_TILE_H  44
+/* MCL's 128x64 screen scaled by 12/5 (2.4): 307 x 153 of the page's ~314 x 208, the tiles below it (pixel x lands on mcl_sc(x), so a pixel is 2 or 3 wide) */
+#define MCL_SN      12
+#define MCL_SD      5
+#define MCL_W       (128 * MCL_SN / MCL_SD)
+#define MCL_H       (64 * MCL_SN / MCL_SD)
+#define MCL_TOP     19
+#define MCL_TILE_Y  (MCL_TOP + MCL_H + 5)
+#define MCL_TILE_H  40
 #define MCL_TILES   5
-#define MCL_ENC_COUNTS 20       /* knob counts per detent (a guess, as the TRIG page's 40; tune on the unit) */
+#define MCL_ENC_COUNTS 40       /* knob counts per MCL step (the TRIG page's; 20 moved MCL's short menus too fast on the unit) */
+#define MCL_ENC_FAST   80       /* a knob event of this many counts or more (a quick spin): twice the steps, so long ranges stay quick */
 
 static int mcl_tile_w(int w) { return (w - 8) / MCL_TILES; }
 
-static int mcl_x0(int w) { return (w - 128 * MCL_SCALE) / 2; }
+static int mcl_x0(int w) { return (w - MCL_W) / 2; }
+static int mcl_sc(int v) { return v * MCL_SN / MCL_SD; }
 
 uint32_t mcl_page_sig(void)
 {
@@ -387,9 +393,9 @@ void mcl_page_draw(int w, int foot_y)
     }
     bkp_enable();
     lp_box(1, 16, w - 2, foot_y - 16, 0x02);
-    lp_box(x0 - 2, MCL_TOP - 2, 128 * MCL_SCALE + 4, 64 * MCL_SCALE + 4, 0x0e);
+    lp_box(x0 - 2, MCL_TOP - 2, MCL_W + 4, MCL_H + 4, 0x0e);
     if (!fb) {
-        lp_text_c(x0, MCL_TOP + 58, 128 * MCL_SCALE, e ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", 0x0c, 1);
+        lp_text_c(x0, MCL_TOP + MCL_H / 2 - 6, MCL_W, e ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", 0x0c, 1);
     } else {
         for (int y = 0; y < 64; y++) {                        /* the screen: 16 bytes a row, leftmost pixel = the top bit; runs of lit pixels become boxes */
             const uint8_t *row = fb + y * 16;
@@ -401,11 +407,11 @@ void mcl_page_draw(int w, int foot_y)
                 while (x < 128 && (row[x >> 3] >> (7 - (x & 7)) & 1))
                     x++;
                 if (x > s)
-                    lp_box(x0 + s * MCL_SCALE, MCL_TOP + y * MCL_SCALE, (x - s) * MCL_SCALE, MCL_SCALE, 0x0f);
+                    lp_box(x0 + mcl_sc(s), MCL_TOP + mcl_sc(y), mcl_sc(x) - mcl_sc(s), mcl_sc(y + 1) - mcl_sc(y), 0x0f);
             }
         }
     }
-    lp_frame(x0 - 3, MCL_TOP - 3, 128 * MCL_SCALE + 6, 64 * MCL_SCALE + 6, 0x10, 1);
+    lp_frame(x0 - 3, MCL_TOP - 3, MCL_W + 6, MCL_H + 6, 0x10, 1);
     int tw = mcl_tile_w(w);
     for (int i = 0; i < MCL_TILES; i++) {
         int on = UI->mask >> i & 1;
@@ -413,9 +419,9 @@ void mcl_page_draw(int w, int foot_y)
             break;
         lp_box(4 + i * tw + 1, MCL_TILE_Y + 1, tw - 3, MCL_TILE_H - 2, on ? 0x1b : 0x01);
         lp_frame(4 + i * tw, MCL_TILE_Y, tw - 1, MCL_TILE_H, on ? 0x0f : 0x10, 1);
-        lp_text_c(4 + i * tw, MCL_TILE_Y + 10, tw - 1, name[i], on ? 0x0e : 0x0f, 2);
+        lp_text_c(4 + i * tw, MCL_TILE_Y + 7, tw - 1, name[i], on ? 0x0e : 0x0f, 2);
         const char *t = i == 1 && midi[0] ? midi : i == 2 && err[0] ? err : role[i];
-        lp_text_c(4 + i * tw, MCL_TILE_Y + 32, tw - 1, t, on ? 0x0e : 0x16, 1);
+        lp_text_c(4 + i * tw, MCL_TILE_Y + 28, tw - 1, t, on ? 0x0e : 0x16, 1);
     }
 }
 
@@ -453,6 +459,8 @@ void mcl_page_knob(int knob, int counts)
     bkp_enable();
     int a = UI->acc[knob] + counts, steps = a / MCL_ENC_COUNTS;
     UI->acc[knob] = (int16_t)(a - steps * MCL_ENC_COUNTS);
+    if (counts >= MCL_ENC_FAST || counts <= -MCL_ENC_FAST)
+        steps *= 2;                                          /* a quick spin: long ranges (levels, tempo) stay quick */
     if (steps)
         e->input(1, knob, steps);
 }

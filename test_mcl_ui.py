@@ -109,13 +109,24 @@ def draw():
 
 calls = draw()
 boxes = [c for c in calls if c[0] == "lp_box"]
-x0 = (W - 256) // 2
-runs = [c for c in boxes if c[4] == 2 and 20 <= c[2] < 148 and x0 <= c[1] < x0 + 256]          # (name, x, d, w, h)
-check("the screen is blitted in runs 2 px high", len(runs) > 20, len(runs))
-check("runs stay inside the 256x128 area", all(c[1] + c[3] <= x0 + 256 for c in runs))
+SW, SH, TOP = 128 * 12 // 5, 64 * 12 // 5, 19                    # the screen scaled by 2.4 (307 x 153)
+sc = lambda v: v * 12 // 5
+x0 = (W - SW) // 2
+runs = [c for c in boxes if c[4] in (2, 3) and TOP <= c[2] < TOP + SH and x0 <= c[1] < x0 + SW]          # (name, x, d, w, h)
+check("the screen is blitted in runs 2 or 3 px high (2.4x)", len(runs) > 20, len(runs))
+check("runs stay inside the 307x153 area", all(c[1] + c[3] <= x0 + SW and c[2] + c[4] <= TOP + SH for c in runs))
 f = fb()
 lit = sum(px(f, x, y) for x in range(128) for y in range(64))
-check("the runs cover exactly the lit pixels (2x)", sum(c[3] // 2 for c in runs) == lit, (sum(c[3] // 2 for c in runs), lit))
+lit_w = {}
+for y in range(64):
+    for x in range(128):
+        if px(f, x, y):
+            lit_w[y] = lit_w.get(y, 0) + sc(x + 1) - sc(x)
+got_w = {}
+for c in runs:
+    y = next(yy for yy in range(64) if TOP + sc(yy) == c[2])
+    got_w[y] = got_w.get(y, 0) + c[3]
+check("the runs cover exactly the lit pixels, each pixel 2 or 3 wide at x * 12 / 5", got_w == lit_w, (sum(got_w.values()), sum(lit_w.values())))
 check("tile frames are drawn (screen frame + 5 tiles)", len([c for c in calls if c[0] == "lp_frame"]) == 6)
 check("tile names and roles are drawn", len([c for c in calls if c[0] == "lp_text_c"]) == 10)
 texts = [e.cstr(c[4]) for c in calls if c[0] == "lp_text_c"]
@@ -126,7 +137,7 @@ check("under B2: the MIDI jack's speed and bytes received ('1X <n>'); under B3: 
 sig_a = entry("mcl_page_sig")
 check("page signature depends on the picture", sig_a == entry("mcl_page_sig"))
 # a tile touch: x in tile 0, d in the tile row
-TILE_Y = 20 + 128 + 10
+TILE_Y = TOP + SH + 5
 tw = (W - 8) // 5
 entry("mcl_page_down", 1, 4 + 2 * tw + 5, TILE_Y + 5, W, FOOT)    # touch id 1 on B3 (stop)
 check("a tile touch presses B3 (stop) and shows it pressed", screen()[3].endswith("B0010"), screen()[3])
@@ -143,17 +154,19 @@ entry("mcl_page_up", 2)
 entry("mcl_page_up", 3)
 check("button released", screen()[3].endswith("B0000"), screen()[3])
 
-# --- knobs: 20 counts a detent, remainder kept
+# --- knobs: 40 counts a step, remainder kept; a quick spin (80 counts or more in one event) doubles the steps
 e0 = screen()[3]
-entry("mcl_page_knob", 2, 15)
-check("under one detent: nothing", screen()[3] == e0)
-entry("mcl_page_knob", 2, 15)
-check("the remainder counts: one detent", screen()[3] != e0 and screen()[3][8:11] == "  1", screen()[3])
+entry("mcl_page_knob", 2, 30)
+check("under one step: nothing", screen()[3] == e0)
+entry("mcl_page_knob", 2, 30)
+check("the remainder counts: one step (20 left)", screen()[3] != e0 and screen()[3][8:11] == "  1", screen()[3])
 entry("mcl_page_knob", 2, -60)
-check("negative counts turn the other way (-50 left 1 - 2)", screen()[3][8:11] == " -1", screen()[3])
+check("negative counts turn the other way (-40: one step back)", screen()[3][8:11] == "  0", screen()[3])
+entry("mcl_page_knob", 2, -100)
+check("a quick spin (-100 in one event): two steps, doubled", screen()[3][8:11] == " -4", screen()[3])
 entry("mcl_page_knob", 7, 100)
 entry("mcl_page_knob", -1, 100)
-check("bad knob numbers are ignored", screen()[3][8:11] == " -1")
+check("bad knob numbers are ignored", screen()[3][8:11] == " -4")
 
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)
