@@ -49,14 +49,21 @@ def second(e):
 
 
 # --- layout
-check("image is 1,310,720 bytes and ends at 0x08180000", len(image) == 0x140000 and BASE + len(image) == PAD_END, len(image))
+import os
+ITCM_LOAD = 0x081D0000                                          # patches/cave.py: the ITCM image (out/itcm.bin) follows, the pad is written over the 0xFF before it
+itcm = open("out/itcm.bin", "rb").read() if os.path.exists("out/itcm.bin") else b""
+if itcm:
+    check("image ends after the ITCM image at 0x081D0000; the pad sits below it", BASE + len(image) == ITCM_LOAD + len(itcm) and image[ITCM_LOAD - BASE:] == itcm, len(image))
+    check("0xFF between the pad and the ITCM image", image[PAD_END - BASE:ITCM_LOAD - BASE] == b"\xff" * (ITCM_LOAD - PAD_END))
+else:
+    check("image is 1,310,720 bytes and ends at 0x08180000", len(image) == 0x140000 and BASE + len(image) == PAD_END, len(image))
 cave_end = 0x080F1E78 + len(open("out/cave.bin", "rb").read())
 check("0xFF gap from the cave end to 0x08140000", image[cave_end - BASE:PAD_BASE - BASE] == b"\xff" * (PAD_BASE - cave_end))
-words = struct.unpack("<65536I", image[PAD_BASE - BASE:])
+words = struct.unpack("<65536I", image[PAD_BASE - BASE:PAD_END - BASE])
 check("pad pattern has no repeats (65,536 distinct words)", len(set(words)) == 65536)
 stock = open("firmware/BLACKBOX-3.1.9.bin", "rb").read()
 diff = [i for i in range(len(stock)) if stock[i] != image[i]]
-check("only the stock bytes the cave patches differ (below 0x080F1E78, not the pad)", max(diff) < 0xB1E78 and len(image) > len(stock))
+check("only the stock bytes the cave patches differ (below 0x080F1E78, not the pad)", max(diff) < 0xB1E78 and len(image) > len(stock), max(diff) if diff else None)
 
 # --- good pad: the result is on the label as soon as it is built at boot
 e = make()
