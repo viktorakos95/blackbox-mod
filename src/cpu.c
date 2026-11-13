@@ -549,8 +549,13 @@ void mcl_page_draw(int w, int foot_y)
     lp_text_c(nx + LOGO_W + 5, MCL_WIN_Y + 3, 65, "MACHINEDRUM", MC_WHITE, 1);
     lp_text_c(nx + LOGO_W + 6, MCL_WIN_Y + 3, 65, "MACHINEDRUM", MC_WHITE, 1);
     if (UI->off) {                                            /* not started after a restart that was not a power-on (see start()): a tap starts it */
-        lp_text_c(x0, MCL_TOP + MCL_H / 2 - 10, MCL_W, "MCL IS OFF", MC_WHITE, 1);
-        lp_text_c(x0, MCL_TOP + MCL_H / 2 + 4, MCL_W, "TAP HERE TO START", MC_WHITE, 1);
+        char line[56];
+        int row = 0;
+        lp_text_c(x0, MCL_TOP + 4, MCL_W, "MCL IS OFF", MC_WHITE, 1);
+        for (int i = 0; i < 5; i++)                           /* why the Blackbox restarted (the crash recorder, src/crash.c): reason, PC / LR, fault registers, callers */
+            if (crash_line(i, line, (int)sizeof line))
+                lp_text_c(x0, MCL_TOP + 22 + row++ * 14, MCL_W, line, MC_WHITE, 1);
+        lp_text_c(x0, MCL_TOP + MCL_H - 14, MCL_W, "TAP HERE TO START", MC_WHITE, 1);
     } else if (!fb) {
         lp_text_c(x0, MCL_TOP + MCL_H / 2 - 4, MCL_W, mcl_image() ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", MC_WHITE, 1);
     } else {
