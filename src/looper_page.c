@@ -2487,6 +2487,9 @@ static void app_msg(void *app, const uint16_t *msg)
             for (int slot = 1; slot < BTNS; slot++) {
                 if (!P->bset[slot] || idx != P->bidx[slot])
                     continue;
+                if ((P->mode == M_MCL || P->mode == M_TRIG) && slot != B_BACK)
+                    break;                                     /* (MCL / TRIG pages: the stock firmware gets these buttons, press AND release, in either of
+                                                                  their messages: its transport acts on the pair, so PLAY / STOP lit up but did nothing when one was taken) */
                 if (id != P->bid[slot]) {
                     if (id >= 0xf4 && id <= 0xf9 && P->bid[slot] >= 0xf4 && P->bid[slot] <= 0xf9)
                         return;                                /* the same button's other message (REC: 244 down, 245 up): taken, not an action */
