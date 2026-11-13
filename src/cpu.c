@@ -625,10 +625,11 @@ void mcl_page_draw(int w, int foot_y)
     }
 }
 
-/* the footer line: what the knobs are */
+/* the footer line: left empty (user) */
 void mcl_page_foot(int w, int foot_y)
 {
-    lp_text_c(3, foot_y + 4, w - 6, "MCL   KNOBS 1-4 = ENCODERS A-D", MC_HOLD, 1);
+    (void)w;
+    (void)foot_y;
 }
 
 void mcl_page_down(int id, int x, int d, int w, int foot_y)

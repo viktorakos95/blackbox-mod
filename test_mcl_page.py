@@ -201,7 +201,7 @@ check("the Machinedrum's mark (orange and red, 35 x 13) pixel for pixel, left of
 check("the shortcuts (abi 5): CHROMATIC DELAY REVERB MIXER GRID", all(s in names for s in ("CHROMATIC", "DELAY", "REVERB", "MIXER", "GRID")), names)
 check("no MIDI / error counters, no restart record", not any("ERR" in s or "RESTART" in s for s in names), names)
 fnames = [r[-1] for r in foot_part(c) if r[0] == "lp_text_c"]
-check("the footer: only what the knobs are (no clock)", fnames == ["MCL   KNOBS 1-4 = ENCODERS A-D"], fnames)
+check("the footer: empty (no clock, no text)", not foot_part(c), foot_part(c)[:3])
 
 
 def extent(r):
@@ -365,8 +365,7 @@ e.call("mcl_page_up", 0)
 entry(4)
 c = draw()
 names = [r[-1] for r in c if r[0] == "lp_text_c"]
-check("abi 4: no shortcuts", "CHROMATIC" not in names and "GRID" not in names and "NO" in names and
-      "MCL   KNOBS 1-4 = ENCODERS A-D" in names, names)
+check("abi 4: no shortcuts", "CHROMATIC" not in names and "GRID" not in names and "NO" in names, names)
 check("... taps where they would be do nothing", touch(W // 2, STRIP) == ([], []))
 
 print(f"\n{fails} failure(s)")
