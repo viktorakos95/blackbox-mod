@@ -150,27 +150,33 @@ e.uc.mem_write(STATE, b"\xa5" * 36)
 e.call(0x0809AD74, APP, ADDR, INFO)
 check("before anything is measured: version + free SDRAM + looper status", e.cstr(INFO) == V + " 3M L-", e.cstr(INFO))
 
-# --- every boot (a watchdog or software reset keeps the RAM): main()'s last call before the tasks clears the magic, so start() runs again
+# --- every boot (a watchdog or software reset keeps the RAM): main()'s FIRST call clears the magic, so start() runs once per boot, at the first
+#     label constructor (the app object's constructor, still in main, builds the screens: 0x0808be4c -> 0x080ae8f0 / 0x080c70b8).
+#     m9f..m9r cleared it at main's last call (0x0804428c), after those constructors: MCL booted twice, the second time over its live task.
 from capstone import CS_ARCH_ARM, CS_MODE_THUMB, Cs
 img = open("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+cave/BLACKBOX.bin", "rb").read()
-ins = next(Cs(CS_ARCH_ARM, CS_MODE_THUMB).disasm(img[0x0804428C - 0x08040000:0x0804428C - 0x08040000 + 4], 0x0804428C))
-check("main()'s call at 0x0804428c goes to cpu_boot", ins.mnemonic == "bl" and int(ins.op_str.lstrip("#"), 16) == e.sym["cpu_boot"], ins.op_str)
+stock = open("firmware/BLACKBOX-3.1.9.bin", "rb").read()
+dis = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
+ins = next(dis.disasm(img[0x0804418C - 0x08040000:0x0804418C - 0x08040000 + 4], 0x0804418C))
+check("main()'s first call (0x0804418c) goes to cpu_boot", ins.mnemonic == "bl" and int(ins.op_str.lstrip("#"), 16) == e.sym["cpu_boot"], ins.op_str)
+check("main()'s call at 0x0804428c is the stock one again", img[0x0804428C - 0x08040000:][:4] == stock[0x0804428C - 0x08040000:][:4])
+ctor = [i for i in dis.disasm(stock[0x0808BE4C - 0x08040000:0x0808BEA4 - 0x08040000], 0x0808BE4C) if i.mnemonic == "bl"]
+check("(the app constructor, called in main before 0x0804428c, builds the label screens itself)",
+      {0x080AE8F0, 0x080C70B8} <= {int(i.op_str.lstrip("#"), 16) for i in ctor})
 called = []
-e.stub(0x08046340, lambda: called.append(1))
-magic0 = e.r32(0x2405FFD0)
+e.stub(0x080778D4, lambda: called.append(1))
+e.w32(0x2405FFD0, 0x43505532)
 e.call("cpu_boot")
-check("cpu_boot clears the state's magic (start() runs again at every boot, whatever the reset) and calls the stock function",
-      magic0 != 0 and e.r32(0x2405FFD0) == 0 and called == [1], (hex(magic0), hex(e.r32(0x2405FFD0)), called))
-
-# --- the restart loop guard's count (src/cpu.c GUARD): the meter's report clears it once the run is a minute old (crash.c's live block count)
-clock["got"] = 1
+check("cpu_boot clears the state's magic and calls the stock function", e.r32(0x2405FFD0) == 0 and called == [1], (hex(e.r32(0x2405FFD0)), called))
+TEXTP = 0x24060000
+e.uc.mem_write(TEXTP, bytes(0x60))
+starts = []
+e.w32(0x2405FFD0, 0)
+for k in range(3):
+    e.call("cpu_text_b", TEXTP, 0x080CF290)                   # the label constructors: the first runs start(), the others do not
+    starts.append(e.r32(0x2405FFD0))
 block(1000, 1000000)
-for blocks, want in ((100, 0x4D434C03), (188 * 61, 0x4D434C00)):
-    e.w32(0x38800690, 0x4D434C03)
-    e.w32(0x38800B20, 0x4556494C)
-    e.w32(0x38800B28, blocks)
-    for i in range(376):
-        block(500000, 500000)
-    check(f"guard after a second of reports, the run {blocks} blocks old: {want:#x}", e.r32(0x38800690) == want, hex(e.r32(0x38800690)))
+check("after cpu_boot: the first label constructor runs start() (magic set), later ones and the audio task's waits leave it alone", starts == [0x43505532] * 3 and e.r32(0x2405FFD0) == 0x43505532, [hex(v) for v in starts])
+
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

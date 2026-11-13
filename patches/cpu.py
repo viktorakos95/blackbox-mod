@@ -21,6 +21,8 @@ PATCHES = [
     hook(0x080C54F8, 0x080A3DEC, "cpu_label_a"),
     hook(0x080AEAB6, 0x080C3B98, "cpu_text_b"),
     hook(0x080C72A4, 0x080C3B98, "cpu_text_c"),
-    # main(), the last call before the tasks are made: every boot (a watchdog or software reset keeps the RAM), so start() runs again
-    hook(0x0804428C, 0x08046340, "cpu_boot"),
+    # main()'s first call (HAL init), before anything of ours can run: every boot (a watchdog or software reset keeps the RAM), so start() runs
+    # again, once. (m9f..m9r hooked main's last call before the tasks, 0x0804428c: the screens' label constructors run before that and had
+    # already booted MCL and made its task, so clearing the magic there booted it a second time over its live task: a restart loop.)
+    hook(0x0804418C, 0x080778D4, "cpu_boot"),
 ]

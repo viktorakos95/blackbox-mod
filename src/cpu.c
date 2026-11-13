@@ -79,20 +79,11 @@ struct mcl_ui {
     uint8_t down[4];            /* the tile each touch id holds (index + 1), 0 = none */
     uint16_t mask;              /* tiles shown pressed */
     int16_t acc[4];             /* knob counts below one detent */
-    uint16_t skip;              /* 1: MCL was not started this boot (the restart loop guard below) */
+    uint16_t _r;
 };
 #define UI ((volatile struct mcl_ui *)0x38800680u)
-_Static_assert(sizeof(struct mcl_ui) <= 16, "the page state must end before the guard word at 0x38800690");
-/* The restart loop guard: boots in a row that came less than a minute after the boot before. Kept across resets (not cleared by start()),
- * valid only with its marker in the top 24 bits (anything else, e.g. what an older build left there, counts as 0). The fourth such boot
- * does not start MCL (the rest of the Blackbox runs, the MCL page says MCL NOT RUNNING); a minute of running clears the count, so the next
- * boot starts MCL again. Nothing to tap, nothing shown. */
-#define GUARD        (*(volatile uint32_t *)0x38800690u)
-#define GUARD_MARK   0x4d434c00u                     /* "MCL" */
-#define GUARD_MAX    3u
-#define GUARD_BLOCKS (188u * 60u)                    /* a minute of audio blocks */
-#define LIVE_MAGIC_W (*(volatile uint32_t *)0x38800b20u)   /* crash.c's live block: its magic, then the audio blocks since this boot */
-#define LIVE_BLOCKS  (*(volatile uint32_t *)0x38800b28u)
+_Static_assert(sizeof(struct mcl_ui) <= 24, "the page state must end before 0x38800698");
+
 
 /* MCL blob (milestone M2): patches/mclblob.py sets mcl_entry to the blob's entry table at 0x08120000 (0 = no blob in this image). */
 struct mcl_entry {
@@ -114,11 +105,7 @@ static const struct mcl_entry *mcl_image(void)       /* the blob, whether or not
     const struct mcl_entry *e = (const struct mcl_entry *)mcl_entry;
     return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 5 ? e : 0;
 }
-static const struct mcl_entry *mcl_blob(void)        /* the blob, if it was started this boot */
-{
-    bkp_enable();
-    return UI->skip ? 0 : mcl_image();
-}
+static const struct mcl_entry *mcl_blob(void) { return mcl_image(); }
 #define MCL_RAM     0xc3f80000u  /* the blob's SDRAM region (src/mcl_bb/mcl_blob.ld): .data, .bss, heap, its task's stack */
 #define MCL_RAM_LEN 0x80000u
 
@@ -139,19 +126,21 @@ static void start(void)
     bkp_enable();
     for (unsigned i = 0; i < sizeof(struct mcl_ui) / 4; i++)
         ((volatile uint32_t *)UI)[i] = 0;     /* the MCL page's state (backup SRAM is not cleared by a reset) */
-    uint32_t quick = (GUARD & 0xffffff00u) == GUARD_MARK ? GUARD & 0xffu : 0u;
-    if (quick < 255u)
-        quick++;
-    GUARD = GUARD_MARK | quick;
     for (unsigned i = 0; i < 5; i++)
         ((volatile uint32_t *)0x38800660u)[i] = 0;   /* seqfix.c's stamps for MCL's tempo follower (stale cycle counts from the last run would look fresh) */
     const struct mcl_entry *e = mcl_image();
     if (e) {
+        /* MCL's memory as at a power-on: a reset that is not one leaves the blob's last run in its SDRAM region, its ready flags included,
+         * which the stock tasks' and interrupts' calls into the blob (SD pump, MIDI taps, the clock's timer) would act on */
+        if (*(volatile uint32_t *)0x080f1e08u == MCL_RAM && *(volatile uint32_t *)0x24000088u <= MCL_RAM) {     /* (the region reserved, the allocator below it) */
+            for (volatile uint32_t *p = (volatile uint32_t *)MCL_RAM; p < (volatile uint32_t *)(MCL_RAM + MCL_RAM_LEN); p++)
+                *p = 0;
+            for (int i = 0; i < 4; i++)
+                ((volatile uint32_t *)0x38800920u)[i] = 0;           /* the blob's status words (mcl_rt.cpp: no booted runtime) */
+            __asm volatile("dsb" ::: "memory");
+        }
         bkp_enable();
-        if (quick > GUARD_MAX)
-            UI->skip = 1;            /* (a restart loop: see GUARD) */
-        else
-            e->boot();               /* at every boot, whatever the reset (cpu_boot) */
+        e->boot();                   /* once per boot, whatever the reset (cpu_boot) */
     }
 }
 
@@ -268,27 +257,13 @@ static void report(void)
     }
 }
 
-/* Replaces the last call in main() before the tasks are made (bl 0x08046340 @0x0804428c): once per boot, whatever the reset. The state in M
- * (and the MCL blob's, in SDRAM) survives a reset that is not a power cycle (watchdog, software, brown-out): start() keyed on M->magic alone then
- * never ran again, so MCL was not booted (its page showed the last picture of the run before). Clearing the magic here makes the first task
- * that calls in run start() as at power-up. */
+/* Replaces main()'s first call (bl 0x080778d4 @0x0804418c, HAL init): once per boot, before anything of ours runs, whatever the reset. M survives
+ * a reset that is not a power cycle (watchdog, software, the updater's), so start() keyed on M->magic alone would not run again and MCL would not
+ * be booted. Clearing the magic here lets the first caller (a label constructor, still in main) run start() exactly once. */
 void cpu_boot(void)
 {
     M->magic = 0;
-    /* MCL's memory as at a power-on: a reset that is not one (watchdog, software, the updater's; a short power cut may not clear the SDRAM
-     * either) leaves the blob's last run in its SDRAM region, its ready flags included. The stock tasks and interrupts call the blob's hooks
-     * (SD pump, MIDI taps, the clock's timer) as soon as they run, before and while start() boots it again: with those flags still set
-     * they ran on the old run's state. Cleared here, before any task: every hook stays off until the new boot sets it up. */
-    if (mcl_image() && *(volatile uint32_t *)0x080f1e08u == MCL_RAM && *(volatile uint32_t *)0x24000088u <= MCL_RAM &&
-        (*(volatile uint32_t *)0x52004000u & 0x80000000u)) {               /* (the region reserved, the allocator below it, FMC on: the SDRAM is up) */
-        for (volatile uint32_t *p = (volatile uint32_t *)MCL_RAM; p < (volatile uint32_t *)(MCL_RAM + MCL_RAM_LEN); p++)
-            *p = 0;
-        bkp_enable();
-        for (int i = 0; i < 4; i++)
-            ((volatile uint32_t *)0x38800920u)[i] = 0;           /* the blob's status words (mcl_rt.cpp: no booted runtime) */
-        __asm volatile("dsb" ::: "memory");
-    }
-    ((void (*)(void))0x08046341u)();
+    ((void (*)(void))0x080778d5u)();
 }
 
 /* Replaces the audio task's queue wait (bl @0x080414e4). */
@@ -317,9 +292,6 @@ int cpu_wait(void *queue, void *item, uint32_t ticks, int peek)
             M->peak_shown = M->peak;
             M->status = STATUS_OK;
             report();
-            bkp_enable();
-            if ((GUARD & 0xffu) && LIVE_MAGIC_W == 0x4556494cu && LIVE_BLOCKS > GUARD_BLOCKS)
-                GUARD = GUARD_MARK;                          /* a minute of running: the restart loop guard starts counting again */
             M->sum = 0;
             M->n = M->peak = M->wakes = 0;
         }
@@ -594,12 +566,6 @@ void mcl_page_draw(int w, int foot_y)
     text_15(nx + LOGO_W + 6, MCL_WIN_Y + 3, "MACHINEDRUM", MC_WHITE);
     if (!fb) {
         lp_text_c(x0, MCL_TOP + MCL_H / 2 - 4, MCL_W, mcl_image() ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", MC_WHITE, 1);
-        if (UI->skip) {                                       /* (MCL crashed at its start: where, from the crash recorder, so it can be fixed) */
-            char line[56];
-            for (int i = 0, row = 0; i < 5; i++)
-                if (crash_line(i, line, (int)sizeof line))
-                    lp_text_c(x0, MCL_TOP + MCL_H / 2 + 12 + row++ * 12, MCL_W, line, MC_WHITE, 1);
-        }
     } else {
         for (int y = 0; y < 64; y++) {                        /* the screen: 16 bytes a row, leftmost pixel = the top bit; runs of lit pixels become boxes */
             const uint8_t *row = fb + y * 16;

@@ -176,47 +176,23 @@ entry("mcl_page_knob", 7, 100)
 entry("mcl_page_knob", -1, 100)
 check("bad knob numbers are ignored", screen()[3][8:11] == " -4")
 
-# --- boots after any reset start MCL; the restart loop guard: the fourth boot in a row that comes less than a minute after the one before skips it
+# --- every boot starts MCL once (cpu_boot clears M->magic at main's first call), after wiping its SDRAM region and status words
+#     (a warm reset leaves the last run's ready flags there); no restart record, no off state, nothing to tap
 boots, guis = [], []
 e.stub(r.b["mcl_boot"], lambda: boots.append(1))
 e.uc.mem_write(REC, struct.pack("<IHHI", 0x31435243, 6, 1, (1 << 24) | (1 << 22)) + bytes([1, 2, 0, 0, 0, 0]) + bytes(0x60))
-GUARD = 0x38800690
-e.w32(GUARD, 0x12345677)                                          # what an older build left there: no marker, counts as 0
-for n in (1, 2, 3):
+for n in range(5):
+    e.uc.mem_write(0xC3F80000, b"\xa5" * 0x80000)
+    e.w32(0x38800920, 0x4D434C42)
+    e.w32(0x24000088, 0xC3F80000)
     e.w32(0x2405FFD0, 0)
     r.boot()
-check("three boots in a row: MCL boots every time (a stale guard word without its marker counts as 0)", boots == [1] * 3 and e.r32(GUARD) == 0x4D434C03, (boots, hex(e.r32(GUARD))))
+    r.boot()                                                      # (a second label constructor: no second start)
+ram = bytes(e.uc.mem_read(0xC3F80000, 0x80000))
+check("five boots in a row: MCL boots once each time", boots == [1] * 5, boots)
+check("... its SDRAM region and status words wiped before each boot", ram == bytes(0x80000) and e.r32(0x38800920) == 0, (ram.count(0), hex(e.r32(0x38800920))))
 texts = [c[5] for c in draw() if c[0] == "lp_text_c"]
 check("... no restart record, no 'MCL IS OFF', no tap prompt on the page", not any("RESTART" in t or "MCL IS OFF" in t or "TAP" in t for t in texts), texts[:6])
-e.w32(0x2405FFD0, 0)
-r.boot()
-check("the fourth quick boot in a row: MCL is not started", boots == [1] * 3, boots)
-texts = [c[5] for c in draw() if c[0] == "lp_text_c"]
-check("... its page says MCL NOT RUNNING and where MCL crashed (the crash record), no tap prompt", "MCL NOT RUNNING" in texts and any(t.startswith("LAST RESTART") for t in texts) and any(t.startswith("PC ") for t in texts) and not any("TAP" in t for t in texts), texts[:6])
-e.w32(GUARD, 0x4D434C04)
-e.w32(0x2405FFD0, 0)
-e.w32(GUARD, 0x4D434C00)                                          # (what a minute of running leaves: cpu.c's report clears the count; test_cpu.py)
-r.boot()
-check("after a minute of running, the next boot starts MCL again", boots == [1] * 4, boots)
-
-# --- cpu_boot: MCL's SDRAM region and status words cleared at every boot (a warm reset leaves the last run's ready flags in the SDRAM)
-e.uc.mem_write(0xC3F80000, b"\xa5" * 0x80000)
-e.w32(0x38800920, 0x4D434C42)
-FMC_MAPPED = True
-try:
-    e.uc.mem_map(0x52004000, 0x1000)
-except Exception:
-    pass
-e.w32(0x52004000, 0x80000000)
-e.w32(0x24000088, 0xC3F80000)
-e.stub(0x08046340)
-e.call("cpu_boot")
-ram = bytes(e.uc.mem_read(0xC3F80000, 0x80000))
-check("cpu_boot: the blob's whole SDRAM region is zero, its status words too", ram == bytes(0x80000) and e.r32(0x38800920) == 0, (ram.count(0), hex(e.r32(0x38800920))))
-e.uc.mem_write(0xC3F80000, b"\xa5" * 16)
-e.w32(0x52004000, 0)
-e.call("cpu_boot")
-check("... not while the FMC is off (the SDRAM not up yet)", bytes(e.uc.mem_read(0xC3F80000, 16)) == b"\xa5" * 16)
 
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

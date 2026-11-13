@@ -480,3 +480,12 @@ The looper branch keeps its ITCM image at 0x08170000..0x08180000, inside what th
   - `cpu_boot` (in main, before any task) zeroes the blob's whole SDRAM region (0xC3F80000..0xC4000000) and its status words (0x38800920). It does this only when the region is reserved, the allocator is below it and FMC is enabled.
   - Restart loop guard, silent: a word at 0x38800690 with a marker counts boots in a row. The fourth boot that comes less than a minute after the one before skips MCL; the page shows MCL NOT RUNNING. The CPU meter's report clears the count after a minute of running (crash.c's live block count), so the next boot starts MCL again.
   - Tests: `test_mcl_ui.py` (the wipe, the guard, a stale word without its marker) and `test_cpu.py` (the clear).
+- **m9r on the unit, the record:** USAGE FAULT, CFSR 0x01000000 (UNALIGNED), PC 0x08088098, LR 0x0808808B, SP 0x2001FF78 (MSP). That is PendSV's `ldmia r0!` from `pxCurrentTCB->pxTopOfStack`, right after `vTaskSwitchContext`: the task being switched in had a corrupt saved stack pointer.
+
+  **Root cause (since m9f):** the app object's constructor (0x0808BE4C, called from main at 0x0804427A) builds the screens, so the label constructors run in main: `remember()` -> `start()` -> MCL boots and makes its task (TCB and stack in the blob's .bss). `cpu_boot` was hooked at main's LAST call (0x0804428C), after them, and cleared M->magic. So the audio task's first `cpu_wait` ran `start()` again: `mcl_boot` zeroed .bss under the live task (TCB included, already in the kernel's lists), and the next switch to it faulted. Every boot did this, hence the restart loops of m9f, m9l, m9p and m9q (the guard's 4 restarts). It also fits m9g, where the first tap-to-start (a second boot over a running MCL) restarted the unit.
+
+  **m9s:**
+  - `cpu_boot` hooks main's FIRST call (0x0804418C, `bl 0x080778D4`, HAL init); 0x0804428C is stock again. So `start()` runs exactly once per boot, at the first label constructor, whatever the reset.
+  - The SDRAM wipe moved into `start()`, just before `e->boot()`.
+  - The restart loop guard and the crash lines on the MCL page are gone (user).
+  - `test_cpu.py` checks the hook site, that 0x0804428C is stock, that the app constructor calls the label constructors, and that only the first label constructor runs `start()`.
