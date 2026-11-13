@@ -186,8 +186,8 @@ r.boot()
 check("warm boot: start() runs, MCL is not booted, the page state says off, no GUI call into the blob", boots == [] and guis == [] and e.r8(0x3880093E) == 1, (boots, guis, e.r8(0x3880093E)))
 calls = draw()
 texts = [c[5] for c in calls if c[0] == "lp_text_c"]
-check("... the page: 'MCL IS OFF', 'TAP HERE TO START'; no restart details, no picture from the last run",
-      "MCL IS OFF" in texts and "TAP HERE TO START" in texts and not any(t.startswith("LAST RESTART") for t in texts)
+check("... the page: 'MCL IS OFF', why the Blackbox restarted, 'TAP HERE TO START'; no picture from the last run",
+      "MCL IS OFF" in texts and "TAP HERE TO START" in texts and any(t.startswith("LAST RESTART") for t in texts)
       and not [c for c in calls if c[0] == "lp_box" and c[4] == 2], texts[:4])
 sig_off = entry("mcl_page_sig")
 page_down(1, W - 10, 150)
