@@ -5,8 +5,8 @@ The page's drawing primitives (lp_box / lp_frame / lp_text_c, src/looper_page.c)
 (out/mcl_page.png, colours approximate: the stock palette is not in this repository).
 
 Checked: the screen is blitted at exactly 2x (every lit pixel a 2x2 block, nothing else in the screen area), the name plate (red mark,
-bold MACHINEDRUM), the four buttons and their touch areas (B1 NO / B2 PAGE / B3 SHIFT / B4 YES, press and release), the shortcuts
-(CHROMATIC with its piano, DELAY, REVERB, MIXER: input kind 6, the one showing lit from midi(10)), the clock on the footer line (CLOCK,
+bold MACHINEDRUM; no MEGACOMMAND), the four buttons and their touch areas (B1 NO / B2 PAGE / B3 SHIFT / B4 YES, press and release), the shortcuts
+(CHROMATIC with its piano, DELAY and REVERB with MCL's own RHYTHM ECHO / GATE BOX icons, MIXER: input kind 6, the one showing lit from midi(10)), the clock on the footer line (CLOCK,
 PLAY / STOP, - / +: kinds 4 / 5 and their arguments, the tempo limits), nothing past the page's width or across the footer line, no
 overlaps, no restart record over the screen, the 'MCL is off' prompt and its tap, and that a blob of abi 4 gets neither strip nor clock.
 NOT checked (hardware only): the real colours, touch feel, the clock itself (test_mcl_clock.py and the unit).
@@ -153,8 +153,9 @@ want = {(x0 + 2 * x + i, TOP + 2 * y + j) for x, y in lit for i in (0, 1) for j 
 check("the screen is exactly 2x: the lit runs cover each lit MCL pixel as a 2x2 block, nothing else", cover == want, (len(cover), len(want)))
 check("every run is 2 px high at an even offset (no 2.4x rounding)", all(r[4] == 2 and (r[2] - TOP) % 2 == 0 and (r[1] - x0) % 2 == 0 for r in white))
 names = [r[-1] for r in texts]
-check("the panel's printing: MACHINEDRUM / MEGACOMMAND, SAVE NO PAGE / LOAD YES SHIFT", all(s in names for s in
-      ("MACHINEDRUM", "MEGACOMMAND", "SAVE", "NO", "PAGE", "LOAD", "YES", "SHIFT")), names)
+check("the panel's printing: MACHINEDRUM, SAVE NO PAGE / LOAD YES SHIFT", all(s in names for s in
+      ("MACHINEDRUM", "SAVE", "NO", "PAGE", "LOAD", "YES", "SHIFT")), names)
+check("no MEGACOMMAND anywhere", not any("MEGACOMMAND" in s for s in names), names)
 check("MACHINEDRUM in bold (drawn twice, one pixel apart)", sorted(r[1] for r in texts if r[-1] == "MACHINEDRUM")[1] -
       sorted(r[1] for r in texts if r[-1] == "MACHINEDRUM")[0] == 1)
 plate = [r for r in texts if r[-1] == "MACHINEDRUM"][0]
@@ -208,7 +209,8 @@ e.call("mcl_page_up", 1)
 check("touching MCL's screen does nothing", touch(W // 2, 80) == ([], []))
 
 # --- the shortcuts
-STRIP_Y = 17 + 156 + 4
+STRIP_Y = 17 + 145 + 4                   # under the window (name plate 14, screen 128, edge 3)
+STRIP_H = 48
 STRIP = STRIP_Y + 10
 
 
@@ -220,7 +222,7 @@ def tile(label, foot=False):
 def strip_fits():
     c = page_part(draw())
     tiles = [extent(r) for r in c if r[0] == "lp_box" and r[2] == STRIP_Y]
-    words = [(r[-1], extent(r)) for r in c if STRIP_Y < r[2] < STRIP_Y + 40 and r[0] != "lp_frame" and r[5] != 0x1C]   # (the tiles' own boxes start at STRIP_Y)
+    words = [(r[-1], extent(r)) for r in c if STRIP_Y < r[2] < STRIP_Y + STRIP_H and r[0] != "lp_frame" and r[5] != 0x1C]   # (the tiles' own boxes start at STRIP_Y)
     return [w for w, x in words if not any(t[0] + 2 <= x[0] and x[2] <= t[2] - 2 and t[1] + 2 <= x[1] and x[3] <= t[3] - 2 for t in tiles)]
 
 
@@ -228,8 +230,29 @@ check("each shortcut's name and picture fit inside its tile's frame", not strip_
 for k, name in enumerate(("CHROMATIC", "DELAY", "REVERB", "MIXER")):
     down, up = touch(tile(name), STRIP)
     check(f"{name}: shortcut {k} (kind 6), nothing on release", down == [(6, k, 0)] and up == [], (down, up))
-piano = [r for r in page_part(draw()) if r[0] == "lp_box" and r[5] == 0x0E and STRIP_Y + 6 <= r[2] < STRIP_Y + 18 and r[4] == 7]
+piano = [r for r in page_part(draw()) if r[0] == "lp_box" and r[5] == 0x0E and STRIP_Y + 10 <= r[2] < STRIP_Y + 22 and r[4] == 7]
 check("the chromatic tile has a little piano (4 black keys)", len(piano) == 4, piano)
+
+
+def icon_pixels(name):
+    """MCL's own bitmap (the fork's resource/icons_page.cpp, as copied into src/cpu.c) -> its lit (x, y)"""
+    src = open("src/cpu.c").read()
+    body = src[src.index(name + "[75] = {"):]
+    b = [int(t, 16) for t in body[body.index("{") + 1:body.index("}")].replace(",", " ").split()]
+    return {(x, y) for y in range(25) for x in range(24) if b[y * 3 + x // 8] >> (7 - x % 8) & 1}
+
+
+c = page_part(draw())
+for k, name, arr in ((1, "DELAY", "icon_echo"), (2, "REVERB", "icon_gbox")):
+    tiles = sorted(r[1] for r in c if r[0] == "lp_box" and r[2] == STRIP_Y)
+    t0 = tiles[k]
+    got = set()
+    for r in c:
+        if r[0] == "lp_box" and r[5] == 0x0F and STRIP_Y < r[2] < STRIP_Y + 30 and t0 <= r[1] < t0 + 52 and r[4] == 1:
+            for xx in range(r[1], r[1] + r[3]):
+                got.add((xx, r[2]))
+    ox, oy = min(x for x, _ in got) - min(x for x, _ in icon_pixels(arr)), min(y for _, y in got) - min(y for _, y in icon_pixels(arr))
+    check(f"{name}: MCL's {arr} drawn pixel for pixel", got == {(x + ox, y + oy) for x, y in icon_pixels(arr)}, (len(got), len(icon_pixels(arr))))
 state["page"] = 2
 lit = [r[-1] for r in page_part(draw()) if r[0] == "lp_text_c" and r[5] == 0x1B]
 check("the page MCL shows (midi(10) = 2) lights its shortcut: REVERB", lit == ["REVERB"], lit)
