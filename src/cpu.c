@@ -594,6 +594,12 @@ void mcl_page_draw(int w, int foot_y)
     text_15(nx + LOGO_W + 6, MCL_WIN_Y + 3, "MACHINEDRUM", MC_WHITE);
     if (!fb) {
         lp_text_c(x0, MCL_TOP + MCL_H / 2 - 4, MCL_W, mcl_image() ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", MC_WHITE, 1);
+        if (UI->skip) {                                       /* (MCL crashed at its start: where, from the crash recorder, so it can be fixed) */
+            char line[56];
+            for (int i = 0, row = 0; i < 5; i++)
+                if (crash_line(i, line, (int)sizeof line))
+                    lp_text_c(x0, MCL_TOP + MCL_H / 2 + 12 + row++ * 12, MCL_W, line, MC_WHITE, 1);
+        }
     } else {
         for (int y = 0; y < 64; y++) {                        /* the screen: 16 bytes a row, leftmost pixel = the top bit; runs of lit pixels become boxes */
             const uint8_t *row = fb + y * 16;

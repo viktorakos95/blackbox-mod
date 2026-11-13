@@ -192,7 +192,7 @@ e.w32(0x2405FFD0, 0)
 r.boot()
 check("the fourth quick boot in a row: MCL is not started", boots == [1] * 3, boots)
 texts = [c[5] for c in draw() if c[0] == "lp_text_c"]
-check("... its page just says MCL NOT RUNNING; buttons do nothing", "MCL NOT RUNNING" in texts and not any("RESTART" in t or "TAP" in t for t in texts), texts[:6])
+check("... its page says MCL NOT RUNNING and where MCL crashed (the crash record), no tap prompt", "MCL NOT RUNNING" in texts and any(t.startswith("LAST RESTART") for t in texts) and any(t.startswith("PC ") for t in texts) and not any("TAP" in t for t in texts), texts[:6])
 e.w32(GUARD, 0x4D434C04)
 e.w32(0x2405FFD0, 0)
 e.w32(GUARD, 0x4D434C00)                                          # (what a minute of running leaves: cpu.c's report clears the count; test_cpu.py)
