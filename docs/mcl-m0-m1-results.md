@@ -489,3 +489,4 @@ The looper branch keeps its ITCM image at 0x08170000..0x08180000, inside what th
   - The SDRAM wipe moved into `start()`, just before `e->boot()`.
   - The restart loop guard and the crash lines on the MCL page are gone (user).
   - `test_cpu.py` checks the hook site, that 0x0804428C is stock, that the app constructor calls the label constructors, and that only the first label constructor runs `start()`.
+- **Roll (beat repeat) timing on the Blackbox (user: 1/4 sounds like 1/16):** `BEAT_REPEAT_DIV192_PERIOD` is in AVR units (12 a 16th); on the ARM builds `div192th_counter` runs at `div192th_ticks_per_16th()` = 6 x clock_interpolation a 16th. Fork patch `0003-beat-repeat-period-scale.patch` scales it with `MidiClock.scale_legacy_div192_to_current()`, which is the identity on AVR, so the MegaCommand is unchanged. (m9t)
