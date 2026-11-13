@@ -161,5 +161,16 @@ magic0 = e.r32(0x2405FFD0)
 e.call("cpu_boot")
 check("cpu_boot clears the state's magic (start() runs again at every boot, whatever the reset) and calls the stock function",
       magic0 != 0 and e.r32(0x2405FFD0) == 0 and called == [1], (hex(magic0), hex(e.r32(0x2405FFD0)), called))
+
+# --- the restart loop guard's count (src/cpu.c GUARD): the meter's report clears it once the run is a minute old (crash.c's live block count)
+clock["got"] = 1
+block(1000, 1000000)
+for blocks, want in ((100, 0x4D434C03), (188 * 61, 0x4D434C00)):
+    e.w32(0x38800690, 0x4D434C03)
+    e.w32(0x38800B20, 0x4556494C)
+    e.w32(0x38800B28, blocks)
+    for i in range(376):
+        block(500000, 500000)
+    check(f"guard after a second of reports, the run {blocks} blocks old: {want:#x}", e.r32(0x38800690) == want, hex(e.r32(0x38800690)))
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

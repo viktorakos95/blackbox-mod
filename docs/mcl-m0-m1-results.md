@@ -472,3 +472,11 @@ The looper branch keeps its ITCM image at 0x08170000..0x08180000, inside what th
   **m9p (user: "remove completely"):** no off state, no restart record on the MCL page, no tap-to-start. `cpu_boot` clears M->magic, so `start()` boots MCL at every boot, whatever the reset. The crash recorder itself stays (the Looper's SETUP debug view).
 
   **Risk accepted:** if MCL crashes at every start, the unit loops (m9f / m9l). The way out is to flash an image without `mclblob`.
+- **m9p on the unit:** a restart loop again (only the LEDs flash).
+
+  **Likely cause:** a reset that is not a power-on keeps the SDRAM, and possibly a short power cut does too. So the blob's last run is still in its region, ready flags included (`bb_sd`, `bb_midi`, `bb_clock`). The stock tasks and interrupts call the blob's hooks (SD pump, MIDI taps, the timer) as soon as they run, before and while `start()` boots MCL again, so they ran on the old run's state. m9j never booted MCL after such a reset, which is why it did not loop.
+
+  **m9q:**
+  - `cpu_boot` (in main, before any task) zeroes the blob's whole SDRAM region (0xC3F80000..0xC4000000) and its status words (0x38800920). It does this only when the region is reserved, the allocator is below it and FMC is enabled.
+  - Restart loop guard, silent: a word at 0x38800690 with a marker counts boots in a row. The fourth boot that comes less than a minute after the one before skips MCL; the page shows MCL NOT RUNNING. The CPU meter's report clears the count after a minute of running (crash.c's live block count), so the next boot starts MCL again.
+  - Tests: `test_mcl_ui.py` (the wipe, the guard, a stale word without its marker) and `test_cpu.py` (the clear).
