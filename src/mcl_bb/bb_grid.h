@@ -33,3 +33,18 @@ struct bb_mixer {
     char pname[8];                     /* the parameter's name (for the first held track's machine, else track 1's) */
     char roll_rate[6];
 };
+
+/* The sample player (abi 7, player()): MCL's task streams a WAV file from the card into the ring (16-bit stereo frames at the file's rate);
+ * the Blackbox's audio stage plays it from there onto Out 3 at 48 kHz (src/cpu.c mcl_player_mix). For the SAMPLE button: listening while
+ * browsing, and playing the file into the Machinedrum's input while its RAM record runs. */
+#define BB_PLAYER_RING 8192u                                  /* frames (a power of 2): 170 ms of a 48 kHz file */
+struct bb_player {
+    volatile uint32_t state;           /* 0 stopped, 1 playing (the audio stage sets 0 at the end) */
+    volatile uint32_t wr;              /* frames written into the ring (MCL's task) */
+    volatile uint32_t rd;              /* the playing position, in the file's frames (the audio stage) */
+    volatile uint32_t end;             /* the file's frames (0: nothing loaded) */
+    volatile uint32_t frac;            /* the position's fraction, 1/65536 (the audio stage) */
+    uint32_t step;                     /* the file's rate / 48000, 1/65536 */
+    float gain;
+    int16_t *ring;                     /* BB_PLAYER_RING x {left, right} */
+};

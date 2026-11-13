@@ -2450,6 +2450,8 @@ void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, in
 /* Out 1 bus, once per audio block, before the master compressor and the output levels (looper_thunk.S).
  * obj is the compressor stage object; its output index names the Out 1 bus, as in comp_process (comp.c). */
 void lira_page_run(float *l, float *r, int n);
+int mcl_player_active(void);                     /* src/cpu.c: MCL's SAMPLE button's file player */
+void mcl_player_mix(float *l, float *r, int n);
 
 /* The bus an engine plays on (LOOPER_O_DOUT / SOUT): Out 1 is the stage's own (l, r); Out 2 and Out 3 are the stock buses 1 and 2, which the
  * render sends to their jacks right after this stage (0x08053576..: bus 0 Out 1 and the headphones, 1 Out 2, 2 Out 3; they skip the master
@@ -2499,6 +2501,12 @@ void looper_stage(uint8_t *obj, void *bufs)
         if (dd->lo_l == l)
             dd->lo_l = dd->lo_r = 0;
         lira_page_run(dl, dr, n);                  /* the LIRA page's voices, before the looper so SOURCE MIX records them (on Out 1) */
+        if (mcl_player_active()) {                 /* MCL's SAMPLE button: the file into the Machinedrum's input, on Out 3 only (src/cpu.c) */
+            float *pl, *pr;
+            out_bus(bufs, 2, n, l, r, &pl, &pr);
+            if (pl != l)
+                mcl_player_mix(pl, pr, n);
+        }
         crash_bc(BC_AUDIO, BCA_STAGE);
         uint32_t c_l = *(volatile uint32_t *)0xe0001004u;
         if (!run(l, r, n)) {

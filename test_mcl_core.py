@@ -37,7 +37,12 @@ with wave.open("out/sd/long.wav", "wb") as w:
     w.setsampwidth(2)
     w.setframerate(44100)
     w.writeframes(bytes(4410 * 2))
-c = R.Core(d, files=[("out/sd/long.wav", "::/Samples/Drums/" + LONG_WAV), ("out/sd/long.wav", "::/" + LONG_WAV)])
+RAMP_N = 20000                                                    # a 24-bit stereo 48 kHz ramp (left +1 a frame in the top 16 bits, right -1): 0.42 s
+with open("out/sd/ramp24.wav", "wb") as f:
+    data = b"".join(struct.pack("<i", (k & 0x7FFF) << 8)[:3] + struct.pack("<i", (-(k & 0x7FFF)) << 8)[:3] for k in range(RAMP_N))
+    fmt = struct.pack("<HHIIHH", 1, 2, 48000, 48000 * 6, 6, 24)
+    f.write(b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data)) + b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(data)) + data)
+c = R.Core(d, files=[("out/sd/long.wav", "::/Samples/Drums/" + LONG_WAV), ("out/sd/long.wav", "::/" + LONG_WAV), ("out/sd/ramp24.wav", "::/ramp24.wav")])
 b = c.b
 sd_ops = []
 orig_service = c.service
@@ -164,7 +169,7 @@ else:
     check("bb_mcl_mixer on the mixer page without a Machinedrum: 0 (MCL's own mixer is shown)", okm == 0, okm)
 n9, _ = shortcut(5)
 src = c.call("bb_mcl_dbg", 0) if False else None
-check("SAMPLE opens MCL's RAM record page (shortcut 5 showing)", n9 == 5, n9)
+check("SAMPLE opens MCL's sample browser (shortcut 5 showing)", n9 == 5, n9)
 shortcut(4)
 shortcut(4)
 
@@ -192,6 +197,40 @@ check("sample manager: it starts at the card's root (the Blackbox's folders and 
 roots = [n for _, n in ents]
 check("... a file whose name is longer than MCL's lists hold (39 characters) is listed by its 8.3 short name, a .WAV (case does not matter)",
       any(n.upper().endswith(".WAV") and "~" in n and len(n) <= 12 for n in roots), roots[:8])
+
+# ---- the SAMPLE button's player, MCL's side (bb_player.cpp): a WAV file streamed from the card into the ring
+NAMEBUF = 0x24079000
+c.uc.mem_write(NAMEBUF, b"/ramp24.wav\0")
+c.call("bb_player_open_req", NAMEBUF)
+for _ in range(40):
+    c.step(20_000_000)
+    c.tick(5)
+okp = c.call("bb_player_open_res")
+PL = c.call("bb_player")
+st = struct.unpack("<6I", bytes(c.uc.mem_read(PL, 24)))
+ring = struct.unpack("<I", bytes(c.uc.mem_read(PL + 28, 4)))[0]
+fr = struct.unpack("<16h", bytes(c.uc.mem_read(ring, 32)))
+check("player: a 24-bit stereo 48 kHz WAV opens (20000 frames, step 1.0) and fills the ring (8192 frames, 2 short of full)",
+      okp == 1 and st[3] == RAMP_N and st[5] == 65536 and st[1] >= 8000, (okp, st))
+check("... the frames are the file's: left +1, right -1 a frame (the top 16 bits of each 24-bit sample)",
+      list(fr[0::2]) == list(range(8)) and list(fr[1::2]) == [-k for k in range(8)], fr)
+c.uc.mem_write(NAMEBUF, b"/MCL\0")
+c.call("bb_player_open_req", NAMEBUF)
+for _ in range(20):
+    c.step(20_000_000)
+    c.tick(5)
+check("... a folder is not a WAV file: refused, nothing loaded", c.call("bb_player_open_res") == 0 and struct.unpack("<I", bytes(c.uc.mem_read(PL + 12, 4)))[0] == 0)
+c.call("bb_player_close")
+n10, _ = shortcut(5)
+cm = c.uc.mem_read(c.b["bb_cable_mode"], 1)[0]
+check("SAMPLE: MCL's sample browser in cable mode (shortcut 5 showing)", n10 == 5 and cm == 1, (n10, cm))
+l0 = c.uc.mem_read(c.b["bb_cable_listen"], 1)[0]
+shortcut(5)
+l1 = c.uc.mem_read(c.b["bb_cable_listen"], 1)[0]
+check("... pressed again: listening on (and again: off)", l0 == 0 and l1 == 1, (l0, l1))
+shortcut(5)
+shortcut(4)
+check("... leaving the browser ends cable mode", c.uc.mem_read(c.b["bb_cable_mode"], 1)[0] == 0)
 png(fa, "mcl-core-fx-a.png")
 png(fb_, "mcl-core-fx-b.png")
 png(pb, "mcl-core-poly.png")

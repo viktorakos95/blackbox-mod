@@ -101,12 +101,13 @@ struct mcl_entry {
                                           * kind 6 = shortcut a (0 chromatic, 1 delay, 2 reverb, 3 mixer); midi(10) = the shortcut showing (255 none) */
     uint32_t (*grid)(struct bb_grid *);  /* abi 6: MCL's grid page as data (mcl_bb/bb_grid.h), 0 while another page shows */
     uint32_t (*mixer)(struct bb_mixer *); /* abi 6: its mixer page as data, likewise */
+    struct bb_player *(*player)(void);   /* abi 7: the SAMPLE button's file player (mcl_bb/bb_grid.h) */
 };
 const volatile uint32_t mcl_entry = 0;
 static const struct mcl_entry *mcl_image(void)       /* the blob, whether or not it runs */
 {
     const struct mcl_entry *e = (const struct mcl_entry *)mcl_entry;
-    return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 6 ? e : 0;
+    return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 7 ? e : 0;
 }
 static const struct mcl_entry *mcl_blob(void) { return mcl_image(); }
 #define MCL_RAM     0xc3f80000u  /* the blob's SDRAM region (src/mcl_bb/mcl_blob.ld): .data, .bss, heap, its task's stack */
@@ -562,6 +563,48 @@ static void sc_icon(int i, int x, int d)
         }
         break;
     }
+}
+
+/* The SAMPLE button's file player (abi 7), from the looper's Out 1 stage (looper_stage), once a block: the ring MCL's task fills (16-bit stereo
+ * frames at the file's rate) onto Out 3 at 48 kHz, linear interpolation, added to whatever plays there. Ends by itself at the file's end;
+ * an empty ring (the card too slow for a moment) is silence, not a stop. */
+static struct bb_player *mcl_player(void)
+{
+    const struct mcl_entry *e = mcl_blob();
+    return e && e->abi >= 7 ? e->player() : 0;
+}
+
+int mcl_player_active(void)
+{
+    struct bb_player *p = mcl_player();
+    return p && p->state == 1;
+}
+
+void mcl_player_mix(float *l, float *r, int n)
+{
+    struct bb_player *p = mcl_player();
+    if (!p || p->state != 1 || !p->ring)
+        return;
+    uint32_t rd = p->rd, frac = p->frac, step = p->step, end = p->end;
+    const float g = p->gain / 32768.f;
+    for (int i = 0; i < n; i++) {
+        if (rd + 1u >= end) {                                 /* the end */
+            p->state = 0;
+            break;
+        }
+        if (rd + 1u >= p->wr)                                 /* (not there yet: silence for the rest of this block) */
+            break;
+        const int16_t *a = p->ring + 2u * (rd & (BB_PLAYER_RING - 1u)), *b = p->ring + 2u * ((rd + 1u) & (BB_PLAYER_RING - 1u));
+        float f = (float)frac * (1.f / 65536.f);
+        l[i] += ((float)a[0] + (float)(b[0] - a[0]) * f) * g;
+        r[i] += ((float)a[1] + (float)(b[1] - a[1]) * f) * g;
+        frac += step;
+        rd += frac >> 16;
+        frac &= 0xffffu;
+    }
+    p->frac = frac;
+    __asm volatile("dmb" ::: "memory");
+    p->rd = rd;
 }
 
 /* MCL's grid page at the Blackbox's own resolution (abi 6): the whole 256 x 128 screen area, black, in the Machinedrum's screen style

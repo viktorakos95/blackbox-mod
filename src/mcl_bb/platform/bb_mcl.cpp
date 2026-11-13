@@ -27,6 +27,20 @@
 #include "Sequencer/BeatRepeat.h"
 #include "NoteInterface.h"
 
+/* the SAMPLE button's player and cable mode (see bb_sample_record below) */
+extern "C" {
+struct bb_player *bb_player(void);
+int bb_player_open(const char *name);
+void bb_player_close(void);
+void bb_player_play(void);
+void bb_player_stop(void);
+void bb_player_pump(void);
+}
+extern "C" volatile uint8_t bb_cable_mode, bb_cable_listen;     /* (the fork's SampleBrowserPage reads them: fork patch 0004) */
+volatile uint8_t bb_cable_mode, bb_cable_listen;
+static volatile uint8_t cable_armed;                             /* the file is loaded and waits for the record's first step */
+static volatile uint16_t cable_step;                             /* that step (RAMPage's transition_step) */
+
 #include "bb_clock.h"
 #include "bb_midi.h"
 #include "bb_sd.h"
@@ -338,6 +352,10 @@ extern "C" void bb_mcl_clk_tick(uint32_t ticks)
     MidiClock.uart_clock_forward2 = nullptr;
     MidiClock.uart_clock_forward3 = nullptr;
     MidiClock.handleImmediateClock();
+    if (cable_armed && MidiClock.state == MidiClockClass::STARTED && MidiClock.mod6_counter == 0 && MidiClock.div16th_counter == cable_step) {
+        cable_armed = 0;                                           /* the RAM record's first step: the file plays into the Machinedrum's input from here */
+        bb_player_play();
+    }
     if (MidiClock.state == MidiClockClass::STARTED && !MidiClock.inCallback)
         TRIGGER_SW_IRQ1();
 }
@@ -401,10 +419,75 @@ static void md_follow_blackbox(void)
     MD.setExternalSync();
 }
 
+/* ---- the SAMPLE button (cable mode): MCL's sample browser, a file played into the Machinedrum's input A from the Blackbox's Out 3 while its RAM
+ * record runs (bb_player.cpp streams it, the cave's audio stage plays it). Listening while browsing is optional (SAMPLE pressed again). ---- */
+
+/* The browser's selection settled on a file (cable mode, listening on): play it from the start. */
+HOOK void bb_sample_browse(const char *name)
+{
+    if (!bb_cable_mode || !bb_cable_listen || cable_armed)
+        return;
+    if (bb_player_open(name)) {
+        bb_player_pump();
+        bb_player_play();
+    }
+}
+
+/* YES on a file (cable mode): load it, set up the RAM record of MCL's RAM page A (track 15, input A, the length rounded up to whole bars of
+ * 4 steps at the current tempo, at most 32), and play it when that record starts. The RAM page then shows (NO slices it there). */
+HOOK void bb_sample_record(const char *name)
+{
+    if (!bb_player_open(name)) {
+        oled_display.textbox("NOT A", "WAV");
+        return;
+    }
+    bb_player_pump();
+    struct bb_player *p = bb_player();
+    float tempo = MidiClock.get_tempo();
+    if (tempo < 30.f)
+        tempo = 120.f;
+    float secs = (float)p->end * (float)p->step / 65536.f / 48000.f;
+    uint32_t steps = (uint32_t)(secs * tempo / 15.f) + 1u;        /* 16ths */
+    uint32_t enc = (steps + 3u) / 4u;
+    ram_a_param4.cur = (int)(enc < 1 ? 1 : enc > 8 ? 8 : enc);
+    ram_a_param1.cur = 1;                                          /* SOURCE_INPA */
+    ram_page_a.setup_ram_rec_mono(14, 64, 1);
+    cable_step = ram_page_a.transition_step;
+    cable_armed = 1;
+    mcl.setPage(RAM_PAGE_A);
+}
+
+static const char *volatile open_req;                            /* (tests: a file for the player, opened from MCL's task, where the card works) */
+static volatile int open_res = -1;
+HOOK void bb_player_open_req(const char *name)
+{
+    open_res = -1;
+    open_req = name;
+}
+HOOK int bb_player_open_res(void) { return open_res; }
+
+static void cable_loop(void)
+{
+    if (open_req) {
+        const char *nm = open_req;
+        open_req = 0;
+        open_res = bb_player_open(nm);
+    }
+    bb_player_pump();
+    if (bb_cable_mode && mcl.currentPage() != SAMPLE_BROWSER) {   /* left the browser: listening ends (an armed record keeps its file) */
+        bb_cable_mode = 0;
+        if (!cable_armed)
+            bb_player_close();
+    }
+    if (cable_armed && grid_page.active_slots[14] != SLOT_RAM_RECORD && grid_page.active_slots[14] != SLOT_PENDING) {
+        cable_armed = 0;                                           /* (the record was replaced before it began) */
+    }
+}
+
 /* ---- the page's shortcuts (the Blackbox's GUI task asks, MCL's task opens the page between two passes of its loop: MCL's pages are not
  * thread safe). 0 chromatic (MCL's pitch sequencer; again: its POLY voice selection), 1 the Machinedrum's delay, 2 its reverb (again: the
  * FX page's other half, FX A <-> FX B, as MCL's own key does), 3 the mixer, 4 the grid. ---- */
-static const PageIndex shortcut_page[6] = {SEQ_PTC_PAGE, FX_PAGE_A, FX_PAGE_B, MIXER_PAGE, GRID_PAGE, RAM_PAGE_A};
+static const PageIndex shortcut_page[6] = {SEQ_PTC_PAGE, FX_PAGE_A, FX_PAGE_B, MIXER_PAGE, GRID_PAGE, SAMPLE_BROWSER};
 static volatile uint8_t shortcut_want = 0xff;
 
 HOOK void bb_mcl_shortcut(uint32_t n)
@@ -418,6 +501,8 @@ HOOK uint32_t bb_mcl_shortcut_now(void)
     PageIndex p = mcl.currentPage();
     if (p == POLY_PAGE)
         return 0;
+    if (p == SAMPLE_BROWSER && !bb_cable_mode)
+        return 255;                                                /* (MCL's own sample manager, not the SAMPLE button's browser) */
     for (uint32_t i = 0; i < 6; i++)
         if (p == shortcut_page[i])
             return i;
@@ -525,11 +610,15 @@ static void shortcut_apply(void)
         FXPage &fx = n == 1 ? fx_page_a : fx_page_b;
         fx.page_mode = !fx.page_mode;
         fx.update_encoders();
-    } else if (n == 5) {                                         /* sample: MCL's RAM record page, recording from the MD's input A (the Blackbox's
-                                                                    output, by cable), not its main mix: YES records, NO slices onto a RAM player */
-        ram_a_param1.cur = 1;                                        /* (SOURCE_INPA) */
-        if (now != want)
-            mcl.setPage(want);
+    } else if (n == 5) {                                         /* sample: MCL's sample browser in cable mode; pressed again there, listening on / off */
+        if (now == SAMPLE_BROWSER && bb_cable_mode) {
+            bb_cable_listen = !bb_cable_listen;
+            if (!bb_cable_listen && !cable_armed)
+                bb_player_stop();
+        } else {
+            bb_cable_mode = 1;
+            mcl.setPage(SAMPLE_BROWSER);
+        }
     } else if (now != want) {
         mcl.setPage(want);
     }
@@ -567,6 +656,7 @@ static void mcl_task(void *)
         loop();
         md_follow_blackbox();
         shortcut_apply();
+        cable_loop();
         if (!bb_midi_owner())
             bb_midi_claim(1);                                      /* (still waiting for an idle moment of the stock transmitter) */
         bb_sleep_ms(1);

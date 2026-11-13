@@ -33,5 +33,5 @@ INC=$(cd "$M"; for d in src src/mcl include src/resources/rp2040 $(find src/mcl 
 CPU="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"
 COMMON="$CPU -Os -ffunction-sections -fdata-sections -w -DARDUINO=10800 -DPLATFORM_DESKTOP=1 -DMCL_BLACKBOX=1 -DVERSION=$MCL_VERSION -include $O/defs.h -Isrc/mcl_bb/platform/common -Isrc/mcl_bb/platform -Isrc/mcl_bb -I$G $INC -fno-exceptions -fno-rtti -fno-threadsafe-statics -fpermissive -std=gnu++17"
 for f in oled GUI_hardware LED_hardware global hardware MidiUart; do arm-none-eabi-g++ $COMMON -c src/mcl_bb/platform/common/$f.cpp -o $P/$f.o; done
-for f in bb_libc bb_platform bb_sdfat bb_mcl; do arm-none-eabi-g++ $COMMON -fno-builtin -fno-tree-loop-distribute-patterns -c src/mcl_bb/platform/$f.cpp -o $P/$f.o; done        # (a string function must not be turned into a call to itself)
+for f in bb_libc bb_platform bb_sdfat bb_mcl bb_player; do arm-none-eabi-g++ $COMMON -fno-builtin -fno-tree-loop-distribute-patterns -c src/mcl_bb/platform/$f.cpp -o $P/$f.o; done        # (a string function must not be turned into a call to itself)
 EXTRA_OBJS="$(ls $O/*.o | grep -v "/dso.o" | tr '\n' ' ') $(ls $P/*.o | tr '\n' ' ')" EXTRA_LD="-Wl,--wrap=_ZN4Oled7displayEv -Wl,--defsym=mclstr_title_project=mclstr_title_files" sh tools/mcl/build_blob.sh

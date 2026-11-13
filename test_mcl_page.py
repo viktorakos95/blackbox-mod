@@ -118,14 +118,16 @@ def mixer_fn():
 
 
 fn("mixer", mixer_fn)
+PLAYER, PRING = 0x24076000, 0x24076100
+fn("player", lambda: e.ret(PLAYER))
 
 
 def entry(abi):
-    u.mem_write(ENTRY, struct.pack("<12I", 0x424C434D, abi, fns["boot"], fns["status"], fns["gui"], 0, fns["fb"], fns["sig"], fns["input"], fns["midi"], fns["grid"], fns["mixer"]))
+    u.mem_write(ENTRY, struct.pack("<13I", 0x424C434D, abi, fns["boot"], fns["status"], fns["gui"], 0, fns["fb"], fns["sig"], fns["input"], fns["midi"], fns["grid"], fns["mixer"], fns["player"]))
     e.w32(e.sym["mcl_entry"], ENTRY)
 
 
-entry(6)
+entry(7)
 
 # MCL's screen: a test picture (a frame, a filled block, a diagonal, a row of single pixels)
 pic = [[0] * 128 for _ in range(64)]
@@ -396,6 +398,44 @@ check("... the two held tracks' faders filled", len(fills) == 2, fills)
 check("... no 2x picture blitted (none of its 2-px runs)", len([r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128]) < 3, [r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128])
 check("... the muted track shows M", "M" in words, words)
 MIXER_PREVIEW = _mx
+
+
+# --- the SAMPLE button's file player (abi 7): the ring onto a bus at 48 kHz, linear interpolation, added to what is there
+LB, RB = 0x24077000, 0x24077800
+
+
+def player(state, wr, rd, end, frac, step, gain=1.0):
+    u.mem_write(PLAYER, struct.pack("<6If I", state, wr, rd, end, frac, step, gain, PRING))
+
+
+def fl(addr, n):
+    return list(struct.unpack("<%df" % n, bytes(u.mem_read(addr, 4 * n))))
+
+
+ring = b"".join(struct.pack("<hh", 100 * k, -100 * k) for k in range(64))          # a ramp: left +100 a frame, right -100
+u.mem_write(PRING, ring)
+u.mem_write(LB, struct.pack("<16f", *([0.5] * 16)))
+u.mem_write(RB, struct.pack("<16f", *([0.0] * 16)))
+player(1, 64, 0, 64, 0, 65536 * 441 // 480)                       # a 44.1 kHz file: 0.91875 of its frames a 48 kHz frame
+e.call("mcl_player_mix", LB, RB, 16)
+lo, ro = fl(LB, 16), fl(RB, 16)
+want = [0.5 + 100 * (k * 0.91875) / 32768 for k in range(16)]
+check("player: a 44.1 kHz ramp is resampled to 48 kHz (linear) and added to the bus", all(abs(a - b) < 2e-4 for a, b in zip(lo, want)) and abs(ro[15] + 100 * 15 * 0.91875 / 32768) < 2e-4, (lo[:3], want[:3]))
+st = struct.unpack("<6I", bytes(u.mem_read(PLAYER, 24)))
+check("... the position moved on by 16 x 0.91875 frames (14.7)", st[2] == 14 and abs(st[4] / 65536 - 0.7) < 0.01, st)
+player(1, 64, 60, 62, 0, 65536)
+u.mem_write(LB, bytes(64))
+e.call("mcl_player_mix", LB, RB, 16)
+st = struct.unpack("<6I", bytes(u.mem_read(PLAYER, 24)))
+check("... at the file's end it stops by itself (state 0)", st[0] == 0 and st[2] == 61, st)
+player(1, 10, 9, 64, 0, 65536)
+u.mem_write(LB, bytes(64))
+e.call("mcl_player_mix", LB, RB, 16)
+st = struct.unpack("<6I", bytes(u.mem_read(PLAYER, 24)))
+check("... an empty ring (the card behind for a moment): silence, still playing", st[0] == 1 and st[2] == 9 and fl(LB, 16) == [0.0] * 16, st)
+player(0, 64, 0, 64, 0, 65536)
+e.call("mcl_player_active")
+check("... mcl_player_active: 0 while stopped", u.reg_read(UC_ARM_REG_R0) == 0)
 
 # --- the footer line: no buttons
 check("taps on the footer line do nothing", touch(30, FOOT + 6) == ([], []) and touch(W // 2, FOOT + 6) == ([], []) and touch(W - 30, FOOT + 6) == ([], []))
