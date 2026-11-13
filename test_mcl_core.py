@@ -130,6 +130,20 @@ n7, _ = shortcut(3)
 check("MIXER opens the mixer, and stays on a second press", n6 == 3 and n7 == 3, (n6, n7))
 n8, s8 = shortcut(4)
 check("GRID opens the grid", n8 == 4, n8)
+
+# ---- the grid page as data for the cave's full-resolution grid (abi 6, bb_grid.h)
+GBUF = 0x24078000
+c.uc.mem_write(GBUF, bytes(400))
+ok = c.call("bb_mcl_grid", GBUF)
+gb = bytes(c.uc.mem_read(GBUF, 260))
+cur_col, cur_row, sel_w, sel_h, gx, gstate = gb[0:6]
+labels = [gb[28 + i:30 + i].decode("latin-1") for i in range(0, 128, 2)]
+check("bb_mcl_grid on the grid page: 1, the cursor in range, a selection of at least 1 x 1, 64 printable two-letter labels",
+      ok == 1 and cur_col < 16 and cur_row < 4 and sel_w >= 1 and sel_h >= 1 and gx in (0, 1) and all(len(l) == 2 and all(0x20 <= ord(ch) < 0x7f for ch in l) for l in labels),
+      (ok, gb[:8].hex(), labels[:8]))
+shortcut(3)
+check("... 0 on another page (the mixer)", c.call("bb_mcl_grid", GBUF) == 0)
+shortcut(4)
 png(fa, "mcl-core-fx-a.png")
 png(fb_, "mcl-core-fx-b.png")
 png(pb, "mcl-core-poly.png")

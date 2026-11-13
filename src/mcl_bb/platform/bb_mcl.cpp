@@ -19,6 +19,9 @@
 #include "MDPages.h"
 #include "GUI/Pages/Sequencer/SeqPages.h"
 #include "GUI/Pages/Sequencer/PolyPage.h"
+#include "GUI/Pages/Grid/GridPages.h"
+#include "Devices/DeviceManager.h"
+#include "bb_grid.h"
 
 #include "bb_clock.h"
 #include "bb_midi.h"
@@ -415,6 +418,47 @@ HOOK uint32_t bb_mcl_shortcut_now(void)
         if (p == shortcut_page[i])
             return i;
     return 255;
+}
+
+/* the grid page as data (abi 6): 0 unless MCL shows its grid page (and not its slot menu, which draws over it) */
+HOOK uint32_t bb_mcl_grid(struct bb_grid *g)
+{
+    if (mcl.currentPage() != GRID_PAGE || grid_page.show_slot_menu || grid_page.bank_popup)
+        return 0;
+    GridPage &p = grid_page;
+    uint32_t col = p.getCol(), row = p.getRow();
+    g->cur_col = (uint8_t)(col < BB_GRID_TRACKS ? col : BB_GRID_TRACKS - 1);
+    g->cur_row = p.cur_row < BB_GRID_ROWS ? p.cur_row : BB_GRID_ROWS - 1;
+    g->sel_w = (uint8_t)(param3.cur > 0 ? param3.cur : 1);
+    g->sel_h = (uint8_t)(param4.cur > 0 ? param4.cur : 1);
+    g->grid = p.cur_grid;
+    g->state = (uint8_t)MidiClock.state;
+    g->base_row = (uint16_t)(row - g->cur_row);
+    float t = MidiClock.get_tempo();
+    g->tempo10 = (uint16_t)(t > 0.f && t < 999.f ? t * 10.f + .5f : 0.f);
+    g->bar = (uint8_t)MidiClock.bar_counter;
+    g->beat = (uint8_t)MidiClock.beat_counter;
+    for (uint32_t x = 0; x < BB_GRID_TRACKS; x++) {
+        GridRow a = p.active_slots[x + GRID_WIDTH * p.cur_grid];
+        g->active[x] = a < GRID_LENGTH ? (uint8_t)a : 0xffu;
+    }
+    for (uint32_t y = 0; y < BB_GRID_ROWS; y++) {
+        for (uint32_t x = 0; x < BB_GRID_TRACKS; x++) {
+            g->label[y][x][0] = p.slot_labels[y][x][0];
+            g->label[y][x][1] = p.slot_labels[y][x][1];
+        }
+        for (uint32_t k = 0; k < 16; k++)
+            g->rowname[y][k] = p.row_headers[y].name[k];
+        g->rowname[y][16] = 0;
+    }
+    MidiDevice *d[2] = {device_manager.primary_device(), device_manager.secondary_device()};
+    for (int i = 0; i < 2; i++) {
+        const char *n = d[i] ? d[i]->name : "";
+        g->dev[i][0] = n[0] ? n[0] : ' ';
+        g->dev[i][1] = n[0] && n[1] ? n[1] : ' ';
+        g->dev[i][2] = 0;
+    }
+    return 1;
 }
 
 static void shortcut_apply(void)

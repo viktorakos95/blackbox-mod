@@ -17,6 +17,7 @@
 #include <stdint.h>
 
 #include "crash.h"
+#include "mcl_bb/bb_grid.h"
 
 void samplr_block_done(uint32_t now);      /* samplr.c: the MAX readout's rest of the block (a no-op until the looper's memory is up) */
 void looper_block_done(uint32_t now);      /* looper.c: the budget guard's rest of the block (a no-op until the looper's memory is up) */
@@ -98,12 +99,13 @@ struct mcl_entry {
     uint32_t (*midi)(uint32_t which);    /* abi 4, the MIDI jack: 0 speed (bit/s), 1 bytes received, 2 receive errors; 6 the tempo followed (1/10 BPM)
                                           * abi 5: input() kind 4 = the clock (a: 0 follow the Blackbox, 1 own tempo running, 2 stopped; b: tempo), kind 5 = tempo b,
                                           * kind 6 = shortcut a (0 chromatic, 1 delay, 2 reverb, 3 mixer); midi(10) = the shortcut showing (255 none) */
+    uint32_t (*grid)(struct bb_grid *);  /* abi 6: MCL's grid page as data (mcl_bb/bb_grid.h), 0 while another page shows */
 };
 const volatile uint32_t mcl_entry = 0;
 static const struct mcl_entry *mcl_image(void)       /* the blob, whether or not it runs */
 {
     const struct mcl_entry *e = (const struct mcl_entry *)mcl_entry;
-    return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 5 ? e : 0;
+    return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 6 ? e : 0;
 }
 static const struct mcl_entry *mcl_blob(void) { return mcl_image(); }
 #define MCL_RAM     0xc3f80000u  /* the blob's SDRAM region (src/mcl_bb/mcl_blob.ld): .data, .bss, heap, its task's stack */
@@ -362,6 +364,7 @@ int cpu_text_c(uint8_t *text, const char *s)               /* FUN_080c70b8 */
 void lp_box(int x, int d, int w, int h, int color);
 void lp_frame(int x, int d, int w, int h, int color, int th);
 void lp_text_c(int x, int d, int w, const char *s, int color, int scale);
+void lp_text(int x, int d, const char *s, int color, int scale);
 
 #define MCL_W       256         /* the screen, 2x: every MCL pixel is a 2x2 block */
 #define MCL_H       128
@@ -553,6 +556,113 @@ static void sc_icon(int i, int x, int d)
     }
 }
 
+/* MCL's grid page at the Blackbox's own resolution (abi 6): the whole 256 x 128 screen area, black, in the Machinedrum's screen style
+ * (a frame, an inverted title bar, dotted dividers): all 16 tracks of the 4 rows MCL keeps, the cursor and its selected area inverted,
+ * each track's playing slot underlined, empty slots grey. */
+#define GR_COL   15                     /* a track's column: a 2-letter name (12 px) and 3 px */
+#define GR_GAP   3                      /* extra px between groups of four tracks, where the dividers are */
+#define GR_X     ((MCL_W - 16 * GR_COL - 3 * GR_GAP) / 2)
+#define GR_CX(k) ((k) * GR_COL + (k) / 4 * GR_GAP)              /* track k's column, from the grid's left edge */
+#define GR_TOP   35                     /* the track numbers, under the title bar and the tempo line */
+#define GR_ROW   20                     /* the rows' pitch */
+static void dots_h(int x, int d, int w, int color)
+{
+    for (int k = 0; k < w; k += 2)
+        lp_box(x + k, d, 1, 1, color);
+}
+static void dots_v(int x, int d, int h, int color)
+{
+    for (int k = 0; k < h; k += 2)
+        lp_box(x, d + k, 1, 1, color);
+}
+static char *put_2(char *p, unsigned v)
+{
+    *p++ = (char)('0' + v / 10 % 10);
+    *p++ = (char)('0' + v % 10);
+    return p;
+}
+static void mcl_grid_draw(int x0, const struct bb_grid *g)
+{
+    int top = MCL_TOP;
+    char t[40], *p;
+    lp_frame(x0, top, MCL_W, MCL_H, MC_WHITE, 1);
+    lp_box(x0 + 1, top + 1, MCL_W - 2, 12, MC_WHITE);         /* the title bar: GRID X  ROW A01  name ... bar:beat, play / stop */
+    p = t;
+    for (const char *c = "GRID "; *c; c++)
+        *p++ = *c;
+    *p++ = g->grid ? 'Y' : 'X';
+    *p++ = ' ';
+    *p++ = ' ';
+    unsigned row = g->base_row + g->cur_row;
+    *p++ = (char)('A' + row / 16);
+    p = put_2(p, row % 16 + 1);
+    *p++ = ' ';
+    *p++ = ' ';
+    const char *nm = g->rowname[g->cur_row];
+    for (int k = 0; k < 16 && nm[k]; k++)
+        *p++ = (nm[k] >= 0x20 && nm[k] < 0x7f) ? nm[k] : ' ';
+    *p = 0;
+    lp_text(x0 + 5, top + 3, t, MC_BLACK, 1);
+    p = t;
+    p = put_uint(p, g->bar);
+    *p++ = ':';
+    p = put_uint(p, g->beat);
+    *p = 0;
+    lp_text(x0 + MCL_W - 44, top + 3, t, MC_BLACK, 1);
+    if (g->state == 2) {                                      /* playing: a triangle */
+        for (int k = 0; k < 4; k++)
+            lp_box(x0 + MCL_W - 12 + k, top + 3 + k, 1, 8 - 2 * k, MC_BLACK);
+    } else {                                                  /* stopped: a square */
+        lp_box(x0 + MCL_W - 12, top + 4, 6, 6, MC_BLACK);
+    }
+    p = t;                                                    /* the tempo line: 125.0 BPM, the devices */
+    p = put_uint(p, g->tempo10 / 10u);
+    *p++ = '.';
+    *p++ = (char)('0' + g->tempo10 % 10u);
+    *p = 0;
+    lp_text(x0 + 6, top + 16, t, MC_WHITE, 2);
+    int bx = x0 + 6 + (int)(p - t) * 12 + 4;
+    lp_text(bx, top + 23, "BPM", MC_GREY, 1);
+    p = t;
+    *p++ = g->dev[0][0];
+    *p++ = g->dev[0][1];
+    *p++ = ' ';
+    *p++ = g->dev[1][0];
+    *p++ = g->dev[1][1];
+    *p = 0;
+    lp_text(x0 + MCL_W - 6 - 5 * 6, top + 23, t, MC_GREY, 1);
+    dots_h(x0 + 3, top + GR_TOP - 3, MCL_W - 6, MC_WHITE);
+    int gx = x0 + GR_X;
+    for (int k = 0; k < 16; k++) {                            /* the track numbers, centred over their 12 px labels */
+        p = put_uint(t, (unsigned)k + 1);
+        *p = 0;
+        lp_text(gx + GR_CX(k) + 1 + (k + 1 < 10 ? 3 : 0), top + GR_TOP, t, MC_GREY, 1);
+    }
+    for (int k = 4; k < 16; k += 4)                           /* dividers every four tracks */
+        dots_v(gx + GR_CX(k) - (GR_COL - 12 + GR_GAP) / 2 - 1, top + GR_TOP, MCL_H - GR_TOP - 3, MC_WHITE);
+    for (int r = 0; r < BB_GRID_ROWS; r++) {
+        int d = top + GR_TOP + 13 + r * GR_ROW;
+        for (int k = 0; k < 16; k++) {
+            int cx = gx + GR_CX(k);
+            char lab[3] = {g->label[r][k][0], g->label[r][k][1], 0};
+            if (lab[0] < 0x20 || lab[0] > 0x7e)
+                lab[0] = ' ';
+            if (lab[1] < 0x20 || lab[1] > 0x7e)
+                lab[1] = ' ';
+            int sel = k >= g->cur_col && k < g->cur_col + g->sel_w && r >= g->cur_row && r < g->cur_row + g->sel_h;
+            int empty = lab[0] == '-' && lab[1] == '-';
+            if (sel) {
+                lp_box(cx - 1, d - 2, 14, 12, MC_WHITE);
+                lp_text(cx + 1, d, lab, MC_BLACK, 1);
+            } else {
+                lp_text(cx + 1, d, lab, empty ? MC_GREY : MC_WHITE, 1);
+            }
+            if (g->active[k] == g->base_row + r && !empty)    /* the slot playing on this track */
+                lp_box(cx, d + 10, 12, 1, sel ? MC_BLACK : MC_WHITE);
+        }
+    }
+}
+
 void mcl_page_draw(int w, int foot_y)
 {
     const struct mcl_entry *e = mcl_blob();
@@ -564,8 +674,11 @@ void mcl_page_draw(int w, int foot_y)
     int nx = wx + (ww - (LOGO_W + 6 + 11 * 9)) / 2;           /* the plate: mark, gap, 11 characters 9 wide */
     mcl_logo(nx, MCL_WIN_Y + 3);
     text_15(nx + LOGO_W + 6, MCL_WIN_Y + 3, "MACHINEDRUM", MC_WHITE);
+    struct bb_grid gd;
     if (!fb) {
         lp_text_c(x0, MCL_TOP + MCL_H / 2 - 4, MCL_W, mcl_image() ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", MC_WHITE, 1);
+    } else if (e->abi >= 6 && e->grid(&gd)) {
+        mcl_grid_draw(x0, &gd);                               /* MCL's grid page: drawn here at full resolution */
     } else {
         for (int y = 0; y < 64; y++) {                        /* the screen: 16 bytes a row, leftmost pixel = the top bit; runs of lit pixels become boxes */
             const uint8_t *row = fb + y * 16;

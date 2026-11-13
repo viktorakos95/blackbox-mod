@@ -9,6 +9,7 @@
  * Result: backup SRAM 0x38800920 (magic, code, constructors run, bss bytes), text "Mok" / "M<code>" for the version label.
  * Codes: 1 ok, 2 region not reserved, 3 self test failed (bit n of the second status word = test n), 4 region too small.
  */
+#include "bb_grid.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,6 +29,7 @@ __attribute__((weak)) uint32_t bb_mcl_clk_stat(int) { return 0; }
 __attribute__((weak)) void bb_mcl_page_input(uint32_t, int32_t, int32_t) {}
 __attribute__((weak)) void bb_mcl_shortcut(uint32_t) {}
 __attribute__((weak)) uint32_t bb_mcl_shortcut_now(void) { return 255; }
+__attribute__((weak)) uint32_t bb_mcl_grid(struct bb_grid *) { return 0; }
 }
 
 extern "C" {
@@ -429,6 +431,7 @@ struct mcl_entry {
     void (*input)(uint32_t kind, int32_t a, int32_t b);     /* encoders and buttons from the page, GUI task */
     uint32_t (*midi)(uint32_t which);                 /* abi 4, the jack for the page: 0 speed (bit/s), 1 bytes received, 2 receive errors (framing + noise + overrun);
                                                          3..9 the clock chain (diagnostics, page_midi) */
+    uint32_t (*grid)(struct bb_grid *);               /* abi 6: MCL's grid page as data (bb_grid.h), 0 while another page shows */
 };
 static int ready(void)
 {
@@ -438,6 +441,7 @@ static int ready(void)
 /* MCL's screen once it has drawn; until then (and if it never does) the bench's diagnostic view of where its task is */
 static int mcl_drawn(void) { return bb_mcl_active() && bb_mcl_frames() != 0; }
 static const uint8_t *page_fb(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_fb() : bb_ui_fb(); }
+static uint32_t page_grid(struct bb_grid *g) { return ready() && mcl_drawn() ? bb_mcl_grid(g) : 0u; }
 static uint32_t page_sig(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_frames() * 2654435761u + 1u : bb_ui_sig(); }
 /* The page's clock (abi 5): kind 4 = the source a (0 the Blackbox's sequencer, 1 MCL's own tempo running, 2 MCL's own tempo stopped) at tempo b,
  * kind 5 = the own tempo b (1/10 BPM). MCL hears start / stop through bb_clock's transport hook, as from the sequencer. */
@@ -498,4 +502,4 @@ static uint32_t page_midi(uint32_t which)
 #else
 #define COMPACT 0u
 #endif
-extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 5, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input, page_midi};
+extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 6, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input, page_midi, page_grid};

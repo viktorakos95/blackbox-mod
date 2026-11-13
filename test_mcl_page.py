@@ -78,14 +78,37 @@ fn("fb", lambda: e.ret(state["fb"]))
 fn("sig", lambda: e.ret(state["sig"]))
 fn("input", lambda: (calls.append((e.arg(0), i32(e.arg(1)), i32(e.arg(2)))), e.ret(0)))
 fn("midi", lambda: e.ret(state["bpm_seen"] if e.arg(0) == 6 else state["page"] if e.arg(0) == 10 else 0))
+GRID = {"on": False}
+GNAMES = ["BD", "SD", "HH", "CP", "RS", "CB", "CY", "LT", "MT", "HT", "TM", "--", "--", "--", "--", "--"]
+
+
+def grid_data():
+    """struct bb_grid (src/mcl_bb/bb_grid.h): cursor track 2 row 1, a 2 x 1 selection, grid X, running, rows from A05, 125.0 BPM, bar 3 beat 2"""
+    b = struct.pack("<6BHH2B", 2, 1, 2, 1, 0, 2, 4, 1250, 3, 2)
+    b += bytes([5 if k in (0, 1) else 6 if k == 2 else 0xFF for k in range(16)])                 # tracks 1, 2 play row A06 (view row 1), track 3 A07
+    for r in range(4):
+        b += b"".join((GNAMES[(k + r) % 16]).encode() for k in range(16))
+    for r in range(4):
+        b += (b"INTRO" if r == 1 else b"").ljust(17, b"\0")
+    b += b"MD\0" + b"MI\0"
+    return b
+
+
+def grid_fn():
+    if GRID["on"]:
+        u.mem_write(e.arg(0), grid_data())
+    e.ret(1 if GRID["on"] else 0)
+
+
+fn("grid", grid_fn)
 
 
 def entry(abi):
-    u.mem_write(ENTRY, struct.pack("<10I", 0x424C434D, abi, fns["boot"], fns["status"], fns["gui"], 0, fns["fb"], fns["sig"], fns["input"], fns["midi"]))
+    u.mem_write(ENTRY, struct.pack("<11I", 0x424C434D, abi, fns["boot"], fns["status"], fns["gui"], 0, fns["fb"], fns["sig"], fns["input"], fns["midi"], fns["grid"]))
     e.w32(e.sym["mcl_entry"], ENTRY)
 
 
-entry(5)
+entry(6)
 
 # MCL's screen: a test picture (a frame, a filled block, a diagonal, a row of single pixels)
 pic = [[0] * 128 for _ in range(64)]
@@ -112,6 +135,8 @@ for name in ("lp_box", "lp_frame", "lp_text_c"):
     e.stub(e.sym[name], lambda n=name: rec.append((n,) + tuple(e.arg(i) for i in range(4)) + (
         (e.r32(e.uc.reg_read(UC_ARM_REG_SP)), e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 4)) if n != "lp_box" else (e.r32(e.uc.reg_read(UC_ARM_REG_SP)),)) +
         ((e.cstr(e.arg(3)),) if n == "lp_text_c" else ())))
+# lp_text(x, d, s, color, scale): recorded as ("lp_text", x, d, s, color, scale)
+e.stub(e.sym["lp_text"], lambda: rec.append(("lp_text", i32(e.arg(0)), i32(e.arg(1)), e.cstr(e.arg(2)), e.arg(3), e.r32(e.uc.reg_read(UC_ARM_REG_SP)))))
 
 
 def draw():
@@ -300,6 +325,45 @@ e.call("mcl_page_sig")
 check("... and a page change changes the signature", e.uc.reg_read(UC_ARM_REG_R0) != s1)
 state["page"] = 255
 
+
+# --- MCL's grid page at full resolution (abi 6): drawn by the page from grid(), MCL's own picture not blitted
+GRID["on"] = True
+c = page_part(draw())
+GRID["on"] = False
+lt = [r for r in c if r[0] == "lp_text"]
+words = [r[3] for r in lt]
+GX = x0 + (256 - 16 * 15 - 9) // 2
+CX = lambda k: GX + k * 15 + k // 4 * 3                          # track k's column (3 px more at each group of four)
+check("grid page: no 2x picture is blitted (no 2-px runs under the title bar)", not [r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128], [r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128][:3])
+check("... the title bar: GRID X, the cursor's row A06 and its name, bar:beat 3:2 (black on white)",
+      ("GRID X  A06  INTRO" in words) and "3:2" in words and all(r[4] == 0x0E for r in lt if r[3] in ("GRID X  A06  INTRO", "3:2")), words[:4])
+check("... the tempo 125.0 at 2x, BPM, the devices", any(r[3] == "125.0" and r[5] == 2 for r in lt) and "BPM" in words and "MD MI" in words, words[:8])
+nums = {r[3]: r[1] for r in lt if r[3].isdigit() and r[2] == TOP + 35}
+check("... the track numbers 1..16, each centred over its column's label (centre at column + 7)",
+      sorted(map(int, nums)) == list(range(1, 17)) and all(abs(nums[str(k)] + len(str(k)) * 6 / 2 - (CX(k - 1) + 7)) <= 1 for k in range(1, 17)),
+      {k: nums[k] for k in list(nums)[:12]})
+cells = {}
+for r in lt:
+    if r[2] >= TOP + 35 + 13:
+        k, row = next(k for k in range(16) if CX(k) <= r[1] - 1 < CX(k) + 15), (r[2] - (TOP + 35 + 13)) // 20
+        cells[(k, row)] = (r[3], r[4])
+check("... all 16 tracks x 4 rows of labels, in their columns", len(cells) == 64 and all(cells[(k, rr)][0] == GNAMES[(k + rr) % 16] for k in range(16) for rr in range(4)),
+      (len(cells), [cells.get((k, 0)) for k in range(4)]))
+check("... the cursor and its selection (tracks 3-4, row 2) inverted: black text, the rest white, empty slots grey",
+      cells[(2, 1)][1] == 0x0E and cells[(3, 1)][1] == 0x0E and cells[(4, 1)][1] == 0x0F and cells[(11 - 1, 1)][1] in (0x0F, 0x09) and
+      all(cells[(k, rr)][1] == 0x09 for k in range(16) for rr in range(4) if cells[(k, rr)][0] == "--" and not (rr == 1 and k in (2, 3))), [cells[(k, 1)] for k in range(2, 5)])
+under = sorted((next(k for k in range(16) if CX(k) <= r[1] < CX(k) + 15), (r[2] - (TOP + 35 + 13 + 10)) // 20) for r in c if r[0] == "lp_box" and r[3] == 12 and r[4] == 1 and TOP + 40 < r[2] < TOP + 128)
+check("... the playing slots underlined: tracks 1, 2 on row 2 (A06), track 3 on row 3 (A07)", under == [(0, 1), (1, 1), (2, 2)], under)
+divs = sorted({r[1] for r in c if r[0] == "lp_box" and r[3] == 1 and r[4] == 1 and TOP + 60 < r[2] < TOP + 120 and x0 < r[1] < x0 + 255})
+check("... the three dotted dividers sit 2+ px clear of the labels either side", len(divs) == 3 and all(CX(4 * g) - 1 - (CX(4 * g - 1) + 12) >= 2 and CX(4 * g) + 1 - d >= 2 and d - (CX(4 * g - 1) + 12) >= 1 for g, d in zip((1, 2, 3), divs)), divs)
+check("... everything inside the 256 x 128 screen area", all(x0 <= r[1] and r[1] + len(r[3]) * 6 * r[5] <= x0 + 256 and TOP <= r[2] <= TOP + 128 - 8 for r in lt),
+      [r for r in lt if not (x0 <= r[1] and r[1] + len(r[3]) * 6 * r[5] <= x0 + 256)][:3])
+preview("out/mcl_grid.png", page_part(draw()) if False else None) if False else None
+GRID["on"] = True
+_g = draw()
+GRID["on"] = False
+GRID_PREVIEW = _g
+
 # --- the footer line: no buttons
 check("taps on the footer line do nothing", touch(30, FOOT + 6) == ([], []) and touch(W // 2, FOOT + 6) == ([], []) and touch(W - 30, FOOT + 6) == ([], []))
 
@@ -331,7 +395,11 @@ def preview(path, c):
             x, d, w, h, col, th = r[1:7]
             box(x, d, w, th, col); box(x, d + h - th, w, th, col); box(x, d, th, h, col); box(x + w - th, d, th, h, col)
         else:
-            x, d, w, _, col, sc, s = r[1:8]
+            if r[0] == "lp_text":
+                x, d, s, col, sc = r[1:6]
+                w = len(s) * 6 * sc - sc
+            else:
+                x, d, w, _, col, sc, s = r[1:8]
             tw = len(s) * 6 * sc - sc
             cx = x + (w - tw) // 2
             for i, ch in enumerate(s):
@@ -347,6 +415,7 @@ def preview(path, c):
 state["page"] = 0
 preview("out/mcl_page.png", draw())
 state["page"] = 255
+preview("out/mcl_grid.png", GRID_PREVIEW)
 
 # --- an older blob (abi 4): the same panel, no shortcuts, no clock: the footer says what the knobs are
 entry(4)
