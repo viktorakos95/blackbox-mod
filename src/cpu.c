@@ -529,7 +529,7 @@ static void sc_icon(int i, int x, int d)
         d += 5;
         for (int r = 0; r < 3; r++)
             for (int k = 0; k < 4; k++)
-                lp_box(x + 1 + k * 6, d + r * 5, 5, 4, r == 1 && k == 2 ? MC_RED : MC_WHITE);
+                lp_box(x + 1 + k * 6, d + r * 5, 5, 4, MC_WHITE);
         break;
     default:                                                  /* three faders */
         d += 6;
