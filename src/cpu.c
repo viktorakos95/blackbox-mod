@@ -372,13 +372,13 @@ void lp_text_c(int x, int d, int w, const char *s, int color, int scale);
 
 #define MCL_W       256         /* the screen, 2x: every MCL pixel is a 2x2 block */
 #define MCL_H       128
-#define MCL_WIN_Y   17          /* the black window: the name plate, the screen, a name line */
+#define MCL_WIN_Y   17          /* the black window: the name plate, the screen */
 #define MCL_TOP     (MCL_WIN_Y + 14)
-#define MCL_WIN_H   (14 + MCL_H + 14)
+#define MCL_WIN_H   (14 + MCL_H + 3)
 #define MCL_COL_W   25          /* the button columns either side of the window */
 #define MCL_SPLIT   98          /* a column's upper button above this line, its lower one below */
 #define MCL_STRIP_Y (MCL_WIN_Y + MCL_WIN_H + 4)
-#define MCL_STRIP_H 40
+#define MCL_STRIP_H 48          /* a 24 x 25 icon over the name */
 #define MCL_FOOT_H  14          /* the footer line (looper_page.c FOOT): its boxes 2 below it, 11 high */
 #define MCL_ENC_COUNTS 40       /* knob counts per MCL step (the TRIG page's; 20 moved MCL's short menus too fast on the unit) */
 #define MCL_ENC_FAST   80       /* a knob event of this many counts or more (a quick spin): twice the steps, so long ranges stay quick */
@@ -471,11 +471,46 @@ static void mcl_logo(int x, int d)
     }
 }
 
-/* the shortcuts' pictures, 26 x 12 at (x, d) */
+/* MCL's own page icons for the Machinedrum's two effects, as its page select and FX pages draw them (the fork's resource/icons_page.cpp,
+ * icon_rhytmecho / icon_gatebox: the MD's RHYTHM ECHO and GATE BOX), 24 x 25, 3 bytes a row, leftmost pixel in the top bit */
+static const uint8_t icon_echo[75] = {
+    0x00, 0x00, 0x00, 0x1f, 0xff, 0xfe, 0x3f, 0xff, 0xfe, 0x3f, 0xff, 0xfc, 0x00, 0x01, 0xfc,
+    0x07, 0xe1, 0xf8, 0x07, 0xe3, 0xf8, 0x0f, 0xc7, 0xf0, 0x0f, 0xff, 0xf0, 0x1f, 0xff, 0xe0,
+    0x1f, 0xff, 0x00, 0x3f, 0x7f, 0x80, 0x3f, 0x1f, 0xc0, 0x7e, 0x0f, 0xe0, 0x7e, 0x07, 0xf0,
+    0x00, 0x00, 0x00, 0x7b, 0xdb, 0x7c, 0x7b, 0xdb, 0x7c, 0x63, 0x1b, 0x6c, 0x7b, 0x1f, 0x6c,
+    0x7b, 0x1f, 0x6c, 0x63, 0x1b, 0x6c, 0x7b, 0xdb, 0x7c, 0x7b, 0xdb, 0x7c, 0x00, 0x00, 0x00,
+};
+static const uint8_t icon_gbox[75] = {
+    0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x1e, 0x80, 0x00, 0x7e, 0xe0, 0x01, 0xfe, 0xe0,
+    0x07, 0xff, 0x90, 0x03, 0xfe, 0x70, 0x0c, 0xf9, 0xf0, 0x0f, 0x26, 0xf0, 0x0f, 0xdc, 0xf0,
+    0xef, 0xd3, 0x37, 0x0f, 0xdf, 0xc0, 0x0f, 0x9f, 0xf0, 0x0e, 0x5f, 0xe0, 0x09, 0xdf, 0x80,
+    0x07, 0xde, 0x00, 0x01, 0xd8, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x3d, 0xef, 0x48,
+    0x21, 0x29, 0x48, 0x2d, 0xe9, 0x30, 0x25, 0x29, 0x48, 0x3d, 0xef, 0x48, 0x00, 0x00, 0x00,
+};
+
+static void bitmap24(const uint8_t *b, int x, int d, int h, int color)
+{
+    for (int y = 0; y < h; y++) {                             /* runs of lit pixels become boxes */
+        const uint8_t *row = b + 3 * y;
+        int i = 0;
+        while (i < 24) {
+            while (i < 24 && !(row[i >> 3] >> (7 - (i & 7)) & 1))
+                i++;
+            int s = i;
+            while (i < 24 && (row[i >> 3] >> (7 - (i & 7)) & 1))
+                i++;
+            if (i > s)
+                lp_box(x + s, d + y, i - s, 1, color);
+        }
+    }
+}
+
+/* the shortcuts' pictures in a 26 x 25 area at (x, d) */
 static void sc_icon(int i, int x, int d)
 {
     switch (i) {
     case SC_CHROM:                                            /* a little piano: 6 white keys, 4 black ones */
+        d += 6;
         lp_box(x, d, 26, 12, MC_WHITE);
         for (int k = 1; k < 6; k++)
             lp_box(x + k * 4 + 1, d, 1, 12, MC_EDGE);
@@ -484,15 +519,14 @@ static void sc_icon(int i, int x, int d)
                 lp_box(x + k * 4, d, 3, 7, MC_BLACK);
         lp_frame(x, d, 26, 12, MC_EDGE, 1);
         break;
-    case SC_DELAY:                                            /* repeats, each quieter */
-        for (int k = 0; k < 5; k++)
-            lp_box(x + 1 + k * 5, d + k * 2 + 2, 3, 10 - k * 2, MC_WHITE);
+    case SC_DELAY:
+        bitmap24(icon_echo, x + 1, d, 25, MC_WHITE);
         break;
-    case SC_REVERB:                                           /* a dense tail */
-        for (int k = 0; k < 13; k++)
-            lp_box(x + k * 2, d + k * 10 / 13 + 1, 1, 11 - k * 10 / 13, MC_WHITE);
+    case SC_REVERB:
+        bitmap24(icon_gbox, x + 1, d, 25, MC_WHITE);
         break;
     default:                                                  /* three faders */
+        d += 6;
         for (int k = 0; k < 3; k++) {
             int fx = x + 4 + k * 8;
             lp_box(fx + 2, d, 1, 12, MC_GREY);
@@ -514,7 +548,6 @@ void mcl_page_draw(int w, int foot_y)
     mcl_logo(nx, MCL_WIN_Y + 3);
     lp_text_c(nx + LOGO_W + 5, MCL_WIN_Y + 3, 65, "MACHINEDRUM", MC_WHITE, 1);
     lp_text_c(nx + LOGO_W + 6, MCL_WIN_Y + 3, 65, "MACHINEDRUM", MC_WHITE, 1);
-    lp_text_c(wx, MCL_TOP + MCL_H + 3, ww, "MEGACOMMAND", MC_GREY, 1);
     if (UI->off) {                                            /* not started after a restart that was not a power-on (see start()): a tap starts it */
         lp_text_c(x0, MCL_TOP + MCL_H / 2 - 10, MCL_W, "MCL IS OFF", MC_WHITE, 1);
         lp_text_c(x0, MCL_TOP + MCL_H / 2 + 4, MCL_W, "TAP HERE TO START", MC_WHITE, 1);
@@ -548,8 +581,8 @@ void mcl_page_draw(int w, int foot_y)
         int x = sc_x(w, i), cw = sc_w[i], on = now == (uint32_t)i;
         lp_box(x, MCL_STRIP_Y, cw, MCL_STRIP_H, MC_BLACK);
         lp_frame(x, MCL_STRIP_Y, cw, MCL_STRIP_H, on ? MC_HOLD : MC_EDGE, on ? 2 : 1);
-        sc_icon(i, x + (cw - 26) / 2, MCL_STRIP_Y + 6);
-        lp_text_c(x, MCL_STRIP_Y + 26, cw, sc_name[i], on ? MC_HOLD : MC_WHITE, 1);
+        sc_icon(i, x + (cw - 26) / 2, MCL_STRIP_Y + 4);
+        lp_text_c(x, MCL_STRIP_Y + 35, cw, sc_name[i], on ? MC_HOLD : MC_WHITE, 1);
     }
 }
 
