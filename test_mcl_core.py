@@ -143,6 +143,20 @@ check("bb_mcl_grid on the grid page: 1, the cursor in range, a selection of at l
       (ok, gb[:8].hex(), labels[:8]))
 shortcut(3)
 check("... 0 on another page (the mixer)", c.call("bb_mcl_grid", GBUF) == 0)
+MBUF = 0x24078800
+c.uc.mem_write(MBUF, bytes(64))
+okm = c.call("bb_mcl_mixer", MBUF)
+mb = bytes(c.uc.mem_read(MBUF, 54))
+pname = mb[40:48].split(b"\0")[0].decode("latin-1")
+md_on = c.uc.mem_read(c.b["MD"] + 4, 1)[0]
+if md_on:
+    check("bb_mcl_mixer on the mixer page (Machinedrum connected): 1, 16 tracks, a printable parameter name", okm == 1 and mb[1] == 16 and pname and all(0x20 <= ord(ch) < 0x7f for ch in pname), (okm, mb[:4].hex(), pname))
+else:
+    check("bb_mcl_mixer on the mixer page without a Machinedrum: 0 (MCL's own mixer is shown)", okm == 0, okm)
+n9, _ = shortcut(5)
+src = c.call("bb_mcl_dbg", 0) if False else None
+check("SAMPLE opens MCL's RAM record page (shortcut 5 showing)", n9 == 5, n9)
+shortcut(4)
 shortcut(4)
 png(fa, "mcl-core-fx-a.png")
 png(fb_, "mcl-core-fx-b.png")

@@ -19,3 +19,17 @@ struct bb_grid {
     char rowname[BB_GRID_ROWS][17];
     char dev[2][3];                    /* the primary and secondary device's short names */
 };
+
+/* MCL's mixer page as data (abi 6, mixer()): the parameter the knobs move and every track's value of it */
+struct bb_mixer {
+    uint8_t param;                     /* the MD parameter shown (0..23, 40 mute, 41 level) */
+    uint8_t count;                     /* tracks (16 for the Machinedrum) */
+    uint16_t held;                     /* tracks held (their trig keys down: the knobs change these) */
+    uint16_t muted;
+    uint8_t roll;                      /* the roll armed */
+    uint8_t _r;
+    uint8_t value[16];                 /* 0..127 */
+    uint8_t meter[16];                 /* 0..127 */
+    char pname[8];                     /* the parameter's name (for the first held track's machine, else track 1's) */
+    char roll_rate[6];
+};

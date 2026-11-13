@@ -22,6 +22,10 @@
 #include "GUI/Pages/Grid/GridPages.h"
 #include "Devices/DeviceManager.h"
 #include "bb_grid.h"
+#include "GUI/Pages/CommonPages.h"
+#include "Drivers/MD/UI/Pages/RAMPage.h"
+#include "Sequencer/BeatRepeat.h"
+#include "NoteInterface.h"
 
 #include "bb_clock.h"
 #include "bb_midi.h"
@@ -400,12 +404,12 @@ static void md_follow_blackbox(void)
 /* ---- the page's shortcuts (the Blackbox's GUI task asks, MCL's task opens the page between two passes of its loop: MCL's pages are not
  * thread safe). 0 chromatic (MCL's pitch sequencer; again: its POLY voice selection), 1 the Machinedrum's delay, 2 its reverb (again: the
  * FX page's other half, FX A <-> FX B, as MCL's own key does), 3 the mixer, 4 the grid. ---- */
-static const PageIndex shortcut_page[5] = {SEQ_PTC_PAGE, FX_PAGE_A, FX_PAGE_B, MIXER_PAGE, GRID_PAGE};
+static const PageIndex shortcut_page[6] = {SEQ_PTC_PAGE, FX_PAGE_A, FX_PAGE_B, MIXER_PAGE, GRID_PAGE, RAM_PAGE_A};
 static volatile uint8_t shortcut_want = 0xff;
 
 HOOK void bb_mcl_shortcut(uint32_t n)
 {
-    if (n < 5)
+    if (n < 6)
         shortcut_want = (uint8_t)n;
 }
 
@@ -414,7 +418,7 @@ HOOK uint32_t bb_mcl_shortcut_now(void)
     PageIndex p = mcl.currentPage();
     if (p == POLY_PAGE)
         return 0;
-    for (uint32_t i = 0; i < 5; i++)
+    for (uint32_t i = 0; i < 6; i++)
         if (p == shortcut_page[i])
             return i;
     return 255;
@@ -461,10 +465,45 @@ HOOK uint32_t bb_mcl_grid(struct bb_grid *g)
     return 1;
 }
 
+/* the mixer page as data (abi 6): 0 unless MCL shows its mixer's faders for the Machinedrum (not its menu, a perf preview or the knobs' popup) */
+HOOK uint32_t bb_mcl_mixer(struct bb_mixer *m)
+{
+    MixerPage &p = mixer_page;
+    if (mcl.currentPage() != MIXER_PAGE || p.show_mixer_menu || p.preview_mute_set != 255 || p.fill_edit_mode || !p.mixer_target.is_md_device())
+        return 0;
+    uint8_t n = p.mixer_track_count();
+    m->param = p.display_mode;
+    m->count = n > 16 ? 16 : n;
+    m->held = m->muted = 0;
+    uint8_t *lv = p.mixer_meter_levels();
+    int first = -1;
+    for (uint8_t i = 0; i < 16; i++) {
+        MidiDeviceMixerParam info;
+        m->value[i] = i < m->count && p.mixer_target.param(i, p.display_mode, &info) ? p.mixer_target.param_value_7bit(info) : 0;
+        m->meter[i] = i < m->count && lv ? lv[i] : 0;
+        if (i < m->count && note_interface.is_note_on(i)) {
+            m->held |= (uint16_t)(1u << i);
+            if (first < 0)
+                first = i;
+        }
+        SeqTrack *t = i < m->count ? p.mixer_seq_track(i) : nullptr;
+        if (t && t->mute_state != SEQ_MUTE_OFF)
+            m->muted |= (uint16_t)(1u << i);
+    }
+    const char *nm = model_param_name(MD.kit.get_model(first < 0 ? 0 : first), p.display_mode);
+    uint32_t k = 0;
+    for (; nm && nm[k] && k < 7; k++)
+        m->pname[k] = nm[k];
+    m->pname[k] = 0;
+    m->roll = p.beat_repeat_armed;
+    beat_repeat_rate_name(mcl_cfg.beat_repeat_rate, m->roll_rate, sizeof m->roll_rate);
+    return 1;
+}
+
 static void shortcut_apply(void)
 {
     uint8_t n = shortcut_want;
-    if (n >= 5)
+    if (n >= 6)
         return;
     shortcut_want = 0xff;
     PageIndex now = mcl.currentPage(), want = shortcut_page[n];
@@ -475,6 +514,11 @@ static void shortcut_apply(void)
         FXPage &fx = n == 1 ? fx_page_a : fx_page_b;
         fx.page_mode = !fx.page_mode;
         fx.update_encoders();
+    } else if (n == 5) {                                         /* sample: MCL's RAM record page, recording from the MD's input A (the Blackbox's
+                                                                    output, by cable), not its main mix: YES records, NO slices onto a RAM player */
+        ram_a_param1.cur = 1;                                        /* (SOURCE_INPA) */
+        if (now != want)
+            mcl.setPage(want);
     } else if (now != want) {
         mcl.setPage(want);
     }

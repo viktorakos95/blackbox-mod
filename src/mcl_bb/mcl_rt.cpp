@@ -30,6 +30,7 @@ __attribute__((weak)) void bb_mcl_page_input(uint32_t, int32_t, int32_t) {}
 __attribute__((weak)) void bb_mcl_shortcut(uint32_t) {}
 __attribute__((weak)) uint32_t bb_mcl_shortcut_now(void) { return 255; }
 __attribute__((weak)) uint32_t bb_mcl_grid(struct bb_grid *) { return 0; }
+__attribute__((weak)) uint32_t bb_mcl_mixer(struct bb_mixer *) { return 0; }
 }
 
 extern "C" {
@@ -432,6 +433,7 @@ struct mcl_entry {
     uint32_t (*midi)(uint32_t which);                 /* abi 4, the jack for the page: 0 speed (bit/s), 1 bytes received, 2 receive errors (framing + noise + overrun);
                                                          3..9 the clock chain (diagnostics, page_midi) */
     uint32_t (*grid)(struct bb_grid *);               /* abi 6: MCL's grid page as data (bb_grid.h), 0 while another page shows */
+    uint32_t (*mixer)(struct bb_mixer *);             /* abi 6: its mixer page as data, likewise */
 };
 static int ready(void)
 {
@@ -442,6 +444,7 @@ static int ready(void)
 static int mcl_drawn(void) { return bb_mcl_active() && bb_mcl_frames() != 0; }
 static const uint8_t *page_fb(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_fb() : bb_ui_fb(); }
 static uint32_t page_grid(struct bb_grid *g) { return ready() && mcl_drawn() ? bb_mcl_grid(g) : 0u; }
+static uint32_t page_mixer(struct bb_mixer *m) { return ready() && mcl_drawn() ? bb_mcl_mixer(m) : 0u; }
 static uint32_t page_sig(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_frames() * 2654435761u + 1u : bb_ui_sig(); }
 /* The page's clock (abi 5): kind 4 = the source a (0 the Blackbox's sequencer, 1 MCL's own tempo running, 2 MCL's own tempo stopped) at tempo b,
  * kind 5 = the own tempo b (1/10 BPM). MCL hears start / stop through bb_clock's transport hook, as from the sequencer. */
@@ -468,8 +471,8 @@ static void page_input(uint32_t kind, int32_t a, int32_t b)
             page_clock(kind, a, b);
         return;
     }
-    if (kind == 6) {                                              /* a shortcut: 0 chromatic, 1 delay, 2 reverb, 3 mixer, 4 grid (bb_mcl.cpp opens it in MCL's task) */
-        if (bb_mcl_active() && a >= 0 && a < 5)
+    if (kind == 6) {                                              /* a shortcut: 0 chromatic, 1 delay, 2 reverb, 3 mixer, 4 grid, 5 sample (bb_mcl.cpp opens it in MCL's task) */
+        if (bb_mcl_active() && a >= 0 && a < 6)
             bb_mcl_shortcut((uint32_t)a);
         return;
     }
@@ -502,4 +505,4 @@ static uint32_t page_midi(uint32_t which)
 #else
 #define COMPACT 0u
 #endif
-extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 6, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input, page_midi, page_grid};
+extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 6, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input, page_midi, page_grid, page_mixer};

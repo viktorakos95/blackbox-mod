@@ -101,10 +101,27 @@ def grid_fn():
 
 
 fn("grid", grid_fn)
+MIXER = {"on": False}
+
+
+def mixer_data():
+    """struct bb_mixer: FLTF (param 12), 16 tracks, tracks 3 and 4 held, track 6 muted, the roll armed at 1/8"""
+    vals = [10 + 7 * k for k in range(16)]
+    mets = [v // 2 for v in vals]
+    return struct.pack("<BBHHBB", 12, 16, (1 << 2) | (1 << 3), 1 << 5, 1, 0) + bytes(vals) + bytes(mets) + b"FLTF".ljust(8, b"\0") + b"1/8".ljust(6, b"\0")
+
+
+def mixer_fn():
+    if MIXER["on"]:
+        u.mem_write(e.arg(0), mixer_data())
+    e.ret(1 if MIXER["on"] else 0)
+
+
+fn("mixer", mixer_fn)
 
 
 def entry(abi):
-    u.mem_write(ENTRY, struct.pack("<11I", 0x424C434D, abi, fns["boot"], fns["status"], fns["gui"], 0, fns["fb"], fns["sig"], fns["input"], fns["midi"], fns["grid"]))
+    u.mem_write(ENTRY, struct.pack("<12I", 0x424C434D, abi, fns["boot"], fns["status"], fns["gui"], 0, fns["fb"], fns["sig"], fns["input"], fns["midi"], fns["grid"], fns["mixer"]))
     e.w32(e.sym["mcl_entry"], ENTRY)
 
 
@@ -223,7 +240,7 @@ lx = min(x for x, _ in got_logo) if got_logo else 0
 want_logo = {(lx + k, 17 + 3 + rr): ch for rr, row in enumerate(LOGO) for k, ch in enumerate(row) if ch != "."}
 check("the Machinedrum's mark (orange and red, 35 x 13) pixel for pixel, left of the name, on its rows", got_logo == want_logo and lx + 35 <= px0,
       (len(got_logo), len(want_logo), lx, px0))
-check("the shortcuts (abi 5): CHROMATIC DELAY REVERB MIXER GRID", all(s in names for s in ("CHROMATIC", "DELAY", "REVERB", "MIXER", "GRID")), names)
+check("the shortcuts (abi 5): CHROMATIC DELAY REVERB MIXER GRID SAMPLE", all(s in names for s in ("CHROMATIC", "DELAY", "REVERB", "MIXER", "GRID", "SAMPLE")), names)
 check("no MIDI / error counters, no restart record", not any("ERR" in s or "RESTART" in s for s in names), names)
 fnames = [r[-1] for r in foot_part(c) if r[0] == "lp_text_c"]
 check("the footer: empty (no clock, no text)", not foot_part(c), foot_part(c)[:3])
@@ -271,8 +288,8 @@ e.call("mcl_page_up", 1)
 check("touching MCL's screen does nothing", touch(W // 2, 80) == ([], []))
 
 # --- the shortcuts
-STRIP_Y = 17 + 150 + 4                   # under the window (name plate 19, screen 128, edge 3)
-STRIP_H = 46
+STRIP_Y = 17 + 150 + 12                  # under the window (name plate 19, screen 128, edge 3) and the PAGE / SHIFT names
+STRIP_H = 43
 STRIP = STRIP_Y + 10
 
 
@@ -289,10 +306,10 @@ def strip_fits():
 
 
 check("each shortcut's name and picture fit inside its tile's frame", not strip_fits(), strip_fits()[:4])
-for k, name in enumerate(("CHROMATIC", "DELAY", "REVERB", "MIXER", "GRID")):
+for k, name in enumerate(("CHROMATIC", "DELAY", "REVERB", "MIXER", "GRID", "SAMPLE")):
     down, up = touch(tile(name), STRIP)
     check(f"{name}: shortcut {k} (kind 6), nothing on release", down == [(6, k, 0)] and up == [], (down, up))
-piano = [r for r in page_part(draw()) if r[0] == "lp_box" and r[5] == 0x0E and STRIP_Y + 10 <= r[2] < STRIP_Y + 22 and r[4] == 7]
+piano = [r for r in page_part(draw()) if r[0] == "lp_box" and r[5] == 0x0E and STRIP_Y + 8 <= r[2] < STRIP_Y + 22 and r[4] == 7]
 check("the chromatic tile has a little piano (4 black keys)", len(piano) == 4, piano)
 
 
@@ -310,7 +327,7 @@ for k, name, arr in ((1, "DELAY", "icon_echo"), (2, "REVERB", "icon_gbox")):
     t0 = tiles[k]
     got = set()
     for r in c:
-        if r[0] == "lp_box" and r[5] == 0x0F and STRIP_Y < r[2] < STRIP_Y + 30 and t0 <= r[1] < t0 + 41 and r[4] == 1:
+        if r[0] == "lp_box" and r[5] == 0x0F and STRIP_Y < r[2] < STRIP_Y + 30 and t0 <= r[1] < t0 + 44 and r[4] == 1:
             for xx in range(r[1], r[1] + r[3]):
                 got.add((xx, r[2]))
     ox, oy = min(x for x, _ in got) - min(x for x, _ in icon_pixels(arr)), min(y for _, y in got) - min(y for _, y in icon_pixels(arr))
@@ -364,6 +381,22 @@ _g = draw()
 GRID["on"] = False
 GRID_PREVIEW = _g
 
+
+# --- MCL's mixer at full resolution (abi 6)
+MIXER["on"] = True
+c = page_part(draw())
+_mx = draw()
+MIXER["on"] = False
+lt = [r for r in c if r[0] == "lp_text"]
+words = [r[3] for r in lt]
+check("mixer page: the title bar names the parameter the knobs move (MIXER  FLTF) and the roll's rate", "MIXER  FLTF" in words and "ROLL 1/8" in words, words[:4])
+check("... the first held track and its value shown (TRK 3  24)", "TRK 3  24" in words, words[:6])
+fills = [r for r in c if r[0] == "lp_box" and r[3] == 10 and r[5] == 0x0F and TOP + 30 <= r[2] < TOP + 100]
+check("... the two held tracks' faders filled", len(fills) == 2, fills)
+check("... no 2x picture blitted (none of its 2-px runs)", len([r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128]) < 3, [r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128])
+check("... the muted track shows M", "M" in words, words)
+MIXER_PREVIEW = _mx
+
 # --- the footer line: no buttons
 check("taps on the footer line do nothing", touch(30, FOOT + 6) == ([], []) and touch(W // 2, FOOT + 6) == ([], []) and touch(W - 30, FOOT + 6) == ([], []))
 
@@ -416,6 +449,7 @@ state["page"] = 0
 preview("out/mcl_page.png", draw())
 state["page"] = 255
 preview("out/mcl_grid.png", GRID_PREVIEW)
+preview("out/mcl_mixer.png", MIXER_PREVIEW)
 
 # --- an older blob (abi 4): the same panel, no shortcuts, no clock: the footer says what the knobs are
 entry(4)

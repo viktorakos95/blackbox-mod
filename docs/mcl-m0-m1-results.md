@@ -498,3 +498,10 @@ The looper branch keeps its ITCM image at 0x08170000..0x08180000, inside what th
   When it returns 1, the cave's page draws the grid itself in the 256 x 128 area instead of blitting MCL's 2x picture, in the Machinedrum's screen style on black: a frame, an inverted title bar (GRID X, row and name, bar:beat, play / stop), the tempo at 2x, all 16 tracks in one line in four groups with dotted dividers, the cursor's area inverted, the playing slots underlined, empty slots grey. The numbers are centred over their columns.
 
   Tests: `test_mcl_page.py` (a fake abi-6 blob: every label in its column, inversion, underlines, numbers, dividers clear of the labels, all inside the area; preview `out/mcl_grid.png`) and `test_mcl_core.py` (`bb_mcl_grid` on the real core: 1 on the grid, 0 on the mixer, printable labels).
+- **Mixer at full resolution and the SAMPLE shortcut (m9w, user):** abi 6 adds `mixer(struct bb_mixer *)`. `bb_mcl_mixer` reports the parameter the knobs move (`mixer_page.display_mode`, an MD parameter: 0..23, 40 mute, 41 level), named with `model_param_name()` for the first held track's machine, plus every track's value, meter, held and muted state, and the roll and its rate. It returns 0 unless the mixer shows faders for a connected Machinedrum (not its menu, a perf preview or the fill editor).
+
+  The page draws 16 faders in the grid's columns: held tracks filled white with the number inverted, the others outlined with their meter, muted tracks grey with an M. The title bar reads MIXER <param> and ROLL <rate>, and under it TRK n plus the value.
+
+  Sixth shortcut, SAMPLE: MCL's RAM record page A, its source set to input A (`ram_a_param1` = 1). YES records onto track 15 at the length of knob D, NO slices it onto a RAM player. The strip moved under the PAGE / SHIFT names and has the page's full width.
+
+  The emulator has no Machinedrum, so there `bb_mcl_mixer` is checked to return 0; the MD path itself is untested.

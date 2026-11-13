@@ -100,6 +100,7 @@ struct mcl_entry {
                                           * abi 5: input() kind 4 = the clock (a: 0 follow the Blackbox, 1 own tempo running, 2 stopped; b: tempo), kind 5 = tempo b,
                                           * kind 6 = shortcut a (0 chromatic, 1 delay, 2 reverb, 3 mixer); midi(10) = the shortcut showing (255 none) */
     uint32_t (*grid)(struct bb_grid *);  /* abi 6: MCL's grid page as data (mcl_bb/bb_grid.h), 0 while another page shows */
+    uint32_t (*mixer)(struct bb_mixer *); /* abi 6: its mixer page as data, likewise */
 };
 const volatile uint32_t mcl_entry = 0;
 static const struct mcl_entry *mcl_image(void)       /* the blob, whether or not it runs */
@@ -374,8 +375,8 @@ void lp_text(int x, int d, const char *s, int color, int scale);
 #define MCL_WIN_H   (MCL_PLATE + MCL_H + 3)
 #define MCL_COL_W   25          /* the button columns either side of the window */
 #define MCL_SPLIT   98          /* a column's upper button above this line, its lower one below */
-#define MCL_STRIP_Y (MCL_WIN_Y + MCL_WIN_H + 4)
-#define MCL_STRIP_H 46          /* a 24 x 25 icon over the name */
+#define MCL_STRIP_Y (MCL_WIN_Y + MCL_WIN_H + 12)  /* under the PAGE / SHIFT names: the strip has the page's whole width */
+#define MCL_STRIP_H 43          /* a 24 x 25 icon over the name */
 #define MCL_FOOT_H  14          /* the footer line (looper_page.c FOOT): its boxes 2 below it, 11 high */
 #define MCL_ENC_COUNTS 40       /* knob counts per MCL step (the TRIG page's; 20 moved MCL's short menus too fast on the unit) */
 #define MCL_ENC_FAST   80       /* a knob event of this many counts or more (a quick spin): twice the steps, so long ranges stay quick */
@@ -400,9 +401,9 @@ static int mcl_abi5(const struct mcl_entry *e) { return e && e->abi >= 5; }
 
 /* the shortcuts under the window (input kind 6, a = the shortcut; the blob's midi(10) = the one showing, 255 none). Pressed again: chromatic
  * opens its POLY voice selection, delay / reverb switch the FX page's halves (FX A / FX B), mixer and grid stay (bb_mcl.cpp shortcut_apply). */
-enum { SC_CHROM, SC_DELAY, SC_REVERB, SC_MIXER, SC_GRID, SC_N };
-static const uint8_t sc_w[SC_N] = {58, 41, 41, 41, 41};      /* (narrow enough to leave the PAGE and SHIFT names room either side) */
-static const char *const sc_name[SC_N] = {"CHROMATIC", "DELAY", "REVERB", "MIXER", "GRID"};
+enum { SC_CHROM, SC_DELAY, SC_REVERB, SC_MIXER, SC_GRID, SC_SAMPLE, SC_N };
+static const uint8_t sc_w[SC_N] = {58, 44, 44, 44, 44, 44};
+static const char *const sc_name[SC_N] = {"CHROMATIC", "DELAY", "REVERB", "MIXER", "GRID", "SAMPLE"};
 
 static int row_x(const uint8_t *ws, int n, int x, int i)
 {
@@ -416,7 +417,7 @@ static int sc_x(int w, int i)
     int total = 4 * (SC_N - 1);
     for (int k = 0; k < SC_N; k++)
         total += sc_w[k];
-    return row_x(sc_w, SC_N, mcl_win_x(w) + (mcl_win_w() - total) / 2, i);
+    return row_x(sc_w, SC_N, (w - total) / 2, i);
 }
 
 
@@ -538,6 +539,13 @@ static void sc_icon(int i, int x, int d)
         break;
     case SC_REVERB:
         bitmap24(icon_gbox, x + 1, d, 25, MC_WHITE);
+        break;
+    case SC_SAMPLE:                                           /* a waveform */
+        {
+            static const uint8_t hgt[13] = {2, 5, 9, 14, 10, 6, 12, 16, 11, 7, 4, 6, 3};
+            for (int k = 0; k < 13; k++)
+                lp_box(x + 1 + k * 2, d + 12 - hgt[k] / 2, 1, hgt[k] ? hgt[k] : 1, MC_WHITE);
+        }
         break;
     case SC_GRID:                                             /* a 4 x 3 grid of slots */
         d += 5;
@@ -663,6 +671,74 @@ static void mcl_grid_draw(int x0, const struct bb_grid *g)
     }
 }
 
+/* MCL's mixer at full resolution (abi 6): the parameter the knobs move named in the title bar, 16 faders in the grid's columns, the tracks
+ * held (whose values the knobs change) filled white, the others outlined with their level meter, muted tracks grey with an M. */
+#define MX_TOP 30                       /* the faders' top, from the screen area's top */
+#define MX_H   70                       /* their height */
+static void mcl_mixer_draw(int x0, const struct bb_mixer *m)
+{
+    int top = MCL_TOP;
+    char t[40], *p = t;
+    lp_frame(x0, top, MCL_W, MCL_H, MC_WHITE, 1);
+    lp_box(x0 + 1, top + 1, MCL_W - 2, 12, MC_WHITE);
+    for (const char *c = "MIXER  "; *c; c++)
+        *p++ = *c;
+    for (int k = 0; k < 7 && m->pname[k]; k++)
+        *p++ = m->pname[k];
+    *p = 0;
+    lp_text(x0 + 5, top + 3, t, MC_BLACK, 1);
+    if (m->roll) {                                            /* the roll armed: its rate */
+        p = t;
+        for (const char *c = "ROLL "; *c; c++)
+            *p++ = *c;
+        for (int k = 0; k < 5 && m->roll_rate[k]; k++)
+            *p++ = m->roll_rate[k];
+        *p = 0;
+        lp_text(x0 + MCL_W - 6 - (int)(p - t) * 6, top + 3, t, MC_BLACK, 1);
+    }
+    int held = -1;                                            /* the value of the first held track, big */
+    for (int k = 0; k < m->count; k++)
+        if (m->held >> k & 1) {
+            held = k;
+            break;
+        }
+    if (held >= 0) {                                          /* TRK 3  24 */
+        p = t;
+        for (const char *c = "TRK "; *c; c++)
+            *p++ = *c;
+        p = put_uint(p, (unsigned)held + 1);
+        *p++ = ' ';
+        *p++ = ' ';
+        p = put_uint(p, m->value[held]);
+        *p = 0;
+        lp_text(x0 + 6, top + 16, t, MC_WHITE, 1);
+    }
+    dots_h(x0 + 3, top + 26, MCL_W - 6, MC_WHITE);
+    int gx = x0 + GR_X;
+    for (int k = 4; k < 16; k += 4)
+        dots_v(gx + GR_CX(k) - (GR_COL - 12 + GR_GAP) / 2 - 1, top + 28, MCL_H - 31, MC_WHITE);
+    for (int k = 0; k < m->count && k < 16; k++) {
+        int cx = gx + GR_CX(k) + 1, fy = top + MX_TOP;
+        int v = m->value[k] * MX_H / 127, lvl = m->meter[k] * MX_H / 127;
+        int is_held = m->held >> k & 1, mute = m->muted >> k & 1;
+        if (lvl > v)
+            lvl = v;
+        lp_frame(cx, fy + MX_H - v - 2, 10, v + 2, mute ? MC_GREY : MC_WHITE, 1);
+        if (is_held)
+            lp_box(cx, fy + MX_H - v, 10, v, MC_WHITE);
+        else if (lvl > 0)
+            lp_box(cx + 2, fy + MX_H - lvl, 6, lvl, mute ? MC_GREY : MC_WHITE);
+        p = put_uint(t, (unsigned)k + 1);
+        *p = 0;
+        if (is_held) {
+            lp_box(cx - 2, fy + MX_H + 3, 14, 11, MC_WHITE);
+            lp_text(cx + (k + 1 < 10 ? 2 : -1), fy + MX_H + 5, t, MC_BLACK, 1);
+        } else {
+            lp_text(cx + (k + 1 < 10 ? 2 : -1), fy + MX_H + 5, mute ? "M" : t, mute ? MC_GREY : MC_WHITE, 1);
+        }
+    }
+}
+
 void mcl_page_draw(int w, int foot_y)
 {
     const struct mcl_entry *e = mcl_blob();
@@ -675,10 +751,13 @@ void mcl_page_draw(int w, int foot_y)
     mcl_logo(nx, MCL_WIN_Y + 3);
     text_15(nx + LOGO_W + 6, MCL_WIN_Y + 3, "MACHINEDRUM", MC_WHITE);
     struct bb_grid gd;
+    struct bb_mixer md;
     if (!fb) {
         lp_text_c(x0, MCL_TOP + MCL_H / 2 - 4, MCL_W, mcl_image() ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", MC_WHITE, 1);
     } else if (e->abi >= 6 && e->grid(&gd)) {
         mcl_grid_draw(x0, &gd);                               /* MCL's grid page: drawn here at full resolution */
+    } else if (e->abi >= 6 && e->mixer(&md)) {
+        mcl_mixer_draw(x0, &md);                              /* its mixer, likewise */
     } else {
         for (int y = 0; y < 64; y++) {                        /* the screen: 16 bytes a row, leftmost pixel = the top bit; runs of lit pixels become boxes */
             const uint8_t *row = fb + y * 16;
@@ -707,8 +786,8 @@ void mcl_page_draw(int w, int foot_y)
         int x = sc_x(w, i), cw = sc_w[i], on = now == (uint32_t)i;
         lp_box(x, MCL_STRIP_Y, cw, MCL_STRIP_H, MC_BLACK);
         lp_frame(x, MCL_STRIP_Y, cw, MCL_STRIP_H, on ? MC_HOLD : MC_EDGE, on ? 2 : 1);
-        sc_icon(i, x + (cw - 26) / 2, MCL_STRIP_Y + 4);
-        lp_text_c(x, MCL_STRIP_Y + 35, cw, sc_name[i], on ? MC_HOLD : MC_WHITE, 1);
+        sc_icon(i, x + (cw - 26) / 2, MCL_STRIP_Y + 3);
+        lp_text_c(x, MCL_STRIP_Y + 32, cw, sc_name[i], on ? MC_HOLD : MC_WHITE, 1);
     }
 }
 
@@ -727,16 +806,17 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
     if (!e || !e->fb() || d < 16 || d >= foot_y)
         return;
     int i = -1;
+    if (d >= MCL_STRIP_Y && d < MCL_STRIP_Y + MCL_STRIP_H) {  /* the shortcuts (the whole width, under the buttons) */
+        if (mcl_abi5(e))
+            for (int k = 0; k < SC_N; k++)
+                if (x >= sc_x(w, k) && x < sc_x(w, k) + sc_w[k])
+                    e->input(6, k, 0);                        /* the blob opens the page (pressed again: see the shortcuts above) */
+        return;
+    }
     if (x < wx)
         i = d < MCL_SPLIT ? 0 : 1;                            /* NO / PAGE */
     else if (x >= wx + ww)
         i = d < MCL_SPLIT ? 3 : 2;                            /* YES / SHIFT */
-    else if (d >= MCL_STRIP_Y && d < MCL_STRIP_Y + MCL_STRIP_H && mcl_abi5(e)) {
-        for (int k = 0; k < SC_N; k++)
-            if (x >= sc_x(w, k) && x < sc_x(w, k) + sc_w[k])
-                e->input(6, k, 0);                            /* the blob opens the page (pressed again: see the shortcuts above) */
-        return;
-    }
     if (i < 0)
         return;
     UI->down[id & 3] = (uint8_t)(i + 1);
