@@ -467,3 +467,8 @@ The looper branch keeps its ITCM image at 0x08170000..0x08180000, inside what th
   - Pressed again: DELAY / REVERB switch the FX page's halves (FX A / FX B, MCL's own toggle), CHROMATIC opens the POLY voice selection (`seq_ptc_page.re_init`, `pushPage(POLY_PAGE)`, MCL's own B1 + B4), MIXER and GRID stay.
   - The name plate: the Machinedrum's mark from its front panel (35 x 13, orange 0x1d / red 0x1f set by the MCL theme in looper_page.c), MACHINEDRUM at 1.5x in bold. The screen moved down 5 px.
   - Tested: `test_mcl_page.py` (pixel checks of the mark and the name), `test_mcl_core.py` (each shortcut pressed twice on the real core), `test_mcl_ui.py` and `test_cpu.py` (the guard).
+- **m9o on the unit:** "MCL IS OFF" after flashing. The updater's reset is not a power-on, and the restart count had just moved to 0x38800690, so it read whatever was left there. Tapping then restarted the Blackbox (tap-start from the GUI task, as on m9k), and then the page showed MCL BB IDLE.
+
+  **m9p (user: "remove completely"):** no off state, no restart record on the MCL page, no tap-to-start. `cpu_boot` clears M->magic, so `start()` boots MCL at every boot, whatever the reset. The crash recorder itself stays (the Looper's SETUP debug view).
+
+  **Risk accepted:** if MCL crashes at every start, the unit loops (m9f / m9l). The way out is to flash an image without `mclblob`.

@@ -176,39 +176,16 @@ entry("mcl_page_knob", 7, 100)
 entry("mcl_page_knob", -1, 100)
 check("bad knob numbers are ignored", screen()[3][8:11] == " -4")
 
-# --- boots after resets that were not a power-on (cpu_boot left M->magic = WARM): MCL starts as usual, unless they come in a row,
-#     each soon after the boot before (a restart loop): the third leaves it off, its page says why, a tap starts it
+# --- a boot after any reset (cpu_boot clears M->magic): MCL boots, no 'MCL is off' state, no restart record over the page
 boots, guis = [], []
 e.stub(r.b["mcl_boot"], lambda: boots.append(1))
-e.stub(r.b["bb_rt_gui"], lambda: guis.append(1))
-e.uc.mem_write(REC, struct.pack("<IHHI", 0x31435243, 6, 1, (1 << 24) | (1 << 22)) + bytes([0, 2, 0, 0, 0, 0]) + bytes(0x60))
-QUICK, OFF = 0x38800690, 0x3880068E
-for n in (1, 2):
-    e.w32(0x2405FFD0, 0x4D524157)
+e.uc.mem_write(REC, struct.pack("<IHHI", 0x31435243, 6, 1, (1 << 24) | (1 << 22)) + bytes([1, 2, 0, 0, 0, 0]) + bytes(0x60))
+for n in (1, 2, 3, 4):
+    e.w32(0x2405FFD0, 0)
     r.boot()
-    check(f"restart {n} in a row: MCL boots as usual (count {n})", len(boots) == n and e.r8(OFF) == 0 and e.r8(QUICK) == n, (boots, e.r8(OFF), e.r8(QUICK)))
-boots.clear()
-guis.clear()
-e.w32(0x2405FFD0, 0x4D524157)
-r.boot()
-check("restart 3 in a row: MCL is not booted, the page state says off, no GUI call into the blob", boots == [] and guis == [] and e.r8(OFF) == 1, (boots, guis, e.r8(OFF)))
-calls = draw()
-texts = [c[5] for c in calls if c[0] == "lp_text_c"]
-check("... the page: 'MCL IS OFF', why the Blackbox restarted, 'TAP HERE TO START'; no picture from the last run",
-      "MCL IS OFF" in texts and "TAP HERE TO START" in texts and any(t.startswith("LAST RESTART") for t in texts)
-      and not [c for c in calls if c[0] == "lp_box" and c[4] == 2 and c[2] >= TOP], texts[:4])
-sig_off = entry("mcl_page_sig")
-page_down(1, W - 10, 150)
-entry("mcl_page_knob", 2, 100)
-check("... buttons and knobs do nothing while it is off", boots == [] and e.r16(0x38800684) == 0, e.r16(0x38800684))
-entry("mcl_page_up", 1)
-page_down(3, W // 2, 90)
-check("a tap on the window: MCL booted and its task started once, page state on, record seen",
-      boots == [1] and guis == [1] and e.r8(OFF) == 0 and e.r8(REC + 13) == 3, (boots, guis, e.r8(OFF), e.r8(REC + 13)))
-check("... the page signature changed", entry("mcl_page_sig") != sig_off)
-e.w32(0x2405FFD0, 0)
-r.boot()
-check("power-on boot (magic 0): MCL booted, the count starts again", boots == [1, 1] and e.r8(OFF) == 0 and e.r8(QUICK) == 0, (boots, e.r8(QUICK)))
+check("four restarts in a row: MCL boots every time", boots == [1] * 4, boots)
+texts = [c[5] for c in draw() if c[0] == "lp_text_c"]
+check("... and the page shows no restart record or 'MCL IS OFF', even with a fault on record", not any("RESTART" in t or "MCL IS OFF" in t or "TAP" in t for t in texts), texts[:6])
 
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

@@ -79,15 +79,10 @@ struct mcl_ui {
     uint8_t down[4];            /* the tile each touch id holds (index + 1), 0 = none */
     uint16_t mask;              /* tiles shown pressed */
     int16_t acc[4];             /* knob counts below one detent */
-    uint16_t off;               /* 1: MCL was not started this run (restart loop guard, see start()); a tap on its page starts it */
-    uint8_t quick;              /* restarts in a row (not power-ons) that came less than QUICK_BLOCKS after the boot before: kept across start() */
-    uint8_t _r[3];
+    uint16_t _r;
 };
 #define UI ((volatile struct mcl_ui *)0x38800680u)
 _Static_assert(sizeof(struct mcl_ui) <= 24, "the page state must end before 0x38800698");
-#define QUICK_BLOCKS (188u * 60u)  /* a minute of audio blocks (crash.c's live count): a run this long clears the count */
-#define QUICK_MAX    3             /* the third quick restart in a row leaves MCL off */
-#define LIVE_BLOCKS (*(volatile uint32_t *)0x38800b28u)   /* crash.c's live block: audio blocks since this boot */
 
 /* MCL blob (milestone M2): patches/mclblob.py sets mcl_entry to the blob's entry table at 0x08120000 (0 = no blob in this image). */
 struct mcl_entry {
@@ -109,21 +104,13 @@ static const struct mcl_entry *mcl_image(void)       /* the blob, whether or not
     const struct mcl_entry *e = (const struct mcl_entry *)mcl_entry;
     return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 5 ? e : 0;
 }
-static const struct mcl_entry *mcl_blob(void)        /* the blob, if it was started this run (its state in SDRAM is the last run's otherwise) */
-{
-    bkp_enable();
-    return UI->off ? 0 : mcl_image();
-}
-
-#define WARM 0x4d524157u         /* M->magic from cpu_boot: this boot followed a reset that was not a power-on */
-#define RSR_POR (1u << 23)       /* RCC_RSR PORRSTF */
+static const struct mcl_entry *mcl_blob(void) { return mcl_image(); }
 
 static void start(void)
 {
     DEMCR |= 1u << 24;           /* TRCENA */
     DWT_LAR = 0xc5acce55u;       /* unlock (Cortex-M7) */
     DWT_CTRL |= 1u;              /* CYCCNTENA */
-    int warm = M->magic == WARM;
     M->armed = 0;
     M->status = STATUS_NONE;
     M->sum = 0;
@@ -134,7 +121,6 @@ static void start(void)
         PAD_ST[0] = 0;               /* power-up: read the flash test pad again */
     }
     bkp_enable();
-    uint8_t quick = warm ? UI->quick : 0;
     for (unsigned i = 0; i < sizeof(struct mcl_ui) / 4; i++)
         ((volatile uint32_t *)UI)[i] = 0;     /* the MCL page's state (backup SRAM is not cleared by a reset) */
     for (unsigned i = 0; i < 5; i++)
@@ -142,13 +128,7 @@ static void start(void)
     const struct mcl_entry *e = mcl_image();
     if (e) {
         bkp_enable();
-        if (warm && quick < 255)
-            quick++;
-        UI->quick = quick;
-        if (quick >= QUICK_MAX)
-            UI->off = 1;             /* restarts in a row, each soon after the boot before: if MCL causes them, starting it again would restart the Blackbox over and over */
-        else
-            e->boot();               /* power-on, or a restart after a good run: MCL starts as usual */
+        e->boot();                   /* at every boot, whatever the reset (cpu_boot) */
     }
 }
 
@@ -271,13 +251,7 @@ static void report(void)
  * that calls in run start() as at power-up. */
 void cpu_boot(void)
 {
-    uint32_t rsr = *(volatile uint32_t *)0x580244d0u;                 /* RCC_RSR, unless the crash recorder already read and cleared it this boot */
-    if (!rsr) {
-        bkp_enable();
-        if (*(volatile uint32_t *)0x38800b38u == 0x31435243u)          /* then its record has this boot's flags */
-            rsr = *(volatile uint32_t *)0x38800b40u;
-    }
-    M->magic = rsr && !(rsr & RSR_POR) ? WARM : 0;                   /* (no flags at all: treated as a power-on) */
+    M->magic = 0;
     ((void (*)(void))0x08046341u)();
 }
 
@@ -307,9 +281,6 @@ int cpu_wait(void *queue, void *item, uint32_t ticks, int peek)
             M->peak_shown = M->peak;
             M->status = STATUS_OK;
             report();
-            bkp_enable();
-            if (UI->quick && LIVE_BLOCKS > QUICK_BLOCKS)
-                UI->quick = 0;                               /* a minute without a restart: the next one starts MCL again */
             M->sum = 0;
             M->n = M->peak = M->wakes = 0;
         }
@@ -440,7 +411,7 @@ uint32_t mcl_page_sig(void)
     const struct mcl_entry *e = mcl_blob();
     bkp_enable();
     uint32_t t = mcl_abi5(e) ? e->midi(10) * 131u : 0u;                    /* the shortcut whose page shows */
-    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + (uint32_t)UI->off * 0x9e3779b9u + t * 977u;
+    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + t * 977u;
 }
 
 static void mcl_button(int x, int d, int cap, int on, const char *above, const char *below, int below_d, int below_x, int below_w)
@@ -582,15 +553,7 @@ void mcl_page_draw(int w, int foot_y)
     int nx = wx + (ww - (LOGO_W + 6 + 11 * 9)) / 2;           /* the plate: mark, gap, 11 characters 9 wide */
     mcl_logo(nx, MCL_WIN_Y + 3);
     text_15(nx + LOGO_W + 6, MCL_WIN_Y + 3, "MACHINEDRUM", MC_WHITE);
-    if (UI->off) {                                            /* not started after a restart that was not a power-on (see start()): a tap starts it */
-        char line[56];
-        int row = 0;
-        lp_text_c(x0, MCL_TOP + 4, MCL_W, "MCL IS OFF", MC_WHITE, 1);
-        for (int i = 0; i < 5; i++)                           /* why the Blackbox restarted (the crash recorder, src/crash.c): reason, PC / LR, fault registers, callers */
-            if (crash_line(i, line, (int)sizeof line))
-                lp_text_c(x0, MCL_TOP + 22 + row++ * 14, MCL_W, line, MC_WHITE, 1);
-        lp_text_c(x0, MCL_TOP + MCL_H - 14, MCL_W, "TAP HERE TO START", MC_WHITE, 1);
-    } else if (!fb) {
+    if (!fb) {
         lp_text_c(x0, MCL_TOP + MCL_H / 2 - 4, MCL_W, mcl_image() ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", MC_WHITE, 1);
     } else {
         for (int y = 0; y < 64; y++) {                        /* the screen: 16 bytes a row, leftmost pixel = the top bit; runs of lit pixels become boxes */
@@ -637,16 +600,6 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
     const struct mcl_entry *e = mcl_blob();
     int wx = mcl_win_x(w), ww = mcl_win_w();
     bkp_enable();
-    if (UI->off && x >= wx && x < wx + ww && d >= MCL_WIN_Y && d < MCL_WIN_Y + MCL_WIN_H) {   /* a tap on the 'MCL is off' window: MCL starts */
-        const struct mcl_entry *m = mcl_image();
-        crash_clear();                                        /* (the restart record counts as seen) */
-        UI->off = 0;
-        if (m) {
-            m->boot();
-            m->gui();                                         /* (its task starts from here, as from a label constructor at power-on) */
-        }
-        return;
-    }
     if (!e || !e->fb() || d < 16 || d >= foot_y)
         return;
     int i = -1;

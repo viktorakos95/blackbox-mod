@@ -8,7 +8,7 @@ Checked: the screen is blitted at exactly 2x (every lit pixel a 2x2 block, nothi
 MACHINEDRUM at 1.5x in bold from the firmware's font, pixel for pixel; no MEGACOMMAND), the four buttons and their touch areas (B1 NO / B2 PAGE /
 B3 SHIFT / B4 YES, press and release), the shortcuts (CHROMATIC with its piano, DELAY and REVERB with MCL's own RHYTHM ECHO / GATE BOX icons, MIXER,
 GRID: input kind 6, the one showing lit from midi(10)), the footer line (only what the knobs are; no clock, taps there do nothing), nothing past
-the page's width or across the footer line, no overlaps, no restart record over the screen, the 'MCL is off' prompt and its tap, and that a blob
+the page's width or across the footer line, no overlaps, no restart record over the screen, and that a blob
 of abi 4 gets no strip.
 NOT checked (hardware only): the real colours, touch feel.
 """
@@ -347,19 +347,6 @@ def preview(path, c):
 state["page"] = 0
 preview("out/mcl_page.png", draw())
 state["page"] = 255
-
-# --- 'MCL is off' (the Blackbox restarted without a power-on): a short prompt in the window, a tap starts MCL
-u.mem_write(UI + 14, struct.pack("<H", 1))
-names = [r[-1] for r in draw() if r[0] == "lp_text_c"]
-check("off: 'MCL IS OFF' / 'TAP HERE TO START', no picture", "MCL IS OFF" in names and "TAP HERE TO START" in names and
-      not [r for r in rec if r[0] == "lp_box" and r[4] == 2 and r[2] >= TOP], names)
-calls.clear()
-page_down(0, 10, 50)
-check("... a tap on the NO button does nothing while off", calls == [] and state["boots"] == 0 and ui()["off"] == 1)
-e.call("mcl_page_up", 0)
-page_down(0, W // 2, 90)
-check("... a tap on the window starts MCL", state["boots"] == 1 and ui()["off"] == 0, (state, ui()))
-e.call("mcl_page_up", 0)
 
 # --- an older blob (abi 4): the same panel, no shortcuts, no clock: the footer says what the knobs are
 entry(4)
