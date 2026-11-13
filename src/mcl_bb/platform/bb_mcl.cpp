@@ -500,8 +500,19 @@ HOOK uint32_t bb_mcl_mixer(struct bb_mixer *m)
     return 1;
 }
 
+static volatile uint8_t page_req = 0xff;
+HOOK void bb_mcl_page_req(uint32_t page)                           /* (tests: open any of MCL's pages, from its task like a shortcut) */
+{
+    page_req = (uint8_t)page;
+}
+
 static void shortcut_apply(void)
 {
+    if (page_req != 0xff) {
+        PageIndex pg = (PageIndex)page_req;
+        page_req = 0xff;
+        mcl.setPage(pg);
+    }
     uint8_t n = shortcut_want;
     if (n >= 6)
         return;

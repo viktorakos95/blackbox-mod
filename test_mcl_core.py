@@ -7,6 +7,7 @@ a project is created and the main grid page shows (the real MegaCommand screen),
 NOT checked (hardware only): timing against the real kernel and cache, the real panel.
 """
 import os
+import struct
 import subprocess
 import sys
 import zlib
@@ -28,7 +29,15 @@ def check(label, cond, detail=""):
 
 
 d = R.build_image()
-c = R.Core(d)
+import wave
+LONG_WAV = "Kick 808 Long Tail Deep Analog Warm.wav"           # (39 characters: more than MCL's file lists hold)
+os.makedirs("out/sd", exist_ok=True)
+with wave.open("out/sd/long.wav", "wb") as w:
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(44100)
+    w.writeframes(bytes(4410 * 2))
+c = R.Core(d, files=[("out/sd/long.wav", "::/Samples/Drums/" + LONG_WAV), ("out/sd/long.wav", "::/" + LONG_WAV)])
 b = c.b
 sd_ops = []
 orig_service = c.service
@@ -158,6 +167,31 @@ src = c.call("bb_mcl_dbg", 0) if False else None
 check("SAMPLE opens MCL's RAM record page (shortcut 5 showing)", n9 == 5, n9)
 shortcut(4)
 shortcut(4)
+
+# ---- the sample manager on the Blackbox (fork patch 0004): the whole card, long names as their 8.3 short names
+def browser_entries():
+    base = c.uc.mem_read(c.b["BANK3_FILE_ENTRIES_START"], 4)
+    base = struct.unpack("<I", bytes(base))[0]
+    n = struct.unpack("<i", bytes(c.uc.mem_read(c.b["_ZN15FileBrowserPage10numEntriesE"], 4)))[0]
+    out = []
+    for i in range(max(0, min(n, 64))):
+        raw = bytes(c.uc.mem_read(base + 32 * i, 32))
+        out.append((raw[0], raw[1:].split(b"\0")[0].decode("latin-1")))
+    return out
+
+
+c.call("bb_mcl_page_req", 11)                                    # SAMPLE_BROWSER
+for _ in range(40):
+    c.step(20_000_000)
+    c.tick(5)
+ents = browser_entries()
+names = [n for _, n in ents]
+check("sample manager: it starts at the card's root (the Blackbox's folders and MCL's)", "Samples" in names and "MCL" in names, names[:10])
+
+
+roots = [n for _, n in ents]
+check("... a file whose name is longer than MCL's lists hold (39 characters) is listed by its 8.3 short name, a .WAV (case does not matter)",
+      any(n.upper().endswith(".WAV") and "~" in n and len(n) <= 12 for n in roots), roots[:8])
 png(fa, "mcl-core-fx-a.png")
 png(fb_, "mcl-core-fx-b.png")
 png(pb, "mcl-core-poly.png")

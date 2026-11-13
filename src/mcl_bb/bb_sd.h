@@ -24,6 +24,7 @@ struct BbDirEnt {
     uint64_t size;
     uint8_t attr;
     char name[SD_NAME_MAX];
+    char alt[13];                                       /* its 8.3 short name when it has a long one (FatFs altname), else "" */
 };
 
 extern "C" {

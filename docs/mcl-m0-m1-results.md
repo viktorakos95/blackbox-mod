@@ -505,3 +505,12 @@ The looper branch keeps its ITCM image at 0x08170000..0x08180000, inside what th
   Sixth shortcut, SAMPLE: MCL's RAM record page A, its source set to input A (`ram_a_param1` = 1). YES records onto track 15 at the length of knob D, NO slices it onto a RAM player. The strip moved under the PAGE / SHIFT names and has the page's full width.
 
   The emulator has no Machinedrum, so there `bb_mcl_mixer` is checked to return 0; the MD path itself is untested.
+- **Sample manager sees the whole card (m9x, user):** fork patch `0004-blackbox-sample-manager-card-root.patch`, under the new `MCL_BLACKBOX` define (set in `build_mcl.sh` and `mcl_size.sh`, rebuild stamp `bb1`).
+  - `FileBrowserPage::card_root`: absolute paths are not put under `/MCL`, and `cd ..` goes up to `/`.
+  - `SampleBrowserPage::setup` starts at `/`, so the Blackbox's folders show as well as MCL's.
+  - Suffix matching is case-insensitive off AVR (`strcasecmp`, added to `bb_libc.cpp`).
+
+  MCL's file lists hold 30 characters (32-byte entries), and many Blackbox names are longer. `bb_sd` now also returns FatFs' `altname` (FILINFO + 13), and `FsFile::openNext` uses the 8.3 short name for a long name that would not fit; it opens like any name.
+
+  `test_mcl_core.py` opens the sample manager on the real core (`bb_mcl_page_req`, a test hook) and checks that the root lists `Samples` and `MCL`, and that a 39-character `.wav` is listed by its 8.3 `.WAV` name. Sending to the Machinedrum (SDS) is MCL's own and unchanged.
+- **Test hygiene:** `mcl_rig.build()` and `test_mcl_rt.py` take the first `out/*+cave+mclblob` image, so keep only the `looper clkmon cave mclblob` one. `test_mcl_rt.py` now expects the region above .bss to be zero (`start()` wipes it, m9s).

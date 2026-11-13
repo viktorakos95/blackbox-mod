@@ -57,6 +57,19 @@ HOOK int strcmp(const char *a, const char *b)
     return (unsigned char)*a - (unsigned char)*b;
 }
 
+HOOK int strcasecmp(const char *a, const char *b)
+{
+    for (;; a++, b++) {
+        int x = (unsigned char)*a, y = (unsigned char)*b;
+        if (x >= 'A' && x <= 'Z')
+            x += 'a' - 'A';
+        if (y >= 'A' && y <= 'Z')
+            y += 'a' - 'A';
+        if (x != y || !x)
+            return x - y;
+    }
+}
+
 HOOK int strncmp(const char *a, const char *b, size_t n)
 {
     for (size_t i = 0; i < n; i++) {

@@ -82,7 +82,7 @@ check(".data copied from flash exactly", mem(ds, de - ds) == bytes(image[lma - B
 bssm = mem(bs, be - bs)
 check(".bss cleared of the garbage (only what the runtime itself sets - heap bookkeeping - is non-zero), .data starts at the region start",
       b"\xa5\xa5\xa5\xa5" not in bssm and sum(1 for b in bssm if b) < 64 and ds == RAM, sum(1 for b in bssm if b))
-check("the heap is not zeroed by boot beyond what malloc handed out (garbage left above .bss)", mem(be + 4096, 64) == b"\xa5" * 64)
+check("the whole region is zero above .bss too: cpu.c start() wipes it before the boot (a warm reset's leftovers, m9s)", mem(be + 4096, 64) == bytes(64))
 check("one static constructor ran, once", e.r32(bsym["_ZN5Probe9ctor_runsE"]) == 1)
 s = [e.r32(BKP + 4 * i) & 0xFFFFFFFF for i in range(4)]
 check("status words in backup SRAM: magic, ok, 1 constructor, bss size", s == [0x4D434C31, 1, 1, be - bs], [hex(x) for x in s])

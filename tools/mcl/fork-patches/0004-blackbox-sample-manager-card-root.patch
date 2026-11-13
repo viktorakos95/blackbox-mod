@@ -1,0 +1,90 @@
+diff --git a/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.cpp b/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.cpp
+index 9b628d1..a7dc43d 100644
+--- a/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.cpp
++++ b/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.cpp
+@@ -385,7 +385,11 @@ void FileBrowserPage::_cd_up() {
+   DEBUG_PRINTLN("cd_up");
+   // don't cd up if we are at the root
+ #ifndef __AVR__
+-  if (mcl_sd.mcl_root[0] == '\0') {
++  if (mcl_sd.mcl_root[0] == '\0'
++#ifdef MCL_BLACKBOX
++      || card_root
++#endif
++  ) {
+     if (strlen(lwd) < 2) {
+       init();
+       return;
+@@ -420,7 +424,11 @@ void FileBrowserPage::_cd_up() {
+   // in case root is trimmed, add it back
+   if (lwd[0] == '\0') {
+ #ifndef __AVR__
+-    if (mcl_sd.mcl_root[0] == '\0') {
++    if (mcl_sd.mcl_root[0] == '\0'
++#ifdef MCL_BLACKBOX
++        || card_root
++#endif
++    ) {
+       strcpy_P(lwd, mclstr_root_path);
+     } else {
+       strcpy(lwd, mcl_sd.mcl_root);
+@@ -451,7 +459,11 @@ bool FileBrowserPage::_cd(const char *child) {
+   file.close();
+ #ifndef __AVR__
+   char rooted_child[sizeof(lwd)];
+-  if (mcl_sd.mcl_root[0] != '\0' && child[0] == '/') {
++  if (mcl_sd.mcl_root[0] != '\0' && child[0] == '/'
++#ifdef MCL_BLACKBOX
++      && !card_root
++#endif
++  ) {
+     child = mcl_sd.full_path(child, rooted_child, sizeof(rooted_child));
+   }
+ #endif
+diff --git a/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.h b/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.h
+index 660b990..bedb2f5 100644
+--- a/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.h
++++ b/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.h
+@@ -53,7 +53,11 @@ class FileBrowserFileTypes {
+   bool compare(const char *str) {
+     for (uint8_t n = 0; n < count; n++) {
+       DEBUG_PRINT("Comparing "); DEBUG_PRINT(str); DEBUG_PRINT(" "); DEBUG_PRINTLN(types[n]);
++#ifndef __AVR__
++      if (strcasecmp(str, types[n]) == 0) {  // (FAT short names are upper case)
++#else
+       if (strcmp(str, types[n]) == 0) {
++#endif
+         DEBUG_PRINTLN("match");
+         return true;
+       }
+@@ -98,6 +102,11 @@ public:
+   static int numEntries;
+ 
+   char lwd[128];
++#ifdef MCL_BLACKBOX
++  // Browse from the card's root rather than MCL's folder (the sample manager
++  // on the Blackbox: its samples are elsewhere on the shared card).
++  bool card_root = false;
++#endif
+   static char title[12];
+   static char str_save[16];
+   uint8_t cur_row;
+diff --git a/src/mcl/MCL/GUI/Pages/SampleBrowserPage.cpp b/src/mcl/MCL/GUI/Pages/SampleBrowserPage.cpp
+index 0449f80..bbfd1e1 100644
+--- a/src/mcl/MCL/GUI/Pages/SampleBrowserPage.cpp
++++ b/src/mcl/MCL/GUI/Pages/SampleBrowserPage.cpp
+@@ -20,7 +20,14 @@ void SampleBrowserPage::setup() {
+   SD.mkdir(mcl_sd.full_path(c_syx_root, path, sizeof(path)), true);
+   sysex = MD.midi->midiSysex;
+   FileBrowserPage::setup();
++#ifdef MCL_BLACKBOX
++  // The whole card: the Blackbox's own sample folders as well as MCL's.
++  card_root = true;
++  strcpy(lwd, "/");
++  SD.chdir("/");
++#else
+   _cd(mcl_sd.full_path(c_wav_root, path, sizeof(path)));
++#endif
+   position.reset();
+ }
+ 

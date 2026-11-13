@@ -40,6 +40,7 @@ static uint8_t info[320] __attribute__((aligned(8)));          /* FILINFO */
 #define INFO_SIZE      (*(uint64_t *)info)
 #define INFO_ATTR      (info[12])
 #define INFO_NAME      ((const char *)(info + 26))
+#define INFO_ALT       ((const char *)(info + 13))
 
 enum { OP_OPEN = 1, OP_CLOSE, OP_READ, OP_WRITE, OP_SEEK, OP_SYNC, OP_TRUNCATE, OP_OPENDIR, OP_READDIR, OP_CLOSEDIR, OP_STAT, OP_MKDIR, OP_UNLINK, OP_RENAME };
 enum { ST_IDLE = 0, ST_POSTED = 1, ST_RUNNING = 3, ST_DONE = 2 };
@@ -55,6 +56,7 @@ static struct {
     uint8_t attr_out;
     char path[320], path2[320];
     char name_out[SD_NAME_MAX];
+    char alt_out[13];
 } req;
 static uint32_t st_requests, st_timeouts, st_wait_ms, st_call_us;
 static uint32_t last_pump, worst_gap_cyc, gaps_100ms;           /* the streamer loop's own rhythm: time between two passes through the hook */
@@ -126,6 +128,8 @@ static uint32_t execute(void)
             req.size_out = INFO_SIZE;
             req.attr_out = INFO_ATTR;
             copy_name(req.name_out, INFO_NAME);
+            for (unsigned i = 0; i < 13; i++)
+                req.alt_out[i] = i < 12 ? INFO_ALT[i] : 0;
         }
         return r;
     }
@@ -363,6 +367,8 @@ static uint32_t finish_ent(uint32_t r, BbDirEnt *out)
         out->size = req.size_out;
         out->attr = req.attr_out;
         copy_name(out->name, req.name_out);
+        for (unsigned i = 0; i < 13; i++)
+            out->alt[i] = req.op == OP_READDIR ? req.alt_out[i] : 0;
     }
     return r;
 }

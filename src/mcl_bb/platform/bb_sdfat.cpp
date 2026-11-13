@@ -127,8 +127,13 @@ bool FsFile::openNext(FsFile *dir, uint8_t mode)
         child[n++] = dir->path_[i];
     if (n && child[n - 1] != '/' && n + 1 < sizeof child)
         child[n++] = '/';
-    for (size_t i = 0; ent.name[i] && n + 1 < sizeof child; i++)
-        child[n++] = ent.name[i];
+    /* a long name that MCL's file lists cannot hold (32-byte entries: 30 characters): its 8.3 short name instead, which always opens
+       (the Blackbox's sample names are often longer) */
+    const char *nm = ent.name;
+    if (strlen(ent.name) > 30 && ent.alt[0])
+        nm = ent.alt;
+    for (size_t i = 0; nm[i] && n + 1 < sizeof child; i++)
+        child[n++] = nm[i];
     child[n] = 0;
     close();
     if (ent.attr & SD_ATTR_DIR) {
