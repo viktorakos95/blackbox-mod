@@ -1722,7 +1722,7 @@ static const struct { uint8_t idx; uint32_t argb; } tint_looper[] = {
     {0x06, 0xffe5484d}, {0x0b, 0xff5fcf8f}, {0x0c, 0xffd65a5a}, {0x12, 0xfff2d24a},
 };
 static const struct { uint8_t idx; uint32_t argb; } tint_mcl[] = {     /* MCL: a MegaCommand's silver panel and its dark printing (src/cpu.c mcl_page_draw) */
-    {0x1c, 0xffb9bcc1}, {0x1e, 0xff2b2d31},
+    {0x1c, 0xffb9bcc1}, {0x1e, 0xff2b2d31}, {0x1d, 0xffd2642c}, {0x1f, 0xffd42a2a},    /* (0x1d / 0x1f: the Machinedrum mark's orange and red) */
 };
 static const struct { uint8_t idx; uint32_t argb; } tint_samplr[] = {   /* petrol: blue-green slate, a peach waveform, golden samples, a raspberry selection */
     {0x02, 0xff0b1112}, {0x19, 0xff131c1e}, {0x10, 0xff2c3d40}, {0x09, 0xff6f8487}, {0x16, 0xffc6d6d6}, {0x01, 0xff1b2628},

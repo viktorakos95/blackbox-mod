@@ -169,5 +169,15 @@ W = 0x4D524157
 check("cpu_boot: power-on -> magic 0; software reset, watchdog -> WARM; flags already taken by the crash recorder -> its record decides; no flags at all -> 0",
       res == [0, W, W, W, 0, 0], [hex(v) for v in res])
 check("... and calls the stock function each time", called == [1] * 6, called)
+
+# --- the restart-loop guard's count (src/cpu.c start()): cleared by the meter's report once the run is a minute old (crash.c's live block count)
+clock["got"] = 1
+block(1000, 1000000)                             # (a first wait: start() has run, the meter is armed)
+for blocks, want in ((100, 2), (188 * 61, 0)):
+    e.w32(0x38800690, 2)
+    e.w32(0x38800B28, blocks)
+    for i in range(376):
+        block(500000, 500000)
+    check(f"guard count after reports, the run {blocks} blocks old: {want}", e.r8(0x38800690) == want, e.r8(0x38800690))
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

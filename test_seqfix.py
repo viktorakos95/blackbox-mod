@@ -168,14 +168,14 @@ e.call("seq_set", SEQ, EVT, 0, 40)
 check("pattern number out of range: ignored, as stock", starts() == [0, 960])
 
 # --- the stamp MCL's tempo follower reads (src/mcl_bb/bb_clock.cpp): sequence, cycle counter, sequencer time, under a version word (odd = being written)
-e.uc.mem_write(0x38800940, bytes(20))
+e.uc.mem_write(0x38800660, bytes(20))
 e.uc.mem_write(0xE0001004, struct.pack("<I", 0x11223344))
 play_at(0x123456789)
-ver, sq, cyc, lo, hi = struct.unpack("<5I", bytes(e.uc.mem_read(0x38800940, 20)))
+ver, sq, cyc, lo, hi = struct.unpack("<5I", bytes(e.uc.mem_read(0x38800660, 20)))
 check("seq_play stamps the sequence, the cycle counter and the sequencer time", (sq, cyc, lo, hi) == (SEQ, 0x11223344, 0x23456789, 1), (hex(sq), hex(cyc), hex(lo), hex(hi)))
 check("... under an even version word (not mid-write)", ver != 0 and ver % 2 == 0, ver)
 play_at(7)
-ver2 = struct.unpack("<I", bytes(e.uc.mem_read(0x38800940, 4)))[0]
+ver2 = struct.unpack("<I", bytes(e.uc.mem_read(0x38800660, 4)))[0]
 check("... which advances at every call", ver2 == ver + 2, (ver, ver2))
 
 print(f"\n{fails} failure(s)")

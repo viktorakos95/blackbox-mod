@@ -450,3 +450,20 @@ The looper branch keeps its ITCM image at 0x08170000..0x08180000, inside what th
   - **The clock on the footer line (abi 5, input kinds 4 / 5):** CLOCK BLACKBOX (as before: MCL follows the Blackbox's sequencer) or CLOCK INTERNAL (MCL's own tempo, 30.0..300.0, 120.0 at power-on: PLAY / STOP, - / + a BPM). Internal runs `bb_clock_start` / `bb_clock_stop`, so MCL plays without the Blackbox's sequencer, and the jack gets the same clock and transport. The setting is not kept over a power cycle.
   - **The restart record is no longer drawn over MCL's screen** (it is still recorded, `docs/diagnostics.md`). After a restart that was not a power-on MCL still stays off until its window is tapped ("MCL IS OFF / TAP HERE TO START"), so a crash at MCL's start cannot become a restart loop. The MIDI speed / byte / error counters under B2 / B3 are gone with the tiles.
   - `test_mcl_page.py` checks the layout, touch areas and inputs under Unicorn from `out/cave.elf` alone (a fake abi-5 blob) and writes `out/mcl_page.png`. `test_mcl_ui.py` (needs the stock image) was updated for the new layout but not run here. Not checked: the real colours, touch feel, and the clock / page shortcuts on the unit.
+
+## m9m / m9n: the other session's MegaCommand page, merged; restart guard; backup SRAM overlap fixed
+- **Merged from `claude/relaxed-edison-r3oo8f`:** `6d96a4c` (the MegaCommand page) and `7ad045f` (the effect icons). Not taken: `8da1311` (MCL booted at every reset, which gave the m9l restart loop).
+- **Their m9k "SD CARD ERROR":** their image was built without `mclsd` (the stock SD task runs MCL's file requests), so MCL could never reach the card. The full set must end in `cave mclblob mclsd`.
+- **Backup SRAM overlap (found while merging):** three blocks shared 0x38800940.
+  - seqfix.c's stamps that MCL follows the Blackbox with (20 bytes).
+  - crash.c's SD block (0x940..0x96c, written by every SD read).
+  - The page state at 0x930, which had grown to 20 bytes.
+
+  So every SD read overwrote the stamps' version / sequence / cycle words; the slow or odd tempo following on the unit may be this. They now live in the free gap between comp.c's state (ends 0x654) and seqfix.c's clock (0x700): stamps at 0x38800660, page state at 0x38800680 (24 bytes reserved, static assert).
+- **Restart guard (m9n):** MCL starts after every restart, as at power-on. Only the third restart in a row that comes less than a minute after the boot before leaves it off; the window then shows the restart record and "TAP HERE TO START". The count (`UI->quick`) survives `start()`; the CPU meter's report clears it once crash.c's live block count passes a minute.
+- **Page (m9n, user):**
+  - The clock row on the footer is gone; it only says what the knobs are.
+  - The GRID shortcut is new.
+  - Pressed again: DELAY / REVERB switch the FX page's halves (FX A / FX B, MCL's own toggle), CHROMATIC opens the POLY voice selection (`seq_ptc_page.re_init`, `pushPage(POLY_PAGE)`, MCL's own B1 + B4), MIXER and GRID stay.
+  - The name plate: the Machinedrum's mark from its front panel (35 x 13, orange 0x1d / red 0x1f set by the MCL theme in looper_page.c), MACHINEDRUM at 1.5x in bold. The screen moved down 5 px.
+  - Tested: `test_mcl_page.py` (pixel checks of the mark and the name), `test_mcl_core.py` (each shortcut pressed twice on the real core), `test_mcl_ui.py` and `test_cpu.py` (the guard).

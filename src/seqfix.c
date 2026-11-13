@@ -95,7 +95,7 @@ void seq_play(uint8_t *seq, const void *clock, int32_t a, int32_t b, uint32_t e)
     /* MCL follows the Blackbox's tempo and transport from these stamps (src/mcl_bb/bb_clock.cpp, bb_clock_sync_seq): which sequence, the cycle counter
        and the sequencer time at this call. Versioned (odd while writing) so the timer interrupt, which preempts this task, never reads half of one. */
     {
-        volatile uint32_t *st = (volatile uint32_t *)0x38800940u;
+        volatile uint32_t *st = (volatile uint32_t *)0x38800660u;
         uint32_t v = st[0] | 1u;
         st[0] = v;
         st[1] = (uint32_t)seq;

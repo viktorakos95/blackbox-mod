@@ -105,6 +105,35 @@ png(s3, "mcl-core-grid.png")
 check("B4 (YES) creates the project: the main grid page shows (a screen with the tempo block top-left and the grid right)", lit(s3) > 400 and s3 != s2 and any(r[:20].count("#") > 8 for r in s3[:9]), lit(s3))
 check("the project was written to the card", any(p.startswith("0:/MCL/Projects/") for _, p in sd_ops), sorted(set(p for _, p in sd_ops if "Projects" in p))[:6])
 
+
+# ---- the page's shortcuts (src/mcl_bb/platform/bb_mcl.cpp, applied in MCL's task between two passes of its loop)
+def shortcut(n):
+    c.call("bb_mcl_shortcut", n)
+    for _ in range(6):
+        c.step(20_000_000)
+        c.tick(5)
+    return c.call("bb_mcl_shortcut_now"), c.screen()
+
+
+now0 = c.call("bb_mcl_shortcut_now")
+check("shortcuts: the grid shows after the new project (4)", now0 == 4, now0)
+n1, fa = shortcut(1)
+n2, fb_ = shortcut(1)
+check("DELAY opens the delay FX page; pressed again it stays there and shows the page's other half (FX A <-> FX B)", n1 == 1 and n2 == 1 and fa != fb_, (n1, n2))
+n3, _ = shortcut(2)
+check("REVERB opens the reverb FX page", n3 == 2, n3)
+n4, pa = shortcut(0)
+n5, pb = shortcut(0)
+check("CHROMATIC opens the pitch page; pressed again: its POLY voice selection (another screen, still counted as chromatic)", n4 == 0 and n5 == 0 and pa != pb, (n4, n5))
+n6, _ = shortcut(3)
+n7, _ = shortcut(3)
+check("MIXER opens the mixer, and stays on a second press", n6 == 3 and n7 == 3, (n6, n7))
+n8, s8 = shortcut(4)
+check("GRID opens the grid", n8 == 4, n8)
+png(fa, "mcl-core-fx-a.png")
+png(fb_, "mcl-core-fx-b.png")
+png(pb, "mcl-core-poly.png")
+
 # ---- MIDI: MCL's output reaches the jack (clock and transport bytes of MCL's own are dropped: bb_clock's), the jack's bytes reach MCL (clock and transport dropped)
 rg = c.rg
 check("MCL owns the jack's transmitter (the stock firmware's sends are redirected into its ring)", c.call("bb_midi_owner") == 1)

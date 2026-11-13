@@ -464,8 +464,8 @@ static void page_input(uint32_t kind, int32_t a, int32_t b)
             page_clock(kind, a, b);
         return;
     }
-    if (kind == 6) {                                              /* a shortcut: 0 chromatic, 1 delay, 2 reverb, 3 mixer (bb_mcl.cpp opens it in MCL's task) */
-        if (bb_mcl_active() && a >= 0 && a < 4)
+    if (kind == 6) {                                              /* a shortcut: 0 chromatic, 1 delay, 2 reverb, 3 mixer, 4 grid (bb_mcl.cpp opens it in MCL's task) */
+        if (bb_mcl_active() && a >= 0 && a < 5)
             bb_mcl_shortcut((uint32_t)a);
         return;
     }

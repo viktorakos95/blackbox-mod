@@ -16,6 +16,9 @@
 #include "oled.h"
 #include "MD.h"
 #include "MCL.h"
+#include "MDPages.h"
+#include "GUI/Pages/Sequencer/SeqPages.h"
+#include "GUI/Pages/Sequencer/PolyPage.h"
 
 #include "bb_clock.h"
 #include "bb_midi.h"
@@ -392,21 +395,23 @@ static void md_follow_blackbox(void)
 }
 
 /* ---- the page's shortcuts (the Blackbox's GUI task asks, MCL's task opens the page between two passes of its loop: MCL's pages are not
- * thread safe). A shortcut to the page that shows goes back to the grid. 0 chromatic (MCL's pitch sequencer), 1 the Machinedrum's delay,
- * 2 its reverb, 3 the mixer. ---- */
-static const PageIndex shortcut_page[4] = {SEQ_PTC_PAGE, FX_PAGE_A, FX_PAGE_B, MIXER_PAGE};
+ * thread safe). 0 chromatic (MCL's pitch sequencer; again: its POLY voice selection), 1 the Machinedrum's delay, 2 its reverb (again: the
+ * FX page's other half, FX A <-> FX B, as MCL's own key does), 3 the mixer, 4 the grid. ---- */
+static const PageIndex shortcut_page[5] = {SEQ_PTC_PAGE, FX_PAGE_A, FX_PAGE_B, MIXER_PAGE, GRID_PAGE};
 static volatile uint8_t shortcut_want = 0xff;
 
 HOOK void bb_mcl_shortcut(uint32_t n)
 {
-    if (n < 4)
+    if (n < 5)
         shortcut_want = (uint8_t)n;
 }
 
 HOOK uint32_t bb_mcl_shortcut_now(void)
 {
     PageIndex p = mcl.currentPage();
-    for (uint32_t i = 0; i < 4; i++)
+    if (p == POLY_PAGE)
+        return 0;
+    for (uint32_t i = 0; i < 5; i++)
         if (p == shortcut_page[i])
             return i;
     return 255;
@@ -415,10 +420,20 @@ HOOK uint32_t bb_mcl_shortcut_now(void)
 static void shortcut_apply(void)
 {
     uint8_t n = shortcut_want;
-    if (n >= 4)
+    if (n >= 5)
         return;
     shortcut_want = 0xff;
-    mcl.setPage(mcl.currentPage() == shortcut_page[n] ? GRID_PAGE : shortcut_page[n]);
+    PageIndex now = mcl.currentPage(), want = shortcut_page[n];
+    if (n == 0 && now == SEQ_PTC_PAGE) {                         /* chromatic again: the poly voice selection (MCL's own way in: B1 + B4) */
+        seq_ptc_page.re_init = true;
+        mcl.pushPage(POLY_PAGE);
+    } else if ((n == 1 || n == 2) && now == want) {              /* delay / reverb again: FX A <-> FX B (MCL's toggle_mode) */
+        FXPage &fx = n == 1 ? fx_page_a : fx_page_b;
+        fx.page_mode = !fx.page_mode;
+        fx.update_encoders();
+    } else if (now != want) {
+        mcl.setPage(want);
+    }
 }
 
 /* ---- the task ---- */

@@ -17,7 +17,7 @@ CORE = 399_000_000
 CYC_US = CORE / 1e6
 LAT = 200
 BLOCK = CORE * 128 / 48000                                       # cycles per audio block
-STAMP = 0x38800940
+STAMP = 0x38800660
 fails = 0
 
 

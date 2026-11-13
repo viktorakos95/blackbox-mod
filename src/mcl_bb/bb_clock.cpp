@@ -81,7 +81,7 @@ static uint32_t acq_now;                                         /* acquisition 
 
 /* Follow the Blackbox's own transport (M5b): seqfix.c stamps (cycle counter, sequencer time at 960 a beat) at every call of the stock note player; the interrupt fits a
  * straight line through the last SQ_N stamps of one sequence and turns it into "virtual" input clocks for the same PLL: the instants the fitted line passes every 40th tick. */
-#define SQ_STAMP    ((volatile uint32_t *)0x38800940u)       /* {version, sequence, cycles, now_lo, now_hi} */
+#define SQ_STAMP    ((volatile uint32_t *)0x38800660u)       /* {version, sequence, cycles, now_lo, now_hi} */
 #define SQ_N        128                                         /* 340 ms of stamps at 120 BPM: the slope of the line is steadier the longer the window */
 #define SQ_MIN      8                                           /* stamps before the line is trusted */
 static volatile uint32_t src_seq;                               /* the input is the stamps, not the jack */

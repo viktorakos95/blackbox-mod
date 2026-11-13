@@ -73,17 +73,21 @@ const volatile uint32_t mclpad_words = 65536u;
 #define PAD_ST    ((volatile uint32_t *)0x38800910u)
 #define PAD_NONE  0xffffffffu
 
-/* (the cave has no .bss: the page's state is in the backup SRAM, 0x38800930..0x38800950, between the MCL status words and Trigger2MIDI's root) */
+/* (the cave has no .bss: the page's state is in the backup SRAM at 0x38800680 (24 bytes reserved); 0x38800660 holds seqfix.c's stamps for MCL (20 bytes): the gap between
+ * comp.c's state (0x400..0x654) and seqfix.c's clock (0x700..0x910). Both were at 0x930 / 0x940 before, on top of crash.c's SD block (0x940..0x96c).) */
 struct mcl_ui {
     uint8_t down[4];            /* the tile each touch id holds (index + 1), 0 = none */
     uint16_t mask;              /* tiles shown pressed */
     int16_t acc[4];             /* knob counts below one detent */
-    uint16_t off;               /* 1: MCL was not started this run (the Blackbox restarted without a power-on, see cpu_boot); a tap on its page starts it */
-    uint8_t clk;                /* the clock (abi 5): 0 follows the Blackbox's sequencer, 1 MCL's own tempo running, 2 stopped */
-    uint8_t _r;
-    uint16_t bpm;               /* MCL's own tempo, 1/10 BPM (0: not set, 120.0) */
+    uint16_t off;               /* 1: MCL was not started this run (restart loop guard, see start()); a tap on its page starts it */
+    uint8_t quick;              /* restarts in a row (not power-ons) that came less than QUICK_BLOCKS after the boot before: kept across start() */
+    uint8_t _r[3];
 };
-#define UI ((volatile struct mcl_ui *)0x38800930u)
+#define UI ((volatile struct mcl_ui *)0x38800680u)
+_Static_assert(sizeof(struct mcl_ui) <= 24, "the page state must end before 0x38800698");
+#define QUICK_BLOCKS (188u * 60u)  /* a minute of audio blocks (crash.c's live count): a run this long clears the count */
+#define QUICK_MAX    3             /* the third quick restart in a row leaves MCL off */
+#define LIVE_BLOCKS (*(volatile uint32_t *)0x38800b28u)   /* crash.c's live block: audio blocks since this boot */
 
 /* MCL blob (milestone M2): patches/mclblob.py sets mcl_entry to the blob's entry table at 0x08120000 (0 = no blob in this image). */
 struct mcl_entry {
@@ -130,17 +134,21 @@ static void start(void)
         PAD_ST[0] = 0;               /* power-up: read the flash test pad again */
     }
     bkp_enable();
+    uint8_t quick = warm ? UI->quick : 0;
     for (unsigned i = 0; i < sizeof(struct mcl_ui) / 4; i++)
         ((volatile uint32_t *)UI)[i] = 0;     /* the MCL page's state (backup SRAM is not cleared by a reset) */
     for (unsigned i = 0; i < 5; i++)
-        ((volatile uint32_t *)0x38800940u)[i] = 0;   /* seqfix.c's stamps for MCL's tempo follower (stale cycle counts from the last run would look fresh) */
+        ((volatile uint32_t *)0x38800660u)[i] = 0;   /* seqfix.c's stamps for MCL's tempo follower (stale cycle counts from the last run would look fresh) */
     const struct mcl_entry *e = mcl_image();
     if (e) {
         bkp_enable();
-        if (warm)
-            UI->off = 1;             /* not after a restart that was not a power-on: if MCL caused it, starting it again could restart the Blackbox over and over */
+        if (warm && quick < 255)
+            quick++;
+        UI->quick = quick;
+        if (quick >= QUICK_MAX)
+            UI->off = 1;             /* restarts in a row, each soon after the boot before: if MCL causes them, starting it again would restart the Blackbox over and over */
         else
-            e->boot();
+            e->boot();               /* power-on, or a restart after a good run: MCL starts as usual */
     }
 }
 
@@ -299,6 +307,9 @@ int cpu_wait(void *queue, void *item, uint32_t ticks, int peek)
             M->peak_shown = M->peak;
             M->status = STATUS_OK;
             report();
+            bkp_enable();
+            if (UI->quick && LIVE_BLOCKS > QUICK_BLOCKS)
+                UI->quick = 0;                               /* a minute without a restart: the next one starts MCL again */
             M->sum = 0;
             M->n = M->peak = M->wakes = 0;
         }
@@ -373,12 +384,13 @@ void lp_text_c(int x, int d, int w, const char *s, int color, int scale);
 #define MCL_W       256         /* the screen, 2x: every MCL pixel is a 2x2 block */
 #define MCL_H       128
 #define MCL_WIN_Y   17          /* the black window: the name plate, the screen */
-#define MCL_TOP     (MCL_WIN_Y + 14)
-#define MCL_WIN_H   (14 + MCL_H + 3)
+#define MCL_PLATE   19          /* the name plate's height: the screen starts under it */
+#define MCL_TOP     (MCL_WIN_Y + MCL_PLATE)
+#define MCL_WIN_H   (MCL_PLATE + MCL_H + 3)
 #define MCL_COL_W   25          /* the button columns either side of the window */
 #define MCL_SPLIT   98          /* a column's upper button above this line, its lower one below */
 #define MCL_STRIP_Y (MCL_WIN_Y + MCL_WIN_H + 4)
-#define MCL_STRIP_H 48          /* a 24 x 25 icon over the name */
+#define MCL_STRIP_H 46          /* a 24 x 25 icon over the name */
 #define MCL_FOOT_H  14          /* the footer line (looper_page.c FOOT): its boxes 2 below it, 11 high */
 #define MCL_ENC_COUNTS 40       /* knob counts per MCL step (the TRIG page's; 20 moved MCL's short menus too fast on the unit) */
 #define MCL_ENC_FAST   80       /* a knob event of this many counts or more (a quick spin): twice the steps, so long ranges stay quick */
@@ -392,25 +404,20 @@ void lp_text_c(int x, int d, int w, const char *s, int color, int scale);
 #define MC_HOLD   0x1b          /* a button held, the page showing */
 #define MC_RUN    0x0b          /* the clock running */
 #define MC_GREY   0x09
+#define MC_LOGO_O 0x1d          /* the mark's orange and red (the MCL theme in looper_page.c sets these two entries) */
+#define MC_LOGO_R 0x1f
 
-#define BPM_MIN 300             /* MCL's own tempo, 1/10 BPM */
-#define BPM_MAX 3000
-#define BPM_DEF 1200
 
 static int mcl_x0(int w) { return (w - MCL_W) / 2; }
 static int mcl_win_x(int w) { return mcl_x0(w) - 3; }
 static int mcl_win_w(void) { return MCL_W + 6; }
-static int mcl_bpm(void) { return UI->bpm >= BPM_MIN && UI->bpm <= BPM_MAX ? UI->bpm : BPM_DEF; }
 static int mcl_abi5(const struct mcl_entry *e) { return e && e->abi >= 5; }
 
-/* the shortcuts under the window (input kind 6, a = the shortcut; the blob's midi(10) = the one showing, 255 none) */
-enum { SC_CHROM, SC_DELAY, SC_REVERB, SC_MIXER, SC_N };
-static const uint8_t sc_w[SC_N] = {62, 52, 52, 52};          /* (narrow enough to leave the PAGE and SHIFT names room either side) */
-static const char *const sc_name[SC_N] = {"CHROMATIC", "DELAY", "REVERB", "MIXER"};
-
-/* the clock on the footer line */
-enum { CK_SYNC, CK_PLAY, CK_DOWN, CK_BPM, CK_UP, CK_N };
-static const uint8_t ck_w[CK_N] = {88, 32, 18, 36, 18};
+/* the shortcuts under the window (input kind 6, a = the shortcut; the blob's midi(10) = the one showing, 255 none). Pressed again: chromatic
+ * opens its POLY voice selection, delay / reverb switch the FX page's halves (FX A / FX B), mixer and grid stay (bb_mcl.cpp shortcut_apply). */
+enum { SC_CHROM, SC_DELAY, SC_REVERB, SC_MIXER, SC_GRID, SC_N };
+static const uint8_t sc_w[SC_N] = {58, 41, 41, 41, 41};      /* (narrow enough to leave the PAGE and SHIFT names room either side) */
+static const char *const sc_name[SC_N] = {"CHROMATIC", "DELAY", "REVERB", "MIXER", "GRID"};
 
 static int row_x(const uint8_t *ws, int n, int x, int i)
 {
@@ -427,22 +434,13 @@ static int sc_x(int w, int i)
     return row_x(sc_w, SC_N, mcl_win_x(w) + (mcl_win_w() - total) / 2, i);
 }
 
-static int ck_x(int i) { return row_x(ck_w, CK_N, 3, i); }
-
-static void put_bpm(char *p, int x10)
-{
-    p = put_uint(p, (unsigned)x10 / 10u);
-    *p++ = '.';
-    *p++ = (char)('0' + x10 % 10);
-    *p = 0;
-}
 
 uint32_t mcl_page_sig(void)
 {
     const struct mcl_entry *e = mcl_blob();
     bkp_enable();
-    uint32_t t = mcl_abi5(e) ? e->midi(6) / 5u + e->midi(10) * 131u : 0u;   /* the tempo followed (to 0.5 BPM, so a wobble does not redraw all the time), the page */
-    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + (uint32_t)UI->off * 0x9e3779b9u + ((uint32_t)UI->clk << 20) + (uint32_t)mcl_bpm() * 4099u + t * 977u;
+    uint32_t t = mcl_abi5(e) ? e->midi(10) * 131u : 0u;                    /* the shortcut whose page shows */
+    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + (uint32_t)UI->off * 0x9e3779b9u + t * 977u;
 }
 
 static void mcl_button(int x, int d, int cap, int on, const char *above, const char *below, int below_d, int below_x, int below_w)
@@ -455,20 +453,51 @@ static void mcl_button(int x, int d, int cap, int on, const char *above, const c
     lp_text_c(below_x, below_d, below_w, below, MC_INK, 1);
 }
 
-/* the name plate: a red mark of two slanted strokes (an A without its bar, a J), 18 x 8, and MACHINEDRUM in bold */
-#define LOGO_W 18
+/* the name plate: the Machinedrum's mark, then MACHINEDRUM in the firmware's font at 1.5x, bold */
+#define LOGO_W 35
+#define LOGO_H 13
+#define FONT6 ((const struct { const uint8_t *data; uint16_t w, h; } *)0x240000d0u)     /* the firmware's 6 x 8 text font (looper_page.c) */
+static void text_15(int x, int d, const char *s, int color)
+{
+    if (!FONT6->data || FONT6->w != 6 || FONT6->h != 8)
+        return;
+    for (; *s; s++, x += 9) {                                 /* 6 x 8 -> 9 x 12: pixel k covers k * 3 / 2 .. (k + 1) * 3 / 2 */
+        unsigned c = (unsigned char)*s;
+        const uint8_t *g = FONT6->data + (c < 0x20 || c > 0x7e ? '?' - 0x20 : c - 0x20) * 8;
+        for (int r = 0; r < 8; r++)
+            for (int k = 0; k < 6; k++)
+                if (g[r] & (0x80 >> k)) {
+                    int x0 = k * 3 / 2, x1 = (k + 1) * 3 / 2, y0 = r * 3 / 2, y1 = (r + 1) * 3 / 2;
+                    lp_box(x + x0, d + y0, x1 - x0 + 1, y1 - y0, color);      /* (+1: bold) */
+                }
+    }
+}
+
+/* the Machinedrum's mark, from its front panel: an orange bent stroke and a red slanted J, 35 x 13 (a bit a pixel, leftmost in bit 34) */
+static const uint64_t logo_o[LOGO_H] = {0x007ff0000ull, 0x00fff0000ull, 0x01fff0000ull, 0x03fff0000ull, 0x07fff0000ull, 0x0ffff0000ull, 0x1ff7f0000ull,
+                                        0x3fe7f0000ull, 0x7fc7f0000ull, 0x7f07f0000ull, 0x3e07f0000ull, 0x0e07f0000ull, 0x0007f0000ull};
+static const uint64_t logo_r[LOGO_H] = {0x00000007full, 0x00000007full, 0x0000000feull, 0x0000000feull, 0x0000001fcull, 0x0000001fcull, 0x0000003f8ull,
+                                        0x0000003f8ull, 0x000001ff0ull, 0x000001ff0ull, 0x000003fe0ull, 0x000003fe0ull, 0x000007fc0ull};
+static void logo_rows(const uint64_t *m, int x, int d, int color)
+{
+    for (int r = 0; r < LOGO_H; r++) {
+        int k = 0;
+        while (k < LOGO_W) {                                  /* runs of set bits become boxes */
+            while (k < LOGO_W && !(m[r] >> (LOGO_W - 1 - k) & 1))
+                k++;
+            int s0 = k;
+            while (k < LOGO_W && (m[r] >> (LOGO_W - 1 - k) & 1))
+                k++;
+            if (k > s0)
+                lp_box(x + s0, d + r, k - s0, 1, color);
+        }
+    }
+}
+
 static void mcl_logo(int x, int d)
 {
-    for (int r = 0; r < 8; r++) {
-        int s = x + 7 - r;
-        if (r < 4) {
-            lp_box(s, d + r, 7, 1, MC_RED);
-        } else {
-            lp_box(s, d + r, 2, 1, MC_RED);
-            lp_box(s + 5, d + r, 2, 1, MC_RED);
-        }
-        lp_box(s + (r < 6 ? 9 : 7), d + r, r < 6 ? 2 : 4, 1, MC_RED);
-    }
+    logo_rows(logo_o, x, d, MC_LOGO_O);
+    logo_rows(logo_r, x, d, MC_LOGO_R);
 }
 
 /* MCL's own page icons for the Machinedrum's two effects, as its page select and FX pages draw them (the fork's resource/icons_page.cpp,
@@ -525,6 +554,12 @@ static void sc_icon(int i, int x, int d)
     case SC_REVERB:
         bitmap24(icon_gbox, x + 1, d, 25, MC_WHITE);
         break;
+    case SC_GRID:                                             /* a 4 x 3 grid of slots */
+        d += 5;
+        for (int r = 0; r < 3; r++)
+            for (int k = 0; k < 4; k++)
+                lp_box(x + 1 + k * 6, d + r * 5, 5, 4, r == 1 && k == 2 ? MC_RED : MC_WHITE);
+        break;
     default:                                                  /* three faders */
         d += 6;
         for (int k = 0; k < 3; k++) {
@@ -544,10 +579,9 @@ void mcl_page_draw(int w, int foot_y)
     bkp_enable();
     lp_box(1, 16, w - 2, foot_y - 16, MC_PANEL);
     lp_box(wx, MCL_WIN_Y, ww, MCL_WIN_H, MC_BLACK);
-    int nx = wx + (ww - (LOGO_W + 5 + 66)) / 2;               /* the plate: mark, gap, 11 characters made bold (one pixel wider) */
+    int nx = wx + (ww - (LOGO_W + 6 + 11 * 9)) / 2;           /* the plate: mark, gap, 11 characters 9 wide */
     mcl_logo(nx, MCL_WIN_Y + 3);
-    lp_text_c(nx + LOGO_W + 5, MCL_WIN_Y + 3, 65, "MACHINEDRUM", MC_WHITE, 1);
-    lp_text_c(nx + LOGO_W + 6, MCL_WIN_Y + 3, 65, "MACHINEDRUM", MC_WHITE, 1);
+    text_15(nx + LOGO_W + 6, MCL_WIN_Y + 3, "MACHINEDRUM", MC_WHITE);
     if (UI->off) {                                            /* not started after a restart that was not a power-on (see start()): a tap starts it */
         char line[56];
         int row = 0;
@@ -591,61 +625,10 @@ void mcl_page_draw(int w, int foot_y)
     }
 }
 
-/* the footer line: the clock (abi 5), then what the knobs are */
+/* the footer line: what the knobs are */
 void mcl_page_foot(int w, int foot_y)
 {
-    const struct mcl_entry *e = mcl_blob();
-    bkp_enable();
-    int d = foot_y + 2, h = MCL_FOOT_H - 3;
-    if (!mcl_abi5(e) || !e->fb()) {
-        lp_text_c(3, foot_y + 4, w - 6, "MCL   KNOBS 1-4 = ENCODERS A-D", MC_HOLD, 1);
-        return;
-    }
-    int clk = UI->clk, follow = clk == 0, run = clk == 1;
-    char bpm[12];
-    uint32_t seen = e->midi(6);                               /* the tempo the Blackbox's sequencer gives (0: stopped, nothing to measure) */
-    if (follow && !seen)
-        bpm[0] = '-', bpm[1] = '-', bpm[2] = 0;
-    else
-        put_bpm(bpm, follow ? (int)seen : mcl_bpm());
-    for (int i = 0; i < CK_N; i++) {
-        int x = ck_x(i), cw = ck_w[i], lit = (i == CK_PLAY && run) || (i == CK_SYNC && !follow), dim = (i == CK_DOWN || i == CK_UP) && follow;
-        if (i != CK_BPM)
-            lp_frame(x, d, cw, h, lit ? MC_RUN : MC_EDGE, 1);
-        const char *s = i == CK_SYNC ? (follow ? "CLOCK BLACKBOX" : "CLOCK INTERNAL") : i == CK_PLAY ? (run ? "STOP" : "PLAY") :
-                        i == CK_DOWN ? "-" : i == CK_UP ? "+" : bpm;
-        lp_text_c(x, foot_y + 4, cw, s, lit ? MC_RUN : dim ? MC_EDGE : MC_WHITE, 1);
-    }
-    int kx = ck_x(CK_N);
-    lp_text_c(kx, foot_y + 4, w - 3 - kx, "KNOBS = A-D", MC_GREY, 1);
-}
-
-/* the clock (abi 5): kind 4 = mode (0 follow the Blackbox, 1 own tempo running, 2 own tempo stopped) at tempo b, kind 5 = the own tempo b */
-static void mcl_clock_tap(const struct mcl_entry *e, int i)
-{
-    int clk = UI->clk, bpm = mcl_bpm();
-    switch (i) {
-    case CK_SYNC:
-        clk = clk == 0 ? 2 : 0;                               /* to the own tempo: stopped until PLAY */
-        break;
-    case CK_PLAY:
-        clk = clk == 2 || clk == 0 ? 1 : 2;                   /* (from the Blackbox's clock: straight to the own tempo, running) */
-        break;
-    case CK_DOWN:
-    case CK_UP:
-        if (clk == 0)
-            return;
-        bpm += i == CK_UP ? 10 : -10;
-        bpm = bpm < BPM_MIN ? BPM_MIN : bpm > BPM_MAX ? BPM_MAX : bpm;
-        UI->bpm = (uint16_t)bpm;
-        e->input(5, 0, bpm);
-        return;
-    default:
-        return;
-    }
-    UI->clk = (uint8_t)clk;
-    UI->bpm = (uint16_t)bpm;
-    e->input(4, clk, bpm);
+    lp_text_c(3, foot_y + 4, w - 6, "MCL   KNOBS 1-4 = ENCODERS A-D", MC_HOLD, 1);
 }
 
 void mcl_page_down(int id, int x, int d, int w, int foot_y)
@@ -663,15 +646,8 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
         }
         return;
     }
-    if (!e || !e->fb() || d < 16 || d >= foot_y + MCL_FOOT_H)
+    if (!e || !e->fb() || d < 16 || d >= foot_y)
         return;
-    if (d >= foot_y) {                                        /* the footer line: the clock */
-        if (mcl_abi5(e))
-            for (int k = 0; k < CK_N; k++)
-                if (k != CK_BPM && x >= ck_x(k) && x < ck_x(k) + ck_w[k])
-                    mcl_clock_tap(e, k);
-        return;
-    }
     int i = -1;
     if (x < wx)
         i = d < MCL_SPLIT ? 0 : 1;                            /* NO / PAGE */
@@ -680,7 +656,7 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
     else if (d >= MCL_STRIP_Y && d < MCL_STRIP_Y + MCL_STRIP_H && mcl_abi5(e)) {
         for (int k = 0; k < SC_N; k++)
             if (x >= sc_x(w, k) && x < sc_x(w, k) + sc_w[k])
-                e->input(6, k, 0);                            /* the blob opens the page (or, if it shows, goes back to the grid) */
+                e->input(6, k, 0);                            /* the blob opens the page (pressed again: see the shortcuts above) */
         return;
     }
     if (i < 0)

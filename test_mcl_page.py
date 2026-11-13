@@ -4,12 +4,13 @@ Run ./build.sh first. A fake blob entry table (abi 5) stands in for MCL: its scr
 The page's drawing primitives (lp_box / lp_frame / lp_text_c, src/looper_page.c) are recorded and painted into a PNG preview
 (out/mcl_page.png, colours approximate: the stock palette is not in this repository).
 
-Checked: the screen is blitted at exactly 2x (every lit pixel a 2x2 block, nothing else in the screen area), the name plate (red mark,
-bold MACHINEDRUM; no MEGACOMMAND), the four buttons and their touch areas (B1 NO / B2 PAGE / B3 SHIFT / B4 YES, press and release), the shortcuts
-(CHROMATIC with its piano, DELAY and REVERB with MCL's own RHYTHM ECHO / GATE BOX icons, MIXER: input kind 6, the one showing lit from midi(10)), the clock on the footer line (CLOCK,
-PLAY / STOP, - / +: kinds 4 / 5 and their arguments, the tempo limits), nothing past the page's width or across the footer line, no
-overlaps, no restart record over the screen, the 'MCL is off' prompt and its tap, and that a blob of abi 4 gets neither strip nor clock.
-NOT checked (hardware only): the real colours, touch feel, the clock itself (test_mcl_clock.py and the unit).
+Checked: the screen is blitted at exactly 2x (every lit pixel a 2x2 block, nothing else in the screen area), the name plate (the Machinedrum's mark,
+MACHINEDRUM at 1.5x in bold from the firmware's font, pixel for pixel; no MEGACOMMAND), the four buttons and their touch areas (B1 NO / B2 PAGE /
+B3 SHIFT / B4 YES, press and release), the shortcuts (CHROMATIC with its piano, DELAY and REVERB with MCL's own RHYTHM ECHO / GATE BOX icons, MIXER,
+GRID: input kind 6, the one showing lit from midi(10)), the footer line (only what the knobs are; no clock, taps there do nothing), nothing past
+the page's width or across the footer line, no overlaps, no restart record over the screen, the 'MCL is off' prompt and its tap, and that a blob
+of abi 4 gets no strip.
+NOT checked (hardware only): the real colours, touch feel.
 """
 import os
 import struct
@@ -21,7 +22,7 @@ from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_SP
 from emu import BASE, STACK, Emu
 
 ENTRY, STUBS, FB = 0x24070000, 0x24071000, 0x24072000
-UI = 0x38800930
+UI = 0x38800680
 W, FOOT = 314, 224                       # the page as the unit gives it (test_mcl_ui.py)
 fails = 0
 
@@ -41,6 +42,18 @@ u = e.uc
 u.mem_write(0x080F1E78, open("out/cave.bin", "rb").read())
 u.mem_map(0x38800000, 0x1000)            # backup SRAM: the page's state
 u.mem_map(0x58020000, 0x10000)           # RCC / PWR (bkp_enable)
+
+# the firmware's 6 x 8 text font (struct {data, w, h} at 0x240000d0; a byte a row, leftmost pixel in the top bit), made from glcdfont.h
+_src = open("src/mcl_bb/glcdfont.h").read()
+_body = _src[_src.index("{") + 1:_src.rindex("}")]
+GLCD = [int(t, 16) for t in _body.replace("//", " ").replace(",", " ").split() if t.startswith("0x")]
+FONT_ROWS = bytearray()
+for ch in range(0x20, 0x7F):
+    for r in range(8):
+        FONT_ROWS.append(sum(0x80 >> k for k in range(5) if GLCD[ch * 5 + k] >> r & 1))
+FONT_AT = 0x24074000
+u.mem_write(FONT_AT, bytes(FONT_ROWS))
+u.mem_write(0x240000D0, struct.pack("<IHH", FONT_AT, 6, 8))
 
 # --- the fake blob: an entry table and its functions (each a hooked `bx lr`)
 calls, state = [], {"sig": 7, "fb": FB, "bpm_seen": 0, "boots": 0, "page": 255}
@@ -120,7 +133,7 @@ def foot_part(c):
 
 def ui():
     b = bytes(u.mem_read(UI, 20))
-    return {"mask": struct.unpack("<H", b[4:6])[0], "off": struct.unpack("<H", b[14:16])[0], "clk": b[16], "bpm": struct.unpack("<H", b[18:20])[0]}
+    return {"mask": struct.unpack("<H", b[4:6])[0], "off": struct.unpack("<H", b[14:16])[0], "quick": b[16]}
 
 
 def page_down(tid, x, d):
@@ -141,7 +154,7 @@ u.mem_write(UI, bytes(32))
 c = draw()
 boxes = [r for r in c if r[0] == "lp_box"]
 texts = [r for r in c if r[0] == "lp_text_c"]
-x0, TOP = (W - 256) // 2, 31
+x0, TOP = (W - 256) // 2, 17 + 19
 lit = [(x, y) for y in range(64) for x in range(128) if pic[y][x]]
 white = [r for r in boxes if r[5] == 0x0F and TOP <= r[2] < TOP + 128 and x0 <= r[1] < x0 + 256]
 cover = set()
@@ -153,18 +166,42 @@ want = {(x0 + 2 * x + i, TOP + 2 * y + j) for x, y in lit for i in (0, 1) for j 
 check("the screen is exactly 2x: the lit runs cover each lit MCL pixel as a 2x2 block, nothing else", cover == want, (len(cover), len(want)))
 check("every run is 2 px high at an even offset (no 2.4x rounding)", all(r[4] == 2 and (r[2] - TOP) % 2 == 0 and (r[1] - x0) % 2 == 0 for r in white))
 names = [r[-1] for r in texts]
-check("the panel's printing: MACHINEDRUM, SAVE NO PAGE / LOAD YES SHIFT", all(s in names for s in
-      ("MACHINEDRUM", "SAVE", "NO", "PAGE", "LOAD", "YES", "SHIFT")), names)
+check("the panel's printing: SAVE NO PAGE / LOAD YES SHIFT", all(s in names for s in ("SAVE", "NO", "PAGE", "LOAD", "YES", "SHIFT")), names)
 check("no MEGACOMMAND anywhere", not any("MEGACOMMAND" in s for s in names), names)
-check("MACHINEDRUM in bold (drawn twice, one pixel apart)", sorted(r[1] for r in texts if r[-1] == "MACHINEDRUM")[1] -
-      sorted(r[1] for r in texts if r[-1] == "MACHINEDRUM")[0] == 1)
-plate = [r for r in texts if r[-1] == "MACHINEDRUM"][0]
-logo = [r for r in boxes if r[5] == 0x06 and 17 <= r[2] < 31 and r[1] > 26]          # (inside the window: not the red NO cap)
-check("the red mark sits left of the name, on its line", logo and all(r[1] + r[3] <= plate[1] and plate[2] <= r[2] < plate[2] + 8 for r in logo), logo[:3])
-check("the shortcuts (abi 5): CHROMATIC DELAY REVERB MIXER", all(s in names for s in ("CHROMATIC", "DELAY", "REVERB", "MIXER")), names)
+plate_px = set()
+for r in boxes:
+    if r[5] == 0x0F and 17 <= r[2] < TOP and 26 < r[1] < W - 26:            # (inside the window: not the white YES cap)
+        for yy in range(r[2], r[2] + r[4]):
+            for xx in range(r[1], r[1] + r[3]):
+                plate_px.add((xx, yy))
+px0 = min(x for x, _ in plate_px)
+want_px = set()
+for i, ch in enumerate("MACHINEDRUM"):
+    for rr in range(8):
+        for k in range(5):
+            if GLCD[ord(ch) * 5 + k] >> rr & 1:
+                for yy in range(rr * 3 // 2, (rr + 1) * 3 // 2):
+                    for xx in range(k * 3 // 2, (k + 1) * 3 // 2 + 1):
+                        want_px.add((px0 + i * 9 + xx, 17 + 3 + yy))
+check("MACHINEDRUM on the plate at 1.5x, bold (9 x 12 a character), pixel for pixel", plate_px == want_px, (len(plate_px), len(want_px)))
+LOGO = ["........OOOOOOOOOOO.........RRRRRRR", ".......OOOOOOOOOOOO.........RRRRRRR", "......OOOOOOOOOOOOO........RRRRRRR.",
+        ".....OOOOOOOOOOOOOO........RRRRRRR.", "....OOOOOOOOOOOOOOO.......RRRRRRR..", "...OOOOOOOOOOOOOOOO.......RRRRRRR..",
+        "..OOOOOOOOO.OOOOOOO......RRRRRRR...", ".OOOOOOOOO..OOOOOOO......RRRRRRR...", "OOOOOOOOO...OOOOOOO...RRRRRRRRR....",
+        "OOOOOOO.....OOOOOOO...RRRRRRRRR....", ".OOOOO......OOOOOOO..RRRRRRRRR.....", "...OOO......OOOOOOO..RRRRRRRRR.....",
+        "............OOOOOOO.RRRRRRRRR......"]          # the Machinedrum's mark (its front panel), O orange, R red
+got_logo = {}
+for r in boxes:
+    if r[5] in (0x1D, 0x1F) and 17 <= r[2] < TOP:
+        for xx in range(r[1], r[1] + r[3]):
+            got_logo[(xx, r[2])] = "O" if r[5] == 0x1D else "R"
+lx = min(x for x, _ in got_logo) if got_logo else 0
+want_logo = {(lx + k, 17 + 3 + rr): ch for rr, row in enumerate(LOGO) for k, ch in enumerate(row) if ch != "."}
+check("the Machinedrum's mark (orange and red, 35 x 13) pixel for pixel, left of the name, on its rows", got_logo == want_logo and lx + 35 <= px0,
+      (len(got_logo), len(want_logo), lx, px0))
+check("the shortcuts (abi 5): CHROMATIC DELAY REVERB MIXER GRID", all(s in names for s in ("CHROMATIC", "DELAY", "REVERB", "MIXER", "GRID")), names)
 check("no MIDI / error counters, no restart record", not any("ERR" in s or "RESTART" in s for s in names), names)
 fnames = [r[-1] for r in foot_part(c) if r[0] == "lp_text_c"]
-check("the footer: CLOCK BLACKBOX, PLAY, - / +, the tempo, the knobs", all(s in fnames for s in ("CLOCK BLACKBOX", "PLAY", "-", "+", "--", "KNOBS = A-D")), fnames)
+check("the footer: only what the knobs are (no clock)", fnames == ["MCL   KNOBS 1-4 = ENCODERS A-D"], fnames)
 
 
 def extent(r):
@@ -209,8 +246,8 @@ e.call("mcl_page_up", 1)
 check("touching MCL's screen does nothing", touch(W // 2, 80) == ([], []))
 
 # --- the shortcuts
-STRIP_Y = 17 + 145 + 4                   # under the window (name plate 14, screen 128, edge 3)
-STRIP_H = 48
+STRIP_Y = 17 + 150 + 4                   # under the window (name plate 19, screen 128, edge 3)
+STRIP_H = 46
 STRIP = STRIP_Y + 10
 
 
@@ -227,7 +264,7 @@ def strip_fits():
 
 
 check("each shortcut's name and picture fit inside its tile's frame", not strip_fits(), strip_fits()[:4])
-for k, name in enumerate(("CHROMATIC", "DELAY", "REVERB", "MIXER")):
+for k, name in enumerate(("CHROMATIC", "DELAY", "REVERB", "MIXER", "GRID")):
     down, up = touch(tile(name), STRIP)
     check(f"{name}: shortcut {k} (kind 6), nothing on release", down == [(6, k, 0)] and up == [], (down, up))
 piano = [r for r in page_part(draw()) if r[0] == "lp_box" and r[5] == 0x0E and STRIP_Y + 10 <= r[2] < STRIP_Y + 22 and r[4] == 7]
@@ -248,7 +285,7 @@ for k, name, arr in ((1, "DELAY", "icon_echo"), (2, "REVERB", "icon_gbox")):
     t0 = tiles[k]
     got = set()
     for r in c:
-        if r[0] == "lp_box" and r[5] == 0x0F and STRIP_Y < r[2] < STRIP_Y + 30 and t0 <= r[1] < t0 + 52 and r[4] == 1:
+        if r[0] == "lp_box" and r[5] == 0x0F and STRIP_Y < r[2] < STRIP_Y + 30 and t0 <= r[1] < t0 + 41 and r[4] == 1:
             for xx in range(r[1], r[1] + r[3]):
                 got.add((xx, r[2]))
     ox, oy = min(x for x, _ in got) - min(x for x, _ in icon_pixels(arr)), min(y for _, y in got) - min(y for _, y in icon_pixels(arr))
@@ -263,45 +300,8 @@ e.call("mcl_page_sig")
 check("... and a page change changes the signature", e.uc.reg_read(UC_ARM_REG_R0) != s1)
 state["page"] = 255
 
-# --- the clock on the footer line
-FD = FOOT + 6
-play = tile("PLAY", True)
-down, _ = touch(play, FD)
-check("PLAY from the Blackbox's clock: MCL's own tempo, running, 120.0", down == [(4, 1, 1200)] and ui()["clk"] == 1, (down, ui()))
-fn_ = [r[-1] for r in foot_part(draw()) if r[0] == "lp_text_c"]
-check("... the footer shows STOP, CLOCK INTERNAL, 120.0", all(s in fn_ for s in ("STOP", "CLOCK INTERNAL", "120.0")), fn_)
-plus = tile("+", True)
-down, _ = touch(plus, FD)
-check("+ : 121.0 (kind 5)", down == [(5, 0, 1210)] and ui()["bpm"] == 1210, (down, ui()))
-for _ in range(400):
-    touch(plus, FD)
-check("the tempo stops at 300.0", ui()["bpm"] == 3000, ui())
-fwords = [(r[-1], extent(r)) for r in foot_part(draw()) if r[0] == "lp_text_c"]
-check("... 300.0 still fits (no overlap on the footer)", not [(a, b) for i, a in enumerate(fwords) for b in fwords[i + 1:] if overlap(a[1], b[1])], fwords)
-minus = tile("-", True)
-for _ in range(400):
-    touch(minus, FD)
-check("... and at 30.0", ui()["bpm"] == 300, ui())
-down, _ = touch(tile("STOP", True), FD)
-check("STOP: own tempo, stopped", down == [(4, 2, 300)] and ui()["clk"] == 2, (down, ui()))
-down, _ = touch(tile("PLAY", True), FD)
-check("PLAY again: running", down == [(4, 1, 300)], down)
-down, _ = touch(tile("CLOCK INTERNAL", True), FD)
-check("CLOCK: back to the Blackbox's sequencer", down == [(4, 0, 300)] and ui()["clk"] == 0, (down, ui()))
-down, _ = touch(tile("CLOCK BLACKBOX", True), FD)
-check("CLOCK again: own tempo, stopped (PLAY starts it)", down == [(4, 2, 300)] and ui()["clk"] == 2, (down, ui()))
-touch(tile("CLOCK INTERNAL", True), FD)
-down, _ = touch(minus, FD)
-check("- / + do nothing while following the Blackbox", down == [] and ui()["bpm"] == 300, (down, ui()))
-check("the tempo readout and the knob note are not buttons", touch(tile("--", True), FD) == ([], []) and touch(tile("KNOBS = A-D", True), FD) == ([], []))
-state["bpm_seen"] = 1234
-check("following: the footer shows the tempo the Blackbox gives (123.4)", "123.4" in [r[-1] for r in draw() if r[0] == "lp_text_c"])
-e.call("mcl_page_sig")
-s1 = e.uc.reg_read(UC_ARM_REG_R0)
-state["bpm_seen"] = 1300
-e.call("mcl_page_sig")
-check("... and a new tempo changes the page signature", e.uc.reg_read(UC_ARM_REG_R0) != s1)
-state["bpm_seen"] = 0
+# --- the footer line: no buttons
+check("taps on the footer line do nothing", touch(30, FOOT + 6) == ([], []) and touch(W // 2, FOOT + 6) == ([], []) and touch(W - 30, FOOT + 6) == ([], []))
 
 
 # --- the preview picture (before the abi 4 / off states below)
@@ -311,7 +311,7 @@ def preview(path, c):
     except ImportError:
         return
     pal = {0x1C: (185, 188, 193), 0x1E: (43, 45, 49), 0x0E: (0, 0, 0), 0x0F: (240, 240, 240), 0x06: (229, 72, 77), 0x10: (90, 93, 100),
-           0x1B: (124, 200, 240), 0x0B: (95, 207, 143), 0x09: (120, 125, 135)}
+           0x1B: (124, 200, 240), 0x0B: (95, 207, 143), 0x09: (120, 125, 135), 0x1D: (210, 100, 44), 0x1F: (212, 42, 42)}
     src = open("src/mcl_bb/glcdfont.h").read()
     body = src[src.index("{") + 1:src.rindex("}")]
     font = [int(t, 16) for t in body.replace("//", " ").replace(",", " ").split() if t.startswith("0x")]
@@ -344,19 +344,15 @@ def preview(path, c):
     print("preview:", path)
 
 
-touch(tile("PLAY", True), FD)
-for _ in range(4):
-    touch(tile("+", True), FD)
 state["page"] = 0
 preview("out/mcl_page.png", draw())
 state["page"] = 255
-touch(tile("STOP", True), FD)
 
 # --- 'MCL is off' (the Blackbox restarted without a power-on): a short prompt in the window, a tap starts MCL
 u.mem_write(UI + 14, struct.pack("<H", 1))
 names = [r[-1] for r in draw() if r[0] == "lp_text_c"]
 check("off: 'MCL IS OFF' / 'TAP HERE TO START', no picture", "MCL IS OFF" in names and "TAP HERE TO START" in names and
-      not [r for r in rec if r[0] == "lp_box" and r[4] == 2], names)
+      not [r for r in rec if r[0] == "lp_box" and r[4] == 2 and r[2] >= TOP], names)
 calls.clear()
 page_down(0, 10, 50)
 check("... a tap on the NO button does nothing while off", calls == [] and state["boots"] == 0 and ui()["off"] == 1)
@@ -369,9 +365,9 @@ e.call("mcl_page_up", 0)
 entry(4)
 c = draw()
 names = [r[-1] for r in c if r[0] == "lp_text_c"]
-check("abi 4: no shortcuts, no clock", "CHROMATIC" not in names and "PLAY" not in names and "NO" in names and
+check("abi 4: no shortcuts", "CHROMATIC" not in names and "GRID" not in names and "NO" in names and
       "MCL   KNOBS 1-4 = ENCODERS A-D" in names, names)
-check("... taps where they would be do nothing", touch(W // 2, STRIP) == ([], []) and touch(play, FD) == ([], []))
+check("... taps where they would be do nothing", touch(W // 2, STRIP) == ([], []))
 
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)
