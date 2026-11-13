@@ -165,9 +165,8 @@ for rsr, rec in (((1 << 23) | (1 << 22) | (1 << 21), 0), ((1 << 24) | (1 << 22),
     e.uc.mem_write(REC, struct.pack("<IHHI", 0x31435243 if rec is not None else 0, 1, 0, rec or 0))
     e.call("cpu_boot")
     res.append(e.r32(0x2405FFD0))
-W = 0x4D524157
-check("cpu_boot: power-on -> magic 0; software reset, watchdog -> WARM; flags already taken by the crash recorder -> its record decides; no flags at all -> 0",
-      res == [0, W, W, W, 0, 0], [hex(v) for v in res])
+check("cpu_boot: magic 0 after every kind of reset (power-on, software, watchdog, flags taken by the crash recorder, none): start() runs, MCL boots",
+      res == [0] * 6, [hex(v) for v in res])
 check("... and calls the stock function each time", called == [1] * 6, called)
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

@@ -120,7 +120,7 @@ def foot_part(c):
 
 def ui():
     b = bytes(u.mem_read(UI, 20))
-    return {"mask": struct.unpack("<H", b[4:6])[0], "off": struct.unpack("<H", b[14:16])[0], "clk": b[16], "bpm": struct.unpack("<H", b[18:20])[0]}
+    return {"mask": struct.unpack("<H", b[4:6])[0], "clk": b[16], "bpm": struct.unpack("<H", b[18:20])[0]}
 
 
 def page_down(tid, x, d):
@@ -352,18 +352,15 @@ preview("out/mcl_page.png", draw())
 state["page"] = 255
 touch(tile("STOP", True), FD)
 
-# --- 'MCL is off' (the Blackbox restarted without a power-on): a short prompt in the window, a tap starts MCL
+# --- no 'MCL is off' state any more (MCL starts at every boot): the half-word that held it does nothing
 u.mem_write(UI + 14, struct.pack("<H", 1))
 names = [r[-1] for r in draw() if r[0] == "lp_text_c"]
-check("off: 'MCL IS OFF' / 'TAP HERE TO START', no picture", "MCL IS OFF" in names and "TAP HERE TO START" in names and
-      not [r for r in rec if r[0] == "lp_box" and r[4] == 2], names)
-calls.clear()
-page_down(0, 10, 50)
-check("... a tap on the NO button does nothing while off", calls == [] and state["boots"] == 0 and ui()["off"] == 1)
-e.call("mcl_page_up", 0)
-page_down(0, W // 2, 90)
-check("... a tap on the window starts MCL", state["boots"] == 1 and ui()["off"] == 0, (state, ui()))
-e.call("mcl_page_up", 0)
+check("no 'MCL IS OFF' / 'TAP HERE TO START', the picture is drawn", not any("MCL IS OFF" in n or "TAP HERE" in n for n in names) and
+      [r for r in rec if r[0] == "lp_box" and r[4] == 2], names)
+down, up = touch(10, 50)
+check("... the buttons work", down == [(2, 0, 0)] and state["boots"] == 0, (down, state))
+check("... a tap on the screen boots nothing", touch(W // 2, 90) == ([], []) and state["boots"] == 0)
+u.mem_write(UI + 14, bytes(2))
 
 # --- an older blob (abi 4): the same panel, no shortcuts, no clock: the footer says what the knobs are
 entry(4)

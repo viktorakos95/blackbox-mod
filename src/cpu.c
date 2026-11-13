@@ -78,7 +78,7 @@ struct mcl_ui {
     uint8_t down[4];            /* the tile each touch id holds (index + 1), 0 = none */
     uint16_t mask;              /* tiles shown pressed */
     int16_t acc[4];             /* knob counts below one detent */
-    uint16_t off;               /* 1: MCL was not started this run (the Blackbox restarted without a power-on, see cpu_boot); a tap on its page starts it */
+    uint16_t _off;              /* (unused: MCL starts at every boot) */
     uint8_t clk;                /* the clock (abi 5): 0 follows the Blackbox's sequencer, 1 MCL's own tempo running, 2 stopped */
     uint8_t _r;
     uint16_t bpm;               /* MCL's own tempo, 1/10 BPM (0: not set, 120.0) */
@@ -108,18 +108,14 @@ static const struct mcl_entry *mcl_image(void)       /* the blob, whether or not
 static const struct mcl_entry *mcl_blob(void)        /* the blob, if it was started this run (its state in SDRAM is the last run's otherwise) */
 {
     bkp_enable();
-    return UI->off ? 0 : mcl_image();
+    return mcl_image();
 }
-
-#define WARM 0x4d524157u         /* M->magic from cpu_boot: this boot followed a reset that was not a power-on */
-#define RSR_POR (1u << 23)       /* RCC_RSR PORRSTF */
 
 static void start(void)
 {
     DEMCR |= 1u << 24;           /* TRCENA */
     DWT_LAR = 0xc5acce55u;       /* unlock (Cortex-M7) */
     DWT_CTRL |= 1u;              /* CYCCNTENA */
-    int warm = M->magic == WARM;
     M->armed = 0;
     M->status = STATUS_NONE;
     M->sum = 0;
@@ -135,13 +131,8 @@ static void start(void)
     for (unsigned i = 0; i < 5; i++)
         ((volatile uint32_t *)0x38800940u)[i] = 0;   /* seqfix.c's stamps for MCL's tempo follower (stale cycle counts from the last run would look fresh) */
     const struct mcl_entry *e = mcl_image();
-    if (e) {
-        bkp_enable();
-        if (warm)
-            UI->off = 1;             /* not after a restart that was not a power-on: if MCL caused it, starting it again could restart the Blackbox over and over */
-        else
-            e->boot();
-    }
+    if (e)
+        e->boot();                   /* at every boot, whatever the reset (MCL starts as on a MegaCommand) */
 }
 
 static char *put_uint(char *p, unsigned v)
@@ -260,16 +251,10 @@ static void report(void)
 /* Replaces the last call in main() before the tasks are made (bl 0x08046340 @0x0804428c): once per boot, whatever the reset. The state in M
  * (and the MCL blob's, in SDRAM) survives a reset that is not a power cycle (watchdog, software, brown-out): start() keyed on M->magic alone then
  * never ran again, so MCL was not booted (its page showed the last picture of the run before). Clearing the magic here makes the first task
- * that calls in run start() as at power-up. */
+ * that calls in run start() as at power-up, and start() boots MCL after every reset. */
 void cpu_boot(void)
 {
-    uint32_t rsr = *(volatile uint32_t *)0x580244d0u;                 /* RCC_RSR, unless the crash recorder already read and cleared it this boot */
-    if (!rsr) {
-        bkp_enable();
-        if (*(volatile uint32_t *)0x38800b38u == 0x31435243u)          /* then its record has this boot's flags */
-            rsr = *(volatile uint32_t *)0x38800b40u;
-    }
-    M->magic = rsr && !(rsr & RSR_POR) ? WARM : 0;                   /* (no flags at all: treated as a power-on) */
+    M->magic = 0;
     ((void (*)(void))0x08046341u)();
 }
 
@@ -442,7 +427,7 @@ uint32_t mcl_page_sig(void)
     const struct mcl_entry *e = mcl_blob();
     bkp_enable();
     uint32_t t = mcl_abi5(e) ? e->midi(6) / 5u + e->midi(10) * 131u : 0u;   /* the tempo followed (to 0.5 BPM, so a wobble does not redraw all the time), the page */
-    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + (uint32_t)UI->off * 0x9e3779b9u + ((uint32_t)UI->clk << 20) + (uint32_t)mcl_bpm() * 4099u + t * 977u;
+    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u  + ((uint32_t)UI->clk << 20) + (uint32_t)mcl_bpm() * 4099u + t * 977u;
 }
 
 static void mcl_button(int x, int d, int cap, int on, const char *above, const char *below, int below_d, int below_x, int below_w)
@@ -548,10 +533,7 @@ void mcl_page_draw(int w, int foot_y)
     mcl_logo(nx, MCL_WIN_Y + 3);
     lp_text_c(nx + LOGO_W + 5, MCL_WIN_Y + 3, 65, "MACHINEDRUM", MC_WHITE, 1);
     lp_text_c(nx + LOGO_W + 6, MCL_WIN_Y + 3, 65, "MACHINEDRUM", MC_WHITE, 1);
-    if (UI->off) {                                            /* not started after a restart that was not a power-on (see start()): a tap starts it */
-        lp_text_c(x0, MCL_TOP + MCL_H / 2 - 10, MCL_W, "MCL IS OFF", MC_WHITE, 1);
-        lp_text_c(x0, MCL_TOP + MCL_H / 2 + 4, MCL_W, "TAP HERE TO START", MC_WHITE, 1);
-    } else if (!fb) {
+    if (!fb) {
         lp_text_c(x0, MCL_TOP + MCL_H / 2 - 4, MCL_W, mcl_image() ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", MC_WHITE, 1);
     } else {
         for (int y = 0; y < 64; y++) {                        /* the screen: 16 bytes a row, leftmost pixel = the top bit; runs of lit pixels become boxes */
@@ -648,16 +630,6 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
     const struct mcl_entry *e = mcl_blob();
     int wx = mcl_win_x(w), ww = mcl_win_w();
     bkp_enable();
-    if (UI->off && x >= wx && x < wx + ww && d >= MCL_WIN_Y && d < MCL_WIN_Y + MCL_WIN_H) {   /* a tap on the 'MCL is off' window: MCL starts */
-        const struct mcl_entry *m = mcl_image();
-        crash_clear();                                        /* (the restart record counts as seen) */
-        UI->off = 0;
-        if (m) {
-            m->boot();
-            m->gui();                                         /* (its task starts from here, as from a label constructor at power-on) */
-        }
-        return;
-    }
     if (!e || !e->fb() || d < 16 || d >= foot_y + MCL_FOOT_H)
         return;
     if (d >= foot_y) {                                        /* the footer line: the clock */

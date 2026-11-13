@@ -176,31 +176,20 @@ entry("mcl_page_knob", 7, 100)
 entry("mcl_page_knob", -1, 100)
 check("bad knob numbers are ignored", screen()[3][8:11] == " -4")
 
-# --- a boot after a reset that was not a power-on (cpu_boot left M->magic = WARM): MCL is not started, its page says so; a tap starts it
+# --- a boot after a reset that was not a power-on (watchdog, software, after flashing): MCL starts as at power-on, no 'MCL is off' page
 boots, guis = [], []
 e.stub(r.b["mcl_boot"], lambda: boots.append(1))
 e.stub(r.b["bb_rt_gui"], lambda: guis.append(1))
 e.uc.mem_write(REC, struct.pack("<IHHI", 0x31435243, 6, 1, (1 << 24) | (1 << 22)) + bytes([0, 2, 0, 0, 0, 0]) + bytes(0x60))
-e.w32(0x2405FFD0, 0x4D524157)
+e.w32(0x2405FFD0, 0)                                             # cpu_boot clears the magic after every reset
 r.boot()
-check("warm boot: start() runs, MCL is not booted, the page state says off, no GUI call into the blob", boots == [] and guis == [] and e.r8(0x3880093E) == 1, (boots, guis, e.r8(0x3880093E)))
+check("warm boot: MCL booted", boots == [1], boots)
 calls = draw()
 texts = [c[5] for c in calls if c[0] == "lp_text_c"]
-check("... the page: 'MCL IS OFF', 'TAP HERE TO START'; no restart details, no picture from the last run",
-      "MCL IS OFF" in texts and "TAP HERE TO START" in texts and not any(t.startswith("LAST RESTART") for t in texts)
-      and not [c for c in calls if c[0] == "lp_box" and c[4] == 2], texts[:4])
-sig_off = entry("mcl_page_sig")
-page_down(1, W - 10, 150)
-entry("mcl_page_knob", 2, 100)
-check("... buttons and knobs do nothing while it is off", boots == [] and e.r16(0x38800934) == 0, e.r16(0x38800934))
-entry("mcl_page_up", 1)
-page_down(3, W // 2, 90)
-check("a tap on the window: MCL booted and its task started once, page state on, record seen",
-      boots == [1] and guis == [1] and e.r8(0x3880093E) == 0 and e.r8(REC + 13) == 3, (boots, guis, e.r8(0x3880093E), e.r8(REC + 13)))
-check("... the page signature changed", entry("mcl_page_sig") != sig_off)
+check("... no 'MCL IS OFF' / 'TAP HERE TO START'", not any("MCL IS OFF" in t or "TAP HERE" in t for t in texts), texts[:4])
 e.w32(0x2405FFD0, 0)
 r.boot()
-check("power-on boot (magic 0): MCL booted", boots == [1, 1] and e.r8(0x3880093E) == 0, boots)
+check("power-on boot: MCL booted", boots == [1, 1], boots)
 
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)
