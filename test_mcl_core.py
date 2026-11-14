@@ -264,6 +264,9 @@ for _ in range(200):
     c.step(3_000_000)
     c.tick(1)
 check("... the published transport stops coming (the audio stage stopped): treated as stopped", c.call("bb_clock_running") == 0, c.call("bb_clock_running"))
+for _ in range(400):                                              # (let the stamp follower see its stamps end and send its stop before the MIDI checks below)
+    c.step(3_000_000)
+    c.tick(5)
 
 # ---- MCL's menus as data (abi 8): a real menu page's items, captured as MCL draws them
 c.call("bb_mcl_page_req", 2)                                      # SYSTEM_PAGE
