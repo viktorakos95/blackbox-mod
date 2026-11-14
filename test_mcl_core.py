@@ -451,7 +451,9 @@ for _ in range(64):                                                # a step (6 c
     d16, f = rec(5), rec(6)
     if f & 1 and "start" not in seen:
         seen["start"] = d16
-    if f & 1 and "slot" not in seen and rec(0) != 252:
+        seen["was"] = rec(0)
+        c.call("bb_mcl_rec_slot", 252)                             # (GridTask puts the recorder in its slot once the Machinedrum has it: no Machinedrum here)
+    elif f & 1 and "slot" not in seen and rec(0) != 252:
         seen["slot"] = (rec(0), rec(1))
     if f & 2:
         seen["end"] = (d16, rec(4))

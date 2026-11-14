@@ -731,6 +731,8 @@ HOOK uint32_t bb_mcl_rec_stat(int which)                            /* (tests) *
     }
 }
 
+HOOK void bb_mcl_rec_slot(uint32_t v) { grid_page.active_slots[14] = (uint8_t)v; }   /* (tests: what GridTask does once the Machinedrum has the machine) */
+
 HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
 {
     uint32_t rate = smp_rate, ch = smp_ch, fr = smp_frames;
