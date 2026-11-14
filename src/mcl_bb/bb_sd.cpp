@@ -95,7 +95,7 @@ static void copy_name(char *dst, const char *src)
     dst[i] = 0;
 }
 
-static uint32_t execute(void)
+static uint32_t exec_once(void)
 {
     switch (req.op) {
     case OP_OPEN: {
@@ -150,6 +150,113 @@ static uint32_t execute(void)
     case OP_RENAME: return stock(F_RENAME, (uint32_t)req.path, (uint32_t)req.path2);
     }
     return SD_BAD_HANDLE;
+}
+
+/* ---- surviving the card's bad moments (user, n2: while a sequence played, folders would not open and a WAV read as "not a WAV"; stopped, both worked).
+ * The stock FatFs has no lock and asks the card for its state (CMD13, sd_diskio's status) in every call: a moment of "not in transfer state" gives
+ * FR_NOT_READY, and in f_open / f_opendir / f_stat it remounts the volume, which bumps the volume's id and makes every object opened before it
+ * invalid (FR_INVALID_OBJECT); a failed transfer gives FR_DISK_ERR, which FatFs keeps in the file object for good. The stock code opens, reads and
+ * closes in one go and does not notice; MCL keeps files and folders open across many requests. So a failed call is tried again (up to 4 times,
+ * a short pause between), after opening the object again where it is ours to reopen: a read-only file at the same position, a folder skipped to
+ * the same entry. Files open for writing are only tried again when nothing was done (not ready). ---- */
+static char fpath[SD_FILES][320], dpath[SD_DIRS][320];
+static uint8_t fmode[SD_FILES];
+static uint32_t dcount[SD_DIRS];
+static uint32_t st_retries, st_revived, st_gaveup, st_last_err;
+
+static int transient(uint32_t r) { return r == 1u || r == 2u || r == 3u || r == 9u; }   /* FR_DISK_ERR, FR_INT_ERR, FR_NOT_READY, FR_INVALID_OBJECT */
+
+static void settle(void)                                         /* ~1-2 ms for the card (bounded: the emulator's cycle counter may stand still) */
+{
+    uint32_t t0 = DWT_CYCCNT, lim = SYST_RVR + 1u;
+    for (uint32_t i = 0; i < 100000u && DWT_CYCCNT - t0 < lim; i++)
+        __asm volatile("nop");
+}
+
+static int reopen_file(uint32_t h, uint64_t pos)
+{
+    if (fmode[h] & SD_WRITE)
+        return 0;
+    for (unsigned i = 0; i < sizeof fils[h].b; i++)
+        fils[h].b[i] = 0;
+    if (stock(F_OPEN, (uint32_t)&fils[h], (uint32_t)fpath[h], SD_READ))
+        return 0;
+    return stock(F_LSEEK, (uint32_t)&fils[h], 0, (uint32_t)pos, (uint32_t)(pos >> 32)) == 0;
+}
+
+static int reopen_dir(uint32_t d)
+{
+    for (unsigned i = 0; i < sizeof dirs[d].b; i++)
+        dirs[d].b[i] = 0;
+    if (stock(F_OPENDIR, (uint32_t)&dirs[d], (uint32_t)dpath[d]))
+        return 0;
+    for (uint32_t k = 0; k < dcount[d]; k++) {                   /* back to where the listing was */
+        info[26] = 0;
+        if (stock(F_READDIR, (uint32_t)&dirs[d], (uint32_t)info) || !info[26])
+            return 0;
+    }
+    return 1;
+}
+
+static uint32_t execute(void)
+{
+    uint32_t op = req.op, h = req.h;
+    int file_op = op == OP_READ || op == OP_WRITE || op == OP_SEEK || op == OP_SYNC || op == OP_TRUNCATE || op == OP_CLOSE;
+    uint64_t pos = file_op ? FIL_FPTR(fils[h]) : 0;
+    uint32_t r = 0;
+    for (int attempt = 0;; attempt++) {
+        r = exec_once();
+        if (r == 0 || !transient(r))
+            break;
+        if (op == OP_CLOSE && !(fmode[h] & SD_WRITE))
+            return 0;                                            /* a read-only file: nothing to write back, it is closed either way */
+        if (op == OP_CLOSEDIR)
+            return 0;
+        if ((op == OP_MKDIR || op == OP_UNLINK || op == OP_RENAME) && r != 3u)
+            break;                                               /* it may have been half done: not again */
+        if (attempt >= 3) {
+            st_gaveup++;
+            break;
+        }
+        st_retries++;
+        settle();
+        if (file_op && r != 3u) {                                /* the object itself is dead (error kept in it, or the volume remounted) */
+            if (!reopen_file(h, pos))
+                continue;                                        /* (the next try fails the same way and counts) */
+            st_revived++;
+        } else if (op == OP_READDIR && r != 3u) {
+            if (!reopen_dir(h))
+                continue;
+            st_revived++;
+        } else if (file_op && op != OP_SEEK) {
+            stock(F_LSEEK, (uint32_t)&fils[h], 0, (uint32_t)pos, (uint32_t)(pos >> 32));   /* (not ready: nothing moved, but be sure) */
+        }
+    }
+    if (r) {
+        st_last_err = op << 8 | r;
+        return r;
+    }
+    switch (op) {                                                /* what a reopen needs later */
+    case OP_OPEN:
+        for (unsigned i = 0; i < sizeof fpath[h]; i++)
+            if (!(fpath[h][i] = req.path[i]))
+                break;
+        fpath[h][sizeof fpath[h] - 1] = 0;
+        fmode[h] = (uint8_t)req.mode;
+        break;
+    case OP_OPENDIR:
+        for (unsigned i = 0; i < sizeof dpath[h]; i++)
+            if (!(dpath[h][i] = req.path[i]))
+                break;
+        dpath[h][sizeof dpath[h] - 1] = 0;
+        dcount[h] = 0;
+        break;
+    case OP_READDIR:
+        if (req.name_out[0])
+            dcount[h]++;
+        break;
+    }
+    return 0;
 }
 
 HOOK void bb_sd_service(void)
@@ -209,16 +316,27 @@ static uint32_t submit(void)
 {
     if (ready != READY_MAGIC)
         return SD_NOT_READY;
-    if (req.state == ST_DONE && req.abandoned) {                 /* the late result of a request we stopped waiting for */
-        req.abandoned = 0;
-        req.state = ST_IDLE;
+    uint32_t last = DWT_CYCCNT;
+    uint64_t cyc = 0;                                            /* elapsed cycles, accumulated: the counter is 32 bits and wraps after 10.7 s */
+    const uint32_t cps = (SYST_RVR + 1u) * 1000u;
+    while (req.state != ST_IDLE && req.abandoned) {              /* a request we stopped waiting for: let it finish first (it used to fail every later one at once) */
+        if (req.state == ST_DONE) {
+            req.abandoned = 0;
+            req.state = ST_IDLE;
+            break;
+        }
+        uint32_t now = DWT_CYCCNT;
+        cyc += now - last;
+        last = now;
+        if (cyc * 1000u / cps >= SD_TIMEOUT_MS)
+            return SD_BUSY;
+        bb_sd_yield();
     }
     if (req.state != ST_IDLE)
         return SD_BUSY;
     st_requests++;
-    uint32_t last = DWT_CYCCNT;
-    uint64_t cyc = 0;                                            /* elapsed cycles, accumulated: the counter is 32 bits and wraps after 10.7 s */
-    const uint32_t cps = (SYST_RVR + 1u) * 1000u;
+    cyc = 0;
+    last = DWT_CYCCNT;
     barrier();
     req.state = ST_POSTED;
     while (req.state != ST_DONE) {
@@ -463,6 +581,10 @@ HOOK uint32_t bb_sd_stat_get(int which)
     case 2: return st_wait_ms;
     case 3: return st_call_us;
     case 4: return (uint32_t)((uint64_t)worst_gap_cyc * 1000u / ((SYST_RVR + 1u) * 1000u));
-    default: return gaps_100ms;
+    case 5: return gaps_100ms;
+    case 6: return st_retries;
+    case 7: return st_revived;
+    case 8: return st_gaveup;
+    default: return st_last_err;
     }
 }

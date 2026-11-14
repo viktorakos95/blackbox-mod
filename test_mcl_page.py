@@ -139,11 +139,11 @@ def menu_fn():
 
 
 fn("menu", menu_fn)
-SMP = {"on": True, "state": 1, "browsing": 0, "clock": 0, "listen": 0}
+SMP = {"on": True, "state": 1, "browsing": 0, "clock": 0, "listen": 0, "slices": 0}
 
 
 def sample_fn():
-    b = struct.pack("<BBBBHHBBBB", SMP["state"], SMP["browsing"], SMP["clock"], 2, 42, 480, SMP["listen"], 16, 0, 0) + b"KICK808.WAV".ljust(32, b"\0")
+    b = struct.pack("<BBBBHHBBBB", SMP["state"], SMP["browsing"], SMP["clock"], 2, 42, 480, SMP["listen"], 16, SMP["slices"], 0) + b"KICK808.WAV".ljust(32, b"\0")
     u.mem_write(e.arg(0), b)
     e.ret(1)
 
@@ -518,7 +518,7 @@ check("slot menu: the grid drawn sharp, the menu over its left side (TURBO selec
 MENU_PREVIEW, PANEL_PREVIEW = _menu_pic, _panel_pic
 
 
-# --- the SAMPLE view (abi 9): the SAMPLE shortcut opens it (input 7 / 4), its buttons send input 7 / 0..3, SAMPLE again closes it (7 / 5)
+# --- the SAMPLE view (abi 9): the SAMPLE shortcut opens it (input 7 / 4), its buttons send input 7 / RECORD 0, BROWSE 1, LISTEN 2, SLICE 3, SAMPLE again closes it (7 / 5)
 e.w32(e.sym["mcl_hires"], 0)
 STRIP_TILES = None
 opened, _ = touch(tile("SAMPLE"), STRIP)
@@ -528,10 +528,10 @@ words = [r[3] if r[0] == "lp_text" else r[-1] for r in lt]
 check("SAMPLE opens the view (input 7 / 4): the file's name, its length and format, READY: PRESS RECORD, the four buttons",
       (7, 4, 0) in opened and "KICK808.WAV" in words and any("0.42 S" in w_ and "STEREO" in w_ and "16 STEPS" in w_ for w_ in words) and "READY: PRESS RECORD" in words and all(b in words for b in ("RECORD", "SLICE", "LISTEN", "BROWSE")), (opened, words[:8]))
 check("... no 2x MCL picture under it", not [r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128])
-for k, name in enumerate(("RECORD", "SLICE", "LISTEN", "BROWSE")):
+for k, (name, code) in enumerate((("RECORD", 0), ("SLICE", 3), ("LISTEN", 2), ("BROWSE", 1))):     # (the blob's codes: bb_mcl.cpp smp_apply)
     bx = x0 + 4 + k * 63 + 30
     down, _ = touch(bx, TOP + 128 - 30 + 10)
-    check(f"... {name}: input 7 / {k}", down == [(7, k, 0)], down)
+    check(f"... {name}: input 7 / {code} (the blob's code for it)", down == [(7, code, 0)], down)
 SMP.update(state=2, clock=0)
 words = [r[3] if r[0] == "lp_text" else r[-1] for r in page_part(draw()) if r[0] in ("lp_text", "lp_text_c")]
 check("... armed and MCL stopped: WAITING: PRESS PLAY", "WAITING: PRESS PLAY" in words, words[:8])
@@ -539,7 +539,10 @@ SMP.update(state=4)
 words = [r[3] if r[0] == "lp_text" else r[-1] for r in page_part(draw()) if r[0] in ("lp_text", "lp_text_c")]
 check("... recorded: RECORDED: SLICE IT, OR RECORD AGAIN", "RECORDED: SLICE IT, OR RECORD AGAIN" in words)
 SMP_PREVIEW = draw()
-SMP.update(browsing=1)
+SMP.update(slices=8)
+words = [r[3] if r[0] == "lp_text" else r[-1] for r in page_part(draw()) if r[0] in ("lp_text", "lp_text_c")]
+check("... sliced: SLICED INTO 8: SLICE FOR MORE", "SLICED INTO 8: SLICE FOR MORE" in words, words[:8])
+SMP.update(slices=0, browsing=1)
 dn, _ = touch(tile("SAMPLE"), STRIP)
 check("... while its browser shows: MCL's screen, and SAMPLE toggles listening (7 / 6)", dn == [(7, 6, 0)], dn)
 SMP.update(browsing=0, state=1)

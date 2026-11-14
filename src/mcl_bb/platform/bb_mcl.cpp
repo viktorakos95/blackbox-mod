@@ -50,6 +50,9 @@ static char smp_path[192];                                       /* ... its full
 static uint8_t smp_loaded, smp_done, smp_in_player;              /* chosen / -, / the player holds it (a preview while browsing replaces it) */
 static uint32_t smp_frames, smp_rate, smp_ch;                    /* the chosen file's length, rate, channels */
 static volatile uint8_t smp_recording, smp_recorded;             /* the file is playing into the record / it was recorded */
+static volatile uint16_t rec_len;                                /* the record's length in steps (from its first step: cable_step) */
+static volatile uint8_t smp_link_play;                           /* the record began: queue the RAM player (P1) for its last step's end */
+static uint8_t slice_want;                                       /* SLICE pressed before the player was in place: slice once it is */
 static PageIndex smp_back = GRID_PAGE;                           /* the page the browser goes back to */
 
 #include "bb_clock.h"
@@ -469,10 +472,17 @@ extern "C" void bb_mcl_clk_tick(uint32_t ticks)
     MidiClock.uart_clock_forward2 = nullptr;
     MidiClock.uart_clock_forward3 = nullptr;
     MidiClock.handleImmediateClock();
-    if (cable_armed && MidiClock.state == MidiClockClass::STARTED && MidiClock.mod6_counter == 0 && MidiClock.div16th_counter == cable_step) {
-        cable_armed = 0;                                           /* the RAM record's first step: the file plays into the Machinedrum's input from here */
-        bb_player_play();
-        smp_recording = 1;
+    if (MidiClock.state == MidiClockClass::STARTED && MidiClock.mod6_counter == 0) {
+        if (cable_armed && MidiClock.div16th_counter == cable_step) {
+            cable_armed = 0;                                       /* the RAM record's first step: the file plays into the Machinedrum's input from here */
+            bb_player_play();
+            smp_recording = 1;
+            smp_link_play = 1;
+        } else if (smp_recording && (uint16_t)(MidiClock.div16th_counter - cable_step) >= rec_len) {
+            bb_player_stop();                                      /* the record's length is over: the file stops with it (user, n2: it played to its end) */
+            smp_recording = 0;
+            smp_recorded = 1;
+        }
     }
     if (MidiClock.state == MidiClockClass::STARTED && !MidiClock.inCallback)
         TRIGGER_SW_IRQ1();
@@ -570,8 +580,12 @@ static int smp_ensure(void)
 /* YES on a file (cable mode): that file is the SAMPLE view's now; back to the page the view was opened over. Nothing is recorded until RECORD. */
 HOOK void bb_sample_record(const char *name)
 {
+    uint32_t gave = bb_sd_stat_get(8), tmo = bb_sd_stat_get(1);
     if (!bb_player_open(name)) {
-        oled_display.textbox("NOT A", "WAV");
+        if (bb_sd_stat_get(8) != gave || bb_sd_stat_get(1) != tmo)
+            oled_display.textbox("CARD ", "ERROR");                /* (the card failed it, not the file's format) */
+        else
+            oled_display.textbox("NOT A", "WAV");
         return;
     }
     bb_player_pump();
@@ -603,7 +617,12 @@ HOOK void bb_sample_record(const char *name)
 static uint32_t smp_steps(void)
 {
     float tempo = MidiClock.get_tempo();
-    if (tempo < 30.f)
+    if (MidiClock.state != MidiClockClass::STARTED) {            /* stopped: MCL's tempo is a stale measure; the Blackbox's own (cpu.c publishes it) is the one it will play at */
+        uint32_t bpm10 = (*(volatile uint32_t *)0x38800678u) >> 8;
+        if (bpm10 >= 300u && bpm10 <= 3000u)
+            tempo = (float)bpm10 / 10.f;
+    }
+    if (tempo < 30.f || tempo > 300.f)
         tempo = 120.f;
     float secs = smp_rate ? (float)smp_frames / (float)smp_rate : 0.f;
     uint32_t steps = (uint32_t)(secs * tempo / 15.f) + 1u;
@@ -620,6 +639,16 @@ HOOK void bb_mcl_sample_input(uint32_t a)
         smp_cmd = (uint8_t)a;
 }
 
+static void smp_slice_next(void)
+{
+    uint32_t c = (uint32_t)ram_a_param3.cur + 1u;
+    if (c > 5u || (1u << c) > rec_len)                           /* (no more slices than steps) */
+        c = 0;
+    ram_a_param3.cur = (int)c;
+    RAMPage::slice_modes[0] = 0;
+    ram_page_a.slice(14, 255);
+}
+
 static void smp_apply(void)
 {
     uint8_t a = smp_cmd;
@@ -633,11 +662,16 @@ static void smp_apply(void)
             break;
         ram_a_param4.cur = (int)(smp_steps() / 4u);
         ram_a_param1.cur = 1;                                    /* SOURCE_INPA */
+        ram_a_param3.cur = 0;                                    /* (not sliced) */
         ram_page_a.setup_ram_rec_mono(14, 64, 1);
         cable_step = ram_page_a.transition_step;
+        rec_len = ram_page_a.record_len;
+        smp_recording = 0;
+        smp_recorded = 0;
+        smp_link_play = 0;
+        slice_want = 0;
         cable_armed = 1;
         smp_done = 0;
-        smp_recorded = 0;
         break;
     case 1:                                                      /* BROWSE */
         if (now != SAMPLE_BROWSER)
@@ -649,9 +683,16 @@ static void smp_apply(void)
         if (!cable_armed && smp_ensure())
             bb_player_play();
         break;
-    case 3:                                                      /* SLICE: as NO on the RAM page (a recording becomes a RAM player, then it is sliced) */
-        if (smp_recorded && !ram_page_a.slice(14, 255))
-            ram_page_a.setup_ram_play_mono(14);
+    case 3:                                                      /* SLICE: into 2, 4, 8, 16, 32 slices, then whole again (as NO on MCL's RAM page, with its slice count stepped) */
+        if (!smp_recorded)
+            break;
+        if (grid_page.active_slots[14] == SLOT_RAM_PLAY) {
+            smp_slice_next();
+        } else {
+            if (grid_page.active_slots[14] != SLOT_PENDING)
+                ram_page_a.setup_ram_play_mono(14);              /* (still the recorder: the player from the next bar) */
+            slice_want = 1;
+        }
         break;
     case 4:                                                      /* the view opened: straight into the browser while nothing is chosen */
         if (!smp_loaded) {
@@ -677,10 +718,22 @@ static void smp_apply(void)
     }
 }
 
+HOOK uint32_t bb_mcl_rec_stat(int which)                            /* (tests) */
+{
+    switch (which) {
+    case 0: return grid_page.active_slots[14];
+    case 1: return ram_page_a.transition_step;
+    case 2: return cable_step;
+    case 3: return rec_len;
+    case 4: return bb_player()->state;
+    case 5: return MidiClock.div16th_counter;
+    default: return (uint32_t)smp_recording | (uint32_t)smp_recorded << 1 | (uint32_t)cable_armed << 2;
+    }
+}
+
 HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
 {
     uint32_t rate = smp_rate, ch = smp_ch, fr = smp_frames;
-    struct bb_player *p = bb_player();
     s->browsing = mcl.currentPage() == SAMPLE_BROWSER && bb_cable_mode;
     s->clock_running = MidiClock.state == MidiClockClass::STARTED;
     s->listen = bb_cable_listen;
@@ -688,11 +741,12 @@ HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
     s->rate_k = (uint16_t)(rate / 100u);
     s->secs100 = rate ? (uint16_t)((uint64_t)fr * 100u / rate) : 0;
     s->steps = smp_loaded ? (uint8_t)smp_steps() : 0;
+    s->slices = smp_recorded && ram_a_param3.cur > 0 ? (uint8_t)(1u << ram_a_param3.cur) : 0;
     if (!smp_loaded)
         s->state = BB_SMP_NONE;
     else if (cable_armed)
         s->state = BB_SMP_WAITING;
-    else if (smp_recording && p->state == 1)
+    else if (smp_recording)
         s->state = BB_SMP_RECORDING;
     else if (smp_recorded)
         s->state = BB_SMP_DONE;
@@ -788,9 +842,23 @@ static void cable_loop(void)
     if (cable_armed && grid_page.active_slots[14] != SLOT_RAM_RECORD && grid_page.active_slots[14] != SLOT_PENDING) {
         cable_armed = 0;                                           /* (the record was replaced before it began) */
     }
-    if (smp_recording && bb_player()->state != 1) {                /* the file has played through: recorded */
+    if (smp_recording && MidiClock.state != MidiClockClass::STARTED) {   /* stopped in the middle of the record: what is there is the recording */
+        bb_player_stop();
         smp_recording = 0;
         smp_recorded = 1;
+    }                                                              /* (a file shorter than the record ends by itself; the record still runs to its end) */
+    if (smp_link_play) {                                           /* the record runs: the RAM player (P1) is queued for its end (MCL's NO would only
+                                                                      take effect a whole record length after it was pressed) */
+        if (grid_page.active_slots[14] == SLOT_RAM_RECORD) {
+            smp_link_play = 0;
+            ram_page_a.setup_ram_play_mono(14);
+        } else if (!smp_recording) {
+            smp_link_play = 0;                                     /* (the recorder never took its place: nothing to follow it) */
+        }
+    }
+    if (slice_want && grid_page.active_slots[14] == SLOT_RAM_PLAY) {
+        slice_want = 0;
+        smp_slice_next();
     }
     smp_apply();
 }

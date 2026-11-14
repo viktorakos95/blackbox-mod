@@ -75,6 +75,7 @@ struct bb_sample {
     uint16_t rate_k;                   /* its rate, Hz / 100 */
     uint8_t listen;                    /* listening while browsing */
     uint8_t steps;                     /* the record's length in steps */
-    uint8_t _r[2];
+    uint8_t slices;                    /* the recording is sliced into this many (0: not sliced) */
+    uint8_t _r;
     char name[32];
 };

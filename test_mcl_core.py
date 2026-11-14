@@ -37,12 +37,17 @@ with wave.open("out/sd/long.wav", "wb") as w:
     w.setsampwidth(2)
     w.setframerate(44100)
     w.writeframes(bytes(4410 * 2))
+with wave.open("out/sd/rec2s.wav", "wb") as w:                  # 2 s: longer than its record at the tempo it is played at below
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(8000)
+    w.writeframes(bytes(16000 * 2))
 RAMP_N = 20000                                                    # a 24-bit stereo 48 kHz ramp (left +1 a frame in the top 16 bits, right -1): 0.42 s
 with open("out/sd/ramp24.wav", "wb") as f:
     data = b"".join(struct.pack("<i", (k & 0x7FFF) << 8)[:3] + struct.pack("<i", (-(k & 0x7FFF)) << 8)[:3] for k in range(RAMP_N))
     fmt = struct.pack("<HHIIHH", 1, 2, 48000, 48000 * 6, 6, 24)
     f.write(b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data)) + b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(data)) + data)
-c = R.Core(d, files=[("out/sd/long.wav", "::/Samples/Drums/" + LONG_WAV), ("out/sd/long.wav", "::/" + LONG_WAV), ("out/sd/ramp24.wav", "::/ramp24.wav")])
+c = R.Core(d, files=[("out/sd/long.wav", "::/Samples/Drums/" + LONG_WAV), ("out/sd/long.wav", "::/" + LONG_WAV), ("out/sd/ramp24.wav", "::/ramp24.wav"), ("out/sd/rec2s.wav", "::/rec2s.wav")])
 b = c.b
 sd_ops = []
 orig_service = c.service
@@ -420,6 +425,42 @@ check("FC: paused, the counters stand still", stat(0) == 0 and stat(1) == before
 c.call("bb_mcl_clk_transport", 0xFB)
 t = ticks(t, 8 * 3)
 check("FB: continues from where it stopped (counters go on)", stat(0) == 2 and stat(1) > before, (stat(0), before, stat(1)))
+# ---- the SAMPLE view's RECORD (cable): the file plays into the Machinedrum from the record's first step and stops at its last (user, n2: it played on
+# to the file's end); the RAM player (P1) is queued as soon as the record runs, for the record's end (it came a whole record length later)
+rec = lambda w: c.call("bb_mcl_rec_stat", w)
+c.call("bb_mcl_clk_transport", 0xFC)
+t = ticks(t, 8 * 2)
+c.uc.mem_write(0x38800674, struct.pack("<II", 1, 600 << 8))         # the Blackbox's tempo while stopped: 60.0 (the record's length is worked out at it)
+c.uc.mem_write(c.b["_ZL8smp_path"], b"/rec2s.wav\0")
+c.uc.mem_write(c.b["_ZL8smp_rate"], struct.pack("<I", 8000))
+c.uc.mem_write(c.b["_ZL10smp_frames"], struct.pack("<I", 16000))
+c.uc.mem_write(c.b["_ZL6smp_ch"], struct.pack("<I", 1))
+c.uc.mem_write(c.b["_ZL13smp_in_player"], b"\0")
+c.uc.mem_write(c.b["_ZL10smp_loaded"], b"\1")
+sample_in(0)
+armed, rl, cs = rec(6) >> 2 & 1, rec(3), rec(2)
+check("RECORD (MCL stopped): armed, 12 steps (2 s at the Blackbox's 60.0, in bars of 4), the record's first step on a 12-step boundary, the file in the player",
+      armed == 1 and rl == 12 and cs % 12 == 0 and cs > rec(5) and c.call("bb_player") and struct.unpack("<I", bytes(c.uc.mem_read(c.call("bb_player") + 12, 4)))[0] > 0, (armed, rl, cs, rec(5)))
+c.call("bb_mcl_clk_transport", 0xFB)
+seen = {}
+for _ in range(64):                                                # a step (6 clocks) at a time, MCL's task running in between
+    t = ticks(t, 48)
+    for _ in range(3):
+        c.step(2_000_000)
+        c.tick(2)
+    d16, f = rec(5), rec(6)
+    if f & 1 and "start" not in seen:
+        seen["start"] = d16
+    if f & 1 and "slot" not in seen and rec(0) != 252:
+        seen["slot"] = (rec(0), rec(1))
+    if f & 2:
+        seen["end"] = (d16, rec(4))
+        break
+check("the record runs from its first step: the file plays (recording), the player on",
+      seen.get("start") is not None and 0 <= seen["start"] - cs <= 1, (seen, cs))
+check("... and stops at the record's end (12 steps), the file not played to its end", "end" in seen and 0 <= seen["end"][0] - (cs + rl) <= 1 and seen["end"][1] == 0, (seen, cs, rl))
+check("... the RAM player was queued while it recorded, for exactly the record's end (not a record length later)",
+      "slot" in seen and seen["slot"][1] == cs + rl, (seen, cs + rl))
 turbo, mu = c.b["turbo_light"], c.b["MidiUart"]
 c.call("_ZN10TurboLight9set_speedEhP13MidiUartClass", turbo, 7, mu)          # what MCL does after peering an Elektron device at its 8x setting
 brr = c.e.r32(0x4001140C)

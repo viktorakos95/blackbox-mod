@@ -872,6 +872,7 @@ static const char *const sb_name[SB_N] = {"RECORD", "SLICE", "LISTEN", "BROWSE"}
 #define SB_Y   (MCL_TOP + MCL_H - 30)
 #define SB_H   26
 static int sb_x(int x0, int i) { return x0 + 4 + i * 63; }
+static const uint8_t sb_code[SB_N] = {0, 3, 2, 1};   /* the blob's codes (input kind 7): 0 RECORD, 1 BROWSE, 2 LISTEN, 3 SLICE */
 
 static void mcl_sample_view(int x0, const struct bb_sample *s)
 {
@@ -911,6 +912,17 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
         const char *st = s->state == BB_SMP_READY ? "READY: PRESS RECORD" :
                          s->state == BB_SMP_WAITING ? (s->clock_running ? "WAITING FOR THE NEXT BAR" : "WAITING: PRESS PLAY") :
                          s->state == BB_SMP_RECORDING ? "RECORDING ..." : "RECORDED: SLICE IT, OR RECORD AGAIN";
+        char sl[40];
+        if (s->state == BB_SMP_DONE && s->slices) {           /* SLICED INTO 8: SLICE FOR MORE */
+            p = sl;
+            for (const char *c = "SLICED INTO "; *c; c++)
+                *p++ = *c;
+            p = put_uint(p, s->slices);
+            for (const char *c = ": SLICE FOR MORE"; *c; c++)
+                *p++ = *c;
+            *p = 0;
+            st = sl;
+        }
         lp_text_c(x0, top + 62, MCL_W, st, s->state == BB_SMP_RECORDING ? MC_RED : MC_HOLD, 1);
     }
     for (int i = 0; i < SB_N; i++) {
@@ -1030,7 +1042,7 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
         if (e->sample(&sm) && !sm.browsing)
             for (int k = 0; k < SB_N; k++)
                 if (x >= sb_x(mcl_x0(w), k) && x < sb_x(mcl_x0(w), k) + 60)
-                    e->input(7, k, 0);
+                    e->input(7, sb_code[k], 0);
         return;
     }
     if (x < wx)

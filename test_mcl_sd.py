@@ -338,6 +338,74 @@ check("B4: counters page: requests counted, the one deliberate timeout of the te
 tile(3)
 # a failing card: write errors reach the screen
 
+# ---- the card's bad moments while sequences play (user, n2): a failed transfer, a moment of "not ready", a remount by another caller
+fault = {"read": 0, "status": 0}
+real_read = e.stubs[H.DRV_READ]
+def flaky_read():
+    if fault["read"]:
+        fault["read"] -= 1
+        e.ret(1)                                                 # RES_ERROR: FatFs gives FR_DISK_ERR and keeps it in the file object
+        return
+    real_read()
+def flaky_status():
+    if fault["status"]:
+        fault["status"] -= 1
+        e.ret(1)                                                 # STA_NOINIT: validate says FR_NOT_READY, f_open / f_stat remount (the volume id moves on)
+        return
+    e.ret(0)
+e.stubs[H.DRV_READ] = flaky_read
+e.stubs[H.DRV_STATUS] = flaky_status
+want = b"hello from the card\n" * 50
+h = signed(gui("bb_sd_open", path("/Mcl/hello.txt"), 1))
+n1 = signed(gui("bb_sd_read", h, BUFB, 100))
+gui("bb_sd_stat", path("/Mcl/big.bin"), ent)                     # (another sector in the window: the next read must go to the card)
+fault["read"] = 1
+n2 = signed(gui("bb_sd_read", h, BUFB + 100, 600))
+check("a transfer fails once in the middle of a file: the read still returns the right bytes (the file is opened again at its position)",
+      n1 == 100 and n2 == 600 and bytes(uc.mem_read(BUFB, 700)) == want[:700], (n1, n2))
+fault["status"] = 1
+n3 = signed(gui("bb_sd_read", h, BUFB + 700, 300))
+check("the card is not ready once: the read is tried again and completes", n3 == 300 and bytes(uc.mem_read(BUFB, 1000)) == want, n3)
+gui("bb_sd_seek", h, 0, 50, 0)
+fault["status"] = 1
+gui("bb_sd_stat", path("/Mcl/hello.txt"), ent)                   # a remount happens (as when the stock streamer opens a file at such a moment)
+n4 = signed(gui("bb_sd_read", h, BUFB, 20))
+check("after a remount (all open objects invalid): the open file still reads, from where it was", n4 == 20 and bytes(uc.mem_read(BUFB, 20)) == want[50:70], n4)
+check("... and closes", gui("bb_sd_close", h) == 0)
+def listing():
+    d = signed(gui("bb_sd_opendir", path("/Mcl")))
+    out = []
+    while gui("bb_sd_readdir", d, ent) == 0 and cstring(ent + 9):
+        out.append(cstring(ent + 9))
+    gui("bb_sd_closedir", d)
+    return out
+seen = set(listing())
+d = signed(gui("bb_sd_opendir", path("/Mcl")))
+names = []
+while True:
+    if len(names) == 10:
+        fault["status"] = 1
+        gui("bb_sd_stat", path("/Mcl/hello.txt"), ent)           # remount in the middle of the listing
+    if len(names) == 20:
+        fault["read"] = 1                                        # a failed transfer in the middle of the listing
+    if len(names) == 30:
+        fault["status"] = 1                                      # not ready in the middle of the listing
+    r = gui("bb_sd_readdir", d, ent)
+    nm = cstring(ent + 9)
+    if r != 0 or not nm:
+        break
+    names.append(nm)
+gui("bb_sd_closedir", d)
+check("a folder listing through a remount, a failed transfer and a not-ready moment: every entry once, none lost",
+      r == 0 and len(names) == len(set(names)) and set(names) == seen, (r, len(names), len(set(names)), len(seen)))
+check("... the faults really happened: tries again counted, objects opened again counted",
+      gui("bb_sd_stat_get", 6) >= 6 and gui("bb_sd_stat_get", 7) >= 4 and fault["read"] == 0 and fault["status"] == 0,
+      (gui("bb_sd_stat_get", 6), gui("bb_sd_stat_get", 7), fault))
+fault["read"] = 0
+fault["status"] = 0
+e.stubs[H.DRV_READ] = real_read
+e.stubs[H.DRV_STATUS] = lambda: e.ret(0)
+
 # ---- the volume afterwards: fsck and mtools
 card.save("out/sd/after.img")
 fsck = subprocess.run(["fsck.vfat", "-n", "out/sd/after.img"], capture_output=True, text=True)

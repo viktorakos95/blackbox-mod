@@ -14,6 +14,7 @@ static uint32_t data_off, data_len, frames, fpos;            /* the data chunk; 
 static uint16_t channels, bits, format;                       /* format 1 PCM, 3 float */
 static uint8_t open_ok;
 static uint32_t rate_hz;
+static uint8_t read_errs;                                     /* failed reads in a row (the card's bad moments are retried on the next pump) */
 
 /* the file loaded: its frames, rate and channels (0 frames: none) */
 HOOK uint32_t bb_player_info(uint32_t *rate, uint32_t *chans)
@@ -32,6 +33,8 @@ HOOK void bb_player_rewind(void)
         return;
     pl.state = 0;
     fpos = 0;
+    read_errs = 0;
+    pl.end = frames;                                          /* (a play cut short by read errors gets its whole length back) */
     pl.rd = pl.wr = pl.frac = 0;
 }
 
@@ -105,6 +108,7 @@ HOOK int bb_player_open(const char *name)
     pl.rd = pl.wr = pl.frac = 0;
     pl.step = (uint32_t)(((uint64_t)rate << 16) / 48000u);
     pl.end = frames;
+    read_errs = 0;
     return 1;
 }
 
@@ -127,12 +131,12 @@ static int16_t sample(const uint8_t *p)
 /* Keeps the ring filled (MCL's task): up to 2 KB of the file a call, while there is room. */
 HOOK void bb_player_pump(void)
 {
-    if (!open_ok || fpos >= frames)
+    if (!open_ok || fpos >= pl.end)
         return;
     uint32_t bps = bits / 8, bpf = channels * bps;
     for (int k = 0; k < 8; k++) {
         uint32_t room = BB_PLAYER_RING - (pl.wr - pl.rd) - 2;   /* (the audio stage reads frame rd + 1 too) */
-        if ((int32_t)room <= 0 || fpos >= frames)
+        if ((int32_t)room <= 0 || fpos >= pl.end)
             return;
         uint8_t buf[2048];
         uint32_t n = sizeof buf / bpf;
@@ -141,10 +145,11 @@ HOOK void bb_player_pump(void)
         if (n > frames - fpos)
             n = frames - fpos;
         if (!n || !file.seekSet(data_off + fpos * bpf) || file.read(buf, n * bpf) != (int)(n * bpf)) {
-            frames = fpos;                                    /* (a read error: it ends here) */
-            pl.end = fpos;
+            if (++read_errs >= 8)                             /* (the card keeps failing: this play ends here; the file keeps its length) */
+                pl.end = fpos;
             return;
         }
+        read_errs = 0;
         for (uint32_t i = 0; i < n; i++) {
             const uint8_t *p = buf + i * bpf;
             uint32_t w = (pl.wr + i) & (BB_PLAYER_RING - 1);
