@@ -179,12 +179,16 @@ static void set_period_counts(uint64_t counts_q32)
     period_lo = (uint32_t)counts_q32;
 }
 
+static uint32_t own_bpm_x10;                                     /* the own tempo last set (bb_clock_tempo) */
+HOOK uint32_t bb_clock_own_bpm_x10(void) { return own_bpm_x10; }
+
 HOOK void bb_clock_tempo(uint32_t bpm_x10)
 {
     if (bpm_x10 < 200u)
         bpm_x10 = 200u;
     if (bpm_x10 > 3000u)
         bpm_x10 = 3000u;
+    own_bpm_x10 = bpm_x10;
     /* counts per 192-PPQN tick = 60 * hz / (192 * bpm) = 600 * hz / (192 * bpm_x10), as 32.32 */
     set_period_counts(((uint64_t)600u * timer_hz << 32) / (192ull * bpm_x10));
 }
