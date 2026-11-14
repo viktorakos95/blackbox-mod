@@ -78,12 +78,14 @@ struct MenuPeek : MenuPageBase {                                     /* (get_men
     MenuBase *m() { return get_menu(); }
 };
 extern "C" uint8_t __real__ZN12MenuPageBase9draw_menuEhhhh(MenuPageBase *self, uint8_t x, uint8_t y, uint8_t w, uint8_t sb);
-extern "C" uint8_t __wrap__ZN12MenuPageBase9draw_menuEhhhh(MenuPageBase *self, uint8_t x, uint8_t y, uint8_t w, uint8_t sb)
+static void menu_capture(MenuPageBase *self, uint8_t kind)
 {
-    uint8_t n = __real__ZN12MenuPageBase9draw_menuEhhhh(self, x, y, w, sb);
     MenuBase *m = ((MenuPeek *)self)->m();
+    if (!m)
+        return;
+    uint8_t n = m->get_number_of_items();
     struct bb_menu *c = &menu_pending;
-    c->kind = (void *)self == (void *)&grid_slot_page ? 1 : 0;
+    c->kind = kind;
     c->count = n > BB_MENU_MAX ? BB_MENU_MAX : n;
     c->cursor = (uint8_t)self->encoders[1]->cur;
     const char *t = m->get_name();
@@ -124,7 +126,36 @@ extern "C" uint8_t __wrap__ZN12MenuPageBase9draw_menuEhhhh(MenuPageBase *self, u
         }
     }
     c->valid = 1;
+}
+
+/* (only the calls from other files reach this: the grid's slot menu, GridPage.cpp; a menu page's own display() draws its list from inside
+ * MenuPage.cpp, which the linker does not redirect: those are captured at the frame's end, see is_menu_page) */
+extern "C" uint8_t __wrap__ZN12MenuPageBase9draw_menuEhhhh(MenuPageBase *self, uint8_t x, uint8_t y, uint8_t w, uint8_t sb)
+{
+    uint8_t n = __real__ZN12MenuPageBase9draw_menuEhhhh(self, x, y, w, sb);
+    menu_capture(self, (void *)self == (void *)&grid_slot_page ? 1 : 0);
     return n;
+}
+
+/* A page whose display() is MenuPageBase's own (a menu page: the system, MIDI, config menus ...): the slot in its vtable that the grid's
+ * slot menu, a MenuPage, has MenuPageBase::display in. */
+extern "C" void _ZN12MenuPageBase7displayEv(void);
+static int is_menu_page(const void *pg)
+{
+    static int slot = -1;
+    const void *disp = (const void *)&_ZN12MenuPageBase7displayEv;
+    if (slot < 0) {
+        void *const *vt = *(void *const *const *)&grid_slot_page;
+        for (int i = 0; i < 40; i++)
+            if (vt[i] == disp) {
+                slot = i;
+                break;
+            }
+        if (slot < 0)
+            return 0;
+    }
+    void *const *vt = *(void *const *const *)pg;
+    return vt && vt[slot] == disp;
 }
 
 HOOK uint32_t bb_mcl_menu(struct bb_menu *out)
@@ -138,6 +169,9 @@ HOOK uint32_t bb_mcl_menu(struct bb_menu *out)
 extern "C" void __wrap__ZN4Oled7displayEv(Oled *self)
 {
     __real__ZN4Oled7displayEv(self);                               /* (draws the text box overlay into the buffer) */
+    LightPage *pg = GUI.currentPage();
+    if (!menu_pending.valid && pg && is_menu_page(pg))
+        menu_capture((MenuPageBase *)pg, 0);                         /* a menu page (its draw_menu call is not wrapped) */
     menu_shown = menu_pending;                                       /* the menu drawn in this frame (valid 0: none) */
     menu_pending.valid = 0;
     const uint8_t *src = self->getBuffer();
@@ -546,12 +580,19 @@ HOOK int bb_player_open_res(void) { return open_res; }
  * the Machinedrum), follows the tempo, stops with it (FC), and hands back to the stamps as soon as a sequence plays. ---- */
 #define XPORT ((volatile uint32_t *)0x38800674u)
 #define SQ_VER (*(volatile uint32_t *)0x38800660u)
-static uint8_t free_run;
+static uint8_t free_run, xp_init;
 static uint32_t xp_count, xp_t, sq_ver_seen, sq_t, run_since, free_bpm;
 
 static void xport_follow(void)
 {
     uint32_t now = millis();
+    if (!xp_init) {                                             /* (what is there at boot is old: no sequence is taken as playing from it) */
+        xp_init = 1;
+        sq_ver_seen = SQ_VER;
+        sq_t = now - 1000u;
+        xp_count = XPORT[0];
+        xp_t = now - 1000u;
+    }
     uint32_t c = XPORT[0], w = XPORT[1];
     if (c != xp_count) {
         xp_count = c;
