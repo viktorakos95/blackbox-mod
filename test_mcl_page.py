@@ -354,9 +354,12 @@ words = [r[3] for r in lt]
 GX = x0 + (256 - 16 * 15 - 9) // 2
 CX = lambda k: GX + k * 15 + k // 4 * 3                          # track k's column (3 px more at each group of four)
 check("grid page: no 2x picture is blitted (no 2-px runs under the title bar)", not [r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128], [r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128][:3])
-check("... the title bar: GRID X, the cursor's row A06 and its name, bar:beat 3:2 (black on white)",
-      ("GRID X  A06  INTRO" in words) and "3:2" in words and all(r[4] == 0x0E for r in lt if r[3] in ("GRID X  A06  INTRO", "3:2")), words[:4])
-check("... the tempo 125.0 at 2x, BPM, the devices", any(r[3] == "125.0" and r[5] == 2 for r in lt) and "BPM" in words and "MD MI" in words, words[:8])
+check("... the title bar: GRID X, the cursor's row A06, the devices, bar:beat 3:2 (black on white)",
+      ("GRID X  A06  MD MI" in words) and "3:2" in words and all(r[4] == 0x0E for r in lt if r[3] in ("GRID X  A06  MD MI", "3:2")), words[:4])
+check("... the tempo 125.0 at 2x, BPM", any(r[3] == "125.0" and r[5] == 2 for r in lt) and "BPM" in words, words[:8])
+nm = [r for r in lt if r[3] == "INTRO"]
+check("... the cursor's row name big and bold (2x, drawn twice one pixel apart), right-aligned in the tempo line",
+      len(nm) == 2 and all(r[5] == 2 and r[4] == 0x0F for r in nm) and abs(nm[0][1] - nm[1][1]) == 1 and max(r[1] for r in nm) + 5 * 12 <= x0 + 256 - 5, nm)
 nums = {r[3]: r[1] for r in lt if r[3].isdigit() and r[2] == TOP + 35}
 check("... the track numbers 1..16, each centred over its column's label (centre at column + 7)",
       sorted(map(int, nums)) == list(range(1, 17)) and all(abs(nums[str(k)] + len(str(k)) * 6 / 2 - (CX(k - 1) + 7)) <= 1 for k in range(1, 17)),

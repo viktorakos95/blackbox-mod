@@ -645,13 +645,17 @@ static void mcl_grid_draw(int x0, const struct bb_grid *g)
     *p++ = ' ';
     *p++ = ' ';
     unsigned row = g->base_row + g->cur_row;
-    *p++ = (char)('A' + row / 16);
-    p = put_2(p, row % 16 + 1);
+    char rowid[4] = {(char)('A' + row / 16), 0, 0, 0};
+    put_2(rowid + 1, row % 16 + 1);
+    for (const char *c = rowid; *c; c++)
+        *p++ = *c;
     *p++ = ' ';
     *p++ = ' ';
-    const char *nm = g->rowname[g->cur_row];
-    for (int k = 0; k < 16 && nm[k]; k++)
-        *p++ = (nm[k] >= 0x20 && nm[k] < 0x7f) ? nm[k] : ' ';
+    *p++ = g->dev[0][0];                                      /* the devices */
+    *p++ = g->dev[0][1];
+    *p++ = ' ';
+    *p++ = g->dev[1][0];
+    *p++ = g->dev[1][1];
     *p = 0;
     lp_text(x0 + 5, top + 3, t, MC_BLACK, 1);
     p = t;
@@ -666,7 +670,7 @@ static void mcl_grid_draw(int x0, const struct bb_grid *g)
     } else {                                                  /* stopped: a square */
         lp_box(x0 + MCL_W - 12, top + 4, 6, 6, MC_BLACK);
     }
-    p = t;                                                    /* the tempo line: 125.0 BPM, the devices */
+    p = t;                                                    /* the tempo line: 125.0 BPM, and the cursor's row name big and bold on the right */
     p = put_uint(p, g->tempo10 / 10u);
     *p++ = '.';
     *p++ = (char)('0' + g->tempo10 % 10u);
@@ -674,14 +678,21 @@ static void mcl_grid_draw(int x0, const struct bb_grid *g)
     lp_text(x0 + 6, top + 16, t, MC_WHITE, 2);
     int bx = x0 + 6 + (int)(p - t) * 12 + 4;
     lp_text(bx, top + 23, "BPM", MC_GREY, 1);
-    p = t;
-    *p++ = g->dev[0][0];
-    *p++ = g->dev[0][1];
-    *p++ = ' ';
-    *p++ = g->dev[1][0];
-    *p++ = g->dev[1][1];
-    *p = 0;
-    lp_text(x0 + MCL_W - 6 - 5 * 6, top + 23, t, MC_GREY, 1);
+    const char *nm = g->rowname[g->cur_row];
+    char name[12];
+    int k = 0;
+    for (; k < 10 && nm[k]; k++)
+        name[k] = (nm[k] >= 0x20 && nm[k] < 0x7f) ? nm[k] : ' ';
+    while (k > 0 && name[k - 1] == ' ')
+        k--;
+    name[k] = 0;
+    const char *show = k ? name : rowid;                      /* (no name: the row's number) */
+    int len = 0;
+    while (show[len])
+        len++;
+    int nx = x0 + MCL_W - 6 - len * 12;
+    lp_text(nx, top + 16, show, MC_WHITE, 2);
+    lp_text(nx + 1, top + 16, show, MC_WHITE, 2);             /* (bold: twice, one pixel apart) */
     dots_h(x0 + 3, top + GR_TOP - 3, MCL_W - 6, MC_WHITE);
     int gx = x0 + GR_X;
     for (int k = 0; k < 16; k++) {                            /* the track numbers, centred over their 12 px labels */
