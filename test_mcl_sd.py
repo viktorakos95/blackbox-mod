@@ -46,6 +46,11 @@ s, j1, j2 = (h1 >> 10) & 1, (h2 >> 13) & 1, (h2 >> 11) & 1
 off = (s << 24) | ((1 - (j1 ^ s)) << 23) | ((1 - (j2 ^ s)) << 22) | ((h1 & 0x3FF) << 12) | ((h2 & 0x7FF) << 1)
 off -= (1 << 25) if s else 0
 check("the streamer loop's queue call goes to mcl_sd_pump (and only those four bytes of the loop changed)", 0x80743E8 + 4 + off == b["mcl_sd_pump"] & ~1 and img[0x80743EC - BASE:0x80743F4 - BASE] == stock[0x80743EC - BASE:0x80743F4 - BASE])
+h1, h2 = struct.unpack("<HH", img[0x807443E - BASE:0x807443E - BASE + 4])
+s_, j1, j2 = (h1 >> 10) & 1, (h2 >> 13) & 1, (h2 >> 11) & 1
+off2 = (s_ << 24) | ((1 - (j1 ^ s_)) << 23) | ((1 - (j2 ^ s_)) << 22) | ((h1 & 0x3FF) << 12) | ((h2 & 0x7FF) << 1)
+off2 -= (1 << 25) if s_ else 0
+check("... and the call at the end of each pass of its inner work loop (0x0807443e) goes to mcl_sd_inner", 0x807443E + 4 + off2 == b["mcl_sd_inner"] & ~1, hex(0x807443E + 4 + off2))
 
 # ---- the rig: the unit's image with the blob, a FAT image behind the stock FatFs
 os.makedirs("out/sd", exist_ok=True)
@@ -87,17 +92,19 @@ REGS = [UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_R
 serviced = [0]
 stream_stack = STACK - 0x8000
 pump_calls = [0]
+SERVE = {"inner": False}                                           # True: the streamer is busy in its inner work loop (sequences playing): only mcl_sd_inner runs
 
 
 def service():
-    """the streamer's loop iteration: the patched call runs mcl_sd_pump (service, then the stock queue take)"""
+    """the streamer's loop iteration: the patched call runs mcl_sd_pump (service, then the stock queue take); while it streams, mcl_sd_inner instead"""
     saved = [uc.reg_read(r) for r in REGS]
-    for r, v in zip((UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3), (0x24060000, 0, 0, 0)):
+    args = (0x2401F508, 0, 0, 0) if SERVE["inner"] else (0x24060000, 0, 0, 0)
+    for r, v in zip((UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3), args):
         uc.reg_write(r, v)
     uc.reg_write(UC_ARM_REG_SP, stream_stack)
     uc.reg_write(UC_ARM_REG_LR, RET | 1)
     pump_calls[0] += 1
-    uc.emu_start(b["mcl_sd_pump"] | 1, RET, count=50_000_000)
+    uc.emu_start(b["mcl_sd_inner" if SERVE["inner"] else "mcl_sd_pump"] | 1, RET, count=50_000_000)
     for r, v in zip(REGS, saved):
         uc.reg_write(r, v)
 
@@ -341,6 +348,14 @@ out = subprocess.run(["mcopy", "-i", "out/sd/after.img", "::/Mcl/hello.txt", "-"
 check("the file that was already on the card is untouched", out == b"hello from the card\n" * 50)
 ls = subprocess.run(["mdir", "-i", "out/sd/after.img", "::/Mcl"], capture_output=True, text=True).stdout
 check("long file names are real long names for mtools too", "Project059.mcl" in ls, ls[-200:])
+
+# ---- while sequences stream: the streamer stays in its inner work loop; requests are served there (mcl_sd_inner) and still complete
+SERVE["inner"] = True
+uc.mem_write(0x2401F508 + 0x120, bytes(8))                        # (its message ring empty: the stock call returns at once)
+n0 = pump_calls[0]
+ok_inner = gui("bb_sd_stat", path("/Mcl/hello.txt"), ent) == 0 and struct.unpack("<Q", bytes(uc.mem_read(ent, 8)))[0] == 1000
+check("a request while the streamer is busy in its inner loop (only mcl_sd_inner runs): served, stat gives 1000", ok_inner and pump_calls[0] > n0, (ok_inner, pump_calls[0] - n0))
+SERVE["inner"] = False
 
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

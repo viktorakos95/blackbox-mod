@@ -102,12 +102,13 @@ struct mcl_entry {
     uint32_t (*grid)(struct bb_grid *);  /* abi 6: MCL's grid page as data (mcl_bb/bb_grid.h), 0 while another page shows */
     uint32_t (*mixer)(struct bb_mixer *); /* abi 6: its mixer page as data, likewise */
     struct bb_player *(*player)(void);   /* abi 7: the SAMPLE button's file player (mcl_bb/bb_grid.h) */
+    uint32_t (*menu)(struct bb_menu *);  /* abi 8: the menu MCL's current frame shows (mcl_bb/bb_grid.h), 0 none */
 };
 const volatile uint32_t mcl_entry = 0;
 static const struct mcl_entry *mcl_image(void)       /* the blob, whether or not it runs */
 {
     const struct mcl_entry *e = (const struct mcl_entry *)mcl_entry;
-    return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 7 ? e : 0;
+    return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 8 ? e : 0;
 }
 static const struct mcl_entry *mcl_blob(void) { return mcl_image(); }
 #define MCL_RAM     0xc3f80000u  /* the blob's SDRAM region (src/mcl_bb/mcl_blob.ld): .data, .bss, heap, its task's stack */
@@ -565,6 +566,23 @@ static void sc_icon(int i, int x, int d)
     }
 }
 
+/* The Blackbox's transport for MCL, once a block from the looper's Out 1 stage: the stock clock object (the stage's context, bufs[0]) runs
+ * while its byte +0x38 is set (its per-block advance, 0x080696d8, returns at once otherwise; its stop, 0x08069a94, clears it) and its tempo is
+ * the float at +0x18 (as the looper reads it). Without a sequence playing there are no seqfix stamps to follow, so MCL runs its own clock at
+ * this tempo while this says running (bb_mcl.cpp xport_follow). Backup SRAM 0x38800674: {block count, running, tempo}. */
+#define XPORT ((volatile uint32_t *)0x38800674u)
+void mcl_xport_block(void *bufs)
+{
+    uint32_t ctx = ((uint32_t *)bufs)[0];
+    if (ctx < 0x20000000u || ctx >= 0x40000000u || (ctx & 3))
+        return;
+    float b = *(volatile float *)(ctx + 0x18);
+    uint32_t bpm10 = b >= 20.f && b <= 400.f ? (uint32_t)(b * 10.f + .5f) : 0u;
+    bkp_enable();
+    XPORT[1] = (*(volatile uint8_t *)(ctx + 0x38) ? 1u : 0u) | bpm10 << 8;
+    XPORT[0] = XPORT[0] + 1u;
+}
+
 /* The SAMPLE button's file player (abi 7), from the looper's Out 1 stage (looper_stage), once a block: the ring MCL's task fills (16-bit stereo
  * frames at the file's rate) onto Out 3 at 48 kHz, linear interpolation, added to whatever plays there. Ends by itself at the file's end;
  * an empty ring (the card too slow for a moment) is silence, not a stop. */
@@ -719,8 +737,8 @@ static void mcl_grid_draw(int x0, const struct bb_grid *g)
             } else {
                 lp_text(cx + 1, d, lab, empty ? MC_GREY : MC_WHITE, 1);
             }
-            if (g->active[k] == g->base_row + r && !empty)    /* the slot playing on this track */
-                lp_box(cx, d + 10, 12, 1, sel ? MC_BLACK : MC_WHITE);
+            if (g->active[k] == g->base_row + r && !empty)    /* the slot playing on this track: a box around it */
+                lp_frame(cx - 2, d - 3, 16, 14, sel ? MC_BLACK : MC_WHITE, 1);
         }
     }
 }
@@ -793,6 +811,52 @@ static void mcl_mixer_draw(int x0, const struct bb_mixer *m)
     }
 }
 
+/* MCL's menus at full resolution (abi 8): rows of name (left) and value (right), the selected one inverted, a scroll bar when they do not all fit.
+ * A menu page fills the screen area under a title bar; the grid's slot menu is a panel over the left of the grid. */
+#define MN_ROW 12
+static void mcl_menu_rows(int x, int d, int w, int rows, const struct bb_menu *m)
+{
+    int first = m->cursor >= rows ? m->cursor - rows + 1 : 0;
+    if (first + rows > m->count)
+        first = m->count > rows ? m->count - rows : 0;
+    for (int i = 0; i < rows && first + i < m->count; i++) {
+        int k = first + i, yy = d + i * MN_ROW, sel = k == m->cursor;
+        if (sel)
+            lp_box(x, yy - 2, w - (m->count > rows ? 5 : 0), MN_ROW, MC_WHITE);
+        int col = sel ? MC_BLACK : MC_WHITE;
+        lp_text(x + 3, yy, m->name[k], col, 1);
+        int vl = 0;
+        while (m->value[k][vl])
+            vl++;
+        if (vl)
+            lp_text(x + w - (m->count > rows ? 8 : 3) - vl * 6, yy, m->value[k], sel ? MC_BLACK : MC_GREY, 1);
+    }
+    if (m->count > rows) {                                    /* the scroll bar */
+        int bh = rows * MN_ROW, th = bh * rows / m->count;
+        if (th < 6)
+            th = 6;
+        lp_box(x + w - 3, d - 2, 2, bh, MC_EDGE);
+        lp_box(x + w - 3, d - 2 + (bh - th) * first / (m->count - rows), 2, th, MC_WHITE);
+    }
+}
+
+static void mcl_menu_page(int x0, const struct bb_menu *m)
+{
+    int top = MCL_TOP;
+    lp_frame(x0, top, MCL_W, MCL_H, MC_WHITE, 1);
+    lp_box(x0 + 1, top + 1, MCL_W - 2, 12, MC_WHITE);
+    lp_text(x0 + 5, top + 3, m->title, MC_BLACK, 1);
+    mcl_menu_rows(x0 + 4, top + 18, MCL_W - 8, (MCL_H - 22) / MN_ROW, m);
+}
+
+static void mcl_menu_panel(int x0, const struct bb_menu *m)
+{
+    int top = MCL_TOP, pw = 136, ph = MCL_H - 14, py = top + 13;
+    lp_box(x0 + 1, py, pw, ph, MC_BLACK);                     /* (from the frame's inside edge: nothing of the grid peeks out on the left) */
+    lp_frame(x0 + 1, py, pw, ph, MC_WHITE, 1);
+    mcl_menu_rows(x0 + 3, py + 6, pw - 4, (ph - 9) / MN_ROW, m);
+}
+
 void mcl_page_draw(int w, int foot_y)
 {
     const struct mcl_entry *e = mcl_blob();
@@ -806,10 +870,15 @@ void mcl_page_draw(int w, int foot_y)
     text_15(nx + LOGO_W + 6, MCL_WIN_Y + 3, "MACHINEDRUM", MC_WHITE);
     struct bb_grid gd;
     struct bb_mixer md;
+    struct bb_menu mn;
     if (!fb) {
         lp_text_c(x0, MCL_TOP + MCL_H / 2 - 4, MCL_W, mcl_image() ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", MC_WHITE, 1);
+    } else if (e->abi >= 8 && e->menu(&mn) && mn.kind == 0) {
+        mcl_menu_page(x0, &mn);                               /* a menu page of MCL's: drawn here at full resolution */
     } else if (e->abi >= 6 && e->grid(&gd)) {
         mcl_grid_draw(x0, &gd);                               /* MCL's grid page: drawn here at full resolution */
+        if (e->abi >= 8 && e->menu(&mn) && mn.kind == 1)
+            mcl_menu_panel(x0, &mn);                          /* ... with its slot menu over it */
     } else if (e->abi >= 6 && e->mixer(&md)) {
         mcl_mixer_draw(x0, &md);                              /* its mixer, likewise */
     } else {

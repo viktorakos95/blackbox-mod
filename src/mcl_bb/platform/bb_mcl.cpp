@@ -22,6 +22,8 @@
 #include "GUI/Pages/Grid/GridPages.h"
 #include "Devices/DeviceManager.h"
 #include "bb_grid.h"
+#include "MenuPage.h"
+#include "GUI/MCLMenus.h"
 #include "GUI/Pages/CommonPages.h"
 #include "Drivers/MD/UI/Pages/RAMPage.h"
 #include "Sequencer/BeatRepeat.h"
@@ -63,9 +65,81 @@ static uint8_t front[OLED_WIDTH * OLED_HEIGHT / 8];
 
 /* ---- the screen ---- */
 extern "C" void __real__ZN4Oled7displayEv(Oled *self);
+/* ---- MCL's menus as data (bb_grid.h struct bb_menu): MenuPageBase::draw_menu is wrapped at link time; what it drew is published with the
+ * frame (Oled::display below), so the page knows the menu is on the screen MCL shows now. ---- */
+static struct bb_menu menu_pending, menu_shown;
+static uint8_t menu_value_from_stored(uint8_t *dest_var, uint8_t stored_value)    /* (as MenuPage.cpp's, which is not reachable from here) */
+{
+    if (dest_var == &mcl_cfg.uart2_poly_chan)
+        return stored_value == MIDI_LOCAL_MODE ? MD_POLY_MODE_INT : MD_POLY_MODE_INT_EXT;
+    return stored_value;
+}
+struct MenuPeek : MenuPageBase {                                     /* (get_menu is protected: read through a derived view) */
+    MenuBase *m() { return get_menu(); }
+};
+extern "C" uint8_t __real__ZN12MenuPageBase9draw_menuEhhhh(MenuPageBase *self, uint8_t x, uint8_t y, uint8_t w, uint8_t sb);
+extern "C" uint8_t __wrap__ZN12MenuPageBase9draw_menuEhhhh(MenuPageBase *self, uint8_t x, uint8_t y, uint8_t w, uint8_t sb)
+{
+    uint8_t n = __real__ZN12MenuPageBase9draw_menuEhhhh(self, x, y, w, sb);
+    MenuBase *m = ((MenuPeek *)self)->m();
+    struct bb_menu *c = &menu_pending;
+    c->kind = (void *)self == (void *)&grid_slot_page ? 1 : 0;
+    c->count = n > BB_MENU_MAX ? BB_MENU_MAX : n;
+    c->cursor = (uint8_t)self->encoders[1]->cur;
+    const char *t = m->get_name();
+    uint32_t k = 0;
+    for (; t && t[k] && k < 10; k++)
+        c->title[k] = t[k];
+    c->title[k] = 0;
+    for (uint8_t i = 0; i < c->count; i++) {
+        const menu_item_t *it = m->get_item(i);
+        c->name[i][0] = c->value[i][0] = 0;
+        if (!it)
+            continue;
+        for (k = 0; k < 14 && it->name[k]; k++)
+            c->name[i][k] = it->name[k];
+        c->name[i][k] = 0;
+        if (it->range > 0) {
+            uint8_t *pd = m->get_dest_variable(it);
+            uint8_t v = pd ? menu_value_from_stored(pd, *pd) : 0;
+            const char *on = m->get_option_name(it, v);
+            char *p = c->value[i];
+            if (on) {
+                for (k = 0; k < 9 && on[k]; k++)
+                    p[k] = on[k];
+                p[k] = 0;
+            } else {
+                char d[4];
+                int nd = 0;
+                do {
+                    d[nd++] = (char)('0' + v % 10);
+                    v /= 10;
+                } while (v && nd < 3);
+                while (nd)
+                    *p++ = d[--nd];
+                if (it->options_begin == MENU_OPTIONS_PERCENT)
+                    *p++ = '%';
+                *p = 0;
+            }
+        }
+    }
+    c->valid = 1;
+    return n;
+}
+
+HOOK uint32_t bb_mcl_menu(struct bb_menu *out)
+{
+    if (!menu_shown.valid)
+        return 0;
+    *out = menu_shown;
+    return 1;
+}
+
 extern "C" void __wrap__ZN4Oled7displayEv(Oled *self)
 {
     __real__ZN4Oled7displayEv(self);                               /* (draws the text box overlay into the buffer) */
+    menu_shown = menu_pending;                                       /* the menu drawn in this frame (valid 0: none) */
+    menu_pending.valid = 0;
     const uint8_t *src = self->getBuffer();
     for (unsigned i = 0; i < sizeof front; i++)
         front[i] = src[i];
@@ -466,6 +540,57 @@ HOOK void bb_player_open_req(const char *name)
 }
 HOOK int bb_player_open_res(void) { return open_res; }
 
+/* ---- following the Blackbox without a sequence. MCL follows the stock sequencer's time (seqfix.c's stamps), which only exists while a sequence
+ * plays: with none selected the transport ran and MCL stood still (user). The cave publishes the stock clock's running flag and tempo once a
+ * block (cpu.c mcl_xport_block, 0x38800674); while it runs and no stamps come, MCL runs its own clock at that tempo (FA, its own transport,
+ * the Machinedrum), follows the tempo, stops with it (FC), and hands back to the stamps as soon as a sequence plays. ---- */
+#define XPORT ((volatile uint32_t *)0x38800674u)
+#define SQ_VER (*(volatile uint32_t *)0x38800660u)
+static uint8_t free_run;
+static uint32_t xp_count, xp_t, sq_ver_seen, sq_t, run_since, free_bpm;
+
+static void xport_follow(void)
+{
+    uint32_t now = millis();
+    uint32_t c = XPORT[0], w = XPORT[1];
+    if (c != xp_count) {
+        xp_count = c;
+        xp_t = now;
+    }
+    int fresh = now - xp_t < 100u;                              /* (the audio stage stopped writing: treat as stopped) */
+    int running = fresh && (w & 1u);
+    uint32_t bpm10 = w >> 8;
+    uint32_t v = SQ_VER;
+    if (v != sq_ver_seen) {
+        sq_ver_seen = v;
+        sq_t = now;
+    }
+    int stamps = now - sq_t < 150u;                             /* a sequence is playing: the stamps lead */
+    if (!free_run) {
+        if (running && !stamps && bpm10) {
+            if (!run_since)
+                run_since = now | 1u;
+            else if (now - run_since > 60u) {                   /* (a sequence starting gives its first stamps within a block or two) */
+                bb_clock_start(bpm10, 1);
+                free_run = 1;
+                free_bpm = bpm10;
+            }
+        } else {
+            run_since = 0;
+        }
+        return;
+    }
+    if (!running || stamps) {
+        bb_clock_stop(!stamps);                                 /* (stopped: FC; a sequence took over: its own start follows) */
+        bb_clock_sync_seq();
+        free_run = 0;
+        run_since = 0;
+    } else if (bpm10 && bpm10 != free_bpm) {
+        bb_clock_tempo(bpm10);
+        free_bpm = bpm10;
+    }
+}
+
 static void cable_loop(void)
 {
     if (open_req) {
@@ -512,7 +637,7 @@ HOOK uint32_t bb_mcl_shortcut_now(void)
 /* the grid page as data (abi 6): 0 unless MCL shows its grid page (and not its slot menu, which draws over it) */
 HOOK uint32_t bb_mcl_grid(struct bb_grid *g)
 {
-    if (mcl.currentPage() != GRID_PAGE || grid_page.show_slot_menu || grid_page.bank_popup)
+    if (mcl.currentPage() != GRID_PAGE || grid_page.bank_popup)
         return 0;
     GridPage &p = grid_page;
     uint32_t col = p.getCol(), row = p.getRow();
@@ -657,6 +782,7 @@ static void mcl_task(void *)
         md_follow_blackbox();
         shortcut_apply();
         cable_loop();
+        xport_follow();
         if (!bb_midi_owner())
             bb_midi_claim(1);                                      /* (still waiting for an idle moment of the stock transmitter) */
         bb_sleep_ms(1);

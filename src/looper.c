@@ -2451,6 +2451,7 @@ void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, in
  * obj is the compressor stage object; its output index names the Out 1 bus, as in comp_process (comp.c). */
 void lira_page_run(float *l, float *r, int n);
 int mcl_player_active(void);                     /* src/cpu.c: MCL's SAMPLE button's file player */
+void mcl_xport_block(void *bufs);                /* src/cpu.c: the transport for MCL */
 void mcl_player_mix(float *l, float *r, int n);
 
 /* The bus an engine plays on (LOOPER_O_DOUT / SOUT): Out 1 is the stage's own (l, r); Out 2 and Out 3 are the stock buses 1 and 2, which the
@@ -2487,6 +2488,7 @@ void looper_stage(uint8_t *obj, void *bufs)
     fw_stereo(buf, &l, &r);
     if (l && r && n > 0) {
         read_bpm(bufs);
+        mcl_xport_block(bufs);                     /* the transport for MCL (src/cpu.c) */
         uint32_t c_in = *(volatile uint32_t *)0xe0001004u, pre = c_in - *(volatile uint32_t *)0x2405ffd4u;   /* (cycles since the wake-up: stock voices, effects, synths) */
         crash_tick();
         guard_stage(DSP(), c_in, n);

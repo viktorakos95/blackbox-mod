@@ -48,3 +48,17 @@ struct bb_player {
     float gain;
     int16_t *ring;                     /* BB_PLAYER_RING x {left, right} */
 };
+
+/* MCL's menus as data (abi 8, menu()): what MCL's last frame drew with MenuPageBase::draw_menu (captured by a link-time wrapper), for the
+ * page to draw sharp: a whole menu page as a list, the grid's slot menu as a panel over the grid. */
+#define BB_MENU_MAX 24
+struct bb_menu {
+    uint8_t valid;                     /* the last frame MCL showed drew this menu */
+    uint8_t kind;                      /* 0 a menu page, 1 the grid's slot menu */
+    uint8_t count;                     /* items (at most BB_MENU_MAX kept) */
+    uint8_t cursor;                    /* the selected item */
+    char title[11];
+    uint8_t _r;
+    char name[BB_MENU_MAX][15];
+    char value[BB_MENU_MAX][10];       /* "" when the item has no value */
+};

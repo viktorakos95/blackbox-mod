@@ -32,6 +32,7 @@ __attribute__((weak)) uint32_t bb_mcl_shortcut_now(void) { return 255; }
 __attribute__((weak)) uint32_t bb_mcl_grid(struct bb_grid *) { return 0; }
 __attribute__((weak)) uint32_t bb_mcl_mixer(struct bb_mixer *) { return 0; }
 __attribute__((weak)) struct bb_player *bb_player(void) { return 0; }
+__attribute__((weak)) uint32_t bb_mcl_menu(struct bb_menu *) { return 0; }
 }
 
 extern "C" {
@@ -436,6 +437,7 @@ struct mcl_entry {
     uint32_t (*grid)(struct bb_grid *);               /* abi 6: MCL's grid page as data (bb_grid.h), 0 while another page shows */
     uint32_t (*mixer)(struct bb_mixer *);             /* abi 6: its mixer page as data, likewise */
     struct bb_player *(*player)(void);                /* abi 7: the SAMPLE button's file player (bb_grid.h); 0 while the runtime is not up */
+    uint32_t (*menu)(struct bb_menu *);               /* abi 8: the menu MCL's current frame shows (bb_grid.h), 0 none */
 };
 static int ready(void)
 {
@@ -448,6 +450,7 @@ static const uint8_t *page_fb(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl
 static uint32_t page_grid(struct bb_grid *g) { return ready() && mcl_drawn() ? bb_mcl_grid(g) : 0u; }
 static uint32_t page_mixer(struct bb_mixer *m) { return ready() && mcl_drawn() ? bb_mcl_mixer(m) : 0u; }
 static struct bb_player *page_player(void) { return ready() ? bb_player() : 0; }
+static uint32_t page_menu(struct bb_menu *m) { return ready() && mcl_drawn() ? bb_mcl_menu(m) : 0u; }
 static uint32_t page_sig(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_frames() * 2654435761u + 1u : bb_ui_sig(); }
 /* The page's clock (abi 5): kind 4 = the source a (0 the Blackbox's sequencer, 1 MCL's own tempo running, 2 MCL's own tempo stopped) at tempo b,
  * kind 5 = the own tempo b (1/10 BPM). MCL hears start / stop through bb_clock's transport hook, as from the sequencer. */
@@ -508,4 +511,4 @@ static uint32_t page_midi(uint32_t which)
 #else
 #define COMPACT 0u
 #endif
-extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 7, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input, page_midi, page_grid, page_mixer, page_player};
+extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 8, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input, page_midi, page_grid, page_mixer, page_player, page_menu};

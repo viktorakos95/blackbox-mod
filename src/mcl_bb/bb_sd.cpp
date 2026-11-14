@@ -185,6 +185,16 @@ HOOK uint32_t mcl_sd_pump(uint32_t queue, uint32_t item, uint32_t ticks, uint32_
     return stock(Q_RECEIVE, queue, item, ticks, peek);
 }
 
+/* Replaces the call at the end of each pass of the streamer's inner work loop (bl 0x08092f5c @0x0807443e, the message ring of 0x2401f508).
+ * That loop keeps running while any of its work rings has entries, which is all the time while sequences stream their samples: the loop's top,
+ * where mcl_sd_pump is, was not reached for long stretches, and MCL's file requests waited until they timed out (user: the sample browser's
+ * folders would not open and a WAV read as "not a WAV" while a sequence played). A pass ends between two stock FatFs operations. */
+HOOK void mcl_sd_inner(void *obj)
+{
+    bb_sd_service();
+    ((void (*)(void *))0x08092f5du)(obj);
+}
+
 /* ---- the GUI side ---- */
 /* Gives the processor to the other ready tasks of the same priority (pends PendSV, the kernel's yield). The wait used to sleep on a semaphore; a yield needs no
  * kernel object from the stock heap, which has nothing to spare (docs/mcl-m0-m1-results.md, M8). */

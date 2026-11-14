@@ -10,4 +10,6 @@ from thumb import ROOT, bl, symbols
 bsym = symbols(os.path.join(ROOT, "out", "mcl.elf"))
 PATCHES = [
     (0x080743E8, bl(0x080743E8, 0x08088756), bl(0x080743E8, bsym["mcl_sd_pump"])),
+    # ... and once a pass of its inner work loop, which runs without a break while sequences stream (the top above is not reached then)
+    (0x0807443E, bl(0x0807443E, 0x08092F5C), bl(0x0807443E, bsym["mcl_sd_inner"])),
 ]

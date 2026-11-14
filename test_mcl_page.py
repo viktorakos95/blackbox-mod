@@ -120,14 +120,33 @@ def mixer_fn():
 fn("mixer", mixer_fn)
 PLAYER, PRING = 0x24076000, 0x24076100
 fn("player", lambda: e.ret(PLAYER))
+MENU = {"on": False, "kind": 0, "cursor": 2}
+MITEMS = [("TURBO", "4X"), ("CLOCK SEND", "OFF"), ("CLOCK RECV", "INT"), ("PROGRAM", "ON"), ("FORWARD", "OFF"), ("MD CTRL", "10"),
+          ("POLY", "INT"), ("ROLL MUTE", "ON"), ("LOAD", ""), ("SAVE", ""), ("MANUAL", "OFF"), ("TRIPLETS", "ON")]
+
+
+def menu_data():
+    b = struct.pack("<BBBB", 1, MENU["kind"], len(MITEMS), MENU["cursor"]) + b"SYSTEM".ljust(11, b"\0") + b"\0"
+    names = b"".join(n.encode().ljust(15, b"\0") for n, _ in MITEMS).ljust(24 * 15, b"\0")
+    vals = b"".join(v.encode().ljust(10, b"\0") for _, v in MITEMS).ljust(24 * 10, b"\0")
+    return b + names + vals
+
+
+def menu_fn():
+    if MENU["on"]:
+        u.mem_write(e.arg(0), menu_data())
+    e.ret(1 if MENU["on"] else 0)
+
+
+fn("menu", menu_fn)
 
 
 def entry(abi):
-    u.mem_write(ENTRY, struct.pack("<13I", 0x424C434D, abi, fns["boot"], fns["status"], fns["gui"], 0, fns["fb"], fns["sig"], fns["input"], fns["midi"], fns["grid"], fns["mixer"], fns["player"]))
+    u.mem_write(ENTRY, struct.pack("<14I", 0x424C434D, abi, fns["boot"], fns["status"], fns["gui"], 0, fns["fb"], fns["sig"], fns["input"], fns["midi"], fns["grid"], fns["mixer"], fns["player"], fns["menu"]))
     e.w32(e.sym["mcl_entry"], ENTRY)
 
 
-entry(7)
+entry(8)
 
 # MCL's screen: a test picture (a frame, a filled block, a diagonal, a row of single pixels)
 pic = [[0] * 128 for _ in range(64)]
@@ -374,8 +393,8 @@ check("... all 16 tracks x 4 rows of labels, in their columns", len(cells) == 64
 check("... the cursor and its selection (tracks 3-4, row 2) inverted: black text, the rest white, empty slots grey",
       cells[(2, 1)][1] == 0x0E and cells[(3, 1)][1] == 0x0E and cells[(4, 1)][1] == 0x0F and cells[(11 - 1, 1)][1] in (0x0F, 0x09) and
       all(cells[(k, rr)][1] == 0x09 for k in range(16) for rr in range(4) if cells[(k, rr)][0] == "--" and not (rr == 1 and k in (2, 3))), [cells[(k, 1)] for k in range(2, 5)])
-under = sorted((next(k for k in range(16) if CX(k) <= r[1] < CX(k) + 15), (r[2] - (TOP + 35 + 13 + 10)) // 20) for r in c if r[0] == "lp_box" and r[3] == 12 and r[4] == 1 and TOP + 40 < r[2] < TOP + 128)
-check("... the playing slots underlined: tracks 1, 2 on row 2 (A06), track 3 on row 3 (A07)", under == [(0, 1), (1, 1), (2, 2)], under)
+under = sorted((next(k for k in range(16) if CX(k) <= r[1] + 2 < CX(k) + 15), (r[2] + 3 - (TOP + 35 + 13)) // 20) for r in c if r[0] == "lp_frame" and r[3] == 16 and r[4] == 14 and TOP + 40 < r[2] < TOP + 128)
+check("... the playing slots boxed: tracks 1, 2 on row 2 (A06), track 3 on row 3 (A07)", under == [(0, 1), (1, 1), (2, 2)], under)
 divs = sorted({r[1] for r in c if r[0] == "lp_box" and r[3] == 1 and r[4] == 1 and TOP + 60 < r[2] < TOP + 120 and x0 < r[1] < x0 + 255})
 check("... the three dotted dividers sit 2+ px clear of the labels either side", len(divs) == 3 and all(CX(4 * g) - 1 - (CX(4 * g - 1) + 12) >= 2 and CX(4 * g) + 1 - d >= 2 and d - (CX(4 * g - 1) + 12) >= 1 for g, d in zip((1, 2, 3), divs)), divs)
 check("... everything inside the 256 x 128 screen area", all(x0 <= r[1] and r[1] + len(r[3]) * 6 * r[5] <= x0 + 256 and TOP <= r[2] <= TOP + 128 - 8 for r in lt),
@@ -440,6 +459,49 @@ player(0, 64, 0, 64, 0, 65536)
 e.call("mcl_player_active")
 check("... mcl_player_active: 0 while stopped", u.reg_read(UC_ARM_REG_R0) == 0)
 
+# --- the transport for MCL (cpu.c mcl_xport_block): the stock clock object's running byte (+0x38) and tempo (+0x18), with a block count
+CTX, BUFS = 0x24075000, 0x24075800
+u.mem_write(CTX, bytes(0x40))
+u.mem_write(CTX + 0x18, struct.pack("<f", 125.4))
+u.mem_write(CTX + 0x38, b"\x01")
+u.mem_write(BUFS, struct.pack("<I", CTX))
+u.mem_write(0x38800674, bytes(8))
+e.call("mcl_xport_block", BUFS)
+e.call("mcl_xport_block", BUFS)
+xc, xw = struct.unpack("<II", bytes(u.mem_read(0x38800674, 8)))
+check("transport: two blocks counted, running, 125.4 BPM (1254 in 1/10)", xc == 2 and xw & 1 and xw >> 8 == 1254, (xc, hex(xw)))
+u.mem_write(CTX + 0x38, b"\x00")
+e.call("mcl_xport_block", BUFS)
+xc, xw = struct.unpack("<II", bytes(u.mem_read(0x38800674, 8)))
+check("... stopped: the running bit clears", xc == 3 and not xw & 1, (xc, hex(xw)))
+u.mem_write(BUFS, struct.pack("<I", 0x12345))
+e.call("mcl_xport_block", BUFS)
+check("... a context that is not RAM: nothing written", struct.unpack("<I", bytes(u.mem_read(0x38800674, 4)))[0] == 3)
+
+
+# --- MCL's menus at full resolution (abi 8): a menu page as a list; the grid's slot menu as a panel over the grid
+MENU.update(on=True, kind=0, cursor=10)
+c = page_part(draw())
+_menu_pic = draw()
+lt = [r for r in c if r[0] == "lp_text"]
+words = [r[3] for r in lt]
+rows = (128 - 22) // 12
+check("menu page: the title in the bar, %d rows that fit, scrolled so the selected item (11, MANUAL) shows" % rows,
+      "SYSTEM" in words and "MANUAL" in words and "TURBO" not in words and len([w for w in words if w in [n for n, _ in MITEMS]]) == rows, words[:6])
+sel = [r for r in lt if r[3] == "MANUAL"][0]
+check("... the selected item inverted (black text on a white bar), its value too", sel[4] == 0x0E and [r for r in lt if r[3] == "OFF" and r[2] == sel[2]][0][4] == 0x0E)
+check("... values right-aligned in grey, no 2x picture", [r for r in lt if r[3] == "ON" and r[2] != sel[2]][0][4] == 0x09 and not [r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128])
+MENU.update(kind=1, cursor=0)
+GRID["on"] = True
+c = page_part(draw())
+_panel_pic = draw()
+GRID["on"] = False
+MENU["on"] = False
+lt = [r for r in c if r[0] == "lp_text"]
+words = [r[3] for r in lt]
+check("slot menu: the grid drawn sharp, the menu over its left side (TURBO selected, inverted)", "GRID X  A06  MD MI" in words and [r for r in lt if r[3] == "TURBO"][0][4] == 0x0E, words[:5])
+MENU_PREVIEW, PANEL_PREVIEW = _menu_pic, _panel_pic
+
 # --- the footer line: no buttons
 check("taps on the footer line do nothing", touch(30, FOOT + 6) == ([], []) and touch(W // 2, FOOT + 6) == ([], []) and touch(W - 30, FOOT + 6) == ([], []))
 
@@ -493,6 +555,8 @@ preview("out/mcl_page.png", draw())
 state["page"] = 255
 preview("out/mcl_grid.png", GRID_PREVIEW)
 preview("out/mcl_mixer.png", MIXER_PREVIEW)
+preview("out/mcl_menu.png", MENU_PREVIEW)
+preview("out/mcl_slotmenu.png", PANEL_PREVIEW)
 
 # --- an older blob (abi 4): the same panel, no shortcuts, no clock: the footer says what the knobs are
 entry(4)

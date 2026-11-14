@@ -231,6 +231,59 @@ check("... pressed again: listening on (and again: off)", l0 == 0 and l1 == 1, (
 shortcut(5)
 shortcut(4)
 check("... leaving the browser ends cable mode", c.uc.mem_read(c.b["bb_cable_mode"], 1)[0] == 0)
+# ---- following the Blackbox without a sequence (bb_mcl.cpp xport_follow, from cpu.c's published transport)
+XP = 0x38800674
+xp_n = [100]
+
+
+def xport(run, bpm10, ms=10):
+    for _ in range(ms):
+        xp_n[0] += 1
+        c.uc.mem_write(XP, struct.pack("<II", xp_n[0], (1 if run else 0) | bpm10 << 8))
+        c.step(3_000_000)
+        c.tick(1)
+
+
+xport(False, 1250, 30)
+r0 = c.call("bb_clock_running")
+xport(True, 1250, 150)
+r1, b1 = c.call("bb_clock_running"), c.call("bb_clock_bpm_x10")
+check("the Blackbox runs without a sequence: MCL's clock runs at its tempo (125.0)", r0 == 0 and r1 == 1 and abs(b1 - 1250) <= 2, (r0, r1, b1))
+xport(True, 1300, 60)
+check("... follows its tempo (130.0)", abs(c.call("bb_clock_bpm_x10") - 1300) <= 2, c.call("bb_clock_bpm_x10"))
+xport(False, 1300, 60)
+check("... stops with it (and follows the stamps again: listening)", c.call("bb_clock_running") == 0 and c.call("bb_clock_sync_state") == 1, (c.call("bb_clock_running"), c.call("bb_clock_sync_state")))
+xport(True, 1250, 150)
+ver = struct.unpack("<I", bytes(c.uc.mem_read(0x38800660, 4)))[0]
+for k in range(40):
+    c.uc.mem_write(0x38800660, struct.pack("<I", ver + 2 * (k + 1)))
+    xport(True, 1250, 2)
+check("... a sequence starts (stamps arrive): MCL hands back to following them", c.call("bb_clock_sync_state") != 0, c.call("bb_clock_sync_state"))
+xport(False, 1250, 30)
+for _ in range(200):
+    c.step(3_000_000)
+    c.tick(1)
+check("... the published transport stops coming (the audio stage stopped): treated as stopped", c.call("bb_clock_running") == 0, c.call("bb_clock_running"))
+
+# ---- MCL's menus as data (abi 8): a real menu page's items, captured as MCL draws them
+c.call("bb_mcl_page_req", 2)                                      # SYSTEM_PAGE
+for _ in range(40):
+    c.step(20_000_000)
+    c.tick(5)
+MNB = 0x24079800
+c.uc.mem_write(MNB, bytes(620))
+okmn = c.call("bb_mcl_menu", MNB)
+mnb = bytes(c.uc.mem_read(MNB, 620))
+mtitle = mnb[4:15].split(b"\0")[0].decode("latin-1")
+mnames = [mnb[16 + 15 * i:16 + 15 * i + 15].split(b"\0")[0].decode("latin-1") for i in range(mnb[2])]
+check("a menu page (SYSTEM): captured as drawn: kind 0, a title, its items' names printable, the cursor among them",
+      okmn == 1 and mnb[0] == 1 and mnb[1] == 0 and mtitle and mnb[2] >= 2 and mnb[3] < mnb[2] and all(n and all(0x20 <= ord(ch) < 0x7f for ch in n) for n in mnames), (okmn, mnb[:4].hex(), mtitle, mnames[:6]))
+c.call("bb_mcl_page_req", 0)
+for _ in range(40):
+    c.step(20_000_000)
+    c.tick(5)
+check("... back on the grid (no menu drawn): none", c.call("bb_mcl_menu", MNB) == 0)
+
 png(fa, "mcl-core-fx-a.png")
 png(fb_, "mcl-core-fx-b.png")
 png(pb, "mcl-core-poly.png")
