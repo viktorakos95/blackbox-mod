@@ -115,6 +115,12 @@ public:
     char    path_[128] = {0}; // logical path for directory-relative openNext
     bool    open_    = false;
     bool    is_dir_  = false;
+    // openNext only lists: the entry is opened on the card when it is first
+    // used (a folder of 500 files listed with 1000 fewer card requests).
+    bool    lazy_    = false;
+    uint8_t lazy_mode_ = 0;
+    uint32_t lazy_size_ = 0;
+    bool ensure();
 };
 
 class SdFat {

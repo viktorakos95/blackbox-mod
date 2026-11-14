@@ -13,6 +13,27 @@ static FsFile file;
 static uint32_t data_off, data_len, frames, fpos;            /* the data chunk; frames in it; the next frame to read */
 static uint16_t channels, bits, format;                       /* format 1 PCM, 3 float */
 static uint8_t open_ok;
+static uint32_t rate_hz;
+
+/* the file loaded: its frames, rate and channels (0 frames: none) */
+HOOK uint32_t bb_player_info(uint32_t *rate, uint32_t *chans)
+{
+    if (rate)
+        *rate = rate_hz;
+    if (chans)
+        *chans = channels;
+    return pl.end;
+}
+
+/* back to the file's start with the ring refilled (to play it again: preview, or a second record of the same file) */
+HOOK void bb_player_rewind(void)
+{
+    if (!open_ok)
+        return;
+    pl.state = 0;
+    fpos = 0;
+    pl.rd = pl.wr = pl.frac = 0;
+}
 
 HOOK struct bb_player *bb_player(void) { return &pl; }
 
@@ -79,6 +100,7 @@ HOOK int bb_player_open(const char *name)
         return 0;
     }
     frames = data_len / bpf;
+    rate_hz = rate;
     fpos = 0;
     pl.rd = pl.wr = pl.frac = 0;
     pl.step = (uint32_t)(((uint64_t)rate << 16) / 48000u);

@@ -221,16 +221,38 @@ for _ in range(20):
     c.tick(5)
 check("... a folder is not a WAV file: refused, nothing loaded", c.call("bb_player_open_res") == 0 and struct.unpack("<I", bytes(c.uc.mem_read(PL + 12, 4)))[0] == 0)
 c.call("bb_player_close")
-n10, _ = shortcut(5)
-cm = c.uc.mem_read(c.b["bb_cable_mode"], 1)[0]
-check("SAMPLE: MCL's sample browser in cable mode (shortcut 5 showing)", n10 == 5 and cm == 1, (n10, cm))
-l0 = c.uc.mem_read(c.b["bb_cable_listen"], 1)[0]
-shortcut(5)
-l1 = c.uc.mem_read(c.b["bb_cable_listen"], 1)[0]
-check("... pressed again: listening on (and again: off)", l0 == 0 and l1 == 1, (l0, l1))
-shortcut(5)
+def sample_in(a):
+    c.call("bb_mcl_sample_input", a)
+    for _ in range(6):
+        c.step(20_000_000)
+        c.tick(5)
+    return c.call("bb_mcl_shortcut_now")
+
+
+SBUF = 0x24079C00
+
+
+def sview():
+    c.uc.mem_write(SBUF, bytes(48))
+    c.call("bb_mcl_sample", SBUF)
+    b = bytes(c.uc.mem_read(SBUF, 48))
+    return b[0], b[1], b[16:48].split(b"\0")[0].decode("latin-1")
+
+
 shortcut(4)
-check("... leaving the browser ends cable mode", c.uc.mem_read(c.b["bb_cable_mode"], 1)[0] == 0)
+n10 = sample_in(4)                                               # the SAMPLE view opened with nothing chosen: straight into the browser
+cm = c.uc.mem_read(c.b["bb_cable_mode"], 1)[0]
+st, br, nm = sview()
+check("SAMPLE view, nothing chosen: MCL's sample browser in cable mode; the view says none, browsing", n10 == 5 and cm == 1 and st == 0 and br == 1, (n10, cm, st, br))
+l0 = c.uc.mem_read(c.b["bb_cable_listen"], 1)[0]
+sample_in(6)
+l1 = c.uc.mem_read(c.b["bb_cable_listen"], 1)[0]
+sample_in(6)
+check("... SAMPLE while browsing (7 / 6): listening on, and off again", l0 == 0 and l1 == 1 and c.uc.mem_read(c.b["bb_cable_listen"], 1)[0] == 0, (l0, l1))
+c.uc.mem_write(NAMEBUF, b"ramp24.wav\0")
+c.call("bb_sample_record", NAMEBUF) if False else None
+sample_in(5)
+check("... closing the view leaves the browser (back to the grid), cable mode off", c.call("bb_mcl_shortcut_now") == 4 and c.uc.mem_read(c.b["bb_cable_mode"], 1)[0] == 0, c.call("bb_mcl_shortcut_now"))
 # ---- following the Blackbox without a sequence (bb_mcl.cpp xport_follow, from cpu.c's published transport)
 XP = 0x38800674
 xp_n = [100]

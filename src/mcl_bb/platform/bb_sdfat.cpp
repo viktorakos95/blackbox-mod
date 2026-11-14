@@ -63,9 +63,13 @@ FsFile &FsFile::operator=(FsFile &&other) noexcept
         memcpy(path_, other.path_, sizeof path_);
         open_ = other.open_;
         is_dir_ = other.is_dir_;
+        lazy_ = other.lazy_;
+        lazy_mode_ = other.lazy_mode_;
+        lazy_size_ = other.lazy_size_;
         other.handle_ = -1;
         other.open_ = false;
         other.is_dir_ = false;
+        other.lazy_ = false;
         other.path_[0] = 0;
     }
     return *this;
@@ -116,7 +120,7 @@ bool FsFile::open(const char *path, uint8_t mode)
 
 bool FsFile::openNext(FsFile *dir, uint8_t mode)
 {
-    if (!dir || !dir->open_ || !dir->is_dir_)
+    if (!dir || !dir->open_ || !dir->is_dir_ || !dir->ensure())
         return false;
     BbDirEnt ent;
     if (bb_sd_readdir(dir->handle_, &ent) != SD_OK || !ent.name[0])
@@ -136,32 +140,49 @@ bool FsFile::openNext(FsFile *dir, uint8_t mode)
         child[n++] = nm[i];
     child[n] = 0;
     close();
-    if (ent.attr & SD_ATTR_DIR) {
-        int d = bb_sd_opendir(child);
-        if (d < 0)
-            return false;
-        handle_ = d;
-        is_dir_ = true;
-    } else {
-        uint32_t fa = 0;
-        if (mode & O_READ)
-            fa |= SD_READ;
-        if (mode & O_WRITE)
-            fa |= SD_WRITE;
-        int h = bb_sd_open(child, fa ? fa : SD_READ);
-        if (h < 0)
-            return false;
-        handle_ = h;
-        is_dir_ = false;
-    }
+    is_dir_ = (ent.attr & SD_ATTR_DIR) != 0;                     /* listed, not opened yet (ensure() opens it when it is used) */
+    lazy_ = true;
+    lazy_mode_ = mode;
+    lazy_size_ = (uint32_t)ent.size;
+    handle_ = -1;
     open_ = true;
     set_name_path(this, child);
     return true;
 }
 
+/* An entry openNext listed: opened on the card now (its path is path_). */
+bool FsFile::ensure()
+{
+    if (!lazy_)
+        return open_;
+    lazy_ = false;
+    if (is_dir_) {
+        int d = bb_sd_opendir(path_);
+        if (d < 0) {
+            open_ = false;
+            return false;
+        }
+        handle_ = d;
+        return true;
+    }
+    uint32_t fa = 0;
+    if (lazy_mode_ & O_READ)
+        fa |= SD_READ;
+    if (lazy_mode_ & O_WRITE)
+        fa |= SD_WRITE;
+    int h = bb_sd_open(path_, fa ? fa : SD_READ);
+    if (h < 0) {
+        open_ = false;
+        return false;
+    }
+    handle_ = h;
+    return true;
+}
+
 bool FsFile::close()
 {
-    if (open_) {
+    lazy_ = false;
+    if (open_ && handle_ >= 0) {
         if (is_dir_)
             bb_sd_closedir(handle_);
         else
@@ -177,7 +198,7 @@ bool FsFile::close()
 
 int FsFile::read(void *buf, size_t n)
 {
-    if (!open_ || is_dir_)
+    if (!open_ || is_dir_ || !ensure())
         return -1;
     int32_t r = bb_sd_read(handle_, buf, (uint32_t)n);
     return r < 0 ? -1 : (int)r;
@@ -185,20 +206,22 @@ int FsFile::read(void *buf, size_t n)
 
 int FsFile::write(const void *buf, size_t n)
 {
-    if (!open_ || is_dir_)
+    if (!open_ || is_dir_ || !ensure())
         return -1;
     int32_t r = bb_sd_write(handle_, buf, (uint32_t)n);
     return r < 0 ? -1 : (int)r;
 }
 
-bool FsFile::seekSet(uint32_t pos) { return open_ && !is_dir_ && bb_sd_seek(handle_, pos) == SD_OK; }
-uint32_t FsFile::curPosition() const { return open_ && !is_dir_ ? (uint32_t)bb_sd_tell(handle_) : 0; }
-uint32_t FsFile::fileSize() const { return open_ && !is_dir_ ? (uint32_t)bb_sd_size(handle_) : 0; }
+bool FsFile::seekSet(uint32_t pos) { return open_ && !is_dir_ && ensure() && bb_sd_seek(handle_, pos) == SD_OK; }
+uint32_t FsFile::curPosition() const { return open_ && !is_dir_ && !lazy_ ? (uint32_t)bb_sd_tell(handle_) : 0; }
+uint32_t FsFile::fileSize() const { return open_ && !is_dir_ ? (lazy_ ? lazy_size_ : (uint32_t)bb_sd_size(handle_)) : 0; }
 
 bool FsFile::rewind()
 {
     if (!open_)
         return false;
+    if (lazy_)
+        return ensure();                                         /* (opening it puts it at its start) */
     if (is_dir_) {                                               /* a directory starts again by being opened again */
         char p[sizeof path_];
         memcpy(p, path_, sizeof p);
@@ -227,11 +250,11 @@ size_t FsFile::getName(char *dst, size_t cap) const
     return n;
 }
 
-bool FsFile::sync() { return open_ && !is_dir_ && bb_sd_sync(handle_) == SD_OK; }
+bool FsFile::sync() { return open_ && !is_dir_ && ensure() && bb_sd_sync(handle_) == SD_OK; }
 
 bool FsFile::truncate(uint32_t length)
 {
-    if (!open_ || is_dir_ || length > bb_sd_size(handle_))
+    if (!open_ || is_dir_ || !ensure() || length > bb_sd_size(handle_))
         return false;
     return bb_sd_seek(handle_, length) == SD_OK && bb_sd_truncate(handle_) == SD_OK;
 }

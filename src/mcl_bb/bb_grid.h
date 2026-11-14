@@ -62,3 +62,19 @@ struct bb_menu {
     char name[BB_MENU_MAX][15];
     char value[BB_MENU_MAX][10];       /* "" when the item has no value */
 };
+
+/* The SAMPLE view (abi 9, sample()): the chosen file and where its recording stands, for the page to show with its touch buttons
+ * (input kind 7: 0 RECORD, 1 BROWSE, 2 LISTEN, 3 SLICE, 4 view opened, 5 view closed, 6 listening while browsing on / off). */
+enum { BB_SMP_NONE, BB_SMP_READY, BB_SMP_WAITING, BB_SMP_RECORDING, BB_SMP_DONE };
+struct bb_sample {
+    uint8_t state;                     /* BB_SMP_* */
+    uint8_t browsing;                  /* MCL's sample browser shows (the page shows MCL's screen then) */
+    uint8_t clock_running;             /* MCL's sequencer runs (a record starts at its next bar) */
+    uint8_t channels;
+    uint16_t secs100;                  /* the file's length, 1/100 s */
+    uint16_t rate_k;                   /* its rate, Hz / 100 */
+    uint8_t listen;                    /* listening while browsing */
+    uint8_t steps;                     /* the record's length in steps */
+    uint8_t _r[2];
+    char name[32];
+};

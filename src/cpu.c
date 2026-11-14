@@ -80,7 +80,7 @@ struct mcl_ui {
     uint8_t down[4];            /* the tile each touch id holds (index + 1), 0 = none */
     uint16_t mask;              /* tiles shown pressed */
     int16_t acc[4];             /* knob counts below one detent */
-    uint16_t _r;
+    uint16_t smp;               /* 1: the SAMPLE view shows (the SAMPLE shortcut) */
 };
 #define UI ((volatile struct mcl_ui *)0x38800680u)
 _Static_assert(sizeof(struct mcl_ui) <= 24, "the page state must end before 0x38800698");
@@ -103,12 +103,13 @@ struct mcl_entry {
     uint32_t (*mixer)(struct bb_mixer *); /* abi 6: its mixer page as data, likewise */
     struct bb_player *(*player)(void);   /* abi 7: the SAMPLE button's file player (mcl_bb/bb_grid.h) */
     uint32_t (*menu)(struct bb_menu *);  /* abi 8: the menu MCL's current frame shows (mcl_bb/bb_grid.h), 0 none */
+    uint32_t (*sample)(struct bb_sample *); /* abi 9: the SAMPLE view's state (mcl_bb/bb_grid.h); input kind 7 its buttons */
 };
 const volatile uint32_t mcl_entry = 0;
 static const struct mcl_entry *mcl_image(void)       /* the blob, whether or not it runs */
 {
     const struct mcl_entry *e = (const struct mcl_entry *)mcl_entry;
-    return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 8 ? e : 0;
+    return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 9 ? e : 0;
 }
 static const struct mcl_entry *mcl_blob(void) { return mcl_image(); }
 #define MCL_RAM     0xc3f80000u  /* the blob's SDRAM region (src/mcl_bb/mcl_blob.ld): .data, .bss, heap, its task's stack */
@@ -428,7 +429,11 @@ uint32_t mcl_page_sig(void)
     const struct mcl_entry *e = mcl_blob();
     bkp_enable();
     uint32_t t = mcl_abi5(e) ? e->midi(10) * 131u : 0u;                    /* the shortcut whose page shows */
-    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + t * 977u;
+    uint32_t sv = 0;
+    struct bb_sample sm;
+    if (UI->smp && e && e->abi >= 9 && e->sample(&sm))
+        sv = 1u + sm.state * 7u + sm.browsing * 131u + sm.clock_running * 1031u + sm.listen * 7919u + (uint32_t)sm.name[0] * 17u + sm.secs100 * 3u;
+    return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + t * 977u + sv * 0x9e3779b9u;
 }
 
 static void mcl_button(int x, int d, int cap, int on, const char *above, const char *below, int below_d, int below_x, int below_w)
@@ -857,6 +862,68 @@ static void mcl_menu_panel(int x0, const struct bb_menu *m)
     mcl_menu_rows(x0 + 3, py + 6, pw - 4, (ph - 9) / MN_ROW, m);
 }
 
+/* The sharp redraws of MCL's grid, mixer and menus (the code above): off, MCL's own screen shows (user: back to the original for now). */
+const volatile uint32_t mcl_hires = 0;                       /* (1: on; the tests set it to check that code) */
+#define MCL_HIRES mcl_hires
+
+/* The SAMPLE view (abi 9): the chosen file, where its recording stands, and four touch buttons along the bottom (input kind 7). */
+enum { SB_RECORD, SB_SLICE, SB_LISTEN, SB_BROWSE, SB_N };
+static const char *const sb_name[SB_N] = {"RECORD", "SLICE", "LISTEN", "BROWSE"};
+#define SB_Y   (MCL_TOP + MCL_H - 30)
+#define SB_H   26
+static int sb_x(int x0, int i) { return x0 + 4 + i * 63; }
+
+static void mcl_sample_view(int x0, const struct bb_sample *s)
+{
+    int top = MCL_TOP;
+    char t[48], *p;
+    lp_frame(x0, top, MCL_W, MCL_H, MC_WHITE, 1);
+    lp_box(x0 + 1, top + 1, MCL_W - 2, 12, MC_WHITE);
+    lp_text(x0 + 5, top + 3, "SAMPLE  > MD TRACK 15 (RAM 1)", MC_BLACK, 1);
+    if (s->state == 0) {
+        lp_text_c(x0, top + 34, MCL_W, "NO SAMPLE CHOSEN", MC_WHITE, 2);
+        lp_text_c(x0, top + 58, MCL_W, "PRESS BROWSE", MC_GREY, 1);
+    } else {
+        int len = 0;
+        while (s->name[len])
+            len++;
+        if (len <= 20)
+            lp_text_c(x0, top + 20, MCL_W, s->name, MC_WHITE, 2);
+        else
+            lp_text_c(x0, top + 24, MCL_W, s->name, MC_WHITE, 1);
+        p = t;                                                /* 0.42 S  48.0 KHZ  STEREO  16 STEPS */
+        p = put_uint(p, s->secs100 / 100u);
+        *p++ = '.';
+        *p++ = (char)('0' + s->secs100 / 10u % 10u);
+        *p++ = (char)('0' + s->secs100 % 10u);
+        for (const char *c = " S  "; *c; c++)
+            *p++ = *c;
+        p = put_uint(p, s->rate_k / 10u);
+        *p++ = '.';
+        *p++ = (char)('0' + s->rate_k % 10u);
+        for (const char *c = s->channels > 1 ? " KHZ STEREO  " : " KHZ MONO  "; *c; c++)
+            *p++ = *c;
+        p = put_uint(p, s->steps);
+        for (const char *c = " STEPS"; *c; c++)
+            *p++ = *c;
+        *p = 0;
+        lp_text_c(x0, top + 42, MCL_W, t, MC_GREY, 1);
+        const char *st = s->state == BB_SMP_READY ? "READY: PRESS RECORD" :
+                         s->state == BB_SMP_WAITING ? (s->clock_running ? "WAITING FOR THE NEXT BAR" : "WAITING: PRESS PLAY") :
+                         s->state == BB_SMP_RECORDING ? "RECORDING ..." : "RECORDED: SLICE IT, OR RECORD AGAIN";
+        lp_text_c(x0, top + 62, MCL_W, st, s->state == BB_SMP_RECORDING ? MC_RED : MC_HOLD, 1);
+    }
+    for (int i = 0; i < SB_N; i++) {
+        int bx = sb_x(x0, i), on = (i == SB_RECORD && (s->state == BB_SMP_WAITING || s->state == BB_SMP_RECORDING)) || (i == SB_LISTEN && s->listen);
+        int live = s->state != 0 || i == SB_BROWSE;
+        if (i == SB_SLICE)
+            live = s->state == BB_SMP_DONE;
+        lp_box(bx, SB_Y, 60, SB_H, on ? (i == SB_RECORD ? MC_RED : MC_HOLD) : MC_BLACK);
+        lp_frame(bx, SB_Y, 60, SB_H, live ? MC_WHITE : MC_EDGE, 1);
+        lp_text_c(bx, SB_Y + 9, 60, sb_name[i], on ? MC_BLACK : live ? MC_WHITE : MC_EDGE, 1);
+    }
+}
+
 void mcl_page_draw(int w, int foot_y)
 {
     const struct mcl_entry *e = mcl_blob();
@@ -871,15 +938,18 @@ void mcl_page_draw(int w, int foot_y)
     struct bb_grid gd;
     struct bb_mixer md;
     struct bb_menu mn;
+    struct bb_sample sm;
     if (!fb) {
         lp_text_c(x0, MCL_TOP + MCL_H / 2 - 4, MCL_W, mcl_image() ? "MCL NOT RUNNING" : "NO MCL IN THIS IMAGE", MC_WHITE, 1);
-    } else if (e->abi >= 8 && e->menu(&mn) && mn.kind == 0) {
+    } else if (UI->smp && e->abi >= 9 && e->sample(&sm) && !sm.browsing) {
+        mcl_sample_view(x0, &sm);                             /* the SAMPLE view (while the browser shows, MCL's screen) */
+    } else if (MCL_HIRES && e->abi >= 8 && e->menu(&mn) && mn.kind == 0) {
         mcl_menu_page(x0, &mn);                               /* a menu page of MCL's: drawn here at full resolution */
-    } else if (e->abi >= 6 && e->grid(&gd)) {
+    } else if (MCL_HIRES && e->abi >= 6 && e->grid(&gd)) {
         mcl_grid_draw(x0, &gd);                               /* MCL's grid page: drawn here at full resolution */
         if (e->abi >= 8 && e->menu(&mn) && mn.kind == 1)
             mcl_menu_panel(x0, &mn);                          /* ... with its slot menu over it */
-    } else if (e->abi >= 6 && e->mixer(&md)) {
+    } else if (MCL_HIRES && e->abi >= 6 && e->mixer(&md)) {
         mcl_mixer_draw(x0, &md);                              /* its mixer, likewise */
     } else {
         for (int y = 0; y < 64; y++) {                        /* the screen: 16 bytes a row, leftmost pixel = the top bit; runs of lit pixels become boxes */
@@ -906,7 +976,7 @@ void mcl_page_draw(int w, int foot_y)
         return;
     uint32_t now = e->midi(10);
     for (int i = 0; i < SC_N; i++) {
-        int x = sc_x(w, i), cw = sc_w[i], on = now == (uint32_t)i;
+        int x = sc_x(w, i), cw = sc_w[i], on = i == SC_SAMPLE ? UI->smp != 0 : now == (uint32_t)i && !UI->smp;
         lp_box(x, MCL_STRIP_Y, cw, MCL_STRIP_H, MC_BLACK);
         lp_frame(x, MCL_STRIP_Y, cw, MCL_STRIP_H, on ? MC_HOLD : MC_EDGE, on ? 2 : 1);
         sc_icon(i, x + (cw - 26) / 2, MCL_STRIP_Y + 3);
@@ -931,9 +1001,36 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
     int i = -1;
     if (d >= MCL_STRIP_Y && d < MCL_STRIP_Y + MCL_STRIP_H) {  /* the shortcuts (the whole width, under the buttons) */
         if (mcl_abi5(e))
-            for (int k = 0; k < SC_N; k++)
-                if (x >= sc_x(w, k) && x < sc_x(w, k) + sc_w[k])
-                    e->input(6, k, 0);                        /* the blob opens the page (pressed again: see the shortcuts above) */
+            for (int k = 0; k < SC_N; k++) {
+                if (x < sc_x(w, k) || x >= sc_x(w, k) + sc_w[k])
+                    continue;
+                if (k == SC_SAMPLE && e->abi >= 9) {          /* SAMPLE: the view on / off; while its browser shows, listening on / off */
+                    struct bb_sample sm;
+                    if (!UI->smp) {
+                        UI->smp = 1;
+                        e->input(7, 4, 0);
+                    } else if (e->sample(&sm) && sm.browsing) {
+                        e->input(7, 6, 0);
+                    } else {
+                        UI->smp = 0;
+                        e->input(7, 5, 0);
+                    }
+                    return;
+                }
+                if (UI->smp && e->abi >= 9) {                 /* another shortcut closes the view */
+                    UI->smp = 0;
+                    e->input(7, 5, 0);
+                }
+                e->input(6, k, 0);                            /* the blob opens the page (pressed again: see the shortcuts above) */
+            }
+        return;
+    }
+    if (UI->smp && e->abi >= 9 && x >= wx && x < wx + ww && d >= SB_Y && d < SB_Y + SB_H) {   /* the SAMPLE view's buttons */
+        struct bb_sample sm;
+        if (e->sample(&sm) && !sm.browsing)
+            for (int k = 0; k < SB_N; k++)
+                if (x >= sb_x(mcl_x0(w), k) && x < sb_x(mcl_x0(w), k) + 60)
+                    e->input(7, k, 0);
         return;
     }
     if (x < wx)

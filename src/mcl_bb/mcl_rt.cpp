@@ -33,6 +33,8 @@ __attribute__((weak)) uint32_t bb_mcl_grid(struct bb_grid *) { return 0; }
 __attribute__((weak)) uint32_t bb_mcl_mixer(struct bb_mixer *) { return 0; }
 __attribute__((weak)) struct bb_player *bb_player(void) { return 0; }
 __attribute__((weak)) uint32_t bb_mcl_menu(struct bb_menu *) { return 0; }
+__attribute__((weak)) uint32_t bb_mcl_sample(struct bb_sample *) { return 0; }
+__attribute__((weak)) void bb_mcl_sample_input(uint32_t) {}
 }
 
 extern "C" {
@@ -438,6 +440,7 @@ struct mcl_entry {
     uint32_t (*mixer)(struct bb_mixer *);             /* abi 6: its mixer page as data, likewise */
     struct bb_player *(*player)(void);                /* abi 7: the SAMPLE button's file player (bb_grid.h); 0 while the runtime is not up */
     uint32_t (*menu)(struct bb_menu *);               /* abi 8: the menu MCL's current frame shows (bb_grid.h), 0 none */
+    uint32_t (*sample)(struct bb_sample *);           /* abi 9: the SAMPLE view's state (bb_grid.h); input kind 7 its buttons */
 };
 static int ready(void)
 {
@@ -451,6 +454,7 @@ static uint32_t page_grid(struct bb_grid *g) { return ready() && mcl_drawn() ? b
 static uint32_t page_mixer(struct bb_mixer *m) { return ready() && mcl_drawn() ? bb_mcl_mixer(m) : 0u; }
 static struct bb_player *page_player(void) { return ready() ? bb_player() : 0; }
 static uint32_t page_menu(struct bb_menu *m) { return ready() && mcl_drawn() ? bb_mcl_menu(m) : 0u; }
+static uint32_t page_sample(struct bb_sample *s) { return ready() && mcl_drawn() ? bb_mcl_sample(s) : 0u; }
 static uint32_t page_sig(void) { return !ready() ? 0 : mcl_drawn() ? bb_mcl_frames() * 2654435761u + 1u : bb_ui_sig(); }
 /* The page's clock (abi 5): kind 4 = the source a (0 the Blackbox's sequencer, 1 MCL's own tempo running, 2 MCL's own tempo stopped) at tempo b,
  * kind 5 = the own tempo b (1/10 BPM). MCL hears start / stop through bb_clock's transport hook, as from the sequencer. */
@@ -475,6 +479,11 @@ static void page_input(uint32_t kind, int32_t a, int32_t b)
     if (kind == 4 || kind == 5) {
         if (bb_mcl_active())
             page_clock(kind, a, b);
+        return;
+    }
+    if (kind == 7) {                                              /* the SAMPLE view's buttons (bb_mcl.cpp applies them in MCL's task) */
+        if (bb_mcl_active())
+            bb_mcl_sample_input((uint32_t)a);
         return;
     }
     if (kind == 6) {                                              /* a shortcut: 0 chromatic, 1 delay, 2 reverb, 3 mixer, 4 grid, 5 sample (bb_mcl.cpp opens it in MCL's task) */
@@ -511,4 +520,4 @@ static uint32_t page_midi(uint32_t which)
 #else
 #define COMPACT 0u
 #endif
-extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 8, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input, page_midi, page_grid, page_mixer, page_player, page_menu};
+extern "C" const mcl_entry mcl_entry_table __attribute__((section(".entry"), used)) = {0x424c434du, 9, mcl_boot, mcl_status_text, bb_rt_gui, COMPACT, page_fb, page_sig, page_input, page_midi, page_grid, page_mixer, page_player, page_menu, page_sample};
