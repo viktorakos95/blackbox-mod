@@ -1071,6 +1071,15 @@ e.uc.mem_write(SCR, b"\x25")
 ring_b([(0xF7, 10)])
 check("key ring: on other screens PLAY is delivered", key_pop() == (1, 0xF7, 10))
 e.uc.mem_write(SCR, b"\x2f")
+mode0 = e.r8(PAGE + 76)
+for mode, name in ((7, "MCL"), (5, "TRIG")):
+    e.uc.mem_write(PAGE + 76, bytes([mode]))
+    ring_b([(0xF7, 10), (0xF6, 9), (0xF4, 8)])
+    got = [key_pop()[1:] for _ in range(3)]
+    check(f"key ring on the {name} page: PLAY, STOP and REC reach the stock transport (the looper's page does not take them there)", got == [(0xF7, 10), (0xF6, 9), (0xF4, 8)], got)
+e.uc.mem_write(PAGE + 76, bytes([mode0]))
+ring_b([(0xF7, 10)])
+check("... on the Looper's own tabs they are still dropped", key_pop()[0] == 0)
 
 # ---- SMPLR tab: waveform, slicer touches, buttons
 SE, LENF = 0x2400A9C0, 16384

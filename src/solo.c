@@ -510,6 +510,9 @@ int looper_key_pop(void *obj, uint8_t *ev)
         int r = ((keypop_fn)0x08043a2du)(obj, ev);
         if (!r || !page_visible())
             return r;
+        int tab = looper_page_tab();
+        if (tab == 8 || tab == 6)
+            return r;                                  /* the MCL and TRIG pages: PLAY / STOP / REC are the stock transport's (they lit up and did nothing on MCL's) */
         unsigned id = *(const uint16_t *)ev, idx = *(const uint32_t *)(ev + 0xc);
         if (id < 0xf4 || id > 0xf8 || idx < 8 || idx > 10)
             return r;
