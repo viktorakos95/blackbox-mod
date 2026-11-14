@@ -267,6 +267,7 @@ check("... the published transport stops coming (the audio stage stopped): treat
 for _ in range(400):                                              # (let the stamp follower see its stamps end and send its stop before the MIDI checks below)
     c.step(3_000_000)
     c.tick(5)
+c.side(c.rg.pump)                                                 # (and put what it sent on the wire)
 
 # ---- MCL's menus as data (abi 8): a real menu page's items, captured as MCL draws them
 c.call("bb_mcl_page_req", 2)                                      # SYSTEM_PAGE
