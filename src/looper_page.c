@@ -337,13 +337,15 @@ static const struct optrow rows_setup[] = {
 static const struct optrow rows_more[] = {
     {"MONITOR INPUT K1", LOOPER_O_MON, 0, {0, 0, 0, 0}},
     {"SPEED PITCH", LOOPER_O_PITCH, 3, {"TAPE", "GRAIN", "SMOOTH", 0}},
+    {"CLOCK OUT 2 PPQ", LOOPER_O_CLKPPQ, 0, {0, 0, 0, 0}},     /* a pulse on Out 2 (cpu.c clkout_block): off, 1, 2, 4, 8, 12, 24 a quarter */
+    {"CLOCK OUT 2 LEVEL", LOOPER_O_CLKLVL, 0, {0, 0, 0, 0}},   /* its amplitude, 5 .. 100 % */
 };
 #define OPT_ROWS opt_rows()                                       /* rows above the buttons row: 7 on SETUP, 6 on MORE */
 static int opt_rows(void);
 
 static int opt_rows(void)
 {
-    return P->mode == M_MORE ? 2 : 13;
+    return P->mode == M_MORE ? 4 : 13;
 }
 
 static const struct optrow *page_rows(void)
@@ -1054,6 +1056,23 @@ static void draw_setup(const struct lay *L)
             char b[10], *p = b;
             if (R->opt == LOOPER_O_GAIN)
                 p = put_db(p, 1.f + 3.f * v);
+            else if (R->opt == LOOPER_O_CLKPPQ) {
+                static const uint8_t ppq[7] = {0, 1, 2, 4, 8, 12, 24};
+                int i = (int)(v * 7.f);
+                i = i > 6 ? 6 : i;
+                if (i == 0) {
+                    *p++ = 'O';
+                    *p++ = 'F';
+                    *p++ = 'F';
+                } else {
+                    p = put_uint(p, ppq[i]);
+                    *p++ = ' ';
+                    *p++ = 'P';
+                    *p++ = 'P';
+                    *p++ = 'Q';
+                }
+            } else if (R->opt == LOOPER_O_CLKLVL)
+                p = put_pct(p, .05f + .95f * v);
             else
                 p = put_pct(p, v);
             *p = 0;

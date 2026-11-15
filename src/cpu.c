@@ -18,6 +18,7 @@
 
 #include "crash.h"
 #include "mcl_bb/bb_grid.h"
+#include "looper.h"
 
 void samplr_block_done(uint32_t now);      /* samplr.c: the MAX readout's rest of the block (a no-op until the looper's memory is up) */
 void looper_block_done(uint32_t now);      /* looper.c: the budget guard's rest of the block (a no-op until the looper's memory is up) */
@@ -586,6 +587,113 @@ void mcl_xport_block(void *bufs)
     bkp_enable();
     XPORT[1] = (*(volatile uint8_t *)(ctx + 0x38) ? 1u : 0u) | bpm10 << 8;
     XPORT[0] = XPORT[0] + 1u;
+}
+
+/* CLOCK OUT (looper page, MORE tab): a clock pulse on Out 2, both channels, written into the audio block at the exact frame it falls on. The stock Analog
+ * Out was not found (docs/analog-sync-notes.md), so this is our own: CLK PPQ (off, 1, 2, 4, 8, 12, 24 pulses a quarter) and CLK LEVEL (5..100 % of full
+ * scale), saved with the looper's other options. A pulse is a positive step of CK_W frames at most (half a period when that is shorter).
+ * Position: the sequencer's stamps (seqfix_now, 960 ticks a beat) while a sequence plays, as the looper follows them; without one, the stock clock
+ * object's running flag and tempo (the context at bufs[0], +0x38 / +0x18) from where the transport started. Pulse k falls at tick k * 960 / ppq; a
+ * pulse is fired once (k only goes up), a late one lands on frame 0, a locate backwards or a jump starts the count again.
+ * The state is in two free pieces of the backup SRAM (the cave has no RAM of its own): 0x3880096c (20 bytes, between crash.c's SD block and Trigger2MIDI's
+ * root) and 0x388009f0 (16 bytes, between the clock monitor's block and fx2's state). */
+float looper_get_opt(int o);
+double seqfix_now(void);
+#define CK_SR 48000.0
+#define CK_W 240
+#define CK_MAGIC 0xc10cu
+struct ck_a { double prev_stamp, pend; int32_t last_k; } __attribute__((packed));
+struct ck_b { uint16_t on_left, w, start[4]; uint8_t n_start, src_prev; uint16_t magic; };
+#define CKA ((volatile struct ck_a *)0x3880096cu)
+#define CKB ((volatile struct ck_b *)0x388009f0u)
+_Static_assert(sizeof(struct ck_a) <= 20 && sizeof(struct ck_b) <= 16, "the clock out's state must fit its gaps");
+
+static const uint8_t ck_ppq[7] = {0, 1, 2, 4, 8, 12, 24};
+
+int clkout_block(void *bufs, int n)
+{
+    volatile struct ck_b *B = CKB;
+    volatile struct ck_a *A = CKA;
+    if (B->magic != CK_MAGIC) {                                      /* (power-up garbage, or the pulse was off) */
+        B->on_left = 0;
+        B->n_start = 0;
+    }
+    int idx = (int)(looper_get_opt(LOOPER_O_CLKPPQ) * 7.f);
+    idx = idx < 0 ? 0 : idx > 6 ? 6 : idx;
+    uint32_t ctx = ((uint32_t *)bufs)[0];
+    B->n_start = 0;
+    if (!idx || n <= 0 || ctx < 0x20000000u || ctx >= 0x40000000u || (ctx & 3)) {
+        B->magic = 0;
+        return 0;
+    }
+    float bpm = *(volatile float *)(ctx + 0x18);
+    int run = *(volatile uint8_t *)(ctx + 0x38) != 0;
+    double p = seqfix_now();
+    int stamps = p != A->prev_stamp;
+    A->prev_stamp = p;
+    int src = stamps ? 1 : run ? 2 : 0;
+    if (!src || bpm < 20.f || bpm > 400.f) {
+        B->magic = 0;                                                /* (stopped: the pulse in progress finishes, the count starts again) */
+        return 0;
+    }
+    double rate = (double)bpm * 960.0 / (60.0 * CK_SR), tpp = 960.0 / (double)ck_ppq[idx];
+    int have = B->magic == CK_MAGIC;
+    int reset = !have || src != B->src_prev;
+    double p_first = p;                                              /* where a new count starts: the first pulse at or after the stamp itself */
+    if (src == 2) {
+        p = have ? A->pend : 0.0;                                    /* no sequence: from where the transport started (or the stamps left off) */
+    } else {
+        /* A stamp is a whole tick (0.5 ms at 120 BPM) and lags the true position by up to one: the position runs on at the tempo and the stamps only
+         * pull it (a fraction of the difference a block), so the pulse sits to a few frames, not to a tick. A jump or a locate takes the stamp. */
+        double ps = p + 0.5, d = ps - A->pend;
+        if (reset || d < -2.0 * (double)n * rate || d > 16.0 * (double)n * rate) {
+            p = ps;
+            reset = 1;
+        } else if (d < -3.0 || d > 3.0) {
+            p = ps;                                                  /* (out of step: no longer than a few ticks, k goes on) */
+        } else {
+            p = A->pend + .05 * d;
+        }
+    }
+    if (reset) {
+        p_first = src == 2 ? p : p_first;
+        int32_t f = (int32_t)(p_first / tpp);
+        A->last_k = (double)f * tpp >= p_first ? f - 1 : f;          /* the first pulse is the one at or after the position */
+    }
+    double pend = p + (double)n * rate;
+    uint32_t w = (uint32_t)(tpp / rate / 2.0);
+    B->w = (uint16_t)(w < 2u ? 2u : w > CK_W ? CK_W : w);
+    for (int32_t k = A->last_k + 1; (double)k * tpp < pend && B->n_start < 4; k++) {
+        double T = (double)k * tpp;
+        int32_t fr = T <= p ? 0 : (int32_t)((T - p) / rate);
+        B->start[B->n_start++] = (uint16_t)(fr >= n ? n - 1 : fr);
+        A->last_k = k;
+    }
+    A->pend = pend;
+    B->src_prev = (uint8_t)src;
+    B->magic = CK_MAGIC;
+    return B->n_start || B->on_left;
+}
+
+void clkout_mix(float *l, float *r, int n)
+{
+    volatile struct ck_b *B = CKB;
+    double lv = (double)looper_get_opt(LOOPER_O_CLKLVL);
+    float level = (float)(.05 + .95 * (lv < 0. ? 0. : lv > 1. ? 1. : lv));
+    uint32_t left = B->on_left;                                      /* (a pulse that began in the last block goes on) */
+    uint8_t k = 0;
+    for (int i = 0; i < n; i++) {
+        while (k < B->n_start && B->start[k] == i) {
+            left = B->w;
+            k++;
+        }
+        if (left) {
+            l[i] += level;
+            r[i] += level;
+            left--;
+        }
+    }
+    B->on_left = (uint16_t)left;
 }
 
 /* The SAMPLE button's file player (abi 7), from the looper's Out 1 stage (looper_stage), once a block: the ring MCL's task fills (16-bit stereo

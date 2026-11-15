@@ -161,7 +161,7 @@ struct looper_state {
     struct track t[LOOPER_TRACKS];
 };
 #define S ((volatile struct looper_state *)0x38800c00u)
-#define MAGIC 0x4c4f4f34u        /* "LOO4": bumped with the layout */
+#define MAGIC 0x4c4f4f35u        /* "LOO5": bumped with the layout */
 
 _Static_assert(sizeof(struct looper_state) <= 0x300, "looper state must fit below the page's state at 0x38800f00");
 
@@ -293,7 +293,7 @@ static inline struct dsp *DSP(void)
     return (struct dsp *)fxbuf(0);
 }
 
-static const float opt_defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, .5f, .6f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
+static const float opt_defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused, except RSIZE / RRET = the clock pulse's PPQ / level, off / 100 %; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
 
 /* Replaces the sample pool init call (bl @0x0804c20e): once per boot, after the pool has its memory. */
 /* The audio code that runs every sample is linked to run from ITCM (src/cave.ld): copy it in from its image in flash. First thing at boot,
@@ -2451,6 +2451,8 @@ void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, in
  * obj is the compressor stage object; its output index names the Out 1 bus, as in comp_process (comp.c). */
 void lira_page_run(float *l, float *r, int n);
 int mcl_player_active(void);                     /* src/cpu.c: MCL's SAMPLE button's file player */
+int clkout_block(void *bufs, int n);             /* src/cpu.c: the clock pulse on Out 2 (CLKPPQ / CLKLVL) */
+void clkout_mix(float *l, float *r, int n);
 void mcl_xport_block(void *bufs);                /* src/cpu.c: the transport for MCL */
 void mcl_player_mix(float *l, float *r, int n);
 
@@ -2508,6 +2510,12 @@ void looper_stage(uint8_t *obj, void *bufs)
             out_bus(bufs, 2, n, l, r, &pl, &pr);
             if (pl != l)
                 mcl_player_mix(pl, pr, n);
+        }
+        if (clkout_block(bufs, n)) {               /* the clock pulse, on Out 2 (src/cpu.c) */
+            float *cl, *cr;
+            out_bus(bufs, 1, n, l, r, &cl, &cr);
+            if (cl != l)
+                clkout_mix(cl, cr, n);
         }
         crash_bc(BC_AUDIO, BCA_STAGE);
         uint32_t c_l = *(volatile uint32_t *)0xe0001004u;
