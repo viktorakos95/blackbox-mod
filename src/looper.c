@@ -720,6 +720,9 @@ void looper_in(void *obj, float **bufs, int frames)
         S->ticks++;
         verify();
         if (S->ok) {
+            if (opt_i(LOOPER_O_SRC) == LOOPER_SRC_MONO && bufs[0] && bufs[1])      /* SOURCE: MONO IN: a mono cable or a stereo one on the left only: the left is both */
+                for (int i = 0; i < frames; i++)
+                    bufs[1][i] = bufs[0][i];
             S->in_l = bufs[0];
             S->in_r = bufs[1];
             S->in_frames = (uint32_t)frames;
@@ -2225,7 +2228,7 @@ static int run(float *bl, float *br, int n)
             }
         }
     }
-    if (opt_get_f(LOOPER_O_MON) > .01f && opt_i(LOOPER_O_SRC) == LOOPER_SRC_INPUT && S->in_frames == (uint32_t)n && S->in_l && S->in_r) {
+    if (opt_get_f(LOOPER_O_MON) > .01f && opt_i(LOOPER_O_SRC) != LOOPER_SRC_MIX && S->in_frames == (uint32_t)n && S->in_l && S->in_r) {
         float mg = opt_get_f(LOOPER_O_MON) * 1.5f;                /* monitoring through the looper (the stock monitor is on the pads) */
         for (int i = 0; i < n; i++) {
             bl[i] += S->in_l[i] * mg;

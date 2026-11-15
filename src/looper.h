@@ -29,7 +29,7 @@ enum { LOOPER_O_LEN, LOOPER_O_SYNC, LOOPER_O_QUANT, LOOPER_O_SRC, LOOPER_O_SLOPE
 #define LOOPER_O_CLKLVL LOOPER_O_RRET
 enum { LOOPER_ROUTE_STOCK, LOOPER_ROUTE_OWN };
 enum { LOOPER_LEN_FOLLOW, LOOPER_LEN_MULT, LOOPER_LEN_FREE };      /* LOOPER_O_LEN */
-enum { LOOPER_SRC_INPUT, LOOPER_SRC_MIX };                         /* LOOPER_O_SRC */
+enum { LOOPER_SRC_INPUT, LOOPER_SRC_MIX, LOOPER_SRC_MONO };   /* MONO: the input with its left copied onto its right (at the input stage, for everything after it) */                         /* LOOPER_O_SRC */
 
 enum { LOOPER_T_PLAY, LOOPER_T_STOP };
 
