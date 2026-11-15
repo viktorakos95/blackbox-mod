@@ -1158,7 +1158,7 @@ static void draw_footer(const struct lay *L)
         int on = i == 0 ? P->mode == M_MAIN : i == 1 ? P->mode == M_FX && FX_GROUP < 2 : i == 2 ? P->mode == M_FX && FX_GROUP >= 2 :
                  i == 3 ? P->mode == M_SETUP : P->mode == M_MORE;
         frame(3 + i * (TAB_W + 2), L->foot_y + 2, TAB_W, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
-        text_c(3 + i * (TAB_W + 2), L->foot_y + 4, TAB_W, tab[i], on ? C_CYAN : C_GREY, 1);
+        text_c(3 + i * (TAB_W + 2), L->foot_y + 4, TAB_W, i == 3 && P->mode == M_MORE ? "MORE" : tab[i], on ? C_CYAN : C_GREY, 1);
     }
     int x0 = 3 + NTABS * (TAB_W + 2) + 4;
     if (P->mode == M_LIRA) {
@@ -2174,7 +2174,7 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         P->entered = 0;
         P->sig = 0;
     } else if (zone == Z_TAB) {
-        tab_select(t);
+        tab_select(t == 3 && P->mode == M_SETUP ? 4 : t);          /* SETUP again: the MORE rows (the clock out, ...) and back */
         P->info_on = 0;
         P->entered = 0;                                           /* repaint the whole page for the new tab */
         P->sig = 0;
