@@ -38,5 +38,5 @@ Open items first. Tick them off here as they ship (image name in brackets).
 2. [ ] Open from before (to check on the unit): browser while a sequence plays (n3 retries); MCL follows PLAY with no sequence selected; two thin lines on the DELAY / REVERB buttons (photo needed); KeyStep clock on the MIDI cable; Out 2 clock pulse alignment (scope).
 
 ## Notes
-- The cave (our code in flash) is nearly full ("about 700 bytes left" in `docs/looper-todo.md`). Every item above that adds code needs a size check first.
+- Room: the main cave has about 46 KB free (limit 0x2E188 bytes, 141,900 used); the saved looper settings block has no spare bytes (new looper options must reuse a slot or move). Check both before each item.
 - Suggested order: B (touches everything, small), then A + C (they set the layout everyone else uses), then each machine's own list.
