@@ -229,6 +229,12 @@ struct gev {                     /* one recorded gesture: when (frames from the 
     uint16_t id;
     int16_t val;
 };
+#define ML_MAX 24
+struct mlearn {                  /* MIDI learn: a control (ui id) follows a controller number on a channel */
+    uint8_t on, n;               /* learn mode, mappings in use */
+    uint16_t target;             /* the control waiting for a controller to be moved (0xffff none) */
+    struct { uint8_t cc, ch; uint16_t id; } m[ML_MAX];
+};
 struct pool {
     uint32_t magic;
     int16_t side[NPADS][NCTL];   /* the 25 controls of every pad position (stored value: 0..1000 or list index) */
@@ -241,6 +247,7 @@ struct pool {
     struct gev ev[GEV_MAX];      /* the recorded gestures */
     uint32_t fil[0xc0];          /* a FatFs FIL for bbmod.bin (0x300 bytes: FIL is about 0x250) */
     uint8_t blob[1280];          /* the settings file as written / read */
+    struct mlearn ml;            /* MIDI learn (not saved) */
 };
 #define POOL       (*(struct pool *volatile *)0x38800bf0u)
 #define POOL_CHECK (*(volatile uint32_t *)0x38800bf4u)
@@ -377,6 +384,8 @@ void lira_register(void *table)
             p->side[k][i] = ctls[i].def;
     for (int i = 0; i < 1024; i++)                       /* the allocator's memory is not zeroed: the recorder reads these buffers before the first block fills them */
         p->rec[0][0][i] = p->rec[0][1][i] = p->rec[1][0][i] = p->rec[1][1][i] = p->rec[2][0][i] = p->rec[2][1][i] = p->scr[0][i] = p->scr[1][i] = 0.0f;
+    p->ml.on = p->ml.n = 0;
+    p->ml.target = 0xffff;
     struct pg *g = &p->pg;
     for (unsigned i = 0; i < sizeof *g; i++)             /* the allocator's memory is not zeroed: every field starts from 0 */
         ((volatile uint8_t *)g)[i] = 0;
@@ -983,12 +992,94 @@ int lira_ui_sel(int set)
 }
 
 /* Signature of what the page shows that the engine changes by itself: the sensors' state (for the repaint test). */
+/* ---- MIDI learn. The stock firmware's incoming-message poll (0x0804495e, three call sites in the render, the audio task) is replaced by lira_midi_get,
+ * which calls it and then looks at the message: a controller change (0xBn cc value). In learn mode with a control waiting (the page's LEARN button, then a
+ * tap on a knob or a turn of an encoder), the first controller moved is bound to it; otherwise a bound controller sets its control (0..127 -> 0..1000). The
+ * message goes on to the stock firmware either way. The bindings are kept in the pool (lost at power-off). */
+uint32_t looper_ticks(void);
+typedef int (*midi_get_fn)(void *mgr, uint8_t *out, uint8_t *flag);
+#define stock_midi_get ((midi_get_fn)0x0804495fu)
+
+static void ml_unbind(struct mlearn *m, int id)
+{
+    for (int i = 0; i < m->n; i++)
+        if (m->m[i].id == id) {
+            m->m[i] = m->m[--m->n];
+            i--;
+        }
+}
+
+void lira_midi_msg(unsigned st, unsigned cc, unsigned val)
+{
+    struct pool *p = pool();
+    if ((st & 0xf0u) != 0xb0u || !p || cc > 127u)
+        return;
+    struct mlearn *m = &p->ml;
+    unsigned ch = st & 15u;
+    if (m->on) {
+        if (m->target != 0xffffu) {
+            int id = m->target;
+            ml_unbind(m, id);
+            for (int i = 0; i < m->n; i++)               /* a controller drives one control */
+                if (m->m[i].cc == cc && m->m[i].ch == ch) {
+                    m->m[i] = m->m[--m->n];
+                    break;
+                }
+            if (m->n < ML_MAX) {
+                m->m[m->n].cc = (uint8_t)cc;
+                m->m[m->n].ch = (uint8_t)ch;
+                m->m[m->n].id = (uint16_t)id;
+                m->n++;
+            }
+            m->target = 0xffff;                           /* learned: the next control can be chosen */
+        }
+        return;
+    }
+    for (int i = 0; i < m->n; i++)
+        if (m->m[i].cc == cc && m->m[i].ch == ch) {
+            lira_ui_set(m->m[i].id, (int)((val * 1000u + 63u) / 127u));
+            return;
+        }
+}
+
+int lira_midi_get(void *mgr, uint8_t *out, uint8_t *flag)
+{
+    int r = stock_midi_get(mgr, out, flag);
+    if (r)
+        lira_midi_msg(out[0], out[1], out[2]);
+    return r;
+}
+
+/* op 0: the state (bit 0 learn on, bits 8.. the mappings), 1: toggle learn mode (clears the waiting control), 2: choose the control to learn (only in learn mode),
+ * 3: forget the control arg's mapping (arg < 0: the one last touched), 4: forget all, 5: arg's mapping as cc + 1 (0 none), 6: the waiting control (0xffff none) */
+int lira_ui_learn(int op, int arg)
+{
+    struct pool *p = pool();
+    if (!p)
+        return 0;
+    struct mlearn *m = &p->ml;
+    switch (op) {
+    case 0: return m->on | m->n << 8;
+    case 1: m->on ^= 1; m->target = 0xffff; return m->on;
+    case 2: if (m->on) m->target = (uint16_t)arg; return m->target;
+    case 3: ml_unbind(m, arg < 0 ? p->pg.last : arg); return m->n;
+    case 4: m->n = 0; return 0;
+    case 5:
+        for (int i = 0; i < m->n; i++)
+            if (m->m[i].id == arg)
+                return m->m[i].cc + 1;
+        return 0;
+    default: return m->target;
+    }
+}
+
 unsigned lira_ui_sig(void)
 {
     struct pool *p = pool();
     unsigned h = 0;
     if (!p)
         return 0;
+    h = (unsigned)(p->ml.on | p->ml.n << 1 | p->ml.target << 8 | (p->ml.on ? (looper_ticks() >> 5 & 1u) << 6 : 0u)) * 2654435761u;       /* (MIDI learn: the frame flashes, so the page is redrawn twice a second or so) */
     const struct pg *g = &p->pg;
     for (int k = 0; k < 8; k++)                          /* (the plates are redrawn while a loop plays them too: only when one changes, at most ~19 times a second) */
         h = h << 1 | g->want[k];

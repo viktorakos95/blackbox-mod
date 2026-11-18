@@ -49,7 +49,7 @@ void lp_vline(int x, int d, int h, int color);
 #define STEP_COUNTS 40
 #define LIT_BLOCKS  30           /* a pad is lit this long after a hit (160 ms) */
 
-enum { SH_HITS, SH_DETECT, SH_OUT, SH_CLK, SHEETS };
+enum { SH_HITS, SH_DETECT, SH_OUT, SHEETS };
 enum { V_SENS, V_THRESH, V_RETRIG, V_MASK, V_SCAN, V_STRICT, V_SPEED, V_CURVE, V_NOTE, V_VEL, V_LEN, V_CHAN, V_CC, V_CCVAL,
        V_BLEED, V_RANGE, V_FLOOR, VALUES, V_NONE = -1 };
 static const char *const val_name[VALUES] = {"SENSITIVITY", "THRESHOLD", "RING GUARD", "DEAD TIME", "PEAK WINDOW", "SHARPNESS", "REACTION", "TOUCH CURVE", "NOTE", "VELOCITY", "NOTE LENGTH", "CHANNEL", "CC NUMBER", "CC VALUE", "BLEED GUARD", "GUARD REACH", "NOISE FLOOR"};
@@ -233,14 +233,52 @@ static int rows_top(int sheet)
     return sheet == SH_DETECT ? TOP + BAR_H + MET_H + 6 : TOP + BAR_H + 4;
 }
 
-static int row_h(int foot, int sheet)
+/* The settings come in squares of four (2 x 2 cells = the four encoders: top-left, top-right, bottom-left, bottom-right), two squares across and
+ * up to two down: group g sits at quadrant (g & 1, g >> 1). The fourth quadrant of DETECT holds the presets. */
+#define CELL_H 30
+static int cell_w(int w) { return (w - 8) / 4 - 2; }
+static void cell_xy(int w, int sheet, int g, int c, int *x, int *y)
 {
-    int h = (foot - rows_top(sheet) - 3) / 3;
-    return h > 40 ? 40 : h;
+    int half = (w - 8) / 2;
+    *x = 4 + (g & 1) * half + (c & 1) * (half / 2);
+    *y = rows_top(sheet) + (g >> 1) * (2 * CELL_H + 3) + (c >> 1) * CELL_H;
 }
 
-static int cell_x(int w, int c) { return 4 + c * ((w - 8) / 4); }
-static int cell_w(int w) { return (w - 8) / 4 - 3; }
+/* presets (DETECT, bottom right): detector settings for typical jobs; the note, channel and CC settings stay. Chosen from the usual drum-module advice
+ * (Roland / Alesis trigger guides: a kick needs a long mask against beater bounce, bleed needs a higher threshold, rolls a short mask and low retrigger
+ * cancel) and this detector's measured latency table (docs/t2m-notes.md). Values within the patch's ranges. */
+struct preset { const char *name; float sens, thresh, retrig, mask, scan, strict, speed, curve, bleed, range, floor; uint8_t vfix; };
+#define PRESETS 6
+static const struct preset presets[PRESETS] = {
+    {"DEFAULT",    2.0f, 2.0f,  8.f, 15.f, 2.f,  8.f, 3.0f, 0.6f, 0.15f, 0.15f,  -60.f, 0},
+    {"FAST",       2.0f, 2.0f,  4.f,  8.f, 0.f,  6.f, 0.5f, 0.6f, 0.00f, 0.00f,  -80.f, 1},   /* lowest latency: fixed velocity, no peak search, quick reaction (about 4 ms) */
+    {"KICK",       1.5f, 4.0f, 12.f, 40.f, 3.f, 10.f, 3.0f, 0.8f, 0.30f, 0.30f,  -60.f, 0},   /* beater bounce and the head's ring ignored */
+    {"BLEED",      1.5f, 6.0f, 12.f, 25.f, 2.f, 14.f, 2.0f, 0.8f, 0.40f, 0.50f,  -60.f, 0},   /* other drums leaking in: higher threshold, sharper, bleed guard wide */
+    {"ROLLS",      2.0f, 2.0f,  2.f,  3.f, 1.f,  4.f, 1.0f, 0.6f, 0.00f, 0.00f, -100.f, 0},   /* many quick retriggers: short dead time, little ring guard */
+    {"SOFT",       5.0f, 1.0f,  6.f, 10.f, 2.f,  5.f, 2.0f, 0.4f, 0.00f, 0.00f,  -90.f, 0},   /* ghost notes and soft pads */
+};
+
+static void preset_xy(int w, int sheet, int i, int *x, int *y, int *bw)
+{
+    int cx, cy;
+    cell_xy(w, sheet, 3, 0, &cx, &cy);
+    *bw = (w - 8) / 4 - 2;
+    *x = cx + (i & 1) * (*bw + 4);
+    *y = cy + 11 + (i >> 1) * 15;
+}
+
+static void preset_apply(struct t2m_mem *m, int k, int i)
+{
+    const struct preset *q = &presets[i];
+    t2m_params p = m->p[k];
+    p.sens = q->sens; p.thresh = q->thresh; p.retrig = q->retrig; p.mask_ms = q->mask; p.strict_db = q->strict;
+    p.speed_ms = q->speed; p.curve = q->curve; p.spec_strict = q->bleed; p.spec_range = q->range; p.floor_db = q->floor;
+    p.scan_ms = q->scan;
+    p.vel_mode = q->vfix;
+    m->scan_saved[k] = q->vfix ? 2.0f : q->scan;
+    m->p[k] = p;
+    UI->preset = (uint8_t)(i + 1);
+}
 
 /* switch row buttons: 0 IN L, 1 IN R, 2 ON, 3 TRS, 4 USB, 5 INT (the Blackbox's own MIDI in), 6 ENG (the whole engine: off = no detector at all) */
 static const int16_t sw_x[7] = {4, 46, 100, 150, 192, 234, 276};   /* (6: ENG, the engine switch) */
@@ -364,152 +402,6 @@ static void draw_hist(const struct t2m_mem *m, int w, int d0, int d1)
 }
 
 /* ---- the CLK sheet */
-static char *put_us(char *p, float v)                /* microseconds, whole */
-{
-    return put_u(p, (unsigned)(v + .5f > 99999.f ? 99999.f : v + .5f));
-}
-
-static void clk_col(const struct clkmon *c, int src, int x, int d0, int st)
-{
-    struct clk_stats o;
-    clkmon_stats(c, src, &o);
-    char b[40], *p;
-    int has = o.n > 0, has_stk = c->r[src].n_stk > 0;
-    p = put_s(b, src ? "ANA P  " : "TRS F8 ");
-    p = put_u(p, o.f8);
-    *p = 0;
-    lp_text(x, d0, b, o.f8 ? C_CYAN : C_GREY, 1);
-    p = put_s(b, "BPM ");
-    p = put_f(p, o.bpm, 1);
-    p = put_s(p, " FA");
-    p = put_u(p, o.fa);
-    p = put_s(p, " FB");
-    p = put_u(p, o.fb);
-    p = put_s(p, " FC");
-    p = put_u(p, o.fc);
-    *p = 0;
-    lp_text(x, d0 + st, b, has ? C_LIGHT : C_GREY, 1);
-    p = put_s(b, "ARR ");
-    p = put_us(p, o.arr_min);
-    *p++ = '-';
-    p = put_us(p, o.arr_max);
-    p = put_s(p, " sd");
-    p = put_us(p, o.arr_sd);
-    *p = 0;
-    lp_text(x, d0 + 2 * st, b, has ? C_GREEN : C_GREY, 1);
-    p = put_s(b, "STK ");
-    p = put_us(p, o.stk_min);
-    *p++ = '-';
-    p = put_us(p, o.stk_max);
-    p = put_s(p, " sd");
-    p = put_us(p, o.stk_sd);
-    *p = 0;
-    lp_text(x, d0 + 3 * st, b, has_stk ? C_YELLOW : C_GREY, 1);
-    p = put_s(b, "LAT ");
-    p = put_us(p, o.lat_avg);
-    p = put_s(p, " max ");
-    p = put_us(p, o.lat_max);
-    *p = 0;
-    lp_text(x, d0 + 4 * st, b, has ? C_LIGHT : C_GREY, 1);
-}
-
-static void draw_clk(struct t2m_mem *m, int w, int foot)
-{
-    const struct clkmon *c = &m->clk;
-    char b[48], *p;
-    lp_text(6, 3, "CLK", C_CYAN, 1);
-    lp_text(36, 3, "MIDI CLOCK IN, US", C_GREY, 1);
-    int d0 = TOP + 3, st = (foot - d0 - 12) / 10;
-    st = st > 14 ? 14 : st < 8 ? 8 : st;
-    clk_col(c, 0, 4, d0, st);
-    clk_col(c, 1, w / 2 + 2, d0, st);
-    lp_vline(w / 2 - 2, TOP, 5 * st, C_RAIL);
-    float mhz = clkmon_mhz(c);
-    struct clk_stats a, u;
-    clkmon_stats(c, 0, &a);
-    clkmon_stats(c, 1, &u);
-    p = put_s(b, "CORE ");
-    if (mhz > 0.f)
-        p = put_f(p, mhz, 0);
-    else
-        p = put_s(p, "..");
-    p = put_s(p, "MHZ  ISR ");
-    p = put_u(p, a.cost);
-    *p++ = '/';
-    p = put_u(p, u.cost);
-    p = put_s(p, "CY  LOST ");
-    p = put_u(p, a.over + u.over);
-    p = put_s(p, "  TAP=RESET");
-    *p = 0;
-    lp_text(4, d0 + 5 * st, b, C_GREY, 1);
-    struct clk_xp_stats xp;
-    clkmon_xp_stats(c, &xp);
-    p = put_s(b, "BLK ");
-    p = put_f(p, clkmon_blk_ms(c, 0), 2);
-    *p++ = '-';
-    p = put_f(p, clkmon_blk_ms(c, 1), 2);
-    p = put_s(p, "MS  FS ");
-    if (xp.fs > 0.f)
-        p = put_u(p, (unsigned)(xp.fs + .5f));
-    else
-        p = put_s(p, "..");
-    p = put_s(p, "HZ");
-    *p = 0;
-    lp_text(4, d0 + 6 * st, b, C_GREY, 1);
-    p = put_s(b, "SEQ ");
-    p = put_u(p, (unsigned)(xp.tps + .5f));
-    p = put_s(p, " T/S  T/BLK ");
-    p = put_u(p, (unsigned)xp.dt_min);
-    *p++ = '-';
-    p = put_u(p, (unsigned)xp.dt_max);
-    p = put_s(p, "  N ");
-    p = put_u(p, xp.calls);
-    *p = 0;
-    lp_text(4, d0 + 7 * st + 2, b, xp.calls ? C_LIGHT : C_GREY, 1);
-    p = put_s(b, "SEQ OFF-LINE ");
-    p = put_s(p, xp.res_min < 0.f ? "-" : "+");
-    p = put_us(p, xp.res_min < 0.f ? -xp.res_min : xp.res_min);
-    p = put_s(p, "..");
-    p = put_s(p, xp.res_max < 0.f ? "-" : "+");
-    p = put_us(p, xp.res_max < 0.f ? -xp.res_max : xp.res_max);
-    p = put_s(p, " sd");
-    p = put_us(p, xp.res_sd);
-    p = put_s(p, " US");
-    *p = 0;
-    lp_text(4, d0 + 8 * st + 2, b, xp.calls ? C_YELLOW : C_GREY, 1);
-    p = put_s(b, "STALL ");
-    p = put_u(p, xp.stalls);
-    p = put_s(p, " SLIP ");
-    p = put_u(p, xp.slips);
-    p = put_s(p, " MISS ");
-    p = put_u(p, xp.misses);
-    p = put_s(p, " SEQS ");
-    p = put_u(p, xp.seqs_max);
-    p = put_s(p, " SPREAD ");
-    p = put_u(p, xp.spread);
-    *p = 0;
-    lp_text(4, d0 + 9 * st + 2, b, xp.calls ? C_LIGHT : C_GREY, 1);
-    p = put_s(b, "BAR ");
-    p = put_f(p, 1.f + (float)(m->clk.now_lo % 3840u) / 960.f, 2);
-    p = put_s(p, " LOOP ");
-    if (m->clk.lstart1)
-        p = put_f(p, 1.f + (float)(m->clk.lstart1 - 1u) / 960.f, 2);
-    else
-        p = put_s(p, "-");
-    if (m->clk.lstart1) {
-        p = put_s(p, " SEQ ");
-        p = put_f(p, 1.f + (float)(m->clk.lseq1 - 1u) / 960.f, 2);
-        p = put_s(p, " W");
-        p = put_u(p, m->clk.linfo & 15u);
-        p = put_s(p, " Q");
-        p = put_u(p, (m->clk.linfo >> 4) & 15u);
-        p = put_s(p, " S");
-        p = put_u(p, (m->clk.linfo >> 8) & 15u);
-    }
-    *p = 0;
-    lp_text(4, d0 + 10 * st + 2, b, xp.calls ? C_YELLOW : C_GREY, 1);
-}
-
 void t2m_page_draw(int w, int foot)
 {
     struct t2m_mem *m = t2m_mem();
@@ -522,10 +414,6 @@ void t2m_page_draw(int w, int foot)
     }
     int k = UI->in & 1, sheet = UI->sheet < SHEETS ? UI->sheet : 0;
     char b[48], *p;
-    if (sheet == SH_CLK) {
-        draw_clk(m, w, foot);
-        return;
-    }
 
     /* top bar: both inputs at a glance */
     lp_text(6, 3, "TRIG", m->eng ? C_CYAN : C_RED, 1);
@@ -578,23 +466,36 @@ void t2m_page_draw(int w, int foot)
 
     if (sheet == SH_DETECT)
         draw_meter(m, k, w, TOP + BAR_H + 3, MET_H - 2);
-    int rh = row_h(foot, sheet), cw = cell_w(w);
-    for (int r = 0; r < 3; r++) {
-        int rd = rows_top(sheet) + r * rh, sel = UI->row == r;
+    int cw = cell_w(w), ngr = sheet == SH_DETECT ? 3 : 2;
+    for (int g = 0; g < ngr; g++) {
+        int sel = UI->row == g, gx, gy;
         for (int c = 0; c < 4; c++) {
-            int v = sheet_vals[sheet - 1][r * 4 + c], x = cell_x(w, c);
+            int v = sheet_vals[sheet - 1][g * 4 + c], x;
+            cell_xy(w, sheet, g, c, &x, &gy);
             if (v == V_NONE)
                 continue;
-            lp_frame(x, rd, cw, rh - 3, sel ? C_PINK : C_RAIL, 1);
-            lp_text_c(x, rd + 3, cw, val_name[v], sel ? C_LIGHT : C_GREY, 1);
+            lp_frame(x, gy, cw, CELL_H - 3, sel ? C_PINK : C_RAIL, 1);
+            lp_text_c(x, gy + 4, cw, val_name[v], sel ? C_LIGHT : C_GREY, 1);
             value_text(m, k, v, b);
-            lp_text_c(x, rd + 3 + (rh - 3 > 26 ? 14 : 10), cw, b, sel ? C_WHITE : C_LIGHT, 1);
+            lp_text_c(x, gy + 16, cw, b, sel ? C_WHITE : C_LIGHT, 1);
         }
+        cell_xy(w, sheet, g, 0, &gx, &gy);
+        if (sel)
+            lp_frame(gx - 2, gy - 2, 2 * cw + 7, 2 * CELL_H + 1, C_PINK, 1);   /* the square the four knobs are on */
     }
-    if (sheet == SH_DETECT)
-        draw_hint(m, sheet, rows_top(sheet) + 3 * rh + 1);
+    if (sheet == SH_DETECT) {
+        int px, py, pw;
+        cell_xy(w, sheet, 3, 0, &px, &py);
+        lp_text(px, py, "PRESETS", C_GREY, 1);
+        for (int i = 0; i < PRESETS; i++) {
+            preset_xy(w, sheet, i, &px, &py, &pw);
+            lp_frame(px, py, pw, 13, UI->preset == i + 1 ? C_CYAN : C_RAIL, 1);
+            lp_text_c(px, py + 3, pw, presets[i].name, UI->preset == i + 1 ? C_WHITE : C_LIGHT, 1);
+        }
+        draw_hint(m, sheet, rows_top(sheet) + 4 * CELL_H + 6);
+    }
     if (sheet == SH_OUT) {
-        int td = rows_top(sheet) + 2 * rh + 4;
+        int td = rows_top(sheet) + 2 * CELL_H + 6;
         draw_hint(m, sheet, td);
         td += 36;
         lp_text(6, td, "TRS = MIDI jack, USB, INT = the Blackbox itself", C_GREY, 1);
@@ -614,14 +515,11 @@ void t2m_page_draw(int w, int foot)
 /* A touch at x / d (page coordinates) above the footer. */
 int t2m_page_touch(int x, int d, int w, int foot)
 {
+    (void)foot;
     struct t2m_mem *m = t2m_mem();
     if (!m)
         return -1;
     int k = UI->in & 1, sheet = UI->sheet < SHEETS ? UI->sheet : 0;
-    if (sheet == SH_CLK) {                            /* anywhere on the CLK sheet: start the numbers again */
-        m->clk.reset = 1;
-        return -1;
-    }
     if (d >= TOP && d < TOP + BAR_H) {
         for (int i = 0; i < 7; i++) {
             if (x < sw_x[i] || x >= sw_x[i] + sw_w[i])
@@ -643,17 +541,29 @@ int t2m_page_touch(int x, int d, int w, int foot)
             UI->in = (uint8_t)(x >= w / 2 ? 1 : 0);
         return -1;
     }
-    for (int r = 0; r < 3; r++) {
-        int rd = rows_top(sheet) + r * row_h(foot, sheet);
-        if (d < rd || d >= rd + row_h(foot, sheet) - 3 || x < 4 || x >= w - 4)
-            continue;
-        UI->row = (uint8_t)r;
-        int c = (x - 4) / ((w - 8) / 4), v = c < 4 ? sheet_vals[sheet - 1][r * 4 + c] : V_NONE;
-        if (v != V_NONE) {
-            UI->last = (uint8_t)v;
-            return v;
+    if (sheet == SH_DETECT) {                          /* a preset */
+        for (int i = 0; i < PRESETS; i++) {
+            int px, py, pw;
+            preset_xy(w, sheet, i, &px, &py, &pw);
+            if (x >= px && x < px + pw && d >= py && d < py + 13) {
+                preset_apply(m, k, i);
+                return -1;
+            }
         }
     }
+    for (int g = 0; g < (sheet == SH_DETECT ? 3 : 2); g++)
+        for (int c = 0; c < 4; c++) {
+            int cx, cy;
+            cell_xy(w, sheet, g, c, &cx, &cy);
+            if (x < cx || x >= cx + cell_w(w) || d < cy || d >= cy + CELL_H - 3)
+                continue;
+            UI->row = (uint8_t)g;
+            int v = sheet_vals[sheet - 1][g * 4 + c];
+            if (v != V_NONE) {
+                UI->last = (uint8_t)v;
+                return v;
+            }
+        }
     return -1;
 }
 
@@ -686,6 +596,7 @@ void t2m_page_reset(int v)
     case V_FLOOR: q.floor_db = d->floor_db; break;
     }
     m->p[k] = q;
+    UI->preset = 0;
 }
 
 void t2m_page_sheet(int sheet)
@@ -706,7 +617,7 @@ int t2m_page_sheet_now(void)
 void t2m_page_knob(int knob, int counts)
 {
     struct t2m_mem *m = t2m_mem();
-    if (!m || knob < 0 || knob > 3 || UI->sheet == SH_CLK)
+    if (!m || knob < 0 || knob > 3)
         return;
     int a = UI->kacc[knob] + counts, steps = a / STEP_COUNTS;
     UI->kacc[knob] = (int16_t)(a - steps * STEP_COUNTS);
@@ -731,6 +642,7 @@ void t2m_page_knob(int knob, int counts)
             q.scan_ms = m->scan_saved[k];                      /* back to DYN: SCAN as it was, unless it was changed meanwhile */
         }
         m->p[k] = q;
+        UI->preset = 0;
     }
 }
 
@@ -740,8 +652,6 @@ uint32_t t2m_page_sig(void)
     struct t2m_mem *m = t2m_mem();
     if (!m)
         return 0;
-    if (m->ui.sheet == SH_CLK)
-        return clkmon_sig(&m->clk) ^ 0xc1c00001u;
     int k = m->ui.in & 1;
     uint32_t h = 2166136261u;
     const uint8_t *b = (const uint8_t *)&m->p[k];

@@ -93,7 +93,7 @@ def boot():
     log.clear()
     e.call("looper_boot", ENGINE, count=200_000_000)
     e.uc.mem_write(STATE + 164 + 9 * 4, struct.pack("<f", 0.0))       # loop make-up gain off: unity, as the checks expect
-    e.uc.mem_write(STATE + 164 + 11 * 4, struct.pack("<f", 0.0))      # not full screen: the geometry the checks expect
+    e.uc.mem_write(e.sym["looper_full"], b"\x00")      # not full screen: the geometry the checks expect
 
 # --- the page
 e.uc.mem_write(0x2405FF60, struct.pack("<IBBBB", 0x534F4C4F, 0, 0, 1, 1))   # a Looper mode left over from before
@@ -318,14 +318,39 @@ e.call("solo_touch_up", VIEW, PTA, 0)
 check("... released: off", key(3) == 0)
 tap(314 - 20, 7)
 # VOICES tab, pair 2 = panel 1 (x 81..157): MOD top-left, SHARP top-right, FM source bottom-left, TOUCH bottom-right
-tap(5 + 76 + 19, 85)
+def set_ticks(n):                                                   # find looper_state.ticks by probing, then write it
+    for off in range(0, 0x300, 4):
+        old = e.r32(STATE + off)
+        e.w32(STATE + off, 0x12345678)
+        e.call("looper_ticks")
+        hit = e.uc.reg_read(A.UC_ARM_REG_R0) == 0x12345678
+        e.w32(STATE + off, n if hit else old)
+        if hit:
+            return
+    raise SystemExit("ticks not found")
+
+
+T = [1000]
+
+
+def slow_tap(x, d):                                                 # a tap well after the last one (two quick taps are a double tap: back to the default)
+    T[0] += 300
+    set_ticks(T[0])
+    tap(x, d)
+
+
+slow_tap(5 + 76 + 19, 85)
 check("pair 2's FM Source button steps (Self -> Off)", get(105) == 1, get(105))
 for _ in range(7):
-    tap(5 + 76 + 19, 85)
+    slow_tap(5 + 76 + 19, 85)
 check("... eight taps in it reaches OUT (8), the ninth wraps to SELF", get(105) == 8, get(105))
-tap(5 + 76 + 19, 85)
+slow_tap(5 + 76 + 19, 85)
 check("... wrapped", get(105) == 0, get(105))
+slow_tap(5 + 76 + 19, 85)
+slow_tap(5 + 76 + 19, 85)
 tap(5 + 76 + 19, 85)
+check("B: a fast double tap on the FM button goes back to SELF (0)", get(105) == 0, get(105))
+slow_tap(5 + 76 + 19, 85)
 
 tap(5 + 76 + 38 + 19, 85)
 check("pair 2's Touch button steps (Fast -> Follow)", get(101) == 2, get(101))
@@ -340,14 +365,20 @@ drag(5 + 19, 140, 120)
 check("voice 1's tune knob: +250", 740 < get(0) < 760, get(0))
 tap(5 + 19, 140)
 check("a plain tap on a knob changes nothing", 740 < get(0) < 760, get(0))
+w0 = get(2)
+drag(5 + 38 * 2 + 19, 140, 138)
+check("a 2 px wiggle on a knob changes nothing (dead zone)", get(2) == w0, (w0, get(2)))
 # the four encoders: voices 1 2 3 4 are the top left, top right, bottom left and bottom right ones (here with the top bar on FREE: a unit a click)
 e.call("lira_ui_action", 6)
-for raw, voice in ((0, 0), (2, 1), (1, 2), (3, 3)):             # voices 1 2 3 4: top left, top right, bottom left, bottom right
-    before = [get(v) for v in range(8)]
-    knob(raw, 80)
-    after = [get(v) for v in range(8)]
-    check("raw knob %d turns voice %d only" % (raw, voice + 1), after[voice] == min(1000, before[voice] + 10) and
-          all(after[v] == before[v] for v in range(8) if v != voice), (before, after))
+e.call("lira_ui_sel", 0)
+ALL = list(range(8)) + [170 + v for v in range(8)]
+for raw, cid, sgn in ((0, 170, -1), (2, 171, -1), (1, 0, 1), (3, 1, 1)):    # the first pair's square: level 1 top left, level 2 top right, voice 1 bottom left, voice 2 bottom right
+    before = [get(v) for v in ALL]
+    knob(raw, 80 * sgn)
+    after = [get(v) for v in ALL]
+    k = ALL.index(cid)
+    check("raw knob %d turns control %d only (the first square: 2 levels over 2 voices)" % (raw, cid), after[k] == before[k] + 10 * sgn and
+          all(after[v] == before[v] for v in range(16) if v != k), (before, after))
 # BACK moves the encoders to voices 5-8
 e.stub(0x080A2E60, lambda: None)
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
@@ -366,38 +397,42 @@ def set_ticks(n):                                                   # find loope
     raise SystemExit("ticks not found")
 
 
+for cid, v in ((170, 1000), (171, 1000), (0, 500), (1, 500)):
+    e.call("lira_ui_set", cid, v)
+e.call("lira_ui_sel", 0)
 set_ticks(5000)
-check("the encoder group is voices 1-4 (bank 0)", sel() == 0, sel())
+check("the encoder group is the first voice pair (bank 0)", sel() == 0, sel())
 button(11, 7)
 e.call("looper_page_tab")
 check("BACK on the page goes back to the TRIG page", e.uc.reg_read(A.UC_ARM_REG_R0) == 6, e.uc.reg_read(A.UC_ARM_REG_R0))
 e.call("looper_page_goto", VIEW, 7)
 set_ticks(5200)
 button(0, 0xc)
-check("INFO: voices 5-8 (bank 1)", sel() == 16, sel())
-before = [get(v) for v in range(8)]
-knob(0, 80)
-check("... the top-left encoder now turns voice 5", get(4) == before[4] + 10 and get(0) == before[0], (before, [get(v) for v in range(8)]))
+check("INFO: the next pair, 3-4 (bank 1)", sel() == 16, sel())
+before = [get(v) for v in ALL]
+knob(0, -80)
+check("... the top-left encoder now turns level 3", get(172) == before[ALL.index(172)] - 10 and get(170) == before[ALL.index(170)], (before, [get(v) for v in ALL]))
+e.call("lira_ui_set", 172, 1000)
 e.call("lira_ui_action", 6)                                         # back to STEP: outside chord mode a click is a semitone, as in chord mode
 set_ticks(5100)
 e.call("lira_ui_sel", 0)                                            # voices 1-4 (BACK leaves the page here; their branch flipped the bank with it)
 e.call("lira_ui_tunepitch", 0)
 h0 = e.uc.reg_read(A.UC_ARM_REG_R0)
-knob(0, 100)
+knob(1, 100)
 e.call("lira_ui_tunepitch", 0)
 h1 = e.uc.reg_read(A.UC_ARM_REG_R0)
 check("STEP: an encoder click moves the voice to the next real note (%d -> %d)" % (h0, h1), h1 % 100 == 0 and 0 < h1 - h0 <= 100, str((h0, h1)))
-knob(0, 100)
+knob(1, 100)
 e.call("lira_ui_tunepitch", 0)
 h2 = e.uc.reg_read(A.UC_ARM_REG_R0)
 check("... and the next one (%d)" % h2, h2 == h1 + 100, str((h1, h2)))
-knob(0, -100)
+knob(1, -100)
 e.call("lira_ui_tunepitch", 0)
 check("... and a click the other way goes back down", e.uc.reg_read(A.UC_ARM_REG_R0) == h1, str(e.uc.reg_read(A.UC_ARM_REG_R0)))
-knob(0, 40)
+knob(1, 40)
 e.call("lira_ui_tunepitch", 0)
 check("... less than a click does nothing yet", e.uc.reg_read(A.UC_ARM_REG_R0) == h1, str(e.uc.reg_read(A.UC_ARM_REG_R0)))
-knob(0, 60)
+knob(1, 60)
 set_ticks(5300)
 e.call("lira_ui_sel", 16)                                           # voices 5-8
 f = draw(0)
@@ -432,15 +467,15 @@ knob(1, 300)                                                      # raw 1 = bott
 check("... and so does its encoder (4 BAR -> 2 BAR)", chord(144) == 2, chord(144))
 tap(5 + 76 + 19, 85)
 check("DLY MOD + SYNC: SYNC 1 (bottom left) steps the first delay line's division", chord(146) == 1, chord(146))
-tap(5 + 76 + 38 + 19, 85)
-tap(5 + 76 + 38 + 19, 85)
+slow_tap(5 + 76 + 38 + 19, 85)
+slow_tap(5 + 76 + 38 + 19, 85)
 check("... SYNC 2 (bottom right) the second's", chord(147) == 2, chord(147))
 # the CHORD tab
 # a level knob per voice, above the tune knobs on every page
 check("every voice level starts at full", all(get(170 + v) == 1000 for v in range(8)), [get(170 + v) for v in range(8)])
 drag(5 + 38 + 19, 118, 150)
 check("LEVEL 2 (the small knob above voice 2's tune knob): dragging down 32 px lowers it by 400", 590 < get(171) < 610 and get(170) == 1000, (get(170), get(171)))
-check("... and it is the encoders' group (bank 7 is levels 5-8, bank 6 levels 1-4)", sel() >> 4 == 6, sel())
+check("... and it is the encoders' group (the first pair's square, bank 0)", sel() >> 4 == 0, sel())
 knob(0, -80)
 check("the top-left encoder turns LEVEL 1 now", get(170) == 990 and get(171) < 610, (get(170), get(171)))
 tap(5 + 38 + 19, 118)
@@ -485,13 +520,17 @@ check("... and on again", chord(195) == 1, chord(195))
 e.call("lira_ui_set", 2, 523)                                    # voice 3 between notes
 e.call("lira_ui_tunepitch", 2)
 off_note = e.uc.reg_read(A.UC_ARM_REG_R0) % 100
+tap(5 + 124 + 10, 215)                                           # the CHORD tab (third in the footer): QUANT lives in its VOICING panel now
+check("QUANT sits on the CHORD tab, VOICING panel, bottom left (SHUFFLE took its place on MIX)", sel() == 3 | 2 << 4, sel())
 tap(5 + 76 + 19, 85)
 e.call("lira_ui_tunepitch", 2)
 snapped = e.uc.reg_read(A.UC_ARM_REG_R0)
-check("QUANT (PITCH panel, bottom left) is a one-shot: voice 3 was %d cents off a note, now %d (a note)" % (off_note, snapped % 100), snapped % 100 == 0, str(snapped))
+check("QUANT (CHORD tab, VOICING panel, bottom left) is a one-shot: voice 3 was %d cents off a note, now %d (a note)" % (off_note, snapped % 100), snapped % 100 == 0, str(snapped))
 e.call("lira_ui_set", 2, get(2) + 3)
 e.call("lira_ui_tunepitch", 2)
 check("... (turning the knob a little leaves the note)", e.uc.reg_read(A.UC_ARM_REG_R0) % 100 != 0, str(e.uc.reg_read(A.UC_ARM_REG_R0)))
+tap(5 + 186 + 10, 215)                                           # back to the MIX tab
+check("... and the MIX tab is back", sel() & 15 == 2, sel())
 f = draw(0)
 snap("mix")
 check("MIX drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
@@ -518,16 +557,16 @@ n0 = [note(v) for v in range(8)]
 check("eight notes in 33..93, all pitch classes of MAJ 7#11 on D-flat... (in the space)", all(33 <= x <= 93 for x in n0) and len(set(n0)) == 8, n0)
 drag(5 + 19, 140, 120)
 check("in chord mode a drag on a voice knob moves its note (15 semitones for 20 px)", note(0) == min(93, n0[0] + 15) and [note(v) for v in range(1, 8)] == n0[1:], (n0, [note(v) for v in range(8)]))
-knob(0, 100)
+knob(1, 100)
 check("... and an encoder turn moves it a semitone", note(0) == min(93, min(93, n0[0] + 15) + 1), note(0))
-knob(0, -100)
+knob(1, -100)
 n0 = [note(v) for v in range(8)]
 check("STEP mode shows whole notes (pitch is an exact note)", pitch(0) % 100 == 0, pitch(0))
 tap(180, 7)
 check("the top-bar STEP / FREE switch selects FREE", chord(157) == 1)
-knob(0, 80)
+knob(1, 80)
 check("FREE: an encoder click moves the voice off the note (0.05 semitone a unit)", pitch(0) % 100 != 0 and abs(pitch(0) - n0[0] * 100) == 50, pitch(0))
-knob(0, -80)
+knob(1, -80)
 check("... and back on the note it is exact again", pitch(0) == n0[0] * 100, pitch(0))
 drag(5 + 19, 140, 139)
 check("a drag moves it freely (0.75 semitone a pixel) ...", pitch(0) != n0[0] * 100, pitch(0))
@@ -545,6 +584,61 @@ f = draw(0)
 snap("env")
 check("ENV drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
 check("ENV defaults: FAST attack a snap, releases as built, slow attack 0.6 s, velocity off", [get(c) for c in range(210, 217)] == [81, 500, 607, 500, 700, 0, 0], [get(c) for c in range(210, 217)])
+# ---- MIDI learn (the MIDI panel of the ENV tab; the render's message poll is hooked by lira_midi_get)
+def learn(op, arg=0):
+    e.call("lira_ui_learn", op, arg)
+    v = e.uc.reg_read(A.UC_ARM_REG_R0)
+    return v - (1 << 32) if v & 0x80000000 else v
+
+
+def midi(st, cc, val):
+    e.call("lira_midi_msg", st, cc, val)
+
+
+check("MIDI learn starts off, nothing mapped", learn(0) == 0)
+slow_tap(233 + 19, 28 + 19)                                       # LEARN (top-left of the MIDI panel)
+check("LEARN switches learn mode on", learn(0) & 1 == 1, learn(0))
+f = draw(0)
+check("learn mode: drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
+slow_tap(5 + 19, 47)                                              # FAST ATTACK (top-left of the first panel)
+check("in learn mode a tap on a knob chooses it (and does not drag it)", learn(6) == 210 and get(210) == 81, (learn(6), get(210)))
+midi(0xB0, 74, 64)
+check("the first controller moved is bound to it: CC 74 on channel 1 -> control 210; the choice is used up", learn(5, 210) == 75 and learn(6) == 0xFFFF and learn(0) >> 8 == 1, (learn(5, 210), learn(6), learn(0)))
+midi(0xB0, 74, 127)
+check("in learn mode a controller moves nothing", get(210) == 81, get(210))
+knob(2, 80)                                                       # an encoder turn in learn mode chooses its control too (the top-right one of the panel: FAST RELEASE, 211)
+midi(0xB0, 20, 1)
+check("... an encoder turn chooses a control as well (and the CC is a second binding)", learn(0) >> 8 == 2, learn(0))
+slow_tap(233 + 19, 28 + 19)
+check("LEARN again: learn mode off", learn(0) & 1 == 0)
+midi(0xB0, 74, 127)
+check("a bound controller sets its control: CC 74 at 127 -> 1000", get(210) == 1000, get(210))
+midi(0xB0, 74, 0)
+check("... and at 0 -> 0", get(210) == 0, get(210))
+midi(0xB1, 74, 127)
+check("another channel's CC 74 does nothing", get(210) == 0, get(210))
+midi(0xE0, 74, 127)
+midi(0x90, 74, 127)
+check("notes and pitch bend never move a control", get(210) == 0)
+midi(0xB0, 74, 64)
+check("a middle value maps to about half (64 -> 504)", 500 <= get(210) <= 510, get(210))
+slow_tap(5 + 19, 47)
+slow_tap(233 + 38 + 19, 28 + 19)                                  # FORGET: the control last touched
+check("FORGET removes the mapping of the control last touched", learn(5, 210) == 0, learn(5, 210))
+learn(1)
+learn(2, 211)
+midi(0xB0, 9, 10)
+learn(1)
+slow_tap(233 + 19, 66 + 19)                                       # CLEAR (bottom-left: the third cell)
+check("CLEAR removes them all", learn(0) >> 8 == 0, learn(0))
+# the stock poll hook: the message is looked at, then goes on unchanged
+e.stub(0x0804495E, lambda: (e.uc.mem_write(e.arg(1), bytes([0xB0, 5, 100, 0, 3])), e.uc.reg_write(A.UC_ARM_REG_R0, 1)))
+learn(1)
+learn(2, 212)
+e.call("lira_midi_get", 0x24002E88, 0x24038200, 0x24038210)
+check("lira_midi_get returns the stock result and the message, and learns from it (CC 5 -> 212)", e.uc.reg_read(A.UC_ARM_REG_R0) == 1 and learn(5, 212) == 6 and list(e.uc.mem_read(0x24038200, 3)) == [0xB0, 5, 100], learn(5, 212))
+learn(1)
+learn(4)
 tap(5 + 152 + 38 + 19, 47)                                        # SOURCE (top-right of VELOCITY)
 check("SOURCE: OFF -> TAP (the height of the touch on a plate)", get(215) == 1, get(215))
 tap(5 + 152 + 19, 85)                                             # TO (bottom-left)
@@ -552,7 +646,7 @@ check("TO: DEPTH -> VOL", get(216) == 1, get(216))
 tap(5 + 152 + 38 + 19, 47)
 tap(5 + 152 + 19, 85)
 tap(5 + 124 + 10, 215)                                            # (back to CHORD for what follows)
-tap(5 + 76 + 19, 85)                                              # SHUFFLE (bottom-left of VOICING)
+e.call("lira_ui_action", 1)                                       # SHUFFLE (a button of the MIX tab now: QUANT took its place on CHORD)
 n1 = [note(v) for v in range(8)]
 check("SHUFFLE gives another voicing", n1 != n0 and sorted(n1) != sorted(n0), (n0, n1))
 tap(5 + 76 + 38 + 19, 85)                                         # ROTATE (bottom-right)
@@ -620,9 +714,7 @@ def info():
 
 
 e.call("lira_ui_sel", 0)
-check("INFO on the tune knobs: voices 1-4 -> 5-8 -> 1-4", [info() >> 4, info() >> 4] == [1, 0] and not stockmsg, (sel(), stockmsg))
-e.call("lira_ui_sel", 6 << 4)
-check("INFO on the level knobs: voices 1-4 -> 5-8 -> 1-4", [info() >> 4, info() >> 4] == [7, 6], sel())
+check("INFO on the voice squares: pair 1-2 -> 3-4 -> 5-6 -> 7-8 -> 1-2", [info() >> 4 for _ in range(4)] == [1, 6, 7, 0] and not stockmsg, (sel(), stockmsg))
 e.call("lira_ui_sel", 0 | 2 << 4)
 seq = [info() for _ in range(4)]
 check("INFO on the panels (VOICES tab): each panel in turn, the tab kept", seq == [0x30, 0x40, 0x50, 0x20], [hex(s) for s in seq])

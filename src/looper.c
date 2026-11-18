@@ -55,6 +55,7 @@
 #include <stdint.h>
 
 #include "looper.h"
+#include "tools.h"
 #include "t2m_bb.h"
 
 #define FN(addr) ((addr) | 1u)
@@ -712,6 +713,8 @@ static void verify(void)
 }
 
 /* Replaces the input stage's tail call (b.w @0x0804cb18): time keeping only; the audio is handled at the Out 1 stage. */
+void looper_page_inpeak(float pk);                        /* looper_page.c */
+
 void looper_in(void *obj, float **bufs, int frames)
 {
     crash_bc(BC_AUDIO, BCA_IN);
@@ -720,9 +723,18 @@ void looper_in(void *obj, float **bufs, int frames)
         S->ticks++;
         verify();
         if (S->ok) {
-            if (opt_i(LOOPER_O_SRC) == LOOPER_SRC_MONO && bufs[0] && bufs[1])      /* SOURCE: MONO IN: a mono cable or a stereo one on the left only: the left is both */
+            if ((tools_get(T_MONO) == 1 || opt_i(LOOPER_O_SRC) == LOOPER_SRC_MONO) && bufs[0] && bufs[1])      /* Tools: Mono Input (or an old SOURCE = MONO IN): a mono cable or a stereo one on the left only: the left is both */
                 for (int i = 0; i < frames; i++)
                     bufs[1][i] = bufs[0][i];
+            if (bufs[0] && bufs[1]) {                                 /* the input's level, for the page's thin line */
+                float pk = 0.f;
+                for (int i = 0; i < frames; i++) {
+                    float a = bufs[0][i] < 0.f ? -bufs[0][i] : bufs[0][i], b = bufs[1][i] < 0.f ? -bufs[1][i] : bufs[1][i];
+                    pk = a > pk ? a : pk;
+                    pk = b > pk ? b : pk;
+                }
+                looper_page_inpeak(pk);
+            }
             S->in_l = bufs[0];
             S->in_r = bufs[1];
             S->in_frames = (uint32_t)frames;
@@ -940,7 +952,7 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
         p->fdrive = d->sdr[t] > .001f ? d->sdr[t] : 0.f;
         p->limit = p->fdrive > 0.f ? 4.f - 3.f * p->fdrive : 0.f;
         p->ilimit = p->limit > 0.f ? 1.f / p->limit : 0.f;
-        p->twelve = opt_i(LOOPER_O_SLOPE) == 0;
+        p->twelve = tools_get(T_FILTERS) == 0;
         float target = active ? 1.f : 0.f;
         p->fm0 = d->fm[t];
         p->dfm = (target - p->fm0) / (float)n;
@@ -2428,7 +2440,7 @@ void looper_filter(struct smfilt *st, float f, float res, float *l, float *r, in
     float h2 = 1.f / (1.f + st->r2 * st->g + st->g * st->g), rg2 = st->r2 + st->g;
     float fd = st->drive > .001f ? st->drive : 0.f, limit = fd > 0.f ? 4.f - 3.f * fd : 0.f, ilimit = limit > 0.f ? 1.f / limit : 0.f;
     float target = active ? 1.f : 0.f, m0 = st->mix, dm = (target - m0) / (float)n;
-    const int twelve = opt_i(LOOPER_O_SLOPE) == 0;
+    const int twelve = tools_get(T_FILTERS) == 0;
     st->mix = target;
     for (int i = 0; i < n; i++) {
         float m = m0 + dm * (float)(i + 1), x2[2] = {l[i], r[i]}, in[2] = {l[i], r[i]};
@@ -2499,9 +2511,9 @@ void looper_stage(uint8_t *obj, void *bufs)
         guard_stage(DSP(), c_in, n);
         crash_bc(BC_AUDIO, BCA_DRONE);
         float *dl, *dr;
-        out_bus(bufs, opt_i(LOOPER_O_DOUT), n, l, r, &dl, &dr);
+        out_bus(bufs, tools_get(T_DRONEOUT), n, l, r, &dl, &dr);
         struct dsp *dd = DSP();
-        out_bus(bufs, opt_i(LOOPER_O_SOUT), n, l, r, &dd->sm_l, &dd->sm_r);
+        out_bus(bufs, tools_get(T_SAMPLROUT), n, l, r, &dd->sm_l, &dd->sm_r);
         if (dd->sm_l == l)
             dd->sm_l = dd->sm_r = 0;
         out_bus(bufs, opt_i(LOOPER_O_ROUTE), n, l, r, &dd->lo_l, &dd->lo_r);

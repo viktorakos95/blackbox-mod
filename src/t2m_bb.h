@@ -34,7 +34,7 @@ struct t2m_mem {
     uint8_t _r0[1];
     struct t2m_hit hist[T2M_INPUTS][T2M_HIST];
     struct {                         /* the TRIG page (src/t2m_page.c) */
-        uint8_t in, row, sheet, last;/* the input shown, the row the knobs turn, the footer's sheet, the value last touched (0xff none) */
+        uint8_t in, row, sheet, last, preset;/* the input shown, the square of four the knobs turn, the footer's sheet, the value last touched (0xff none), the preset last applied + 1 (0 none) */
         int16_t kacc[4];             /* knob counts not yet a step */
     } ui;
     t2m_params p[T2M_INPUTS];

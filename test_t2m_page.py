@@ -34,7 +34,7 @@ open("out/t2m_test/off2.c", "w").write(
     + "".join(f'printf("{f} %zu\\n", offsetof(struct t2m_mem, {f}));\n' for f in FIELDS)
     + 'printf("PSIZE %zu\\n", sizeof(t2m_params));\n'
     + "".join(f'printf("p_{f} %zu\\n", offsetof(t2m_params, {f}));\n' for f in
-            ("sens", "mask_ms", "floor_db", "scan_ms", "note", "note_on", "vel_mode", "vel_fixed", "cc_on", "cc_num", "len_mode", "len_ms"))
+            ("sens", "mask_ms", "floor_db", "scan_ms", "speed_ms", "retrig", "channel", "note", "note_on", "vel_mode", "vel_fixed", "cc_on", "cc_num", "len_mode", "len_ms"))
     + "}\n")
 subprocess.run(["gcc", "-o", "out/t2m_test/off2", "out/t2m_test/off2.c"], check=True)
 O = {l.split()[0]: int(l.split()[1]) for l in
@@ -46,6 +46,8 @@ MEM, ENGINE_PAD = 0x30030000, 0x2400A9C0
 e.stub(0x080443F0, fn=lambda: e.uc.reg_write(A.UC_ARM_REG_R0, 3 << 20))
 e.stub(0x08044404, fn=lambda: e.uc.reg_write(A.UC_ARM_REG_R0, MEM))
 e.call("t2m_boot")
+assert e.r8(MEM + O["eng"]) == 0, "the engine starts off"
+e.uc.mem_write(MEM + O["eng"], b"\x01")               # (the tests below use it on; it starts off: checked above)
 check("Trigger2MIDI has its memory", e.r32(0x38800984) == MEM)
 
 
@@ -149,8 +151,8 @@ def inside(f):
 # ---- footer: three sheets
 f = draw(0)
 check("TRIG page: no looper tab strip, no looper track columns", not any(x[2] == 71 for x in f) and not any(x[2] == 34 and x[3] == 1 for x in f))
-check("footer: the four sheets (HITS, DETECT, OUT, CLK), 58 px wide at 60 px pitch",
-      all(any(x[0] == 3 + 3 + 60 * i and x[2] == 58 and x[3] == 1 for x in f) for i in range(4)), [x for x in f if x[3] == 1 and x[2] == 58][:4])
+check("footer: the three sheets (HITS, DETECT, OUT; the CLK sheet is gone), 58 px wide at 60 px pitch",
+      all(any(x[0] == 3 + 3 + 60 * i and x[2] == 58 and x[3] == 1 for x in f) for i in range(3)) and not any(x[0] == 3 + 3 + 180 and x[2] == 58 for x in f), [x for x in f if x[3] == 1 and x[2] == 58][:4])
 check("TRIG page: inside the screen, text drawn", inside(f) and len(pixels) > 1500, len(pixels))
 check("HITS is the first sheet", e.r8(MEM + O["ui"] + 2) == 0)
 
@@ -213,11 +215,11 @@ e.uc.mem_write(MEM + O["ui"] + 2, bytes([1]))
 e.uc.mem_write(MEM + O["ui"] + 3, bytes([14]))                  # BLEED GUARD
 f = picture("detect_bleed")
 e.uc.mem_write(MEM + O["ui"] + 3, bytes([0]))
-tap(40, 134 + 10)                                              # row 2, column 0: BLEED GUARD
+tap(40, 117 + 10)                                              # the third square (bottom left), cell 0: BLEED GUARD
 check("a tap on a cell makes it the one explained", ui_last() == 14, ui_last())
-tap(116, 134 + 10)
+tap(116, 117 + 10)
 check("... the next cell: GUARD REACH", ui_last() == 15, ui_last())
-tap(192, 134 + 10)
+tap(40, 147 + 10)
 check("... and the third: NOISE FLOOR", ui_last() == 16, ui_last())
 tap(40, 54 + 10)
 check("... another row, first column: SENSITIVITY", ui_last() == 0, ui_last())
@@ -225,12 +227,12 @@ knob(1, 40)
 check("turning a knob makes its value the one explained (knob 2 = THRESHOLD)", ui_last() == 1, ui_last())
 knob(1, -40)
 fl = lambda off: struct.unpack("<f", e.uc.mem_read(MEM + O["p"] + off, 4))[0]
-tap(150, 54 + 10)                                          # DETECT row 0: SENS THRESH RETRIG MASK
+tap(110, 54 + 40)                                          # DETECT first square: SENS THRESH RETRIG MASK (a tap on MASK, cell 3)
 knob(3, -40 * 30)
 check(f"DETECT: MASK goes down to 1 ms (the patch's range stopped at 15): {fl(O['p_mask_ms']):.0f} ms", fl(O["p_mask_ms"]) == 1.0, fl(O["p_mask_ms"]))
 knob(3, 40 * 14)
 check("... one ms a step: back to 15", fl(O["p_mask_ms"]) == 15.0, fl(O["p_mask_ms"]))
-tap(150, 134 + 10)                                         # DETECT row 2: BLEED RANGE FLOOR
+tap(40, 117 + 10)                                         # DETECT third square: BLEED RANGE FLOOR
 knob(2, -40 * 40)
 check(f"DETECT: FLOOR -60 dB down 40 steps: {fl(O['p_floor_db']):.0f} dB", fl(O["p_floor_db"]) == -100.0, fl(O["p_floor_db"]))
 knob(2, -40 * 60)
@@ -239,8 +241,8 @@ f = picture("detect_floor")
 check("... and the cell shows it", inside(f))
 knob(2, 40 * 120)
 check("FLOOR up stops at -40 dB", fl(O["p_floor_db"]) == -40.0)
-tap(192, 134 + 10)
-tap(192, 134 + 10)
+tap(40, 147 + 10)
+tap(40, 147 + 10)
 check("a fast double tap on NOISE FLOOR: back to the patch's -60 dB", fl(O["p_floor_db"]) == -60.0, fl(O["p_floor_db"]))
 knob(2, 40 * 120)
 knob(2, -40 * 20)
@@ -269,8 +271,8 @@ tap(293, 26)
 check("ENG: and on again", e.r8(MEM + O["eng"]) == 1)
 
 # ---- OUT rows (d 40, 80; 40 px each): NOTE VEL LEN CHAN / CC CC VAL
-tap(150, 40 + 10)
-check("tapping the NOTE row hands it to the knobs", e.r8(MEM + O["ui"] + 1) == 0)
+tap(40, 40 + 10)
+check("tapping the NOTE square hands it to the knobs", e.r8(MEM + O["ui"] + 1) == 0)
 knob(0, 40)
 check("knob 1, one step up: NOTE 38 -> 39", p8(0, O["p_note"]) == 39, p8(0, O["p_note"]))
 knob(0, -40 * 60)
@@ -300,7 +302,7 @@ knob(2, 40 * 2)
 check("... then 5 ms a step: 15 ms", e.r16(MEM + O["p"] + O["p_len_ms"]) == 15, e.r16(MEM + O["p"] + O["p_len_ms"]))
 knob(2, -40 * 5)
 check("... and back to DYN", p8(0, O["p_len_mode"]) == 0)
-tap(150, 80 + 10)
+tap(190, 40 + 10)
 knob(0, 40 * 75)
 check("CC row, knob 1: CC OFF -> CC 74", p8(0, O["p_cc_on"]) == 1 and p8(0, O["p_cc_num"]) == 74)
 knob(0, -40 * 200)
@@ -336,47 +338,26 @@ s0 = sig()
 e.w32(MEM + O["looped"], 99)
 check("... and when a note is put into the Blackbox", sig() != s0)
 
-# ---- the CLK sheet (src/clkmon.c): a measurement of the incoming MIDI clock, a fourth sheet of the footer
-import random  # noqa: E402
-
-CYC, MGR = 0xE0001004, 0x24002E88
-e.w32(0xE000E014, 400_000 - 1)                              # SysTick reload: a 400 MHz core
-e.w32(0x580244E0, 1 << 28)                                # RCC: backup SRAM clock
-e.w32(0x58024800, 1 << 8)                                 # PWR: backup domain writes
-e.uc.mem_write(MGR + 0x20D, b"\x01")
-tap(3 + 180 + 10, 216)
-check("footer: CLK", e.r8(MEM + O["ui"] + 2) == 3, e.r8(MEM + O["ui"] + 2))
-rng = random.Random(5)
-blk, tick = 2133333, 8333333
-arr = [300000 + i * tick + rng.randint(-900, 900) for i in range(60)]
-ev = sorted([(t, 1) for t in arr] + [(blk * b + 777, 0) for b in range(1, arr[-1] // blk + 3)])
-for t, is_tick in ev:
-    e.w32(CYC, t)
-    if is_tick:
-        e.call("clkmon_rx", MGR, 0xF8, 0)
-    else:
-        e.call("clkmon_block", MEM + O["clk"], 128)
-e.w32(CYC, 2_100_000_000)
-e.call("clkmon_rx", MGR, 0xFA, 0)
-f = picture("clk")
-check("CLK sheet: inside the screen, text drawn", inside(f) and len(pixels) > 800, len(pixels))
-check("CLK sheet: no switch row (nothing at the TRIG switch row's buttons)", not any(x[0] == 4 and x[1] == 18 and x[2] == 38 for x in f))
-s0 = sig()
-e.w32(CYC, 2_100_001_000)
-e.call("clkmon_rx", MGR, 0xF8, 0)
-check("CLK sheet: the page redraws when a tick arrives", sig() != s0)
-n0 = p8(0, O["p_note"])
-knob(0, 40 * 20)
-check("knobs do nothing on the CLK sheet", p8(0, O["p_note"]) == n0 and e.r8(MEM + O["ui"] + 2) == 3)
-tap(100, 100)
-e.call("clkmon_block", MEM + O["clk"], 128)
-e.call("clkmon_stats", MEM + O["clk"], 0, 0x30038000)
-check("a tap on the sheet resets the numbers (counted from zero after the next block)",
-      e.r32(0x30038000) == 0 and e.r32(0x30038014) == 0, (e.r32(0x30038000), e.r32(0x30038014)))
+# ---- presets (DETECT, the fourth quadrant): FAST KICK BLEED ROLLS SOFT, two columns
 tap(3 + 60 + 10, 216)
-check("back to DETECT from CLK", e.r8(MEM + O["ui"] + 2) == 1)
-f = picture("detect_after_clk")
-check("DETECT after CLK: inside the screen", inside(f))
+f = picture("presets")
+check("DETECT with presets: inside the screen", inside(f))
+PX = lambda i: 4 + 153 + (i & 1) * 78 + 20
+PY = lambda i: 54 + 63 + 11 + (i >> 1) * 15 + 5
+tap(PX(1), PY(1))
+check("preset FAST: speed 0.5, scan 0, mask 8, fixed velocity", fl(O["p_speed_ms"]) == 0.5 and fl(O["p_scan_ms"]) == 0.0 and fl(O["p_mask_ms"]) == 8.0 and p8(0, O["p_vel_mode"]) == 1)
+check("... the note, channel and CC settings stay", p8(0, O["p_note"]) == 38 and p8(0, O["p_channel"]) == 1)
+check("... and its button is lit (ui.preset = 2)", e.r8(MEM + O["ui"] + 4) == 2, e.r8(MEM + O["ui"] + 4))
+tap(PX(2), PY(2))
+check("preset KICK: mask 40 ms, retrigger 12, dynamic velocity, scan 3", fl(O["p_mask_ms"]) == 40.0 and fl(O["p_retrig"]) == 12.0 and p8(0, O["p_vel_mode"]) == 0 and fl(O["p_scan_ms"]) == 3.0)
+tap(PX(4), PY(4))
+check("preset ROLLS: mask 3 ms, retrigger 2, floor -100", fl(O["p_mask_ms"]) == 3.0 and fl(O["p_retrig"]) == 2.0 and fl(O["p_floor_db"]) == -100.0)
+tap(PX(0), PY(0))
+check("preset DEFAULT: the patch's defaults again", fl(O["p_mask_ms"]) == 15.0 and fl(O["p_speed_ms"]) == 3.0 and fl(O["p_sens"]) == 2.0)
+tap(40, 54 + 10)
+knob(0, 40)
+check("a hand edit clears the lit preset", e.r8(MEM + O["ui"] + 4) == 0)
+
 
 print("ALL PASS" if not fails else f"{fails} FAILED")
 sys.exit(1 if fails else 0)

@@ -83,7 +83,7 @@ void t2m_boot(void)
     m->ui.last = 0xff;
     clkmon_boot(&m->clk);                       /* the cycle counter and the clock monitor's interrupt block */
     m->on[0] = 1;                               /* input L on, R off */
-    m->eng = 1;
+    m->eng = 0;                                 /* the engine starts off (the ENG switch on the TRIG page turns it on) */
     R->mem = m;
     R->magic = MAGIC;
 }

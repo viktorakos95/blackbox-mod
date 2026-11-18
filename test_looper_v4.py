@@ -97,7 +97,7 @@ def boot():
     log.clear()
     e.call("looper_boot", ENGINE, count=200_000_000)
     e.uc.mem_write(STATE + 164 + 9 * 4, struct.pack("<f", 0.0))
-    e.uc.mem_write(STATE + 164 + 11 * 4, struct.pack("<f", 0.0))
+    e.uc.mem_write(e.sym["looper_full"], b"\x00")
     e.uc.mem_write(STATE + 164 + 1 * 4, struct.pack("<f", 0.0))               # SYNC off and QUANT 1/16: what the checks assume (the defaults are SYNC on, 1 BAR)
     e.uc.mem_write(STATE + 164 + 2 * 4, struct.pack("<f", 3.0))
 

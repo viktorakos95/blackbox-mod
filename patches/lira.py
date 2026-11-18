@@ -24,6 +24,10 @@ PAGES = 0x08098D40       # a cell's settings page -> list (app, cell, list, page
 RENDER = 0x08055BB8      # voice render (pad, voice, out, src): Level, ADSR, filter, mix
 
 PATCHES = [
+    # MIDI learn: the render's three calls of the incoming-message poll (0x0804495e) look at controller changes first (src/lira_pad.c lira_midi_get)
+    hook(0x0804CB80, 0x0804495E, "lira_midi_get"),
+    hook(0x0804CC78, 0x0804495E, "lira_midi_get"),
+    hook(0x0804D0DE, 0x0804495E, "lira_midi_get"),
     # the sample readers' tail calls into the voice render: LIRA's audio replaces the sample before Level / ADSR
     (0x080572BA, bw(0x080572BA, RENDER), bw(0x080572BA, sym["lira_render"])),
     (0x0805825E, bw(0x0805825E, RENDER), bw(0x0805825E, sym["lira_render"])),

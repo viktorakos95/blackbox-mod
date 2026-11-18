@@ -2,16 +2,16 @@
  * Opened by the PAD button (second press on the pad screen). The engine is lira_pad.c's page instance, which the looper's
  * output stage runs: no pad or sample needed.
  *
- * One 8 x 38 px grid carries everything. At the bottom, always: the eight voices in two groups of four (a small LEVEL knob and a TUNE knob each,
- * in its pair's colour, and a big plate below them: tap = on / off, the top-right switch makes the plates HOLD). The eight hardware
+ * One 8 x 38 px grid carries everything. At the bottom, always: the eight voices in four squares of four, one per pair (two small LEVEL knobs above
+ * the pair's two TUNE knobs, in its pair's colour, and a big plate below them: tap = on / off, the top-right switch makes the plates HOLD). The eight hardware
  * buttons are the same plates. Above them one of four tabs (footer), each a row of four panels of four controls:
  *   VOICES   one panel per voice pair: MOD, SHARP, FM source, TOUCH
  *   SOUND    DELAY (time 1, 2, feedback, mix), MOD + SYNC (mod 1, 2 and the tempo sync of the two lines), LFO + SYNC (LFO A, B and their sync), LFO SHAPE (shape, combine, link, delay source)
  *   MIX      OUTPUT (drive, dist, volume, ext in), PITCH (the two pitches, QUANT, VIB), GESTURE, FEEL (PAN, DRIFT, the POWER switch)
  *   CHORD    TONAL SPACE (space, root, register, span), VOICING (chord on, tuning, shuffle, rotate), the notes of the voices
- * The four encoders turn the four controls of the active group (white frame): the strip's voices 1-4 or 5-8, or a panel. A touch on
- * a control makes its group the active one; BACK flips between voices 1-4 and 5-8; INFO moves on within the part of the page the
- * group is in (lira_shift: the next panel, or levels / tunes 1-4 <-> 5-8; the page has no SHIFT mode). PAD (round button 0) is never a
+ * The four encoders turn the four controls of the active group (orange frame): a voice pair's square, or a panel. A touch on
+ * a control makes its group the active one; INFO moves on within the part of the page the
+ * group is in (lira_shift: the next panel, or the next pair; the page has no SHIFT mode). PAD (round button 0) is never a
  * plate: it goes back to the pads, and PAD on the pad screen comes back here. Inside a panel the encoders sit like the
  * controls: top-left, top-right, bottom-left, bottom-right.
  */
@@ -96,15 +96,21 @@ static void lu_cell(int p, int c, int *x, int *d)
     *d = LU_PANEL + 12 + (c >> 1) * 38;
 }
 
+/* The encoder group (bank) of voice pair p (0..3): banks 0, 1, 6, 7 (2..5 are the panels). */
+static int lu_pb(int p)
+{
+    return p < 2 ? p : p + 4;
+}
+
 static int lu_specs(int sel, struct lu_spec *o)
 {
     int page = sel & 15, n = 0;
     static const char *const vn[8] = {"1", "2", "3", "4", "5", "6", "7", "8"};
     static const char *const ln[8] = {"LV 1", "LV 2", "LV 3", "LV 4", "LV 5", "LV 6", "LV 7", "LV 8"};
-    for (int v = 0; v < 8; v++) {                                 /* the voice knobs, on every page: a level row above the tune row */
-        LU_SP(n, v, LU_X0 + v * LU_COL, LU_TUNE, LU_COL, 38, v >> 2, lu_enc_row[v & 3], LK_KNOB, lu_pair_col[v >> 1], 12, vn[v]);
+    for (int v = 0; v < 8; v++) {                                 /* the voice knobs, on every page: a square of four per pair, 2 levels above 2 voices (encoders TL, TR, BL, BR) */
+        LU_SP(n, v, LU_X0 + v * LU_COL, LU_TUNE, LU_COL, 38, lu_pb(v >> 1), lu_enc_cell[2 + (v & 1)], LK_KNOB, lu_pair_col[v >> 1], 12, vn[v]);
         n++;
-        LU_SP(n, 170 + v, LU_X0 + v * LU_COL, LU_LVL, LU_COL, 21, 6 + (v >> 2), lu_enc_row[v & 3], LK_KNOB, lu_pair_col[v >> 1], 8, ln[v]);
+        LU_SP(n, 170 + v, LU_X0 + v * LU_COL, LU_LVL, LU_COL, 21, lu_pb(v >> 1), lu_enc_cell[v & 1], LK_KNOB, lu_pair_col[v >> 1], 8, ln[v]);
         n++;
     }
     int x, d;
@@ -140,8 +146,8 @@ static int lu_specs(int sel, struct lu_spec *o)
         static const char *const nm[4] = {"DRIVE", "DIST", "VOL", "EXT"};
         static const uint16_t gid[4] = {190, 148, 191, 193};
         static const char *const gn[4] = {"REC", "LEN", "UNDO", "LOOP"};
-        static const uint16_t pid[4] = {123, 124, 196, 195};      /* PITCH: the two global pitches, QUANT (the nearest real note), VIB (the vibrato) */
-        static const char *const pn[4] = {"P 1-4", "P 5-8", "QUANT", "VIB"};
+        static const uint16_t pid[4] = {123, 124, 151, 195};      /* PITCH: the two global pitches, SHUFFLE (moved here from CHORD to make room for QUANT there), VIB (the vibrato) */
+        static const char *const pn[4] = {"P 1-4", "P 5-8", "SHUFL", "VIB"};
         for (int i = 0; i < 4; i++) {
             lu_cell(0, i, &x, &d);
             LU_SP(n, ids[i], x, d, LU_COL, 38, 2, lu_enc_cell[i], LK_KNOB, LU_ACC1, 11, nm[i]);
@@ -174,9 +180,15 @@ static int lu_specs(int sel, struct lu_spec *o)
             LU_SP(n, ids[i], x, d, LU_COL, 38, 2 + pan[i], lu_enc_cell[cel[i]], i < 5 ? LK_KNOB : LK_BTN, pan[i] == 1 ? LU_ACC2 : LU_ACC1, i < 5 ? 11 : 0, nm[i]);
             n++;
         }
+        static const char *const mn[3] = {"LEARN", "FORGET", "CLEAR"};      /* MIDI learn (lira_pad.c): LEARN, then a tap on a knob or an encoder turn, then a controller moved; FORGET = the last control touched; CLEAR = all */
+        for (int i = 0; i < 3; i++) {
+            lu_cell(3, i, &x, &d);
+            LU_SP(n, 220 + i, x, d, LU_COL, 38, 5, lu_enc_cell[i], LK_BTN, LU_ACC2, 0, mn[i]);
+            n++;
+        }
     } else {
-        static const char *const nm[8] = {"SPACE", "ROOT", "OCT", "SPAN", "CHORD", "TUNE", "SHUFL", "CYCLE"};
-        static const uint16_t ids[8] = {140, 141, 142, 143, 150, 153, 151, 152};
+        static const char *const nm[8] = {"SPACE", "KEY", "OCT", "SPAN", "CHORD", "TUNE", "QUANT", "CYCLE"};      /* KEY: the C D E selector (was ROOT); QUANT (the nearest real note) moved here from MIX */
+        static const uint16_t ids[8] = {140, 141, 142, 143, 150, 153, 196, 152};
         static const uint8_t cellof[8] = {0, 1, 2, 3, 0, 1, 2, 3};
         for (int i = 0; i < 8; i++) {
             lu_cell(i >> 2, cellof[i], &x, &d);
@@ -344,7 +356,18 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             st = lira_ui_get(215) ? "TAP" : "OFF", on = lira_ui_get(215);
         else if (s->id == 216)
             st = lira_ui_get(216) ? "VOL" : "DEPTH", on = 1;
-        else
+        else if (s->id == 220)
+            st = lira_ui_learn(0, 0) & 1 ? "ON" : "OFF", on = lira_ui_learn(0, 0) & 1;
+        else if (s->id == 221)
+            st = "LAST", on = 0;
+        else if (s->id == 222) {
+            int mapped = lira_ui_learn(0, 0) >> 8;
+            b[0] = (char)('0' + mapped / 10 % 10);
+            b[1] = (char)('0' + mapped % 10);
+            b[2] = 0;
+            st = mapped > 9 ? b : b + 1;
+            on = mapped != 0;
+        } else
             on = 0;
         if (on)
             box(s->x + 3, s->d + 3, s->w - 6, s->h - 6, lu_dark(s->col));
@@ -369,6 +392,12 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
         *q = 0;
         text_c(s->x, s->d + 26, s->w, b, s->col, 1);
     }
+    if (s->kind == LK_KNOB) {                                     /* MIDI learn: a dot on a control that has a controller; a frame on the one waiting for one */
+        if (lira_ui_learn(5, s->id))
+            box(s->x + s->w - 8, s->d + 3, 3, 3, LU_SEL);
+        if (lira_ui_learn(6, 0) == s->id)
+            frame(s->x + 2, s->d, s->w - 4, s->h, LU_SEL, 1);
+    }
 }
 
 static void draw_lira(void)
@@ -380,12 +409,13 @@ static void draw_lira(void)
     int n = lu_specs(sel, sp);
     char b[40], *q;
     static const char *const ptitle[LU_TABS][4] = {{"PAIR 1-2", "PAIR 3-4", "PAIR 5-6", "PAIR 7-8"},
-                                                   {"DELAY", "MOD + SYNC", "LFO + SYNC", "LFO SHAPE"},
+                                                   {"DELAY", "DLY MOD/SYNC", "LFO + SYNC", "LFO SHAPE"},
                                                    {"OUTPUT", "PITCH", "GESTURE", "FEEL"},
                                                    {"TONAL SPACE", "VOICING", "VOICES 1-4", "VOICES 5-8"},
-                                                   {"FAST", "SLOW", "VELOCITY", "MIDI: SOON"}};
+                                                   {"FAST", "SLOW", "VELOCITY", "MIDI LEARN"}};
     box(1, 1, P->w - 2, TOPBAR, C_BG);
-    text(6, 4, "DRONE-8", C_WHITE, 1);
+    int learn = lira_ui_learn(0, 0) & 1;
+    text(6, 4, learn ? "MIDI LEARN!" : "DRONE-8", learn ? LU_SEL : C_WHITE, 1);
     int last = lira_ui_last(-1);
     q = b;
     *q = 0;
@@ -423,7 +453,8 @@ static void draw_lira(void)
     }
     /* (the governor's SHED and the load readouts that stood here: docs/diagnostics.md) */
     b[8] = 0;                                                     /* (it must stay clear of the switches) */
-    text(54, 4, b, *b ? C_WHITE : C_GREY, 1);
+    if (!learn)
+        text(54, 4, b, *b ? C_WHITE : C_GREY, 1);
     draw_load(P->w - 10);                                         /* the overload warning at the right, as on the other pages (looper_page.c draw_load) */
     int mom = lira_ui_momentary(0), sine = lira_ui_chord_get(154), fr = lira_ui_chord_get(157), xs = lira_ui_chord_get(156), gm = lira_ui_chord_get(158);
     /* six switches at the right, 32 px wide every 33, from the right: LATCH / HOLD, TRI / SINE, X:IN / X:MIX / X:ALL, STEP / FREE, REC, BTN */
@@ -457,20 +488,13 @@ static void draw_lira(void)
         if (page == LP_VOICES)
             box(x + 6, LU_PANEL + 13, 2 * LU_COL - 12, 1, lu_pair_col[p]);
     }
-    for (int g = 0; g < 2; g++) {                                 /* the voice groups: level row, tune row (the colour bars first, so the encoders' frame lies over them) */
-        int x = LU_X0 + g * 4 * LU_COL;
-        for (int k = 0; k < 2; k++)
-            box(x + k * 2 * LU_COL + 6, LU_STRIP, 2 * LU_COL - 12, 2, lu_pair_col[g * 2 + k]);
-    }
+    for (int g = 0; g < 4; g++)                                   /* the voice squares: pair g's 2 levels over its 2 voices (the colour bars first, so the encoders' frame lies over them) */
+        box(LU_X0 + g * 2 * LU_COL + 6, LU_STRIP, 2 * LU_COL - 12, 2, lu_pair_col[g]);
     for (int i = 0; i < n; i++)
         lu_draw_spec(&sp[i], bank, chord);
-    for (int g = 0; g < 2; g++) {                                 /* the groups' frames, over everything of theirs */
-        int x = LU_X0 + g * 4 * LU_COL;
-        frame(x + 1, LU_STRIP, 4 * LU_COL - 2, LU_PLATE - LU_STRIP - 3, LU_LINE, 1);
-        if (bank == g)
-            frame(x + 1, LU_TUNE - 1, 4 * LU_COL - 2, 40, LU_SEL, 1);
-        if (bank == 6 + g)
-            frame(x + 1, LU_STRIP, 4 * LU_COL - 2, 23, LU_SEL, 1);
+    for (int g = 0; g < 4; g++) {                                 /* the squares' frames, over everything of theirs: the one the encoders are on is orange */
+        int x = LU_X0 + g * 2 * LU_COL;
+        frame(x + 1, LU_STRIP, 2 * LU_COL - 2, LU_PLATE - LU_STRIP - 3, bank == lu_pb(g) ? LU_SEL : LU_LINE, 1);
     }
     for (int v = 0; v < 8; v++) {                                 /* the plates */
         int x, d, w, h, on = lira_ui_key_get(v), col = lu_pair_col[v >> 1];
@@ -481,6 +505,8 @@ static void draw_lira(void)
         *q = 0;
         text_c(x, d + h / 2 - 8, w, b, on ? C_WHITE : C_GREY, 2);
     }
+    if (learn && (looper_ticks() >> 5 & 1u))                     /* MIDI learn: the frame flashes, like INFO's */
+        frame(0, 0, P->w, P->hg, LU_SEL, 2);
 }
 
 /* the footer: the page tabs (the stock FX button sits at the right, drawn by the caller) */
@@ -520,12 +546,13 @@ static void lira_back(void)
 static void lu_bank(int bank);
 
 /* INFO (SHIFT elsewhere): the encoders move on within the part of the page they are in. The panels above: the next panel of the tab
-   that has encoder controls (four, or three); the level knobs: voices 1-4 <-> 5-8; the tune knobs: voices 1-4 <-> 5-8. */
+   that has encoder controls (four, or three); the voice squares: the next pair. */
 static void lira_shift(void)
 {
     int sel = lira_ui_sel(-1), bank = (sel >> 4) & 7;
-    if (bank <= 1 || bank >= 6) {
-        bank ^= 1;
+    if (bank <= 1 || bank >= 6) {                                 /* the voice squares: pair 1-2, 3-4, 5-6, 7-8, round */
+        int p = bank <= 1 ? bank : bank - 4;
+        bank = lu_pb((p + 1) & 3);
     } else {
         struct lu_spec sp[LU_MAXS];
         int n = lu_specs(sel, sp);
@@ -564,10 +591,21 @@ static void lu_set(const struct lu_spec *s, int v)
     }
 }
 
+/* the buttons that cycle through choices and have a first one to go back to (FM, TOUCH, the sync divisions, LEN, the velocity switches) */
+static int lu_btn_resets(int id)
+{
+    return (id >= 100 && id < 108) || (id >= 144 && id < 149) || id == 215 || id == 216;
+}
+
 /* a control back to its default (the double tap) */
 static void lu_reset(const struct lu_spec *s)
 {
-    if (s->kind == LK_STEP) {
+    if (s->kind == LK_BTN) {
+        if (s->id >= 144 && s->id < 149)
+            lira_ui_chord_set(s->id, 0);
+        else
+            lira_ui_set(s->id, 0);
+    } else if (s->kind == LK_STEP) {
         static const uint8_t def[4] = {0, 0, 1, 2};
         lira_ui_chord_set(s->id, s->id >= 144 ? 0 : def[s->id - 140]);
     } else if (s->kind == LK_KNOB && !(s->id < 8 && lira_ui_chord_get(150))) {
@@ -611,6 +649,12 @@ static void lu_press(const struct lu_spec *s, int dir)
         lira_ui_action(3);
     else if (id == 215 || id == 216)
         lira_ui_set(id, !lira_ui_get(id));
+    else if (id == 220)
+        lira_ui_learn(1, 0);
+    else if (id == 221)
+        lira_ui_learn(3, -1);
+    else if (id == 222)
+        lira_ui_learn(4, 0);
 }
 
 /* kind 0 down, 1 move, 2 up; x / d in page pixels. A knob turns by 80 px of travel up or down from where it was touched. */
@@ -628,8 +672,9 @@ static void lira_touch(int kind, int id, int x, int d)
     if (kind == 1) {
         if (lira_ui_drag(id, 1, 0, 0, 0, 0) == 3) {
             int i = lira_ui_drag(id, 2, 0, 0, 0, 0), dy = lira_ui_drag(id, 3, 0, 0, 0, 0) - d;
-            if (dy > 3 || dy < -3)
-                lira_ui_tap(0xffff, 0, 0);                        /* a drag is not the first half of a double tap */
+            if (dy > -4 && dy < 4 && !(i < n && sp[i].id < 8 && lira_ui_chord_get(150)))
+                return;                                           /* a tap (finger jitter) moves nothing: the double tap then resets cleanly */
+            lira_ui_tap(0xffff, 0, 0);                            /* a drag is not the first half of a double tap */
             if (i < n && sp[i].id < 8 && lira_ui_chord_get(150)) {     /* chord mode: the voice's pitch, free (60 semitones over 80 px), with a detent on every note */
                 int h = lira_ui_drag(id, 4, 0, 0, 0, 0) + dy * 75, nn = (h + 50) / 100;
                 lira_ui_pitch_set(sp[i].id, h - nn * 100 >= -12 && h - nn * 100 <= 12 ? nn * 100 : h);
@@ -675,10 +720,17 @@ static void lira_touch(int kind, int id, int x, int d)
     for (int i = 0; i < n; i++)
         if (x >= sp[i].x && x < sp[i].x + sp[i].w && d >= sp[i].d && d < sp[i].d + sp[i].h && sp[i].kind != LK_NOTE) {
             lu_bank(sp[i].bank);
-            lira_ui_last(sp[i].id);
-            if (sp[i].kind == LK_BTN)
+            if (sp[i].id != 221)                                      /* (FORGET acts on the control touched last: it must not become that one) */
+                lira_ui_last(sp[i].id);
+            if (sp[i].kind == LK_KNOB && (lira_ui_learn(0, 0) & 1)) {  /* MIDI learn: the control is chosen, the next controller moved is its */
+                lira_ui_learn(2, sp[i].id);
+                return;
+            }
+            if (sp[i].kind == LK_BTN && lu_btn_resets(sp[i].id) && lira_ui_tap(sp[i].id, looper_ticks(), DTAP))
+                lu_reset(&sp[i]);                                 /* a double tap on a cycling button: back to its first choice (it has cycled twice by then) */
+            else if (sp[i].kind == LK_BTN)
                 lu_press(&sp[i], 1);
-            else if (lira_ui_tap(sp[i].id, looper_ticks(), 100))
+            else if (lira_ui_tap(sp[i].id, looper_ticks(), DTAP))
                 lu_reset(&sp[i]);                                 /* a double tap: back to the default */
             else
                 lira_ui_drag(id, 0, 3, i, d, sp[i].id < 8 && lira_ui_chord_get(150) ? lira_ui_pitch(sp[i].id) : lu_value(&sp[i]));
@@ -690,7 +742,7 @@ static void lira_touch(int kind, int id, int x, int d)
             return;
         }
     if (d >= LU_STRIP && d < LU_PLATE - 1 && x >= LU_X0)
-        lu_bank(x < LU_X0 + 4 * LU_COL ? 0 : 1);
+        lu_bank(lu_pb(x < LU_X0 ? 0 : (x - LU_X0) / (2 * LU_COL) > 3 ? 3 : (x - LU_X0) / (2 * LU_COL)));
 }
 
 /* The four encoders turn the controls of the active group. */
@@ -700,6 +752,11 @@ static void lira_knob(int knob, int counts)
     int sel = lira_ui_sel(-1), bank = (sel >> 4) & 7, n = lu_specs(sel, sp);
     for (int i = 0; i < n; i++)
         if (sp[i].bank == bank && sp[i].enc == knob) {
+            if (sp[i].kind == LK_KNOB && (lira_ui_learn(0, 0) & 1)) {  /* MIDI learn: turning an encoder chooses its control, it does not change it */
+                lira_ui_learn(2, sp[i].id);
+                lira_ui_last(sp[i].id);
+                return;
+            }
             int d = counts / 8, chord = lira_ui_chord_get(150);
             if (d == 0)
                 d = counts > 0 ? 1 : -1;

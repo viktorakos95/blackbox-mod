@@ -162,16 +162,16 @@ entry("mcl_page_up", 2)
 entry("mcl_page_up", 0)
 check("button released", screen()[3].endswith("B0000"), screen()[3])
 
-# --- knobs: 40 counts a step, remainder kept; a quick spin (80 counts or more in one event) doubles the steps
+# --- knobs: 80 counts a step, remainder kept; a quick spin (200 counts or more in one event) doubles the steps
 e0 = screen()[3]
-entry("mcl_page_knob", 2, 30)
+entry("mcl_page_knob", 2, 50)
 check("under one step: nothing", screen()[3] == e0)
-entry("mcl_page_knob", 2, 30)
+entry("mcl_page_knob", 2, 50)
 check("the remainder counts: one step (20 left)", screen()[3] != e0 and screen()[3][8:11] == "  1", screen()[3])
-entry("mcl_page_knob", 2, -60)
-check("negative counts turn the other way (-40: one step back)", screen()[3][8:11] == "  0", screen()[3])
 entry("mcl_page_knob", 2, -100)
-check("a quick spin (-100 in one event): two steps, doubled", screen()[3][8:11] == " -4", screen()[3])
+check("negative counts turn the other way (-80: one step back)", screen()[3][8:11] == "  0", screen()[3])
+entry("mcl_page_knob", 2, -250)
+check("a quick spin (-250 in one event): three steps, doubled", screen()[3][8:11] == " -6", screen()[3])
 entry("mcl_page_knob", 7, 100)
 entry("mcl_page_knob", -1, 100)
 check("bad knob numbers are ignored", screen()[3][8:11] == " -4")

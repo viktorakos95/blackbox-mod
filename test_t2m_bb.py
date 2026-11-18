@@ -113,6 +113,8 @@ e.call("t2m_boot")
 check(f"boot: one allocation of the settings + two detectors ({SIZE} bytes)", allocs == [SIZE], allocs)
 check("boot: the root in the backup SRAM points at it", e.r32(ROOT) == MAGIC and e.r32(ROOT + 4) == MEM,
       (hex(e.r32(ROOT)), hex(e.r32(ROOT + 4))))
+check("boot: the engine starts off", e.r8(MEM + O["eng"]) == 0)
+e.uc.mem_write(MEM + O["eng"], b"\x01")               # (switched on for the tests below)
 check("boot: input L on, R off, both on TRS + USB, not into the Blackbox itself (INT off)",
       [e.r8(MEM + O["on"]), e.r8(MEM + O["on"] + 1), e.r8(MEM + O["port"]), e.r8(MEM + O["port"] + 1)] == [1, 0, 3, 3])
 

@@ -1,4 +1,4 @@
-"""The clock pulse on Out 2 (src/cpu.c clkout_block / clkout_mix, options CLKPPQ / CLKLVL = the looper's RSIZE / RRET slots) under Unicorn.
+"""The clock pulse on Out 2 (src/cpu.c clkout_block / clkout_mix, Tools settings 0x1a0 Clock Out 2 / 0x1a1 Clock Level) under Unicorn.
 
 The looper is booted for its state (the options live there); the sequencer's stamp (seqfix.c's clock block, 0x38800908) and the stock clock object (tempo +0x18, running
 +0x38) are written by the test; each block is clkout_block then clkout_mix on a zeroed bus. Checked: off by default; pulses fall on the exact frame (positions in
@@ -80,9 +80,14 @@ def block(stamp_ticks=None):
     return r0, l, r
 
 
+STORE, ARR = 0x24020088 + 0x8C90, 0x24070000      # the stock global settings store: the clock out's two settings live there now (Tools: Clock Out 2, Clock Level)
+
+
 def opts(ppq_step, level_pct=None):
-    opt(7, (ppq_step + .5) / 7.0)
-    opt(8, 1.0 if level_pct is None else (level_pct / 100.0 - .05) / .95)
+    lv = 1000 if level_pct is None else int(level_pct * 10)
+    e.uc.mem_write(ARR, struct.pack("<HHI", 0x1A0, 0, ppq_step) + struct.pack("<HHI", 0x1A1, 0, lv))
+    e.w32(STORE + 4, ARR)
+    e.uc.mem_write(STORE + 10, struct.pack("<H", 2))
 
 
 RATE = lambda bpm: bpm * 960.0 / (60.0 * 48000.0)

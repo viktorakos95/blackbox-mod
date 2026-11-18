@@ -19,6 +19,7 @@
 #include "crash.h"
 #include "mcl_bb/bb_grid.h"
 #include "looper.h"
+#include "tools.h"
 
 void samplr_block_done(uint32_t now);      /* samplr.c: the MAX readout's rest of the block (a no-op until the looper's memory is up) */
 void looper_block_done(uint32_t now);      /* looper.c: the budget guard's rest of the block (a no-op until the looper's memory is up) */
@@ -382,8 +383,8 @@ void lp_text(int x, int d, const char *s, int color, int scale);
 #define MCL_STRIP_Y (MCL_WIN_Y + MCL_WIN_H + 12)  /* under the PAGE / SHIFT names: the strip has the page's whole width */
 #define MCL_STRIP_H 43          /* a 24 x 25 icon over the name */
 #define MCL_FOOT_H  14          /* the footer line (looper_page.c FOOT): its boxes 2 below it, 11 high */
-#define MCL_ENC_COUNTS 40       /* knob counts per MCL step (the TRIG page's; 20 moved MCL's short menus too fast on the unit) */
-#define MCL_ENC_FAST   80       /* a knob event of this many counts or more (a quick spin): twice the steps, so long ranges stay quick */
+#define MCL_ENC_COUNTS 80       /* knob counts per MCL step (the TRIG page's was 40: still too fast on the unit, so half the speed; 20 before that) */
+#define MCL_ENC_FAST   200      /* a knob event of this many counts or more (a quick spin): twice the steps, so long ranges stay quick */
 
 #define MC_PANEL  0x1c          /* silver (the MCL theme) */
 #define MC_INK    0x1e          /* the panel's printing (the MCL theme) */
@@ -618,7 +619,7 @@ int clkout_block(void *bufs, int n)
         B->on_left = 0;
         B->n_start = 0;
     }
-    int idx = (int)(looper_get_opt(LOOPER_O_CLKPPQ) * 7.f);
+    int idx = tools_get(T_CLKPPQ);
     idx = idx < 0 ? 0 : idx > 6 ? 6 : idx;
     uint32_t ctx = ((uint32_t *)bufs)[0];
     B->n_start = 0;
@@ -678,8 +679,8 @@ int clkout_block(void *bufs, int n)
 void clkout_mix(float *l, float *r, int n)
 {
     volatile struct ck_b *B = CKB;
-    double lv = (double)looper_get_opt(LOOPER_O_CLKLVL);
-    float level = (float)(.05 + .95 * (lv < 0. ? 0. : lv > 1. ? 1. : lv));
+    int lv = tools_get(T_CLKLVL);                                      /* Tools: Clock Level, 50..1000 (0: not registered: full) */
+    float level = lv < 50 || lv > 1000 ? 1.f : (float)lv * .001f;
     uint32_t left = B->on_left;                                      /* (a pulse that began in the last block goes on) */
     uint8_t k = 0;
     for (int i = 0; i < n; i++) {

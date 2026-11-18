@@ -46,12 +46,28 @@ typedef void (*store_add_fn)(void *store, int param, int value);
 #define SETTINGS ((const void *)(0x24020088u + 0x8c90u)) /* app: global settings store */
 #define PARAM_COMP 0xb4
 #define PARAM_THRESH 0x1d0       /* unregistered in stock; ids < 500 are table slots */
+#define TYPE_PCT   8
 #define TYPE_DB    7             /* value in milli-dB, shown as dB (the Metro Gain style) */
 
 void bkp_enable(void);
 
 #define MODELS 5
 const char *const comp_names[2 + MODELS] = {"Off", "Stock", "Glue", "Punch", "Opto", "Squash", "Limit"};
+
+/* General settings of our own machines (C in docs/todo.md), on the Tools pages: ids 0x1a0.. (stock uses up to 0x19b; the table slots go to 0x1f3).
+ * Stored in settings.tml with the others (xml names below). Read live with tools_get() by the looper's stages and the clock out. */
+#define T_FIRST 0x1a0
+#define T_COUNT 6
+static const char *const t_ppq[7] = {"Off", "1 PPQ", "2 PPQ", "4 PPQ", "8 PPQ", "12 PPQ", "24 PPQ"};
+static const char *const t_off_on[2] = {"Off", "On"};
+static const char *const t_outs[3] = {"Out 1", "Out 2", "Out 3"};
+static const char *const t_slope[2] = {"12 dB", "24 dB"};
+
+/* One of those settings (T_CLKPPQ ..., src/tools.h). Unregistered (an image without the comp patch) reads 0 = the defaults, except the level (0 -> 100 %). */
+int tools_get(int id)
+{
+    return fw_setting(SETTINGS, (unsigned)id);
+}
 
 /* Replaces the Compressor registration (FUN_0808c12c, an On/Off): same parameter, now a 7-entry list. */
 void comp_register(void *table, int param, int type, const char *label, int min, int max, const char *xml)
@@ -61,6 +77,12 @@ void comp_register(void *table, int param, int type, const char *label, int min,
     (void)max;
     fw_register_list(table, param, label, comp_names, 2 + MODELS, xml);
     fw_register_num(table, PARAM_THRESH, TYPE_DB, "Comp Thresh:", -24000, 12000, "compthresh");
+    fw_register_list(table, T_FIRST + 0, "Clock Out 2:", t_ppq, 7, "clkout2ppq");                 /* a pulse on Out 2, per quarter note */
+    fw_register_num(table, T_FIRST + 1, TYPE_PCT, "Clock Level:", 50, 1000, "clkout2lvl");        /* its height, 5 .. 100 % */
+    fw_register_list(table, T_FIRST + 2, "Mono Input:", t_off_on, 2, "monoinput");                /* the left input is copied onto the right */
+    fw_register_list(table, T_FIRST + 3, "DRONE-8 Out:", t_outs, 3, "droneout");
+    fw_register_list(table, T_FIRST + 4, "SAMPLR Out:", t_outs, 3, "samplrout");
+    fw_register_list(table, T_FIRST + 5, "Machine Filters:", t_slope, 2, "machfilter");           /* the looper's and SAMPLR's filters: 12 dB (cheaper) or 24 dB */
 }
 
 /* Replaces the "Compressor defaults to 1" entry of the global settings defaults (bl @0x08094886): add ours after it. */
@@ -68,6 +90,9 @@ void comp_defaults(void *store, int param, int value)
 {
     fw_store_add(store, param, value);
     fw_store_add(store, PARAM_THRESH, 0);
+    static const int16_t def[T_COUNT] = {0, 1000, 0, 0, 0, 0};
+    for (int i = 0; i < T_COUNT; i++)
+        fw_store_add(store, T_FIRST + i, def[i]);
 }
 
 /* Pad Overdrive is now a different circuit (od.c): its label on the pad page. */
