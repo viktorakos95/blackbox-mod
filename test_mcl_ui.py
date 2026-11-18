@@ -174,7 +174,7 @@ entry("mcl_page_knob", 2, -250)
 check("a quick spin (-250 in one event): three steps, doubled", screen()[3][8:11] == " -6", screen()[3])
 entry("mcl_page_knob", 7, 100)
 entry("mcl_page_knob", -1, 100)
-check("bad knob numbers are ignored", screen()[3][8:11] == " -4")
+check("bad knob numbers are ignored", screen()[3][8:11] == " -6")
 
 # --- every boot starts MCL once (cpu_boot clears M->magic at main's first call), after wiping its SDRAM region and status words
 #     (a warm reset leaves the last run's ready flags there); no restart record, no off state, nothing to tap
