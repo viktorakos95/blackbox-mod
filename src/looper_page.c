@@ -478,9 +478,11 @@ int looper_page_hit(int x, int d, int *track, float *val)
         if (d >= L.sel_y && d < L.sel_y + 13)
             return Z_SEL;
         int th = fx_tile_h(&L);
-        if (d >= y0 && d < y0 + 4 * (th + 1) && xx >= 0 && xx < 2 * (DIAL + 1) && (d - y0) % (th + 1) < th &&
-            xx % (DIAL + 1) < DIAL) {
-            int c = (FX_GROUP >> 1) * 8 + ((d - y0) / (th + 1)) * 2 + xx / (DIAL + 1);
+        if (d >= y0 - 2 && d < y0 + 4 * (th + 1) && xx >= -3 && xx < 2 * (DIAL + 1) + 3) {     /* (the whole square and the gaps and a few pixels around: a finger is wider than the tile) */
+            int rr = (d - y0) / (th + 1), cc = xx / (DIAL + 1);
+            rr = rr < 0 ? 0 : rr > 3 ? 3 : rr;
+            cc = cc < 0 ? 0 : cc > 1 ? 1 : cc;
+            int c = (FX_GROUP >> 1) * 8 + rr * 2 + cc;
             if (c >= FX_N)
                 return Z_NONE;
             *val = (float)c;

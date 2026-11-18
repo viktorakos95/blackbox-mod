@@ -717,8 +717,12 @@ static void lira_touch(int kind, int id, int x, int d)
             return;
         }
     }
-    for (int i = 0; i < n; i++)
-        if (x >= sp[i].x && x < sp[i].x + sp[i].w && d >= sp[i].d && d < sp[i].d + sp[i].h && sp[i].kind != LK_NOTE) {
+    for (int pass = 0, i = 0, hit = -1; pass < 2 && hit < 0; pass++)       /* (pass 1: a finger a few pixels outside a control, in the gaps between them, still takes the nearest) */
+        for (i = 0; i < n; i++) {
+            int m = pass ? 4 : 0;
+            if (!(x >= sp[i].x - m && x < sp[i].x + sp[i].w + m && d >= sp[i].d - m && d < sp[i].d + sp[i].h + m && sp[i].kind != LK_NOTE))
+                continue;
+            hit = i;
             lu_bank(sp[i].bank);
             if (sp[i].id != 221)                                      /* (FORGET acts on the control touched last: it must not become that one) */
                 lira_ui_last(sp[i].id);
