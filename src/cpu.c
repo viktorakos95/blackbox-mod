@@ -213,6 +213,8 @@ static char *pad_text(char *p)
     return p;
 }
 
+const volatile uint8_t cpu_long_label = 0;   /* 1: the long readout ("3.1.x 34/71% 41M Lok ...") on the version labels; off in the image, the tests switch it on */
+
 /* "3.1.x 34/71% 41M Lok", "3.1.x --% 41M Lok", or "3.1.x 41M Lok" before the first second. At most 30 bytes. */
 static void compose(char *buf)
 {
@@ -224,6 +226,10 @@ static void compose(char *buf)
     char *p = buf;
     for (const char *v = VERSION; *v && p < buf + 8; v++)
         *p++ = *v;
+    if (!cpu_long_label) {               /* just the tag: the long readout did not fit the Tools screen's boxes and showed garbage (n8); the load is on the pages' own lines */
+        *p = 0;
+        return;
+    }
     if (M->magic == MAGIC && M->status == STATUS_OK) {
         *p++ = ' ';
         p = put_uint(p, (M->avg_shown + 5u) / 10u);

@@ -31,6 +31,7 @@ def check(label, cond, detail=""):
 
 def make(image_patch=None, top=0xC3F00000):
     e = Emu(IMG, "out/cave.elf")
+    e.uc.mem_write(e.sym["cpu_long_label"], b"\x01")      # (the image shows just the tag; these tests read the long readout)
     if image_patch:
         image_patch(e.uc)
     e.uc.mem_map(0xE0000000, 0x100000)

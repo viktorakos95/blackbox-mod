@@ -158,7 +158,8 @@ const volatile uint8_t looper_full = 1;                           /* the page al
 enum { B_NONE, B_FX, B_REC, B_BACK, B_STOP, B_PLAY, BTNS };
 
 #define TAB_W      34
-#define ROW_H      13                      /* SETUP: one option per row (thirteen rows and the CLEAR ALL row above the footer) */
+static int rowh(void);
+#define ROW_H      rowh()                  /* SETUP: one option per row, as tall as the page allows (finger sized: 13 .. 18 px) */
 #define OPT_X      84                      /* SETUP: where the choices start */
 #define CHOICE_W   52
 #define SLIDER_W   150
@@ -330,12 +331,18 @@ static const struct optrow rows_setup[] = {                       /* the Looper'
     {"QUANT", LOOPER_O_QUANT, 4, {"1 BAR", "1/4", "1/8", "1/16"}},
     {"SOURCE", LOOPER_O_SRC, 2, {"INPUT", "MIX", 0, 0}},
     {"HW STOP PLAY", LOOPER_O_HWBTN, 2, {"LOOPER", "+STOCK", 0, 0}},
+    {"FX ON EMPTY", LOOPER_O_FXRST, 2, {"KEEP", "RESET", 0, 0}},         /* an emptied track's FX knobs go back to their defaults */
     {"SPEED PITCH", LOOPER_O_PITCH, 3, {"TAPE", "GRAIN", "SMOOTH", 0}},
     {"LOOPER OUT", LOOPER_O_ROUTE, 3, {"OUT 1", "OUT 2", "OUT 3", 0}},
 };
 /* The two knob boxes under the rows, like the encoders: LOOP GAIN at the bottom left (knob 1), MONITOR at the bottom right (knob 4). */
 static const struct { const char *name; uint8_t opt; char tag[3]; } kboxes[2] = {{"LOOP GAIN", LOOPER_O_GAIN, "K1"}, {"MONITOR", LOOPER_O_MON, "K4"}};
 #define KB_H 46
+static int rowh(void)                                             /* the eight rows and the CLEAR ALL row share the page above the knob boxes */
+{
+    int h = (P->hg - FOOT - 2 - KB_H - 8 - 16 - 3) / 9;
+    return h < 13 ? 13 : h > 18 ? 18 : h;
+}
 static void kbox(const struct lay *L, int i, int *x, int *d, int *w)
 {
     int bw = (P->w - 8) / 2;
@@ -348,7 +355,7 @@ static int opt_rows(void);
 
 static int opt_rows(void)
 {
-    return P->mode == M_MORE ? 0 : 7;
+    return P->mode == M_MORE ? 0 : 8;
 }
 
 static const struct optrow *page_rows(void)
@@ -735,7 +742,7 @@ static char *put_pct(char *p, float v)
 
 static int fx_bipolar(int q)                                       /* engine parameters that go -1..1 */
 {
-    return q == LOOPER_P_FILT || q == LOOPER_P_SPEED || q == LOOPER_P_WOB || q == LOOPER_P_STUT || q == LOOPER_P_SCRM || q == LOOPER_P_PTCH;
+    return q == LOOPER_P_FILT || q == LOOPER_P_SPEED || q == LOOPER_P_WOB || q == LOOPER_P_SCRM || q == LOOPER_P_PTCH;
 }
 
 static float fx_default(int q)
@@ -760,7 +767,7 @@ static float fx_value(const struct looper_info *k, int param)
 }
 
 static const char *const fx_name[FX_N] = {"FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB", "REV", "HALF",
-                                          "STAB", "RPT", "SPEED", "WOB", "TRIM", "STUT", "SCRM", "PTCH"};
+                                          "STAB", "RPT", "SPEED", "WOB", "TRIM", "POS", "SCRM", "PTCH"};
 
 /* The text a knob shows on top: "LVL 0.0dB" / the pan line / the selected FX parameter's value. */
 static void fx_text(char *b, int param, float v)
@@ -782,8 +789,10 @@ static void fx_text(char *b, int param, float v)
         *p++ = '.';
         p = put_uint(p, (unsigned)(n % 10));
         *p++ = 'x';
-    } else if (param == 12) {                                     /* TRIM: the part of the loop that plays */
+    } else if (param == 12) {                                     /* TRIM: the part of the loop that plays: its length */
         int n = (int)(v * 6.f + .5f);
+        for (const char *o = "LEN "; *o; o++)
+            *p++ = *o;
         const char *o = n <= 0 ? "OFF" : n == 1 ? "1/2" : n == 2 ? "1/4" : n == 3 ? "1/8" : n == 4 ? "1/16" : n == 5 ? "1/32" : "1/64";
         for (; *o; o++)
             *p++ = *o;
@@ -800,26 +809,32 @@ static void fx_text(char *b, int param, float v)
             p = put_pct(p, a);
         }
     } else if (param == 15) {                                     /* PTCH: semitones */
-        int semi = (int)(v * 24.f + (v >= 0.f ? .5f : -.5f));
-        if (semi == 0) {
+        float sf = v * 24.f, sn = (float)(int)(sf + (sf >= 0.f ? .5f : -.5f));       /* semitones; cents between them, a detent at each whole one (looper.c) */
+        if (sf - sn < .12f && sf - sn > -.12f)
+            sf = sn;
+        int hund = (int)((sf < 0.f ? -sf : sf) * 100.f + .5f), semi = hund / 100;
+        if (hund < 2) {
             *p++ = 'O';
             *p++ = 'F';
             *p++ = 'F';
         } else {
-            *p++ = semi < 0 ? '-' : '+';
-            p = put_uint(p, (unsigned)(semi < 0 ? -semi : semi));
+            *p++ = sf < 0.f ? '-' : '+';
+            p = put_uint(p, (unsigned)semi);
+            if (hund % 100) {                                         /* "+3.25": semitones and hundredths (cents) */
+                *p++ = '.';
+                *p++ = (char)('0' + hund % 100 / 10);
+                *p++ = (char)('0' + hund % 10);
+            }
         }
-    } else if (param == 13) {                                     /* STUT: "<1/4" repeats what just played, ">1/4" what comes next */
-        float a = v < 0.f ? -v : v;
-        if (a < .02f) {
+    } else if (param == 13) {                                     /* POS: where the loop (or TRIM's window) starts */
+        if (v < .01f) {
             *p++ = 'O';
             *p++ = 'F';
             *p++ = 'F';
         } else {
-            static const char *const fr[6] = {"1", "1/2", "1/4", "1/8", "1/16", "1/32"};
-            *p++ = v < 0.f ? '<' : '>';
-            for (const char *o = fr[(int)(a * 5.99f)]; *o; o++)
+            for (const char *o = "START "; *o; o++)
                 *p++ = *o;
+            p = put_pct(p, v);
         }
     } else if (param == LOOPER_P_FILT) {
         if (v > -.03f && v < .03f) {
@@ -1027,7 +1042,7 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
             break;
         float v = fx_value(k, p);
         dial_h(x + 2 + (j & 1) * (DIAL + 1), y0 + (j >> 1) * (th + 1), th, fx_name[p],
-               p == LOOPER_P_FILT || p == 10 || p == 11 || p == 13 || p == 14 || p == 15 ? (v + 1.f) * .5f : v, 0, (p == 6 || p == 7) && v > .5f);
+               p == LOOPER_P_FILT || p == 10 || p == 11 || p == 14 || p == 15 ? (v + 1.f) * .5f : v, 0, (p == 6 || p == 7) && v > .5f);
     }
     if (P->sel == t) {                                            /* the one pink square: this column's block of four = knobs 1-4 */
         int by = y0 + (FX_GROUP & 1) * 2 * (th + 1) - 2;
@@ -1056,13 +1071,13 @@ static void draw_setup(const struct lay *L)
     for (int r = 0; r < OPT_ROWS; r++) {
         const struct optrow *R = &rows[r];
         int d = row_d(L, r);
-        text(6, d + 1, R->name, C_LIGHT, 1);
+        text(6, d + (ROW_H - 11) / 2 + 1, R->name, C_LIGHT, 1);
         if (R->n) {
             int cur = (int)(opt_get(R->opt) + .5f);
             for (int c = 0; c < R->n; c++) {
                 int on = c == cur;
                 frame(OPT_X + c * CHOICE_W, d, CHOICE_W - 3, ROW_H - 3, on ? C_CYAN : C_RAIL, 1);
-                text_c(OPT_X + c * CHOICE_W, d + 1, CHOICE_W - 3, R->c[c], on ? C_WHITE : C_GREY, 1);
+                text_c(OPT_X + c * CHOICE_W, d + (ROW_H - 11) / 2 + 1, CHOICE_W - 3, R->c[c], on ? C_WHITE : C_GREY, 1);
             }
         }
     }
@@ -1092,7 +1107,7 @@ static void draw_setup(const struct lay *L)
         int armed = P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT;
         int done = P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW;
         frame(OPT_X, d, 110, ROW_H - 3, done ? C_GREEN : C_RED, 1);
-        text_c(OPT_X, d + 1, 110, done ? "CLEARED!" : armed ? "TAP AGAIN" : "CLEAR ALL", done ? C_GREEN : armed ? C_WHITE : C_RED, 1);
+        text_c(OPT_X, d + (ROW_H - 11) / 2 + 1, 110, done ? "CLEARED!" : armed ? "TAP AGAIN" : "CLEAR ALL", done ? C_GREEN : armed ? C_WHITE : C_RED, 1);
         float bpm = looper_bpm();
         for (const char *q = "BPM "; *q; q++)
             *p++ = *q;
@@ -1103,7 +1118,7 @@ static void draw_setup(const struct lay *L)
         for (const char *q = looper_running() ? " RUN" : " STOP"; *q; q++)
             *p++ = *q;
         *p = 0;
-        text(OPT_X + 120, d + 1, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
+        text(OPT_X + 120, d + (ROW_H - 11) / 2 + 1, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
     } else {
         /* one diagnostic line: the last button message, the sequencer clock's position and rate, the screens visited */
         for (const char *q = "LAST "; *q; q++)
@@ -1456,7 +1471,6 @@ static void draw_samplr(void)
         } else if (s->mode == SM_ARP) {
             lab[0] = "SNAP";
             on[0] = s->qi != 0;
-            lab[1] = "AUTO";                                      /* its own AUTO SLICE (finds the transients, as in the slicer; SNAP then puts the spots on them) */
             lab[3] = samplr_pat_name(s->pat);
             lab[4] = "YP";
             on[4] = (s->ypit >> s->mode) & 1;
@@ -1482,6 +1496,8 @@ static void draw_samplr(void)
         for (int i = 0; i < 7; i++)
             if (lab[i])
                 sm_button(3 + 44 * i, r1, 42, lab[i], on[i]);
+        if (s->mode == SM_ARP)                                    /* ARP's own AUTO SLICE (finds the transients, as in the slicer; SNAP then puts the spots on them): the last two slots, joined */
+            sm_button(3 + 44 * 5, r1, 86, "AUTO SLICE", 0);
     } else if (sh == SMS_REC) {                                   /* REC: the take - UNDO, CLR, LEN, the layers, PANIC */
         sm_button(3, r1, 46, "UNDO", 0);
         sm_button(51, r1, 40, "CLR", 0);
@@ -1660,7 +1676,7 @@ static int sm_touch(int kind, int id, int x, int d)
                     samplr_toggle_gate();
                 else if (i == 1 && m == SM_GRAIN)
                     samplr_cycle(5);
-                else if (i == 1 && m == SM_ARP)
+                else if ((i == 5 || i == 6) && m == SM_ARP)
                     samplr_cycle(4);
                 else if (i == 2)
                     samplr_cycle(2);
@@ -2372,7 +2388,7 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
         int counts = *(const int16_t *)((const uint8_t *)msg + 0x10);
         if (knob >= 0 && knob < LOOPER_TRACKS) {
             if (P->mode == M_SMPLR && SM_SHEET != SMS_FX) {
-                static const uint8_t sm_knob[4] = {2, 3, 1, 0};   /* SAMPLR's knobs 0..3 (0 = the sample's volume): volume on the bottom-right encoder, then top-left 3, top-right 1, bottom-left 2 */
+                static const uint8_t sm_knob[4] = {2, 1, 3, 0};   /* SAMPLR's knobs 0..3 (0 = the sample's volume): volume on the bottom-right encoder; the others follow the top bar's row of parameters (mode / count, attack, release) left to right: top-left 1, bottom-left 2, top-right 3 */
                 knob = sm_knob[knob];
             } else if (P->mode == M_MAIN || P->mode == M_SMPLR || P->mode == M_TRIG)
                 knob = knob_slot[knob];                           /* a row of four, as on DRONE-8: top-left, top-right, bottom-left, bottom-right */

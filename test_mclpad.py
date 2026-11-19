@@ -25,6 +25,7 @@ def check(label, cond, detail=""):
 
 def make(e=None):
     e = e or Emu(IMG, "out/cave.elf")
+    e.uc.mem_write(e.sym["cpu_long_label"], b"\x01")      # (the image shows just the tag; these tests read the long readout)
     e.uc.mem_map(0xE0000000, 0x100000)
     e.uc.mem_map(0x38800000, 0x1000)
     e.uc.mem_map(0x58024000, 0x1000)
@@ -79,6 +80,7 @@ for name, patch, idx in (("one flipped word", lambda u: u.mem_write(PAD_BASE + 4
                          ("erased tail (0xFF from 0x08170000)", lambda u: u.mem_write(0x08170000, b"\xff" * 0x10000), 0xC000),
                          ("first word wrong", lambda u: u.mem_write(PAD_BASE, b"\xef\xbe\xad\xde"), 0)):
     e = Emu(IMG, "out/cave.elf")
+    e.uc.mem_write(e.sym["cpu_long_label"], b"\x01")      # (the image shows just the tag; these tests read the long readout)
     patch(e.uc)
     e = make(e)
     check(f"{name}: ' F{idx:04x}'", f" F{idx:04x}" in label(e), label(e))
@@ -99,6 +101,7 @@ check("power-up (start()) clears the result, the next label rescans", " F004d" i
 
 # --- flag 0 (normal build): the pad region is never read
 e = Emu(IMG, "out/cave.elf")
+e.uc.mem_write(e.sym["cpu_long_label"], b"\x01")      # (the image shows just the tag; these tests read the long readout)
 e.uc.mem_write(e.sym["mclpad_on"], bytes(4))
 reads = []
 from unicorn import UC_HOOK_MEM_READ

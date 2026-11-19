@@ -146,8 +146,8 @@ static int lu_specs(int sel, struct lu_spec *o)
         static const char *const nm[4] = {"DRIVE", "DIST", "VOL", "EXT"};
         static const uint16_t gid[4] = {190, 148, 191, 193};
         static const char *const gn[4] = {"REC", "LEN", "UNDO", "LOOP"};
-        static const uint16_t pid[4] = {123, 124, 151, 195};      /* PITCH: the two global pitches, SHUFFLE (moved here from CHORD to make room for QUANT there), VIB (the vibrato) */
-        static const char *const pn[4] = {"P 1-4", "P 5-8", "SHUFL", "VIB"};
+        static const uint16_t pid[4] = {123, 124, 195, 151};      /* PITCH: the two global pitches on top, the two buttons below: VIB (the vibrato) and SHUFFLE (moved here from CHORD to make room for QUANT there) */
+        static const char *const pn[4] = {"P 1-4", "P 5-8", "VIB", "SHUFL"};
         for (int i = 0; i < 4; i++) {
             lu_cell(0, i, &x, &d);
             LU_SP(n, ids[i], x, d, LU_COL, 38, 2, lu_enc_cell[i], LK_KNOB, LU_ACC1, 11, nm[i]);
@@ -159,17 +159,17 @@ static int lu_specs(int sel, struct lu_spec *o)
             LU_SP(n, gid[i], x, d, LU_COL, 38, 4, lu_enc_cell[i], LK_BTN, LU_ACC1, 0, gn[i]);
             n++;
         }
-        lu_cell(3, 0, &x, &d);                                    /* FEEL: the stereo pan (0 = mono, the cheap path), the pitch drift, the engine switch */
+        lu_cell(3, 0, &x, &d);                                    /* FEEL: the stereo pan (0 = mono, the cheap path), the pitch drift, the send to the Blackbox's own reverb (FX page: type, size, return): three knobs, */
         LU_SP(n, 180, x, d, LU_COL, 38, 5, lu_enc_cell[0], LK_KNOB, LU_ACC2, 11, "PAN");
         n++;
         lu_cell(3, 1, &x, &d);
         LU_SP(n, 181, x, d, LU_COL, 38, 5, lu_enc_cell[1], LK_KNOB, LU_ACC2, 11, "DRIFT");
         n++;
         lu_cell(3, 2, &x, &d);
-        LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_BTN, LU_ACC2, 0, "POWER");
+        LU_SP(n, 182, x, d, LU_COL, 38, 5, lu_enc_cell[2], LK_KNOB, LU_ACC2, 11, "VERB");
         n++;
-        lu_cell(3, 3, &x, &d);                                    /* and the send to the Blackbox's own reverb (FX page: type, size, return) */
-        LU_SP(n, 182, x, d, LU_COL, 38, 5, lu_enc_cell[3], LK_KNOB, LU_ACC2, 11, "REVERB");
+        lu_cell(3, 3, &x, &d);                                    /* then the engine switch, like the buttons at the bottom of the other panels */
+        LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[3], LK_BTN, LU_ACC2, 0, "POWER");
         n++;
     } else if (page == LP_ENV) {                                  /* FAST: attack, release | SLOW: attack, release | VELOCITY: amount, source, target | MIDI (to come) */
         static const uint16_t ids[7] = {210, 211, 212, 213, 214, 215, 216};

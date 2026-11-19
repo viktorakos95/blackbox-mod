@@ -241,7 +241,7 @@ struct dsp {
     float rp[LOOPER_TRACKS];                     /* the play head (frames, fractional) while the Blooper controls act */
     float wb[LOOPER_TRACKS], wl[LOOPER_TRACKS];  /* the stutter's window: where it starts (may be < 0) and how long */
     uint32_t scr_n[LOOPER_TRACKS];               /* the slice the scrambler last decided on */
-    uint8_t stut_on[LOOPER_TRACKS], gv[LOOPER_TRACKS], stut_mode_l[LOOPER_TRACKS];
+    uint8_t stut_on[LOOPER_TRACKS], gv[LOOPER_TRACKS], stut_mode_l[LOOPER_TRACKS], fxe[LOOPER_TRACKS];   /* fxe: the track was empty at the last block (FX WHEN EMPTY) */
     float stut_len_l[LOOPER_TRACKS];             /* the size and side the stutter's window was taken with */
     float gpos[LOOPER_TRACKS][2];                /* the keep-pitch grains: read position, age (-1 = idle), direction */
     int32_t gag[LOOPER_TRACKS][2], ghc[LOOPER_TRACKS];
@@ -850,6 +850,7 @@ struct pb {                                       /* one track, one block */
     int stut_mode, scr_mode;             /* stutter 0 off 1 back 2 forward; scrambler 0 off 1 random 2 sequence */
     float wob;                                    /* WOB depth 0..1 (0 = off) */
     float wrate;                                  /* WOB rate: pan cycles a beat */
+    float posn;                                   /* POS (the old STUT's knob): where the loop starts, 0..1 of its length */
 };
 
 static inline float quant(float x, float q, float qi)
@@ -996,26 +997,26 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
     p->rptm = k->rpt >= .995f ? 1.f : exp2_fast(-1.4427f * lsec / tau);
     int tw = (int)(k->trim * 6.f + .5f);
     p->win = tw <= 0 ? 0 : tw;                                        /* 1: 1/2 of the loop ... 6: 1/64 */
-    float sv = k->stut < 0.f ? -k->stut : k->stut;
-    p->stut_mode = sv < .02f ? 0 : k->stut < 0.f ? 1 : 2;             /* the slice: a beat, halving up to 1/32 */
-    p->stut_len = beat_frames() / (float)(1 << (int)(sv * 5.99f));
-    if (p->stut_len < 64.f)
-        p->stut_len = 64.f;
+    p->stut_mode = 0;                                                 /* (the stutter is gone: its knob is POS now, TRIM did nearly the same) */
+    p->stut_len = 64.f;
+    p->posn = k->stut < .01f ? 0.f : k->stut > 1.f ? 1.f : k->stut;   /* POS: the loop (or TRIM's window) starts this far into it */
     float cv = k->scrm < 0.f ? -k->scrm : k->scrm;
     p->scr_p = cv;
     p->scr_mode = cv < .02f ? 0 : k->scrm < 0.f ? 1 : 2;
     p->keep = opt_i(LOOPER_O_PITCH) >= 1;
     p->smooth = opt_i(LOOPER_O_PITCH) == 2;
-    int semi = (int)(k->ptch * 24.f + (k->ptch >= 0.f ? .5f : -.5f));       /* PTCH: whole semitones */
-    p->ptch_on = semi != 0;
-    p->pratio = exp2_fast((float)semi * (1.f / 12.f));
+    float semif = k->ptch * 24.f, semin = (float)(int)(semif + (semif >= 0.f ? .5f : -.5f));       /* PTCH: semitones, with cents between them and a sticky detent at each whole one */
+    if (semif - semin < .12f && semif - semin > -.12f)
+        semif = semin;
+    p->ptch_on = semif > .02f || semif < -.02f;
+    p->pratio = exp2_fast(semif * (1.f / 12.f));
     {   /* WOB: one auto-pan; the knob is its speed (left slow: a cycle in 4 beats, right fast: 2 a beat), the depth goes the other way (slow = wide, fast = narrow) */
         float wt = (k->wob + 1.f) * .5f;
         int woff = k->wob < .02f && k->wob > -.02f;
         p->wob = woff ? 0.f : .9f - .55f * wt;
         p->wrate = .25f * exp2_fast(3.f * wt);
     }
-    p->mod = (sp > .01f || sp < -.01f) || k->stab > .01f || tw > 0 || p->stut_mode || p->scr_mode || p->ptch_on || (p->keep && k->half);
+    p->mod = (sp > .01f || sp < -.01f) || k->stab > .01f || tw > 0 || p->posn > 0.f || p->scr_mode || p->ptch_on || (p->keep && k->half);
 }
 
 /* One trapezoidal state-variable stage (stmlib Svf), low pass or high pass; the limit soft-limits the resonant loop. */
@@ -1294,6 +1295,11 @@ __attribute__((optimize("O2"))) static inline void mod_read(struct dsp *d, struc
     float rpi = rp < 0.f ? rp + (float)len : rp;                  /* where to read (the stutter's window can reach back past 0) */
     if (rpi >= (float)len)
         rpi -= (float)len;
+    if (p->posn > 0.f) {                                          /* POS: the window / loop starts this far in (wrapping) */
+        rpi += p->posn * (float)len;
+        if (rpi >= (float)len)
+            rpi -= (float)len;
+    }
     uint32_t i0 = (uint32_t)rpi;
     float f = rpi - (float)i0;
     if (i0 >= len) {
@@ -1304,7 +1310,7 @@ __attribute__((optimize("O2"))) static inline void mod_read(struct dsp *d, struc
     if (s->stut_on && on) {
         if (i1 >= len)
             i1 = 0;
-    } else if (i1 >= wlen) {
+    } else if (p->posn > 0.f ? i1 >= len : i1 >= wlen) {
         i1 = 0;
     }
     float ml = 0.f, mr = 0.f;
@@ -1835,12 +1841,12 @@ static float track_model(struct dsp *d, int t, vtrack *k, int lv, int n)
 {
     float f = k->filt, sp = k->speed;
     int filt = f < -.01f || f > .01f || d->fm[t] > 0.f;
-    int semi = (int)(k->ptch * 24.f + (k->ptch >= 0.f ? .5f : -.5f));
+    int semi = k->ptch > .001f || k->ptch < -.001f;                         /* (any pitch shift, cents included) */
     float spd = (sp >= 0.f ? 1.f + sp : 1.f + 2.f * sp) * (k->half ? .5f : 1.f);
     int keep = opt_i(LOOPER_O_PITCH) >= 1;
     int grains = semi != 0 || (keep && (spd < .98f || spd > 1.02f));
-    int mod = sp > .01f || sp < -.01f || k->stab > .01f || k->trim > .08f || k->stut > .02f ||
-              k->stut < -.02f || k->scrm > .02f || k->scrm < -.02f || semi != 0 || (keep && k->half);
+    int mod = sp > .01f || sp < -.01f || k->stab > .01f || k->trim > .08f || k->stut > .01f ||
+              k->scrm > .02f || k->scrm < -.02f || semi != 0 || (keep && k->half);
     float c = 110.f;                                                      /* read, gain, output (fitted to the everything-on case) */
     if (mod)
         c += 170.f + (k->stab > .01f ? 40.f : 0.f) + 0.f;
@@ -2505,6 +2511,17 @@ void looper_stage(uint8_t *obj, void *bufs)
     fw_stereo(buf, &l, &r);
     if (l && r && n > 0) {
         read_bpm(bufs);
+        for (int t = 0; t < LOOPER_TRACKS; t++) {                  /* FX WHEN EMPTY: a track that just became empty gets its FX knobs back at their defaults */
+            vtrack *k = &S->t[t];
+            int emp = k->mode == LOOPER_EMPTY;
+            if (emp && !DSP()->fxe[t] && opt_i(LOOPER_O_FXRST)) {
+                k->filt = k->crunch = k->drive = k->send_d = k->send_r = 0.f;
+                k->stab = k->speed = k->wob = k->trim = k->stut = k->scrm = k->ptch = 0.f;
+                k->rpt = 1.f;
+                k->res = .5f;
+            }
+            DSP()->fxe[t] = (uint8_t)(emp && opt_i(LOOPER_O_FXRST));    /* (so switching the option on resets the empty tracks too) */
+        }
         mcl_xport_block(bufs);                     /* the transport for MCL (src/cpu.c) */
         uint32_t c_in = *(volatile uint32_t *)0xe0001004u, pre = c_in - *(volatile uint32_t *)0x2405ffd4u;   /* (cycles since the wake-up: stock voices, effects, synths) */
         crash_tick();
@@ -2721,7 +2738,7 @@ void looper_set_param(int t, int p, float v)
         k->trim = fclampf(v, 0.f, 1.f);
         break;
     case LOOPER_P_STUT:
-        k->stut = fclampf(v, -1.f, 1.f);
+        k->stut = fclampf(v, 0.f, 1.f);                       /* POS (it was STUT, -1..1) */
         break;
     case LOOPER_P_SCRM:
         k->scrm = fclampf(v, -1.f, 1.f);

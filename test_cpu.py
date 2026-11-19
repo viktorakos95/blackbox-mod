@@ -10,6 +10,7 @@ import sys
 from emu import Emu
 
 e = Emu("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+cave/BLACKBOX.bin", "out/cave.elf")
+e.uc.mem_write(e.sym["cpu_long_label"], b"\x01")      # (the image shows just the tag; these tests read the long readout)
 V = e.cstr(0x080CF290)                          # "3.1.x" of this build
 e.uc.mem_map(0xE0000000, 0x100000)
 e.uc.mem_map(0x38800000, 0x1000)               # backup SRAM: the looper's state (its status joins the label)
@@ -71,6 +72,11 @@ e.uc.mem_write(STATE, b"\xa5" * 36)            # patch RAM is not zeroed at boot
 e.w32(CYC, 123456)
 labels()
 check("labels built at boot are remembered (all three) and keep the version text", all(e.r32(STATE + 24 + 4 * i) == TEXT[i] for i in range(3)) and text(1) == V + MB, [hex(e.r32(STATE + 24 + 4 * i)) for i in range(3)])
+e.uc.mem_write(e.sym["cpu_long_label"], b"\x00")
+labels()
+check("the image's default: the labels show just the tag (the long readout garbled the Tools screen's boxes)", text(0) == V and text(1) == V and text(2) == V, (text(0), text(1), text(2)))
+e.uc.mem_write(e.sym["cpu_long_label"], b"\x01")
+labels()
 e.uc.mem_write(0x24063000, b"other\0")
 e.call("cpu_text_b", TEXT[1], 0x24063000)
 check("a constructor call with some other string passes it through untouched", text(1) == "other", text(1))

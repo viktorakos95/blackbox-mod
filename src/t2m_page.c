@@ -258,6 +258,16 @@ static const struct preset presets[PRESETS] = {
     {"SOFT",       5.0f, 1.0f,  6.f, 10.f, 2.f,  5.f, 2.0f, 0.4f, 0.00f, 0.00f,  -90.f, 0},   /* ghost notes and soft pads */
 };
 
+/* what each preset is for (two lines of at most 50 characters, shown under the squares while it is the last thing chosen) */
+static const char *const preset_note[PRESETS][2] = {
+    {"DEFAULT: the patch's own settings.", "A fair start for most pads."},
+    {"FAST: lowest delay (about 4 ms), fixed velocity.", "For triggering sounds live; no peak search."},
+    {"KICK: long dead time ignores beater bounce.", "Higher threshold, wide ring guard."},
+    {"BLEED: other drums leaking in are ignored.", "Higher threshold, sharper, wide bleed guard."},
+    {"ROLLS: very short dead time for fast repeats.", "Low ring guard: may double-trigger on ringing."},
+    {"SOFT: ghost notes and light touch.", "High sensitivity, low threshold, soft curve."},
+};
+
 static void preset_xy(int w, int sheet, int i, int *x, int *y, int *bw)
 {
     int cx, cy;
@@ -492,7 +502,14 @@ void t2m_page_draw(int w, int foot)
             lp_frame(px, py, pw, 13, UI->preset == i + 1 ? C_CYAN : C_RAIL, 1);
             lp_text_c(px, py + 3, pw, presets[i].name, UI->preset == i + 1 ? C_WHITE : C_LIGHT, 1);
         }
-        draw_hint(m, sheet, rows_top(sheet) + 4 * CELL_H + 6);
+        if (UI->preset) {
+            int d0 = rows_top(sheet) + 4 * CELL_H + 6;
+            lp_text(6, d0, presets[UI->preset - 1].name, C_CYAN, 1);
+            lp_text(6, d0 + 11, preset_note[UI->preset - 1][0], C_LIGHT, 1);
+            lp_text(6, d0 + 21, preset_note[UI->preset - 1][1], C_LIGHT, 1);
+        } else {
+            draw_hint(m, sheet, rows_top(sheet) + 4 * CELL_H + 6);
+        }
     }
     if (sheet == SH_OUT) {
         int td = rows_top(sheet) + 2 * CELL_H + 6;

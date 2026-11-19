@@ -31,10 +31,12 @@ def page(a):
     return out
 
 
-p0, p3 = page(0x080EED18), page(0x080EEDF0)
-check("Tools Main: the comp order, then Mono Input, DRONE-8 Out, SAMPLR Out, Machine Filters", p0 == [0xBA, 0xB4, 0x1D0, 0xBB, 0xBC, 0xBD, 0x7F, 0xCD, 0xF6, 0xF7, 0x19B, 0x1A2, 0x1A3, 0x1A4, 0x1A5], [hex(v) for v in p0])
+p0, p3, p2 = page(0x080EED18), page(0x080EEDF0), page(0x080EEDA8)
+check("Tools Main: the comp order, untouched by us (11 ids)", p0 == [0xBA, 0xB4, 0x1D0, 0xBB, 0xBC, 0xBD, 0x7F, 0xCD, 0xF6, 0xF7, 0x19B], [hex(v) for v in p0])
+check("Tools page 2: its six, then Mono Input, DRONE-8 Out, SAMPLR Out, Machine Filters", p2 == [0x76, 0xE2, 0x79, 0xD3, 0x71, 0x7B, 0x1A2, 0x1A3, 0x1A4, 0x1A5], [hex(v) for v in p2])
+check("no Tools page has more than 11 ids (the stock builder's structure holds 11)", all(len(page(0x080EED18 + 0x48 * k)) <= 11 for k in range(4)))
 check("clock page: Analog In / Out, then Clock Out 2 and Clock Level", p3 == [0xEF, 0xF0, 0x10F, 0x110, 0x1A0, 0x1A1], [hex(v) for v in p3])
-check("the next page slots are untouched (page 1, 2 and the one after the clock page)", page(0x080EED60) == [0x9D, 0xE1, 0xD5] and page(0x080EEDA8) == [0x76, 0xE2, 0x79, 0xD3, 0x71, 0x7B] and page(0x080EEE38) == [])
+check("the next page slots are untouched (page 1 and the one after the clock page)", page(0x080EED60) == [0x9D, 0xE1, 0xD5] and page(0x080EEE38) == [])
 
 # ids 0x1a0..0x1a5 are not registered by the stock firmware
 stock = open("firmware/BLACKBOX-3.1.9.bin", "rb").read()

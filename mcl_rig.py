@@ -61,6 +61,7 @@ class Rig:
     def __init__(self, d):
         self.img, self.elf, self.b = d + "/BLACKBOX.bin", d + "/mcl.elf", syms(d + "/mcl.elf")
         e = self.e = Emu(self.img, "out/cave.elf")
+        e.uc.mem_write(e.sym["cpu_long_label"], b"\x01")      # (the image shows just the tag; the MCL tests read the long readout)
         u = e.uc
         u.mem_map(0xE0000000, 0x100000)
         u.mem_map(0x38800000, 0x1000)

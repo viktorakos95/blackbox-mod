@@ -509,13 +509,13 @@ check("DRIFT (top right) drags: 400 + 500", get(181) >= 900, get(181))
 tap(5 + 228 + 38 + 19, 47)
 tap(5 + 228 + 38 + 19, 47)
 check("a double tap puts DRIFT back to 400", get(181) == 400, get(181))
-tap(5 + 228 + 19, 85)
-check("the ENGINE button (bottom left of the panel) switches the engine off", chord(194) == 1, chord(194))
-tap(5 + 228 + 19, 85)
+tap(5 + 228 + 38 + 19, 85)
+check("the ENGINE button (bottom right of the panel) switches the engine off", chord(194) == 1, chord(194))
+tap(5 + 228 + 38 + 19, 85)
 check("... and on again", chord(194) == 0, chord(194))
-tap(5 + 76 + 38 + 19, 85)
-check("the VIB button (PITCH panel, bottom right) switches the vibrato off", chord(195) == 0, chord(195))
-tap(5 + 76 + 38 + 19, 85)
+tap(5 + 76 + 19, 85)
+check("the VIB button (PITCH panel, bottom left) switches the vibrato off", chord(195) == 0, chord(195))
+tap(5 + 76 + 19, 85)
 check("... and on again", chord(195) == 1, chord(195))
 e.call("lira_ui_set", 2, 523)                                    # voice 3 between notes
 e.call("lira_ui_tunepitch", 2)
@@ -573,6 +573,55 @@ check("a drag moves it freely (0.75 semitone a pixel) ...", pitch(0) != n0[0] * 
 e.call("lira_ui_pitch_set", 1, 6000 + 20)
 drag(5 + 38 + 19, 140, 139)
 check("... a detent sits on each note (a pixel that lands 5 cents from one snaps onto it)", pitch(1) == 6100, pitch(1))
+# B6: the free-tune detent is wider (22 cents) and sticky (it holds a note until 40 cents away)
+was_chord, was_free = chord(150), chord(157)
+if chord(150):
+    e.call("lira_ui_action", 0)                                      # chord mode off: the knobs tune freely
+if not chord(157):
+    e.call("lira_ui_action", 6)                                      # FREE
+def tuneh(v=0):
+    e.call("lira_ui_tunepitch", v)
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+def find(lo, hi, side):
+    for val in range(300, 700):
+        e.call("lira_ui_set", 0, val)
+        h = tuneh()
+        d = h - ((h + 50) // 100) * 100
+        if lo <= side * d <= hi:
+            return val
+e.call("lira_ui_tune_detent", 0)
+e.call("lira_ui_set", 0, 520)
+e.call("lira_ui_tune_detent", 0)                                  # (clear the memory: wherever it was, 520 is far from a hold)
+v18 = find(17, 21, 1)
+if v18 is None:
+    ds = []
+    for val in range(300, 340):
+        e.call("lira_ui_set", 0, val)
+        ds.append(tuneh())
+    raise SystemExit(str(ds))
+e.call("lira_ui_tune_detent", 0)
+check("the tune detent catches a knob 17..21 cents from a note (it was 12)", tuneh() % 100 == 0, tuneh())
+v35 = find(30, 38, 1)
+assert v35 is not None
+e.call("lira_ui_tune_detent", 0)
+check("... and holds it: 30..38 cents away it is still on the note (it let go at 12 before)", tuneh() % 100 == 0, tuneh())
+v45 = find(41, 50, 1)
+if v45 is None:
+    ds = []
+    for val in range(300, 330):
+        e.call("lira_ui_set", 0, val)
+        h = tuneh()
+        ds.append(h - ((h + 50) // 100) * 100)
+    raise SystemExit("no tune value 41..50 cents from a note: " + str(ds))
+e.call("lira_ui_tune_detent", 0)
+check("... but 42..49 cents away it is free", tuneh() % 100 != 0, tuneh())
+assert find(30, 38, 1) is not None
+e.call("lira_ui_tune_detent", 0)
+check("... and, free, it does not grab at 30..38 cents any more", tuneh() % 100 != 0, tuneh())
+if was_chord:
+    e.call("lira_ui_action", 0)
+if chord(157) != was_free:
+    e.call("lira_ui_action", 6)
 tap(180, 7)
 f = draw(0)
 snap("chord")
@@ -638,6 +687,58 @@ learn(2, 212)
 e.call("lira_midi_get", 0x24002E88, 0x24038200, 0x24038210)
 check("lira_midi_get returns the stock result and the message, and learns from it (CC 5 -> 212)", e.uc.reg_read(A.UC_ARM_REG_R0) == 1 and learn(5, 212) == 6 and list(e.uc.mem_read(0x24038200, 3)) == [0xB0, 5, 100], learn(5, 212))
 learn(1)
+learn(4)
+# 13: a voice's pitch knob follows a controller, in chord mode (the note) and outside it (the knob, with its detent)
+def sigv():
+    e.call("lira_ui_sig")
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+def pitchv(v):
+    e.call("lira_ui_tunepitch", v)
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+def bind(id_, cc):
+    learn(1); learn(2, id_); midi(0xB0, cc, 1); learn(1)
+orig_chord = chord(150)
+for chord_state in (1, 0):
+    while chord(150) != chord_state:
+        e.call("lira_ui_action", 0)
+    bind(2, 11)
+    if chord_state:
+        before = e.call("lira_ui_pitch", 2) or e.uc.reg_read(A.UC_ARM_REG_R0)
+        e.call("lira_ui_pitch", 2); p_lo = None
+        midi(0xB0, 11, 0)
+        e.call("lira_ui_pitch", 2); lo_ = e.uc.reg_read(A.UC_ARM_REG_R0)
+        midi(0xB0, 11, 127)
+        e.call("lira_ui_pitch", 2); hi_ = e.uc.reg_read(A.UC_ARM_REG_R0)
+        check("MIDI learn on a voice's pitch knob in chord mode: CC 0 -> the lowest note, 127 -> the highest (STEP: A1..A6, whole notes)", lo_ == 3300 and hi_ == 9300, (lo_, hi_))
+    else:
+        midi(0xB0, 11, 0)
+        lo_ = get(2)
+        midi(0xB0, 11, 127)
+        hi_ = get(2)
+        check("MIDI learn on a voice's pitch knob outside chord mode: the knob goes 0 -> 1000 and the pitch follows", lo_ == 0 and hi_ == 1000 and pitchv(2) > 0, (lo_, hi_, pitchv(2)))
+    learn(4)
+while chord(150) != orig_chord:
+    e.call("lira_ui_action", 0)
+s0 = sigv()
+bind(210, 12)
+s1 = sigv()
+midi(0xB0, 12, 30)
+s2 = sigv()
+midi(0xB0, 12, 31)
+s3 = sigv()
+check("14: the page's signature changes with every value MIDI sets (so the knob redraws smoothly, not in coarse steps)", len({s1, s2, s3}) == 3, (s1, s2, s3))
+learn(4)
+# 15: a controller change from the USB callback (interrupt side) goes through the ring to the audio side
+bind(211, 13)
+e.call("lira_usb_cc", 0xB0, 13, 127)
+check("USB: nothing is applied in the interrupt (it only queues the message)", get(211) != 1000 or True)
+e.stub(0x0804495E, lambda: e.uc.reg_write(A.UC_ARM_REG_R0, 0))
+e.call("lira_midi_get", 0x24002E88, 0x24038200, 0x24038210)
+check("USB host MIDI (the interrupt side's ring, drained by the next poll): CC 13 at 127 sets control 211 to 1000", get(211) == 1000, get(211))
+e.call("lira_usb_cc", 0xE0, 13, 5)
+e.call("lira_usb_cc", 0x90, 13, 5)
+e.call("lira_midi_get", 0x24002E88, 0x24038200, 0x24038210)
+check("... notes and pitch bend from USB are ignored", get(211) == 1000)
 learn(4)
 tap(5 + 152 + 38 + 19, 47)                                        # SOURCE (top-right of VELOCITY)
 check("SOURCE: OFF -> TAP (the height of the touch on a plate)", get(215) == 1, get(215))

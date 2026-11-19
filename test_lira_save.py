@@ -99,7 +99,16 @@ e.call("lira_ui_action", 3)
 e.call("lira_ui_action", 4)
 notes = [None] * 8
 e.call("lira_save")
-check("save: bbmod.bin written with create-always (mode 0x0a)", opened[-1] == ("bbmod.bin", 0x0A) and len(disk["bbmod.bin"]) > 1000, str(opened[-1]) + " %d bytes" % len(disk.get("bbmod.bin", b"")))
+check("save: bbmod.bin written with create-always (mode 0x0a), then the general file bbgen.bin", opened[-2:] == [("bbmod.bin", 0x0A), ("bbgen.bin", 0x0A)] and len(disk["bbmod.bin"]) > 1000, str(opened[-2:]) + " %d bytes" % len(disk.get("bbmod.bin", b"")))
+gen = disk.get("bbgen.bin", b"")
+check("bbgen.bin: magic 8GEN, version 1, its own size, the Looper's 15 options and a crc", gen[:4] == b"8GEN" and struct.unpack("<HH", gen[4:8])[0] == 1 and struct.unpack("<HH", gen[4:8])[1] == len(gen) and len(gen) > 200, str((gen[:8], len(gen))))
+e.call("lira_ui_learn", 1, 0)
+e.call("lira_ui_learn", 2, 210)
+e.call("lira_midi_msg", 0xB2, 33, 5)
+e.call("lira_ui_learn", 1, 0)
+e.call("lira_save")
+gen = disk["bbgen.bin"]
+check("bbgen.bin holds the MIDI-learn mapping (CC 33 on channel 3 -> control 210)", bytes([33, 2]) + struct.pack("<H", 210) in gen, gen[68:90].hex())
 want = (get(16), get(125), get(105), get(108), chord(140), chord(141), chord(150), chord(153), chord(154), get(106), chord(195))
 # change everything, load, compare
 e.call("lira_ui_set", 16, 1)

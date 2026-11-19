@@ -35,6 +35,8 @@
 #include "lira.h"
 #include "lira_ui.h"
 #include "lira_chord.h"
+#include "looper.h"
+#include "t2m_bb.h"
 
 #pragma GCC optimize("O2", "no-tree-loop-distribute-patterns")
 
@@ -232,6 +234,10 @@ struct gev {                     /* one recorded gesture: when (frames from the 
 #define ML_MAX 24
 struct mlearn {                  /* MIDI learn: a control (ui id) follows a controller number on a channel */
     uint8_t on, n;               /* learn mode, mappings in use */
+    uint8_t stuck;               /* (not MIDI learn: the free-tune detent's memory, one bit a voice: it sits on a note and holds it) */
+    uint8_t rwr, rrd;            /* controller changes from the USB interrupt, waiting for the audio task */
+    uint16_t seq;                /* counts the values MIDI has set (the page redraws when it moves) */
+    uint8_t rq[16][3];
     uint16_t target;             /* the control waiting for a controller to be moved (0xffff none) */
     struct { uint8_t cc, ch; uint16_t id; } m[ML_MAX];
 };
@@ -247,7 +253,8 @@ struct pool {
     struct gev ev[GEV_MAX];      /* the recorded gestures */
     uint32_t fil[0xc0];          /* a FatFs FIL for bbmod.bin (0x300 bytes: FIL is about 0x250) */
     uint8_t blob[1280];          /* the settings file as written / read */
-    struct mlearn ml;            /* MIDI learn (not saved) */
+    struct mlearn ml;            /* MIDI learn (saved in the general file, bbgen.bin) */
+    uint8_t gen_loaded;          /* the general file has been read this boot */
 };
 #define POOL       (*(struct pool *volatile *)0x38800bf0u)
 #define POOL_CHECK (*(volatile uint32_t *)0x38800bf4u)
@@ -384,7 +391,9 @@ void lira_register(void *table)
             p->side[k][i] = ctls[i].def;
     for (int i = 0; i < 1024; i++)                       /* the allocator's memory is not zeroed: the recorder reads these buffers before the first block fills them */
         p->rec[0][0][i] = p->rec[0][1][i] = p->rec[1][0][i] = p->rec[1][1][i] = p->rec[2][0][i] = p->rec[2][1][i] = p->scr[0][i] = p->scr[1][i] = 0.0f;
-    p->ml.on = p->ml.n = 0;
+    p->ml.on = p->ml.n = p->ml.stuck = p->ml.rwr = p->ml.rrd = 0;
+    p->ml.seq = 0;
+    p->gen_loaded = 0;
     p->ml.target = 0xffff;
     struct pg *g = &p->pg;
     for (unsigned i = 0; i < sizeof *g; i++)             /* the allocator's memory is not zeroed: every field starts from 0 */
@@ -996,7 +1005,7 @@ int lira_ui_sel(int set)
  * which calls it and then looks at the message: a controller change (0xBn cc value). In learn mode with a control waiting (the page's LEARN button, then a
  * tap on a knob or a turn of an encoder), the first controller moved is bound to it; otherwise a bound controller sets its control (0..127 -> 0..1000). The
  * message goes on to the stock firmware either way. The bindings are kept in the pool (lost at power-off). */
-uint32_t looper_ticks(void);
+
 typedef int (*midi_get_fn)(void *mgr, uint8_t *out, uint8_t *flag);
 #define stock_midi_get ((midi_get_fn)0x0804495fu)
 
@@ -1007,6 +1016,34 @@ static void ml_unbind(struct mlearn *m, int id)
             m->m[i] = m->m[--m->n];
             i--;
         }
+}
+
+void lira_ui_pitch_set(int v, int h);
+
+/* A controller's value onto a control: through the path a touch takes. A voice's pitch knob (ids 0..7) is the special one: outside chord mode it is the knob with
+ * its note detent; in chord mode the knob is the voice's note (lira_ui_set does nothing there), so the controller sweeps the range (A1..A6 in STEP,
+ * the oscillator's whole range in FREE; whole notes in STEP). */
+static void ml_apply(struct pool *p, int id, unsigned val)
+{
+    if (id >= 0 && id < 8 && p->pg.chord_on) {
+        float lo, hi;
+        lira_tune_range(id, &lo, &hi);
+        if (!p->pg.free_enc) {
+            lo = 33.f;
+            hi = 93.f;
+        } else if (hi > 127.f) {
+            hi = 127.f;
+        }
+        int h = (int)(lo * 100.f + (hi - lo) * 100.f * (float)val * (1.f / 127.f) + .5f);
+        if (!p->pg.free_enc)
+            h = (h + 50) / 100 * 100;
+        lira_ui_pitch_set(id, h);
+    } else {
+        lira_ui_set(id, (int)((val * 1000u + 63u) / 127u));
+        if (id >= 0 && id < 8)
+            lira_ui_tune_detent(id);                      /* (a touch drag does the same) */
+    }
+    p->ml.seq++;
 }
 
 void lira_midi_msg(unsigned st, unsigned cc, unsigned val)
@@ -1037,13 +1074,36 @@ void lira_midi_msg(unsigned st, unsigned cc, unsigned val)
     }
     for (int i = 0; i < m->n; i++)
         if (m->m[i].cc == cc && m->m[i].ch == ch) {
-            lira_ui_set(m->m[i].id, (int)((val * 1000u + 63u) / 127u));
+            ml_apply(p, m->m[i].id, val);
             return;
         }
 }
 
+/* From the USB MIDI receive callback (interrupt context, src/clkmon.c clkmon_usb_rx): a controller change goes into a small ring; the audio task takes it with the
+ * next poll. Nothing happens when no device is attached (no packets come). */
+void lira_usb_cc(unsigned st, unsigned cc, unsigned val)
+{
+    struct pool *p = pool();
+    if (!p || (st & 0xf0u) != 0xb0u)
+        return;
+    uint8_t w = p->ml.rwr, n = (uint8_t)((w + 1u) & 15u);
+    if (n == p->ml.rrd)
+        return;
+    p->ml.rq[w][0] = (uint8_t)st;
+    p->ml.rq[w][1] = (uint8_t)cc;
+    p->ml.rq[w][2] = (uint8_t)val;
+    __asm volatile("dmb" ::: "memory");
+    p->ml.rwr = n;
+}
+
 int lira_midi_get(void *mgr, uint8_t *out, uint8_t *flag)
 {
+    struct pool *q = pool();
+    while (q && q->ml.rrd != q->ml.rwr) {                    /* what the USB callback left */
+        uint8_t r0 = q->ml.rrd;
+        lira_midi_msg(q->ml.rq[r0][0], q->ml.rq[r0][1], q->ml.rq[r0][2]);
+        q->ml.rrd = (uint8_t)((r0 + 1u) & 15u);
+    }
     int r = stock_midi_get(mgr, out, flag);
     if (r)
         lira_midi_msg(out[0], out[1], out[2]);
@@ -1079,7 +1139,7 @@ unsigned lira_ui_sig(void)
     unsigned h = 0;
     if (!p)
         return 0;
-    h = (unsigned)(p->ml.on | p->ml.n << 1 | p->ml.target << 8 | (p->ml.on ? (looper_ticks() >> 5 & 1u) << 6 : 0u)) * 2654435761u;       /* (MIDI learn: the frame flashes, so the page is redrawn twice a second or so) */
+    h = (unsigned)(p->ml.on | p->ml.n << 1 | p->ml.target << 8 | (p->ml.on ? (looper_ticks() >> 5 & 1u) << 6 : 0u)) * 2654435761u + (unsigned)p->ml.seq * 40503u;       /* (MIDI learn: the frame flashes, so the page is redrawn twice a second or so) */
     const struct pg *g = &p->pg;
     for (int k = 0; k < 8; k++)                          /* (the plates are redrawn while a loop plays them too: only when one changes, at most ~19 times a second) */
         h = h << 1 | g->want[k];
@@ -1954,14 +2014,19 @@ void lira_ui_tune_step(int v, int dir)                   /* STEP: the knob goes 
     tune_to(&p->pg, v, (float)n);
 }
 
-void lira_ui_tune_detent(int v)                          /* a drag lands on a note when it is within 12 cents of one */
+void lira_ui_tune_detent(int v)                          /* a drag lands on a note within 22 cents of one and then sticks to it until 40 cents away (it was 12, no hold) */
 {
     struct pool *p = pool();
     if (!p || v < 0 || v > 7)
         return;
     int h = tune_hund(&p->pg, v), n = (h + 50) / 100, d = h - n * 100;
-    if (d >= -12 && d <= 12)
+    int ad = d < 0 ? -d : d, lim = p->ml.stuck & (1u << v) ? 40 : 22;
+    if (ad <= lim) {
         tune_to(&p->pg, v, (float)n);
+        p->ml.stuck |= (uint8_t)(1u << v);
+    } else {
+        p->ml.stuck &= (uint8_t)~(1u << v);
+    }
 }
 
 /* a voice's pitch in hundredths of a semitone (note * 100 + cents) */
@@ -2186,6 +2251,9 @@ void lira_save(void)
     crash_bc(BC_FILE, 0);
 }
 
+static void gen_save(struct pool *p);
+static void gen_load(struct pool *p);
+
 static void lira_save_(void)
 {
     struct pool *p = pool();
@@ -2254,6 +2322,7 @@ static void lira_save_(void)
         FF_WRITE(p->fil, b, sizeof *b + sizeof *tl + sizeof *et, &bw);
         FF_CLOSE(p->fil);
     }
+    gen_save(p);
 }
 
 static void lira_load_(void);
@@ -2270,6 +2339,7 @@ static void lira_load_(void)
     if (!p)
         return;
     struct blob *b = (struct blob *)p->blob;
+    gen_load(p);                                             /* (the general file: once after boot) */
     for (unsigned i = 0; i < sizeof p->fil / 4; i++)
         p->fil[i] = 0;
     unsigned br = 0;
@@ -2345,4 +2415,99 @@ static void lira_load_(void)
     }
     for (int i = 0; i < NCTL; i++)
         g->s.vals[i] = -1;                                   /* the engine takes them all again */
+}
+
+/* ---- the general settings file, bbgen.bin (root of the card; the project's own settings stay in bbmod.bin): what belongs to the machines, not to a
+ * project. MIDI learn's mappings, the Looper's options, Trigger2MIDI's two inputs (settings, switches, ports). Written whenever a project is saved (the
+ * file task), read once after boot, at the first project load (the stock firmware loads the last project at start-up), so every project sees the same.
+ * The Tools settings (clock out, mono input, outputs, filters) are stock settings and travel in settings.tml. ---- */
+#define GEN_MAGIC 0x4e454738u                            /* "8GEN" */
+struct gen {
+    uint32_t magic;
+    uint16_t ver, size;
+    float lopt[LOOPER_OPTS];
+    struct mlearn ml;
+    t2m_params tp[T2M_INPUTS];
+    uint8_t ton[T2M_INPUTS], tport[T2M_INPUTS], has_t2m, _r;
+    uint32_t crc;
+};
+_Static_assert(sizeof(struct gen) <= 1280, "the general file must fit the pool's buffer");
+
+static uint32_t gen_crc(const struct gen *g)
+{
+    uint32_t h = 2166136261u;
+    const uint8_t *q = (const uint8_t *)g;
+    for (unsigned i = 0; i < sizeof *g - 4; i++)
+        h = (h ^ q[i]) * 16777619u;
+    return h;
+}
+
+static void gen_copy(void *d, const void *s, unsigned n)    /* (no memcpy in the cave) */
+{
+    for (unsigned i = 0; i < n; i++)
+        ((volatile uint8_t *)d)[i] = ((const volatile uint8_t *)s)[i];
+}
+
+static void gen_save(struct pool *p)
+{
+    struct gen *g = (struct gen *)p->blob;
+    for (unsigned i = 0; i < sizeof *g; i++)
+        ((uint8_t *)g)[i] = 0;
+    g->magic = GEN_MAGIC;
+    g->ver = 1;
+    g->size = (uint16_t)sizeof *g;
+    for (int i = 0; i < LOOPER_OPTS; i++)
+        g->lopt[i] = looper_get_opt(i);
+    gen_copy(&g->ml, &p->ml, sizeof g->ml);
+    g->ml.on = 0;
+    g->ml.target = 0xffff;
+    const struct t2m_mem *t = t2m_mem();
+    if (t) {
+        g->has_t2m = 1;
+        for (int k = 0; k < T2M_INPUTS; k++) {
+            gen_copy(&g->tp[k], &t->p[k], sizeof g->tp[k]);
+            g->ton[k] = t->on[k];
+            g->tport[k] = t->port[k];
+        }
+    }
+    g->crc = gen_crc(g);
+    for (unsigned i = 0; i < sizeof p->fil / 4; i++)
+        p->fil[i] = 0;
+    unsigned bw = 0;
+    if (FF_OPEN(p->fil, "bbgen.bin", 0x0au) == 0) {
+        FF_WRITE(p->fil, g, sizeof *g, &bw);
+        FF_CLOSE(p->fil);
+    }
+}
+
+static void gen_load(struct pool *p)
+{
+    if (p->gen_loaded)
+        return;
+    p->gen_loaded = 1;
+    struct gen *g = (struct gen *)p->blob;
+    for (unsigned i = 0; i < sizeof p->fil / 4; i++)
+        p->fil[i] = 0;
+    unsigned br = 0;
+    if (FF_OPEN(p->fil, "bbgen.bin", 1u) != 0)
+        return;
+    int rc = FF_READ(p->fil, g, sizeof *g, &br);
+    FF_CLOSE(p->fil);
+    if (rc != 0 || br != sizeof *g || g->magic != GEN_MAGIC || g->ver != 1 || g->size != sizeof *g || g->crc != gen_crc(g))
+        return;
+    for (int i = 0; i < LOOPER_OPTS; i++)
+        looper_set_opt(i, g->lopt[i]);
+    p->ml.n = g->ml.n > ML_MAX ? 0 : g->ml.n;
+    for (int i = 0; i < p->ml.n; i++)
+        p->ml.m[i] = g->ml.m[i];
+    struct t2m_mem *t = t2m_mem();
+    if (t && g->has_t2m) {
+        for (int k = 0; k < T2M_INPUTS; k++) {
+            gen_copy(&t->p[k], &g->tp[k], sizeof g->tp[k]);
+            t->on[k] = g->ton[k] & 1;
+            t->port[k] = g->tport[k] & 7;
+            if (g->tp[k].scan_ms > 0.f)
+                t->scan_saved[k] = g->tp[k].scan_ms;
+        }
+    }
 }

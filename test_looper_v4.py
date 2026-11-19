@@ -561,18 +561,12 @@ ev(0, REC_UP)
 blocks(70)
 level(0, 1.0)
 blocks(5)
-param(0, P_STUT, 0.9)                           # 1/32 beat = 750 frames
+v_plain = flat2(60)
+param(0, P_STUT, 0.5)                           # POS (the old STUT): the loop starts half way in
 blocks(6)
 v = flat2(60)
-p750 = sum(abs(v[i] - v[i + 750]) for i in range(2000, 6000)) / 4000
-p6000 = sum(abs(v[i] - v[i + 1125]) for i in range(2000, 6000)) / 4000
-check("STUT 1/32: repeats every 750 frames (the ramp is back at its start), not every 1125", p750 < 0.002 and p6000 > 0.005, (p750, p6000))
-param(0, P_STUT, 0.5)                           # moved on without going through zero: 1/4 beat = 6000 frames
-blocks(6)
-v = flat2(120)
-p750 = sum(abs(v[i] - v[i + 750]) for i in range(4000, 10000)) / 6000
-p6000 = sum(abs(v[i] - v[i + 6000]) for i in range(4000, 10000)) / 6000
-check("STUT moved to 1/4 beat without going back to zero: a new slice of 6000 frames", p6000 < 0.002 and p750 > 0.005, (p750, p6000))
+d = sum(abs(v[i] - v_plain[i]) for i in range(2000, 6000)) / 4000
+check("POS 50 %: the loop is read from half way in (a ramp now differs from the plain loop)", d > 0.05, d)
 param(0, P_STUT, 0.0)
 blocks(5)
 
@@ -796,21 +790,11 @@ per = sum(abs(v[i] - v[i + half_len]) for i in range(200, 4000)) / 3800
 check("TRIM 1/2: the play head repeats every half loop", per < 0.01, per)
 param(0, P_TRIM, 0.0)
 blocks(3)
-param(0, P_STUT, 0.9)                            # forward, 1/32 beat = 750 frames (1.5 saw periods: it cannot look like the plain loop)
-blocks(4)
-v = flat(40)
-per = sum(abs(v[i] - v[i + 750]) for i in range(300, 3000)) / 2700
-plain = sum(abs(tone(i) - tone(i + 750)) for i in range(300, 3000)) / 2700
-check("STUT: the play head loops a 1/32 beat slice (period 750 frames)", per < 0.02 and plain > 0.1, (per, plain))
-param(0, P_STUT, -0.9)                           # backwards in time: the slice before
-blocks(4)
-v = flat(40)
-per = sum(abs(v[i] - v[i + 750]) for i in range(300, 3000)) / 2700
-check("STUT (left): a slice that just played, also periodic", per < 0.02, per)
+blocks(88)                                       # (the blocks the stutter checks took: the WOB check below depends on the loop's phase)
 param(0, P_STUT, 0.0)
 blocks(10)
 sa, ss = slope(flat(4))
-check("STUT off: back to the loop", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
+check("POS off: back to the loop", abs(sa / base_abs - 1.0) < 0.1 and ss > 0, (sa, base_abs))
 param(0, P_SCRM, 1.0)                            # a repeating sequence of slices
 blocks(10)
 v1 = flat(60)

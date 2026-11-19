@@ -27,6 +27,7 @@ enum { LOOPER_O_LEN, LOOPER_O_SYNC, LOOPER_O_QUANT, LOOPER_O_SRC, LOOPER_O_SLOPE
  * (off, 1, 2, 4, 8, 12, 24 a quarter; default off), CLKLVL 5..100 % (default 100 %). */
 #define LOOPER_O_CLKPPQ LOOPER_O_RSIZE
 #define LOOPER_O_CLKLVL LOOPER_O_RRET
+#define LOOPER_O_FXRST LOOPER_O_DOUT          /* FX WHEN EMPTY: 1 = a track's FX knobs go back to their defaults when it becomes empty (DOUT's old slot: the output moved to the Tools settings) */
 enum { LOOPER_ROUTE_STOCK, LOOPER_ROUTE_OWN };
 enum { LOOPER_LEN_FOLLOW, LOOPER_LEN_MULT, LOOPER_LEN_FREE };      /* LOOPER_O_LEN */
 enum { LOOPER_SRC_INPUT, LOOPER_SRC_MIX, LOOPER_SRC_MONO };   /* MONO: the input with its left copied onto its right (at the input stage, for everything after it) */                         /* LOOPER_O_SRC */
