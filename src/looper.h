@@ -11,12 +11,12 @@ enum { LOOPER_EV_REC_DOWN, LOOPER_EV_REC_UP, LOOPER_EV_MUTE_DOWN, LOOPER_EV_MUTE
 
 /* Per-track parameters (looper_set_param). */
 /* The Blooper-style controls: STAB wow / flutter / noise / dull, RPT how much of the old loop is kept per overdub pass
- * (1 = all), SPEED -1..1 (0 = normal, up to 2x, down through stopped to backwards), DROP random dropouts, TRIM the
+ * (1 = all), SPEED -1..1 (0 = normal, up to 2x, down through stopped to backwards), DROP random dropouts, POS (slot TRIM) the start of the loop, TRIM (gone) the
  * play head loops 1/2 ... 1/64 of the loop (steps), STUT repeats a slice of a beat (left: what just played, right: what
  * comes next; -1..1), SCRM jumps between slices of the loop (left: random, right: a repeating sequence; -1..1), PTCH
  * shifts the pitch without changing the speed (-1..1 = -24..+24 semitones). */
 enum { LOOPER_P_FILT, LOOPER_P_RES, LOOPER_P_CRUNCH, LOOPER_P_DRIVE, LOOPER_P_SEND_D, LOOPER_P_SEND_R,
-       LOOPER_P_STAB, LOOPER_P_RPT, LOOPER_P_SPEED, LOOPER_P_WOB, LOOPER_P_TRIM, LOOPER_P_STUT, LOOPER_P_SCRM, LOOPER_P_PTCH, LOOPER_PARAMS };
+       LOOPER_P_STAB, LOOPER_P_RPT, LOOPER_P_SPEED, LOOPER_P_WOB, LOOPER_P_TRIM /* = POS: where the loop starts */, LOOPER_P_STUT, LOOPER_P_SCRM, LOOPER_P_PTCH, LOOPER_PARAMS };
 
 /* Global options (looper_set_opt): the first five and LOOPER_O_ROUTE are choices (whole numbers), the rest amounts 0..1.
  * QUANT: 0 = 1 bar, 1 = 1/4, 2 = 1/8, 3 = 1/16. ROUTE, DTIME, DFB, DRET, RSIZE, RRET: the looper's own delay and reverb are gone (the sends always go to the Blackbox's own); the slots stay, unused.

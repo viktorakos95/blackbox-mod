@@ -1292,6 +1292,35 @@ press(0xF9, 0)                                                  # (BACK was lear
 e.call("solo_set_mode", VIEW, 1)
 e.call("looper_page_tab")
 check("BACK on the stock song screen: the previous page of the round, DRONE-8", screens == [0x2F] and e.uc.reg_read(A.UC_ARM_REG_R0) == 7, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
+# ---- the whole round backwards, with the MCL blob present (a fake entry table: the magic and an abi): BACK is the exact reverse of SONG
+FAKE = 0x30030000
+e.uc.mem_write(FAKE, struct.pack("<II", 0x424C434D, 9) + bytes(0x80))
+e.w32(e.sym["mcl_entry"] & ~1, FAKE)
+def back_press():
+    for _ in range(30):                                          # (time passes: the input stage only, the fake blob must not be called by the output stage)
+        e.call("looper_in", 0x24005555, PTRS, N, count=20_000_000)
+    appmsg.clear()
+    e.uc.mem_write(MSG, struct.pack("<H", 0xF9) + bytes(10) + struct.pack("<i", 0))
+    e.call("looper_app_msg", APP, MSG)
+def tab_now():
+    e.call("looper_page_tab")
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+e.uc.mem_write(APP + 0x8CA4, b"\x2d")
+screens.clear()
+back_press()
+e.call("solo_set_mode", VIEW, 1)
+check("BACK round 1: the stock song screen opens MCL when the blob is there (tab 8)", screens == [0x2F] and tab_now() == 8, (screens, tab_now()))
+e.w32(e.sym["mcl_entry"] & ~1, 0)                                # (the fake blob is only for that one press: the output stage would call into it)
+e.uc.mem_write(APP + 0x8CA4, b"\x2f")
+rounds = []
+for want in (7, 6, 5, 0):
+    back_press()
+    rounds.append(tab_now())
+check("BACK round 2: MCL -> DRONE-8 -> TRIG -> SAMPLR -> Looper MAIN (tabs 7, 6, 5, 0)", rounds == [7, 6, 5, 0], rounds)
+screens.clear()
+back_press()
+check("BACK round 3: Looper MAIN -> the stock song screen (0x2d), and the round is complete", screens == [0x2D], screens)
+e.w32(e.sym["mcl_entry"] & ~1, 0)
 e.uc.mem_write(APP + 0x8CA4, b"\x2f")
 e.call("looper_page_goto", VIEW, 1)
 screens.clear()

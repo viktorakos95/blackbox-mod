@@ -850,7 +850,7 @@ struct pb {                                       /* one track, one block */
     int stut_mode, scr_mode;             /* stutter 0 off 1 back 2 forward; scrambler 0 off 1 random 2 sequence */
     float wob;                                    /* WOB depth 0..1 (0 = off) */
     float wrate;                                  /* WOB rate: pan cycles a beat */
-    float posn;                                   /* POS (the old STUT's knob): where the loop starts, 0..1 of its length */
+    float posn;                                   /* POS (the TRIM slot): where the loop starts, 0..1 of its length */
 };
 
 static inline float quant(float x, float q, float qi)
@@ -995,18 +995,20 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
     float tau = .3f + 20.f * k->rpt * k->rpt;
     float lsec = k->len ? (float)k->len / SR : 1.f;
     p->rptm = k->rpt >= .995f ? 1.f : exp2_fast(-1.4427f * lsec / tau);
-    int tw = (int)(k->trim * 6.f + .5f);
-    p->win = tw <= 0 ? 0 : tw;                                        /* 1: 1/2 of the loop ... 6: 1/64 */
-    p->stut_mode = 0;                                                 /* (the stutter is gone: its knob is POS now, TRIM did nearly the same) */
-    p->stut_len = 64.f;
-    p->posn = k->stut < .01f ? 0.f : k->stut > 1.f ? 1.f : k->stut;   /* POS: the loop (or TRIM's window) starts this far into it */
+    p->win = 0;                                                       /* (TRIM's window is gone: its knob is POS now) */
+    float sv = k->stut < 0.f ? -k->stut : k->stut;
+    p->stut_mode = sv < .02f ? 0 : k->stut < 0.f ? 1 : 2;             /* the slice: a beat, halving up to 1/32 */
+    p->stut_len = beat_frames() / (float)(1 << (int)(sv * 5.99f));
+    if (p->stut_len < 64.f)
+        p->stut_len = 64.f;
+    p->posn = k->trim < .01f ? 0.f : k->trim > 1.f ? 1.f : k->trim;   /* POS (the old TRIM's slot): the loop starts this far into it */
     float cv = k->scrm < 0.f ? -k->scrm : k->scrm;
     p->scr_p = cv;
     p->scr_mode = cv < .02f ? 0 : k->scrm < 0.f ? 1 : 2;
     p->keep = opt_i(LOOPER_O_PITCH) >= 1;
     p->smooth = opt_i(LOOPER_O_PITCH) == 2;
     float semif = k->ptch * 24.f, semin = (float)(int)(semif + (semif >= 0.f ? .5f : -.5f));       /* PTCH: semitones, with cents between them and a sticky detent at each whole one */
-    if (semif - semin < .12f && semif - semin > -.12f)
+    if (semif - semin < .25f && semif - semin > -.25f)             /* a flat of half a semitone round each whole one */
         semif = semin;
     p->ptch_on = semif > .02f || semif < -.02f;
     p->pratio = exp2_fast(semif * (1.f / 12.f));
@@ -1016,7 +1018,7 @@ static void setup(struct dsp *d, int t, struct pb *p, vtrack *k, int n)
         p->wob = woff ? 0.f : .9f - .55f * wt;
         p->wrate = .25f * exp2_fast(3.f * wt);
     }
-    p->mod = (sp > .01f || sp < -.01f) || k->stab > .01f || tw > 0 || p->posn > 0.f || p->scr_mode || p->ptch_on || (p->keep && k->half);
+    p->mod = (sp > .01f || sp < -.01f) || k->stab > .01f || p->posn > 0.f || p->stut_mode || p->scr_mode || p->ptch_on || (p->keep && k->half);
 }
 
 /* One trapezoidal state-variable stage (stmlib Svf), low pass or high pass; the limit soft-limits the resonant loop. */
@@ -1845,8 +1847,8 @@ static float track_model(struct dsp *d, int t, vtrack *k, int lv, int n)
     float spd = (sp >= 0.f ? 1.f + sp : 1.f + 2.f * sp) * (k->half ? .5f : 1.f);
     int keep = opt_i(LOOPER_O_PITCH) >= 1;
     int grains = semi != 0 || (keep && (spd < .98f || spd > 1.02f));
-    int mod = sp > .01f || sp < -.01f || k->stab > .01f || k->trim > .08f || k->stut > .01f ||
-              k->scrm > .02f || k->scrm < -.02f || semi != 0 || (keep && k->half);
+    int mod = sp > .01f || sp < -.01f || k->stab > .01f || k->trim > .01f || k->stut > .02f ||
+              k->stut < -.02f || k->scrm > .02f || k->scrm < -.02f || semi != 0 || (keep && k->half);
     float c = 110.f;                                                      /* read, gain, output (fitted to the everything-on case) */
     if (mod)
         c += 170.f + (k->stab > .01f ? 40.f : 0.f) + 0.f;
@@ -2735,10 +2737,10 @@ void looper_set_param(int t, int p, float v)
         k->wob = fclampf(v, -1.f, 1.f);
         break;
     case LOOPER_P_TRIM:
-        k->trim = fclampf(v, 0.f, 1.f);
+        k->trim = fclampf(v, 0.f, 1.f);                       /* POS (the old TRIM's slot) */
         break;
     case LOOPER_P_STUT:
-        k->stut = fclampf(v, 0.f, 1.f);                       /* POS (it was STUT, -1..1) */
+        k->stut = fclampf(v, -1.f, 1.f);
         break;
     case LOOPER_P_SCRM:
         k->scrm = fclampf(v, -1.f, 1.f);

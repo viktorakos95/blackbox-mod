@@ -31,12 +31,20 @@ def page(a):
     return out
 
 
-p0, p3, p2 = page(0x080EED18), page(0x080EEDF0), page(0x080EEDA8)
+p0, p3, p2, p1 = page(0x080EED18), page(0x080EEDF0), page(0x080EEDA8), page(0x080EED60)
 check("Tools Main: the comp order, untouched by us (11 ids)", p0 == [0xBA, 0xB4, 0x1D0, 0xBB, 0xBC, 0xBD, 0x7F, 0xCD, 0xF6, 0xF7, 0x19B], [hex(v) for v in p0])
-check("Tools page 2: its six, then Mono Input, DRONE-8 Out, SAMPLR Out, Machine Filters", p2 == [0x76, 0xE2, 0x79, 0xD3, 0x71, 0x7B, 0x1A2, 0x1A3, 0x1A4, 0x1A5], [hex(v) for v in p2])
-check("no Tools page has more than 11 ids (the stock builder's structure holds 11)", all(len(page(0x080EED18 + 0x48 * k)) <= 11 for k in range(4)))
-check("clock page: Analog In / Out, then Clock Out 2 and Clock Level", p3 == [0xEF, 0xF0, 0x10F, 0x110, 0x1A0, 0x1A1], [hex(v) for v in p3])
-check("the next page slots are untouched (page 1 and the one after the clock page)", page(0x080EED60) == [0x9D, 0xE1, 0xD5] and page(0x080EEE38) == [])
+check("Tools Rec tab: its three, then Mono Input, DRONE-8 Out, SAMPLR Out, Machine Filters (7)", p1 == [0x9D, 0xE1, 0xD5, 0x1A2, 0x1A3, 0x1A4, 0x1A5], [hex(v) for v in p1])
+check("Tools MIDI tab: untouched (stock six)", p2 == [0x76, 0xE2, 0x79, 0xD3, 0x71, 0x7B], [hex(v) for v in p2])
+lens = [len(page(0x080EED18 + 0x48 * k)) for k in range(4)]
+check("no Tools page has more than 12 ids (entry 12 of the stock builder's structure is the tab count: the bottom row)", all(n <= 12 for n in lens), lens)
+check("the pages we touched stay on one knob page (8 ids or fewer); Main keeps its stock 11", lens[1] <= 8 and lens[3] <= 8 and lens[0] == 11, lens)
+# the builder's structure (read from 0x080996b0): ids at +2+2k, values at +0x14+4k, tab count +0x44, names +0x4d: where an entry would land
+land = {k: "ok" if 0x14 + 4 * k + 4 <= 0x44 else "tab count / names" for k in range(16)}
+check("the stock builder's structure: entries 0..11 are safe, 12 and up overwrite the tab count and names", all(land[k] == "ok" for k in range(12)) and all(land[k] != "ok" for k in range(12, 16)), land)
+# the tab names table (0x080eee80: Main, Rec, MIDI, Clock, then two empty) is untouched: four buttons
+tabs = [e.cstr(e.r32(0x080EEE80 + 4 * i)) for i in range(6)]
+check("the bottom row: four tabs Main, Rec, MIDI, Clock, then two empty names (so the tab count is 4)", tabs == ["Main", "Rec", "MIDI", "Clock", "", ""], tabs)
+check("the next page slots are untouched (MIDI and the slot after the clock page)", page(0x080EEE38) == [])
 
 # ids 0x1a0..0x1a5 are not registered by the stock firmware
 stock = open("firmware/BLACKBOX-3.1.9.bin", "rb").read()

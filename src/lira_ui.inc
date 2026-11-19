@@ -288,7 +288,7 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             text_c(s->x, cy + s->r + 3, s->w, b, C_WHITE, 1);
         } else if (s->id < 8) {                                   /* the note the knob is on: its name on a note, else the MIDI number with a tenth (51.1, 51.2 ...) */
             int h = lira_ui_tunepitch(s->id), nn = (h + 50) / 100;
-            if (h - nn * 100 >= -12 && h - nn * 100 <= 12) {
+            if ((h - nn * 100 >= -35 && h - nn * 100 <= 35) || lira_ui_tune_stuck(s->id)) {          /* (the name stays while the detent holds the note, and a little round it) */
                 lira_note_name(nn, lira_ui_flats(), b);
             } else {
                 q = put_uint(b, (unsigned)(h / 100));
@@ -392,7 +392,7 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
         *q = 0;
         text_c(s->x, s->d + 26, s->w, b, s->col, 1);
     }
-    if (s->kind == LK_KNOB) {                                     /* MIDI learn: a dot on a control that has a controller; a frame on the one waiting for one */
+    if (s->kind != LK_NOTE) {                                     /* MIDI learn: a dot on a control that has a controller; a frame on the one waiting for one */
         if (lira_ui_learn(5, s->id))
             box(s->x + s->w - 8, s->d + 3, 3, 3, LU_SEL);
         if (lira_ui_learn(6, 0) == s->id)
@@ -504,6 +504,16 @@ static void draw_lira(void)
         q = put_uint(b, (unsigned)(v + 1));
         *q = 0;
         text_c(x, d + h / 2 - 8, w, b, on ? C_WHITE : C_GREY, 2);
+        if (lira_ui_learn(5, 300 + v))                            /* MIDI learn: a dot on a plate that has a controller, a frame on the one waiting for one */
+            box(x + w - 8, d + 4, 3, 3, LU_SEL);
+        if (lira_ui_learn(6, 0) == 300 + v)
+            frame(x, d, w, h, LU_SEL, 1);
+    }
+    for (int k = 0; k < 6; k++) {                                 /* ... and on the top bar's switches */
+        if (lira_ui_learn(5, 310 + k))
+            box(LU_SW(k) + 28, 3, 3, 3, LU_SEL);
+        if (lira_ui_learn(6, 0) == 310 + k)
+            frame(LU_SW(k), 2, 32, TOPBAR - 2, LU_SEL, 1);
     }
     if (learn && (looper_ticks() >> 5 & 1u))                     /* MIDI learn: the frame flashes, like INFO's */
         frame(0, 0, P->w, P->hg, LU_SEL, 2);
@@ -657,6 +667,43 @@ static void lu_press(const struct lu_spec *s, int dir)
         lira_ui_learn(4, 0);
 }
 
+/* MIDI learn on buttons (lira_pad.c lira_midi_msg calls these from the audio task): a learned controller crossing 64 upward presses the button (cycling
+ * buttons step on, toggles flip); a plate in HOLD follows the controller (down at 64 and over, up below). Ids: the spec ids of the buttons, 300 + voice for
+ * a plate, 310 + k for the top bar's switches (0 LATCH / HOLD, 1 TRI / SINE, 2 X:, 3 STEP / FREE, 4 REC, 5 BTN). */
+int lira_btn_press(int id, int down)
+{
+    if (id >= 300 && id < 308) {
+        int v = id - 300;
+        if (lira_ui_momentary(0))
+            lira_ui_key(v, down);
+        else if (down)
+            lira_ui_key(v, !lira_ui_key_get(v));
+    } else if (id >= 310 && id < 316 && down) {
+        int k = id - 310;
+        if (k == 0)
+            lira_ui_momentary(1);
+        else
+            lira_ui_action(k == 1 ? 4 : k == 2 ? 5 : k == 3 ? 6 : k == 4 ? 7 : 8);
+    } else if (down) {
+        struct lu_spec sp = {0};
+        sp.id = (uint16_t)id;
+        lu_press(&sp, 1);
+    }
+    P->sig = 0;
+    return 0;
+}
+
+int lira_step_max(int id)                                           /* a stepped control's highest step (the chord page's SPACE, KEY, OCT, SPAN) */
+{
+    return lu_stepmax(id);
+}
+
+/* what MIDI learn can take: every control but the note displays and the learn buttons themselves */
+static int lu_learnable(const struct lu_spec *s)
+{
+    return s->kind != LK_NOTE && !(s->id >= 220 && s->id <= 222);
+}
+
 /* kind 0 down, 1 move, 2 up; x / d in page pixels. A knob turns by 80 px of travel up or down from where it was touched. */
 static void lira_touch(int kind, int id, int x, int d)
 {
@@ -689,6 +736,11 @@ static void lira_touch(int kind, int id, int x, int d)
     lira_ui_drag(id, 0, 0, 0, 0, 0);
     if (d <= TOPBAR + 1) {
         int k = x < P->w - 13 ? (P->w - 13 - x) / 33 : -1;                              /* the switches: 0 LATCH, 1 TRI / SINE, 2 X:, 3 STEP / FREE, 4 REC, 5 BTN */
+        if (k >= 0 && k <= 5 && (lira_ui_learn(0, 0) & 1)) {      /* MIDI learn: the switch is chosen */
+            lira_ui_learn(2, 310 + k);
+            lira_ui_last(310 + k);                                 /* (so FORGET knows it) */
+            return;
+        }
         if (k == 0)
             lira_ui_momentary(1);
         else if (k == 1)
@@ -707,6 +759,11 @@ static void lira_touch(int kind, int id, int x, int d)
         int px, pd, pw, ph;
         lu_plate_rect(v, &px, &pd, &pw, &ph);
         if (x >= px - 1 && x < px + pw + 1 && d >= pd && d < pd + ph + 4) {
+            if (lira_ui_learn(0, 0) & 1) {                        /* MIDI learn: the plate is chosen */
+                lira_ui_learn(2, 300 + v);
+                lira_ui_last(300 + v);
+                return;
+            }
             lira_ui_tapvel(v, ph > 0 ? 1000 - (d - pd) * 1000 / ph : 1000);   /* (velocity TAP: the top of the plate is full, its bottom soft) */
             if (lira_ui_momentary(0)) {
                 lira_ui_key(v, 1);
@@ -726,7 +783,7 @@ static void lira_touch(int kind, int id, int x, int d)
             lu_bank(sp[i].bank);
             if (sp[i].id != 221)                                      /* (FORGET acts on the control touched last: it must not become that one) */
                 lira_ui_last(sp[i].id);
-            if (sp[i].kind == LK_KNOB && (lira_ui_learn(0, 0) & 1)) {  /* MIDI learn: the control is chosen, the next controller moved is its */
+            if (lu_learnable(&sp[i]) && (lira_ui_learn(0, 0) & 1)) {  /* MIDI learn: the control (knob or button) is chosen, the next controller moved is its */
                 lira_ui_learn(2, sp[i].id);
                 return;
             }
@@ -756,7 +813,7 @@ static void lira_knob(int knob, int counts)
     int sel = lira_ui_sel(-1), bank = (sel >> 4) & 7, n = lu_specs(sel, sp);
     for (int i = 0; i < n; i++)
         if (sp[i].bank == bank && sp[i].enc == knob) {
-            if (sp[i].kind == LK_KNOB && (lira_ui_learn(0, 0) & 1)) {  /* MIDI learn: turning an encoder chooses its control, it does not change it */
+            if (lu_learnable(&sp[i]) && (lira_ui_learn(0, 0) & 1)) {  /* MIDI learn: turning an encoder chooses its control, it does not change it */
                 lira_ui_learn(2, sp[i].id);
                 lira_ui_last(sp[i].id);
                 return;

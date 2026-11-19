@@ -31,6 +31,7 @@ int lira_ui_pitch(int v);
 int lira_ui_tunepitch(int v);
 void lira_ui_tune_step(int v, int dir);
 void lira_ui_tune_detent(int v);
+int lira_ui_tune_stuck(int v);
 void lira_ui_pitch_set(int v, int h);
 void lira_page_run(float *l, float *r, int n);
 int lira_ui_learn(int op, int arg);          /* MIDI learn (lira_pad.c): 0 state, 1 toggle, 2 choose a control, 3 forget one, 4 forget all, 5 its controller + 1, 6 the control waiting */

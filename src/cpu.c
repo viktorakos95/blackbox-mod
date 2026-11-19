@@ -114,6 +114,7 @@ static const struct mcl_entry *mcl_image(void)       /* the blob, whether or not
     return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 9 ? e : 0;
 }
 static const struct mcl_entry *mcl_blob(void) { return mcl_image(); }
+int mcl_page_present(void) { return mcl_image() != 0; }     /* the MCL blob is in the image (looper_page.c: BACK from the stock song screen) */
 #define MCL_RAM     0xc3f80000u  /* the blob's SDRAM region (src/mcl_bb/mcl_blob.ld): .data, .bss, heap, its task's stack */
 #define MCL_RAM_LEN 0x80000u
 

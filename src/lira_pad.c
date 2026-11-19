@@ -235,6 +235,8 @@ struct gev {                     /* one recorded gesture: when (frames from the 
 struct mlearn {                  /* MIDI learn: a control (ui id) follows a controller number on a channel */
     uint8_t on, n;               /* learn mode, mappings in use */
     uint8_t stuck;               /* (not MIDI learn: the free-tune detent's memory, one bit a voice: it sits on a note and holds it) */
+    uint32_t hi;                 /* per mapping: the controller was at 64 or over at its last message (a button presses on the way up) */
+    uint8_t snote[8];            /* the note each voice's detent holds */
     uint8_t rwr, rrd;            /* controller changes from the USB interrupt, waiting for the audio task */
     uint16_t seq;                /* counts the values MIDI has set (the page redraws when it moves) */
     uint8_t rq[16][3];
@@ -393,6 +395,7 @@ void lira_register(void *table)
         p->rec[0][0][i] = p->rec[0][1][i] = p->rec[1][0][i] = p->rec[1][1][i] = p->rec[2][0][i] = p->rec[2][1][i] = p->scr[0][i] = p->scr[1][i] = 0.0f;
     p->ml.on = p->ml.n = p->ml.stuck = p->ml.rwr = p->ml.rrd = 0;
     p->ml.seq = 0;
+    p->ml.hi = 0;
     p->gen_loaded = 0;
     p->ml.target = 0xffff;
     struct pg *g = &p->pg;
@@ -1011,6 +1014,7 @@ typedef int (*midi_get_fn)(void *mgr, uint8_t *out, uint8_t *flag);
 
 static void ml_unbind(struct mlearn *m, int id)
 {
+    m->hi = 0;
     for (int i = 0; i < m->n; i++)
         if (m->m[i].id == id) {
             m->m[i] = m->m[--m->n];
@@ -1019,6 +1023,8 @@ static void ml_unbind(struct mlearn *m, int id)
 }
 
 void lira_ui_pitch_set(int v, int h);
+int lira_btn_press(int id, int down);                    /* src/lira_ui.inc (looper_page.c): a button pressed by MIDI */
+int lira_step_max(int id);
 
 /* A controller's value onto a control: through the path a touch takes. A voice's pitch knob (ids 0..7) is the special one: outside chord mode it is the knob with
  * its note detent; in chord mode the knob is the voice's note (lira_ui_set does nothing there), so the controller sweeps the range (A1..A6 in STEP,
@@ -1057,6 +1063,7 @@ void lira_midi_msg(unsigned st, unsigned cc, unsigned val)
         if (m->target != 0xffffu) {
             int id = m->target;
             ml_unbind(m, id);
+            m->hi = 0;
             for (int i = 0; i < m->n; i++)               /* a controller drives one control */
                 if (m->m[i].cc == cc && m->m[i].ch == ch) {
                     m->m[i] = m->m[--m->n];
@@ -1074,7 +1081,20 @@ void lira_midi_msg(unsigned st, unsigned cc, unsigned val)
     }
     for (int i = 0; i < m->n; i++)
         if (m->m[i].cc == cc && m->m[i].ch == ch) {
-            ml_apply(p, m->m[i].id, val);
+            int id = m->m[i].id;
+            if ((id >= 100 && id < 108) || (id >= 144 && id < 154) || (id >= 160 && id < 164) || (id >= 190 && id < 197) || id == 215 || id == 216 || id >= 300) {
+                int hi = val >= 64u, was = m->hi >> i & 1u;           /* a button: it presses on the way up through 64 (a plate in HOLD also lets go on the way down) */
+                m->hi = (m->hi & ~(1u << i)) | (uint32_t)hi << i;
+                if (hi != was && (hi || (id >= 300 && id < 308)))
+                    lira_btn_press(id, hi);
+                m->seq++;
+            } else if (id >= 140 && id < 144) {                       /* a stepped knob (SPACE, KEY, OCT, SPAN): the controller's range over its steps */
+                int mx = lira_step_max(id);
+                lira_ui_chord_set(id, (int)((val * (unsigned)mx + 63u) / 127u));
+                m->seq++;
+            } else {
+                ml_apply(p, id, val);
+            }
             return;
         }
 }
@@ -2014,18 +2034,33 @@ void lira_ui_tune_step(int v, int dir)                   /* STEP: the knob goes 
     tune_to(&p->pg, v, (float)n);
 }
 
-void lira_ui_tune_detent(int v)                          /* a drag lands on a note within 22 cents of one and then sticks to it until 40 cents away (it was 12, no hold) */
+#define LIRA_CATCH 30
+#define LIRA_HOLD  60
+int lira_ui_tune_stuck(int v)                            /* the voice sits on a note by the detent: its name keeps showing */
+{
+    struct pool *p = pool();
+    return p && v >= 0 && v < 8 && (p->ml.stuck >> v & 1);
+}
+
+void lira_ui_tune_detent(int v)                          /* a drag lands on a note within 30 cents of one and then sticks to it until 60 cents away: a flat of 120 cents of finger travel round each note (it was 12 cents, no hold; 22 / 40 in n10, which did not feel like a cut) */
 {
     struct pool *p = pool();
     if (!p || v < 0 || v > 7)
         return;
-    int h = tune_hund(&p->pg, v), n = (h + 50) / 100, d = h - n * 100;
-    int ad = d < 0 ? -d : d, lim = p->ml.stuck & (1u << v) ? 40 : 22;
-    if (ad <= lim) {
+    int h = tune_hund(&p->pg, v);
+    if (p->ml.stuck >> v & 1) {                                    /* held on a note: it stays until the finger is 60 cents away from THAT note */
+        int dn = h - p->ml.snote[v] * 100;
+        if (dn >= -LIRA_HOLD && dn <= LIRA_HOLD) {
+            tune_to(&p->pg, v, (float)p->ml.snote[v]);
+            return;
+        }
+        p->ml.stuck &= (uint8_t)~(1u << v);
+    }
+    int n = (h + 50) / 100, d = h - n * 100;
+    if (d >= -LIRA_CATCH && d <= LIRA_CATCH) {                     /* a new note is caught within 30 cents */
         tune_to(&p->pg, v, (float)n);
         p->ml.stuck |= (uint8_t)(1u << v);
-    } else {
-        p->ml.stuck &= (uint8_t)~(1u << v);
+        p->ml.snote[v] = (uint8_t)n;
     }
 }
 

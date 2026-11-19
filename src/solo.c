@@ -320,7 +320,7 @@ void solo_song_pressed(uint8_t *app, int computed, int a, int b)
     }
 }
 
-/* Open one of the pages (a tab of looper_page_goto) from a stock screen: BACK on the stock song screen opens DRONE-8. */
+/* Open one of the pages (a tab of looper_page_goto) from a stock screen: BACK on the stock song screen opens MCL (DRONE-8 without the blob). */
 void solo_open_page(uint8_t *app, int tab)
 {
     ensure();

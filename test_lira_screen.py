@@ -592,32 +592,46 @@ def find(lo, hi, side):
 e.call("lira_ui_tune_detent", 0)
 e.call("lira_ui_set", 0, 520)
 e.call("lira_ui_tune_detent", 0)                                  # (clear the memory: wherever it was, 520 is far from a hold)
-v18 = find(17, 21, 1)
-if v18 is None:
-    ds = []
-    for val in range(300, 340):
-        e.call("lira_ui_set", 0, val)
-        ds.append(tuneh())
-    raise SystemExit(str(ds))
+v18 = find(26, 30, 1)
+assert v18 is not None
 e.call("lira_ui_tune_detent", 0)
-check("the tune detent catches a knob 17..21 cents from a note (it was 12)", tuneh() % 100 == 0, tuneh())
-v35 = find(30, 38, 1)
-assert v35 is not None
+check("the tune detent catches a knob 26..30 cents from a note (it was 12, then 22)", tuneh() % 100 == 0, tuneh())
+held = tuneh()
+vv = None
+for val in range(v18, v18 + 40):
+    e.call("lira_ui_set", 0, val)
+    if 41 <= tuneh() - held <= 49:
+        vv = val
+        break
+assert vv is not None
 e.call("lira_ui_tune_detent", 0)
-check("... and holds it: 30..38 cents away it is still on the note (it let go at 12 before)", tuneh() % 100 == 0, tuneh())
-v45 = find(41, 50, 1)
-if v45 is None:
-    ds = []
-    for val in range(300, 330):
-        e.call("lira_ui_set", 0, val)
-        h = tuneh()
-        ds.append(h - ((h + 50) // 100) * 100)
-    raise SystemExit("no tune value 41..50 cents from a note: " + str(ds))
+check("... and holds it: 41..49 cents away from the held note it is still on it", tuneh() == held, (held, tuneh()))
+for val in range(vv, vv + 12):
+    e.call("lira_ui_set", 0, val)
+    if tuneh() - held > 62:
+        break
 e.call("lira_ui_tune_detent", 0)
-check("... but 42..49 cents away it is free", tuneh() % 100 != 0, tuneh())
-assert find(30, 38, 1) is not None
+check("... and past 60 cents it has let go (free, or caught by the next note)", tuneh() != held, (held, tuneh()))
+# a slow drag across a note, one knob unit (about 11 cents) a step, the detent called after each like the touch handler: how long the note value stays
+e.call("lira_ui_set", 0, 300)
 e.call("lira_ui_tune_detent", 0)
-check("... and, free, it does not grab at 30..38 cents any more", tuneh() % 100 != 0, tuneh())
+seq = []
+for val in range(300, 420):
+    e.call("lira_ui_set", 0, val)
+    e.call("lira_ui_tune_detent", 0)
+    h = tuneh()
+    seq.append(h)
+runs, cur = [], 0
+for h in seq:
+    if h % 100 == 0:
+        cur += 1
+    elif cur:
+        runs.append(cur)
+        cur = 0
+if cur:
+    runs.append(cur)
+check("a slow drag: the note value is held over a long run of steps (a deliberate move to leave it)", runs and max(runs) >= 10, (runs, seq[:3]))
+check("... and the drag does move on (several different notes met)", len({h for h in seq if h % 100 == 0}) >= 3, sorted({h for h in seq if h % 100 == 0}))
 if was_chord:
     e.call("lira_ui_action", 0)
 if chord(157) != was_free:
@@ -727,6 +741,57 @@ s2 = sigv()
 midi(0xB0, 12, 31)
 s3 = sigv()
 check("14: the page's signature changes with every value MIDI sets (so the knob redraws smoothly, not in coarse steps)", len({s1, s2, s3}) == 3, (s1, s2, s3))
+learn(4)
+# 1: MIDI learn on buttons: plates, cycling buttons, the top bar's switches, stepped knobs. A button presses when the controller crosses 64 upward.
+def momentary():
+    e.call("lira_ui_momentary", 0)
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+learn(4)
+learn(1)
+tap(5 + 38 * 2 + 19, PLD)                                          # a plate, in learn mode: chosen, not played
+check("learn mode: a tap on a plate chooses it (300 + voice) and does not play it", learn(6) == 302 and key(2) == 0, (learn(6), key(2)))
+midi(0xB0, 50, 100)
+learn(1)
+check("... the first controller moved is bound to the plate", learn(5, 302) == 51, learn(5, 302))
+midi(0xB0, 50, 100)
+check("a plate (LATCH): the controller going up through 64 switches it on", key(2) == 1, key(2))
+midi(0xB0, 50, 110)
+check("... staying high does nothing more", key(2) == 1)
+midi(0xB0, 50, 5)
+check("... and going down does nothing (a latched plate toggles on the way up only)", key(2) == 1)
+midi(0xB0, 50, 127)
+check("... the next way up switches it off", key(2) == 0, key(2))
+learn(1)
+tap(294, 7)                                                         # the top bar's LATCH switch (k = 0), in learn mode
+check("learn mode: a tap on a top-bar switch chooses it (310 + k)", learn(6) == 310, learn(6))
+midi(0xB0, 51, 90)
+learn(1)
+m0 = momentary()
+midi(0xB0, 51, 0)
+midi(0xB0, 51, 127)
+check("the LATCH / HOLD switch follows a controller: one way up flips it", momentary() != m0, (m0, momentary()))
+if momentary() != m0:
+    e.call("lira_ui_momentary", 1)                                # (put it back)
+# a cycling button (FM source of pair 2, id 105) and a stepped knob (KEY, 141)
+bind(105, 60)
+f0 = get(105)
+midi(0xB0, 60, 127)
+check("a cycling button: a controller going up steps it on (FM source +1)", get(105) == (f0 + 1) % 9, (f0, get(105)))
+midi(0xB0, 60, 0)
+midi(0xB0, 60, 127)
+check("... and again on the next way up", get(105) == (f0 + 2) % 9, get(105))
+bind(141, 61)
+midi(0xB0, 61, 127)
+check("a stepped knob (KEY): the controller's range over its steps (127 -> 11)", chord(141) == 11, chord(141))
+midi(0xB0, 61, 0)
+check("... 0 -> 0", chord(141) == 0, chord(141))
+# FORGET on a button (the plate's mapping): the last control chosen
+learn(1)
+tap(5 + 38 * 2 + 19, PLD)
+learn(1)
+slow_tap(233 + 38 + 19, 28 + 19) if sel() & 15 == 4 else None
+learn(3, 302)
+check("FORGET / unlearn removes a button's mapping too", learn(5, 302) == 0, learn(5, 302))
 learn(4)
 # 15: a controller change from the USB callback (interrupt side) goes through the ring to the audio side
 bind(211, 13)

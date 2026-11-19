@@ -70,6 +70,7 @@ void looper_guard_drawing(int on);
 struct lay;
 static void lira_footer(const struct lay *L);
 static int lira_footer_hit(int x);
+int mcl_page_present(void);                                       /* src/cpu.c */
 static void lira_back(void) __attribute__((unused));   /* (BACK now goes back a page; the voice swap is no longer on a button) */
 static void rehide(uint8_t *view);
 static void paint(uint8_t *view);
@@ -122,7 +123,7 @@ static const uint8_t track_colour[LOOPER_TRACKS] = {0x1b, 0x14, 0x17, 0x18};   /
 #define TOPBAR    14             /* the row of values; its line is at d = TOPBAR + 1 */
 #define FOOT      14             /* the footer; its line is at d = hg - FOOT - 1 */
 #define REC_H     40             /* the record box */
-#define FX_N 16                                                   /* the FX tab's controls, two pages of eight: six dials, REV, HALF; STAB RPT SPEED DROP TRIM STUT SCRM PTCH */
+#define FX_N 16                                                   /* the FX tab's controls, two pages of eight: six dials, REV, HALF; STAB RPT SPEED DROP POS STUT SCRM PTCH */
 #define FX_PAGE(c) ((c) >> 3)
 /* The square's tiles (0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right) lie like the encoders on the panel: left top is
  * track 2's (knob 1), left bottom track 1's (knob 0), right top track 3's, right bottom track 4's. */
@@ -742,7 +743,7 @@ static char *put_pct(char *p, float v)
 
 static int fx_bipolar(int q)                                       /* engine parameters that go -1..1 */
 {
-    return q == LOOPER_P_FILT || q == LOOPER_P_SPEED || q == LOOPER_P_WOB || q == LOOPER_P_SCRM || q == LOOPER_P_PTCH;
+    return q == LOOPER_P_FILT || q == LOOPER_P_SPEED || q == LOOPER_P_WOB || q == LOOPER_P_STUT || q == LOOPER_P_SCRM || q == LOOPER_P_PTCH;
 }
 
 static float fx_default(int q)
@@ -767,7 +768,7 @@ static float fx_value(const struct looper_info *k, int param)
 }
 
 static const char *const fx_name[FX_N] = {"FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB", "REV", "HALF",
-                                          "STAB", "RPT", "SPEED", "WOB", "TRIM", "POS", "SCRM", "PTCH"};
+                                          "STAB", "RPT", "SPEED", "WOB", "POS", "STUT", "SCRM", "PTCH"};
 
 /* The text a knob shows on top: "LVL 0.0dB" / the pan line / the selected FX parameter's value. */
 static void fx_text(char *b, int param, float v)
@@ -789,13 +790,16 @@ static void fx_text(char *b, int param, float v)
         *p++ = '.';
         p = put_uint(p, (unsigned)(n % 10));
         *p++ = 'x';
-    } else if (param == 12) {                                     /* TRIM: the part of the loop that plays: its length */
-        int n = (int)(v * 6.f + .5f);
-        for (const char *o = "LEN "; *o; o++)
-            *p++ = *o;
-        const char *o = n <= 0 ? "OFF" : n == 1 ? "1/2" : n == 2 ? "1/4" : n == 3 ? "1/8" : n == 4 ? "1/16" : n == 5 ? "1/32" : "1/64";
-        for (; *o; o++)
-            *p++ = *o;
+    } else if (param == 12) {                                     /* POS: where the loop starts */
+        if (v < .01f) {
+            *p++ = 'O';
+            *p++ = 'F';
+            *p++ = 'F';
+        } else {
+            for (const char *o = "START "; *o; o++)
+                *p++ = *o;
+            p = put_pct(p, v);
+        }
     } else if (param == 11 || param == 14) {                      /* WOB / SCRM: WOB tremolo (left) / auto-pan (right); SCRM random (left) / sequence (right) */
         float a = v < 0.f ? -v : v;
         if (a < .02f) {
@@ -810,7 +814,7 @@ static void fx_text(char *b, int param, float v)
         }
     } else if (param == 15) {                                     /* PTCH: semitones */
         float sf = v * 24.f, sn = (float)(int)(sf + (sf >= 0.f ? .5f : -.5f));       /* semitones; cents between them, a detent at each whole one (looper.c) */
-        if (sf - sn < .12f && sf - sn > -.12f)
+        if (sf - sn < .25f && sf - sn > -.25f)
             sf = sn;
         int hund = (int)((sf < 0.f ? -sf : sf) * 100.f + .5f), semi = hund / 100;
         if (hund < 2) {
@@ -826,15 +830,17 @@ static void fx_text(char *b, int param, float v)
                 *p++ = (char)('0' + hund % 10);
             }
         }
-    } else if (param == 13) {                                     /* POS: where the loop (or TRIM's window) starts */
-        if (v < .01f) {
+    } else if (param == 13) {                                     /* STUT: "<1/4" repeats what just played, ">1/4" what comes next */
+        float a = v < 0.f ? -v : v;
+        if (a < .02f) {
             *p++ = 'O';
             *p++ = 'F';
             *p++ = 'F';
         } else {
-            for (const char *o = "START "; *o; o++)
+            static const char *const fr[6] = {"1", "1/2", "1/4", "1/8", "1/16", "1/32"};
+            *p++ = v < 0.f ? '<' : '>';
+            for (const char *o = fr[(int)(a * 5.99f)]; *o; o++)
                 *p++ = *o;
-            p = put_pct(p, v);
         }
     } else if (param == LOOPER_P_FILT) {
         if (v > -.03f && v < .03f) {
@@ -1042,7 +1048,7 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
             break;
         float v = fx_value(k, p);
         dial_h(x + 2 + (j & 1) * (DIAL + 1), y0 + (j >> 1) * (th + 1), th, fx_name[p],
-               p == LOOPER_P_FILT || p == 10 || p == 11 || p == 14 || p == 15 ? (v + 1.f) * .5f : v, 0, (p == 6 || p == 7) && v > .5f);
+               p == LOOPER_P_FILT || p == 10 || p == 11 || p == 13 || p == 14 || p == 15 ? (v + 1.f) * .5f : v, 0, (p == 6 || p == 7) && v > .5f);
     }
     if (P->sel == t) {                                            /* the one pink square: this column's block of four = knobs 1-4 */
         int by = y0 + (FX_GROUP & 1) * 2 * (th + 1) - 2;
@@ -2512,9 +2518,9 @@ static void app_msg(void *app, const uint16_t *msg)
     }
     if (msg && ((const uint8_t *)app)[0x8ca4] == 0x2d && P->bset[B_BACK] && msg[0] == P->bid[B_BACK] &&
         *(const uint32_t *)((const uint8_t *)msg + 0xc) == P->bidx[B_BACK]) {
-        if (looper_ticks() - P->btn_t > 20) {                     /* BACK on the stock song screen: the previous page of SONG's round, DRONE-8 */
+        if (looper_ticks() - P->btn_t > 20) {                     /* BACK on the stock song screen: the previous page of SONG's round, MCL (DRONE-8 without the blob) */
             P->btn_t = looper_ticks();                            /* (its release, arriving on the page, is the same press) */
-            solo_open_page((uint8_t *)app, 7);
+            solo_open_page((uint8_t *)app, mcl_page_present() ? 8 : 7);       /* (the round backwards: MCL when it is there, else DRONE-8) */
         }
         return;
     }
