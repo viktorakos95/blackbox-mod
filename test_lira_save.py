@@ -187,5 +187,44 @@ check("a file from before the ENV tab loads with its defaults (FAST attack a 3 m
 e.call("lira_ui_set", 16, 1)
 e.call("lira_load_thunk", 0x2401F508, 0x24072000)
 check("load thunk: the stock load handler runs, then the file is read", order[-1][0] == "stock load" and get(16) == want[0], str(order[-1]))
+
+# ---- SAVE TO PROJECT (n13): a page asks, the streamer task's idle pass (the stock preset poll wrapped by lira_file_poll) writes both files
+polls = []
+e.stub(0x08092F5C, lambda: polls.append(e.arg(0)))
+def ui_save(op):
+    e.call("lira_ui_save", op)
+    return e.uc.reg_read(UC_ARM_REG_R0)
+disk.pop("bbmod.bin", None)
+disk.pop("bbgen.bin", None)
+check("SAVE: idle state is 0 (SAVE)", ui_save(1) == 0)
+ui_save(0)
+check("... a tap sets SAVING (1) and writes nothing yet (the page never touches the card)", ui_save(1) == 1 and "bbmod.bin" not in disk and "bbgen.bin" not in disk)
+e.call("lira_file_poll", 0x24002E88)
+check("the idle pass: both files written (bbmod.bin and bbgen.bin), the stock poll still called once with its argument", "bbmod.bin" in disk and "bbgen.bin" in disk and polls == [0x24002E88], str((list(disk), polls)))
+check("... the state is SAVED (2)", ui_save(1) == 2)
+g = disk["bbgen.bin"]
+import zlib
+check("bbgen.bin: magic 8GEN, version 1, size, the crc matches (FNV over all but the last 4 bytes)", g[:4] == b"8GEN" and g[8:12] != b"" and len(g) == struct.unpack("<H", g[6:8])[0], str((g[:8], len(g))))
+def fnv(b):
+    h = 2166136261
+    for x in b:
+        h = ((h ^ x) * 16777619) & 0xFFFFFFFF
+    return h
+check("... crc ok", struct.unpack("<I", g[-4:])[0] == fnv(g[:-4]))
+m = disk["bbmod.bin"]
+check("bbmod.bin: magic 8RND, version 3, and its crc", m[:4] == struct.pack("<I", 0x444e5238), str(m[:4]))
+e.call("lira_file_poll", 0x24002E88)
+check("with nothing asked, the idle pass only calls the stock poll (no file calls)", polls == [0x24002E88, 0x24002E88] and opened[-1][0] in ("bbgen.bin",), str((polls, opened[-2:])))
+ui_save(0)
+# a failing card: f_open returns an error
+real_open = f_open
+def failing_open():
+    opened.append((e.cstr(e.arg(1)), e.arg(2)))
+    e.uc.reg_write(UC_ARM_REG_R0, 3)                              # FR_NOT_READY
+e.stub(0x08086534, failing_open)
+e.call("lira_file_poll", 0x24002E88)
+check("a card that does not open the files: the state is FAILED (3)", ui_save(1) == 3, str(ui_save(1)))
+e.stub(0x08086534, f_open)
+print("SAVE TO PROJECT tests done")
 print("failures:", fails)
 sys.exit(1 if fails else 0)

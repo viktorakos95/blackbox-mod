@@ -70,6 +70,7 @@ void looper_guard_drawing(int on);
 struct lay;
 static void lira_footer(const struct lay *L);
 static int lira_footer_hit(int x);
+static void save_button(int x, int d, int w, int h);
 int mcl_page_present(void);                                       /* src/cpu.c */
 static void lira_back(void) __attribute__((unused));   /* (BACK now goes back a page; the voice swap is no longer on a button) */
 static void rehide(uint8_t *view);
@@ -413,6 +414,10 @@ int looper_page_hit(int x, int d, int *track, float *val)
                 *track = 10 + sh;
                 return Z_TAB;
             }
+            if (P->mode == M_SMPLR && x >= 3 + 60 * SM_SHEETS) {      /* SAVE TO PROJECT, right of the sheets (the whole end of the footer: a finger need not be exact) */
+                *track = 92;
+                return Z_OPTC;
+            }
             return Z_NONE;
         }
         int i = (x - 3) / (TAB_W + 2);
@@ -447,7 +452,13 @@ int looper_page_hit(int x, int d, int *track, float *val)
         }
         if (r == OPT_ROWS) {
             if (P->mode == M_SETUP)
+            {
+                if (x >= OPT_X + 116 && x < OPT_X + 236) {
+                    *track = 92;                                       /* SAVE TO PROJECT */
+                    return Z_OPTC;
+                }
                 return x >= OPT_X && x < OPT_X + 110 ? Z_CLEAR : Z_NONE;
+            }
 #ifdef BANK2
             if (P->mode == M_MORE) {
                 *track = 93;
@@ -1114,6 +1125,7 @@ static void draw_setup(const struct lay *L)
     if (P->mode == M_SETUP) {
         int armed = P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT;
         int done = P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW;
+        save_button(OPT_X + 120, d, 110, ROW_H - 3);              /* SAVE TO PROJECT: the options go into bbgen.bin now (with DRONE-8's bbmod.bin) */
         frame(OPT_X, d, 110, ROW_H - 3, done ? C_GREEN : C_RED, 1);
         text_c(OPT_X, d + (ROW_H - 11) / 2 + 1, 110, done ? "CLEARED!" : armed ? "TAP AGAIN" : "CLEAR ALL", done ? C_GREEN : armed ? C_WHITE : C_RED, 1);
         float bpm = looper_bpm();
@@ -1126,7 +1138,7 @@ static void draw_setup(const struct lay *L)
         for (const char *q = looper_running() ? " RUN" : " STOP"; *q; q++)
             *p++ = *q;
         *p = 0;
-        text(OPT_X + 120, d + (ROW_H - 11) / 2 + 1, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);
+        text(6, d + (ROW_H - 11) / 2 + 1, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);               /* (BPM and the transport, left of CLEAR ALL) */
     } else {
         /* one diagnostic line: the last button message, the sequencer clock's position and rate, the screens visited */
         for (const char *q = "LAST "; *q; q++)
@@ -1180,6 +1192,16 @@ static void draw_setup(const struct lay *L)
     }
 }
 
+/* The SAVE TO PROJECT button (DRONE-8's footer, SAMPLR's footer, the Looper's SETUP page): SAVE, SAVING while the streamer task writes, SAVED / FAILED for 2 s (lira_pad.c). */
+static void save_button(int x, int d, int w, int h)
+{
+    int st = lira_ui_save(1);
+    const char *t = st == 1 ? "SAVING" : st == 2 ? "SAVED" : st == 3 ? "FAILED" : "SAVE";
+    int col = st == 2 ? C_GREEN : st == 3 ? C_RED : st == 1 ? C_YELLOW : C_LIGHT;
+    frame(x, d, w, h, st ? col : C_RAIL, 1);
+    text_c(x, d + (h - 8) / 2, w, t, col, 1);
+}
+
 static void draw_footer(const struct lay *L)
 {
     box(1, L->foot_y + 1, P->w - 2, FOOT - 1, C_BG);
@@ -1214,6 +1236,7 @@ static void draw_footer(const struct lay *L)
             frame(3 + 60 * i, L->foot_y + 2, 58, FOOT - 3, on ? C_CYAN : C_RAIL, 1);
             text_c(3 + 60 * i, L->foot_y + 4, 58, sm_sheet_name[i], on ? C_CYAN : C_GREY, 1);
         }
+        save_button(3 + 60 * SM_SHEETS + 4, L->foot_y + 2, P->w - 3 - 60 * SM_SHEETS - 8, FOOT - 3);
         x0 = P->w;
     }
     if (P->mode < M_SMPLR) {
@@ -1770,6 +1793,7 @@ static uint32_t signature(void)
               (uint32_t)(P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) << 29 | (uint32_t)(P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW) << 28)) * 16777619u;
     for (int o = 0; o < LOOPER_OPTS; o++)
         h = (h ^ (uint32_t)(looper_get_opt(o) * 1000.f + .5f)) * 16777619u;
+    h = (h ^ (uint32_t)lira_ui_save(1) * 7919u) * 16777619u;                           /* (the SAVE button's SAVING / SAVED / FAILED) */
     h = (h ^ (uint32_t)(P->panic_t && (uint16_t)(looper_ticks() - P->panic_t) < PANIC_WAIT)) * 16777619u;               /* (SAMPLR's PANIC asking SURE?, and back after 2 s) */
     h = (h ^ (uint32_t)looper_overload_level()) * 16777619u;
     return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : P->mode == M_TRIG ? t2m_page_sig() : 0u) ^ (P->mode == M_LIRA ? lira_ui_sig() : P->mode == M_MCL ? mcl_page_sig() : 0u);
@@ -2251,6 +2275,9 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         if (t >= 95 && t <= 99) {
             int slot = 100 - t;                                   /* LEARN <button>: the next press of it is remembered */
             P->learn = P->learn == slot ? 0 : (uint8_t)slot;
+        } else if (t == 92) {                                     /* SAVE TO PROJECT: the streamer task writes bbmod.bin and bbgen.bin on its next idle pass */
+            lira_ui_save(0);
+            P->sig = 0;
         } else if (t == 94) {
             stock_fx();
 #ifdef BANK2

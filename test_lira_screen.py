@@ -449,7 +449,7 @@ src0 = get(106)
 knob(1, 300)                                                      # raw 1 = bottom-left = FM source (a step per ~300 counts)
 check("the bottom-left encoder steps the FM source", get(106) == (src0 + 1) & 7, (src0, get(106)))
 # the SOUND tab
-tap(5 + 62 + 10, 215)
+tap(5 + 52 + 10, 215)
 check("the SOUND tab (first panel is the encoder group)", sel() == 1 | 2 << 4, sel())
 t0 = get(16)
 drag(5 + 19, 35, 75)
@@ -481,7 +481,7 @@ check("the top-left encoder turns LEVEL 1 now", get(170) == 990 and get(171) < 6
 tap(5 + 38 + 19, 118)
 tap(5 + 38 + 19, 118)
 check("a double tap puts the level back to full", get(171) == 1000, get(171))
-tap(5 + 186 + 10, 215)                                      # MIX: the last tab (CHORD before it)
+tap(5 + 156 + 10, 215)                                      # MIX: the last tab (CHORD before it)
 check("the MIX tab: the output stage in one row", sel() == 2 | 2 << 4, sel())
 d0 = get(22)
 drag(5 + 19, 60, 20)
@@ -520,7 +520,7 @@ check("... and on again", chord(195) == 1, chord(195))
 e.call("lira_ui_set", 2, 523)                                    # voice 3 between notes
 e.call("lira_ui_tunepitch", 2)
 off_note = e.uc.reg_read(A.UC_ARM_REG_R0) % 100
-tap(5 + 124 + 10, 215)                                           # the CHORD tab (third in the footer): QUANT lives in its VOICING panel now
+tap(5 + 104 + 10, 215)                                           # the CHORD tab (third in the footer): QUANT lives in its VOICING panel now
 check("QUANT sits on the CHORD tab, VOICING panel, bottom left (SHUFFLE took its place on MIX)", sel() == 3 | 2 << 4, sel())
 tap(5 + 76 + 19, 85)
 e.call("lira_ui_tunepitch", 2)
@@ -529,20 +529,20 @@ check("QUANT (CHORD tab, VOICING panel, bottom left) is a one-shot: voice 3 was 
 e.call("lira_ui_set", 2, get(2) + 3)
 e.call("lira_ui_tunepitch", 2)
 check("... (turning the knob a little leaves the note)", e.uc.reg_read(A.UC_ARM_REG_R0) % 100 != 0, str(e.uc.reg_read(A.UC_ARM_REG_R0)))
-tap(5 + 186 + 10, 215)                                           # back to the MIX tab
+tap(5 + 156 + 10, 215)                                           # back to the MIX tab
 check("... and the MIX tab is back", sel() & 15 == 2, sel())
 f = draw(0)
 snap("mix")
 check("MIX drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
 # the LFO panel of SOUND: SHAPE, COMBINE, LINK, DLY SRC
-tap(5 + 62 + 10, 215)
+tap(5 + 52 + 10, 215)
 tap(5 + 228 + 19, 85)
 tap(5 + 228 + 38 + 19, 85)
 check("the LFO panel: LINK switches on, DLY SRC goes LFO -> self", chord(162) == 1 and chord(163) == 0, (chord(160), chord(161), chord(162), chord(163)))
 tap(5 + 228 + 19, 47)
 tap(5 + 228 + 38 + 19, 47)
 check("SHAPE and COMBINE toggle", chord(160) == 1 and chord(161) == 1, (chord(160), chord(161)))
-tap(5 + 124 + 10, 215)                                      # CHORD: the third tab
+tap(5 + 104 + 10, 215)                                      # CHORD: the third tab
 check("the CHORD tab", sel() == 3 | 2 << 4, sel())
 check("chord mode starts off, MAJ 9, root C", chord(150) == 0 and chord(140) == 0 and chord(141) == 0, (chord(150), chord(140), chord(141)))
 knob(0, 300)
@@ -668,12 +668,25 @@ f = draw(0)
 snap("chord")
 check("CHORD drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
 # the ENV tab (fifth): FAST / SLOW envelope times, VELOCITY, MIDI to come
-tap(5 + 248 + 10, 215)
+tap(5 + 208 + 10, 215)
 check("the ENV tab (fifth in the footer)", sel() == 4 | 2 << 4, sel())
 f = draw(0)
 snap("env")
 check("ENV drawn inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
 check("ENV defaults: FAST attack a snap, releases as built, slow attack 0.6 s, velocity off", [get(c) for c in range(210, 217)] == [81, 500, 607, 500, 700, 0, 0], [get(c) for c in range(210, 217)])
+# ---- SAVE TO PROJECT in the footer (n13): the end of the footer, right of the five tabs
+saves = []
+e.stub(e.sym["lira_ui_save"] & ~1, lambda: saves.append(e.arg(0)))
+tap(5 + 52 * 5 + 20, 215)
+check("DRONE-8: a tap on the footer's SAVE button asks for a save (and changes no tab)", saves.count(0) == 1 and sel() & 15 == 4, (saves, hex(sel())))
+tap(5 + 52 * 4 + 20, 215)
+check("... the ENV tab, just left of it, is still a tab", sel() & 15 == 4 and saves.count(0) == 1, (saves, hex(sel())))
+tap(5 + 52 * 1 + 20, 215)
+check("... and the SOUND tab next to VOICES still works with the narrower tabs", sel() & 15 == 1 and saves.count(0) == 1, (saves, hex(sel())))
+f = draw(0)
+check("the footer with the SAVE button is inside the screen", all(x[0] >= 3 and x[0] + x[2] <= 317 and x[1] >= 0 and x[1] + x[3] <= 224 for x in f))
+e.stubs.pop(e.sym["lira_ui_save"] & ~1, None)
+tap(5 + 208 + 10, 215)
 # ---- MIDI learn (the MIDI panel of the ENV tab; the render's message poll is hooked by lira_midi_get)
 def learn(op, arg=0):
     e.call("lira_ui_learn", op, arg)
@@ -895,7 +908,7 @@ tap(5 + 152 + 19, 85)                                             # TO (bottom-l
 check("TO: DEPTH -> VOL", get(216) == 1, get(216))
 tap(5 + 152 + 38 + 19, 47)
 tap(5 + 152 + 19, 85)
-tap(5 + 124 + 10, 215)                                            # (back to CHORD for what follows)
+tap(5 + 104 + 10, 215)                                            # (back to CHORD for what follows)
 e.call("lira_ui_action", 1)                                       # SHUFFLE (a button of the MIX tab now: QUANT took its place on CHORD)
 n1 = [note(v) for v in range(8)]
 check("SHUFFLE gives another voicing", n1 != n0 and sorted(n1) != sorted(n0), (n0, n1))

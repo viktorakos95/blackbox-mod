@@ -235,6 +235,8 @@ struct gev {                     /* one recorded gesture: when (frames from the 
 struct mlearn {                  /* MIDI learn: a control (ui id) follows a controller number on a channel */
     uint8_t on, n;               /* learn mode, mappings in use */
     uint8_t stuck;               /* (not MIDI learn: the free-tune detent's memory, one bit a voice: it sits on a note and holds it) */
+    uint8_t sreq, sstate, sok;   /* SAVE TO PROJECT: requested by a page, state 0 idle / 1 waiting for the file task / 2 saved / 3 failed, the last save's result */
+    uint16_t st_t;               /* when the state became 2 or 3 (low 16 bits of looper_ticks): shown for 2 s */
     uint32_t cjack, cqueue, craw, cusb;   /* messages seen: from the jack's ring, from the software queue, packets in the USB callback, messages taken from its ring (the MIDI panel's J / U / C) */
     uint32_t hi;                 /* per mapping: the controller was at 64 or over at its last message (a button presses on the way up) */
     uint8_t snote[8];
@@ -398,6 +400,7 @@ void lira_register(void *table)
     p->ml.on = p->ml.n = p->ml.stuck = p->ml.rwr = p->ml.rrd = 0;
     p->ml.seq = 0;
     p->ml.hi = 0;
+    p->ml.sreq = p->ml.sstate = p->ml.sok = 0;
     p->ml.cjack = p->ml.cqueue = p->ml.craw = p->ml.cusb = 0;
     p->gen_loaded = 0;
     p->ml.target = 0xffff;
@@ -2439,9 +2442,11 @@ static void lira_save_(void)
     et->vel_to = g->vel_to;
     et->crc = env_crc(et);
     unsigned bw = 0;
+    p->ml.sok = 0;
     if (FF_OPEN(p->fil, "bbmod.bin", 0x0au) == 0) {
-        FF_WRITE(p->fil, b, sizeof *b + sizeof *tl + sizeof *et, &bw);
-        FF_CLOSE(p->fil);
+        int rc = FF_WRITE(p->fil, b, sizeof *b + sizeof *tl + sizeof *et, &bw);
+        int rc2 = FF_CLOSE(p->fil);
+        p->ml.sok = rc == 0 && rc2 == 0 && bw == sizeof *b + sizeof *tl + sizeof *et;
     }
     gen_save(p);
 }
@@ -2595,10 +2600,13 @@ static void gen_save(struct pool *p)
     for (unsigned i = 0; i < sizeof p->fil / 4; i++)
         p->fil[i] = 0;
     unsigned bw = 0;
+    int ok = 0;
     if (FF_OPEN(p->fil, "bbgen.bin", 0x0au) == 0) {
-        FF_WRITE(p->fil, g, sizeof *g, &bw);
-        FF_CLOSE(p->fil);
+        int rc = FF_WRITE(p->fil, g, sizeof *g, &bw);
+        int rc2 = FF_CLOSE(p->fil);
+        ok = rc == 0 && rc2 == 0 && bw == sizeof *g;
     }
+    p->ml.sok = p->ml.sok && ok;                           /* (both files written whole) */
 }
 
 static void gen_load(struct pool *p)
@@ -2631,4 +2639,46 @@ static void gen_load(struct pool *p)
                 t->scan_saved[k] = g->tp[k].scan_ms;
         }
     }
+}
+
+/* ---- SAVE TO PROJECT: a button on the pages (DRONE-8's footer, SAMPLR's footer, the Looper's SETUP page) asks for the same write the project save does (bbmod.bin and
+ * bbgen.bin), without going through the stock SD menu. It runs in the stock streamer task (the one task that uses the card): the idle pass of its loop calls the
+ * stock preset poll (0x08092f5c, call at 0x080744d8) between taking and giving its lock; that call is wrapped here, so a stock save / load being handled is never
+ * overlapped (one task, one command at a time) and the file calls are made exactly where the stock ones are. The page only sets a flag; the result comes back as a state
+ * the button shows (SAVING, SAVED, FAILED for 2 s). ---- */
+#define SAVE_SHOW 375                                      /* audio blocks (2 s) */
+typedef void (*preset_poll_fn)(void *mgr);
+#define stock_preset_poll ((preset_poll_fn)0x08092f5du)
+
+/* op 0: ask for a save (ignored while one waits); 1: the state to show: 0 SAVE, 1 SAVING, 2 SAVED, 3 FAILED (the last two for 2 s, then 0) */
+int lira_ui_save(int op)
+{
+    struct pool *p = pool();
+    if (!p)
+        return op == 0 ? 0 : 3;
+    struct mlearn *m = &p->ml;
+    if (op == 0) {
+        if (m->sstate != 1) {
+            m->sstate = 1;
+            m->sreq = 1;
+        }
+        return 1;
+    }
+    if (m->sstate >= 2 && (uint16_t)((uint16_t)looper_ticks() - m->st_t) >= SAVE_SHOW)
+        m->sstate = 0;
+    return m->sstate;
+}
+
+void lira_file_poll(void *mgr)
+{
+    struct pool *p = pool();
+    if (p && p->ml.sreq) {
+        p->ml.sreq = 0;
+        crash_bc(BC_FILE, BCF_SAVE);
+        lira_save_();
+        crash_bc(BC_FILE, 0);
+        p->ml.st_t = (uint16_t)looper_ticks();
+        p->ml.sstate = p->ml.sok ? 2 : 3;
+    }
+    stock_preset_poll(mgr);
 }

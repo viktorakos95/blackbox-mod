@@ -36,6 +36,7 @@ int lira_ui_pitch_detent(int v, int h);
 void lira_ui_pitch_enc(int v, int delta);
 void lira_ui_pitch_set(int v, int h);
 void lira_page_run(float *l, float *r, int n);
+int lira_ui_save(int op);                    /* SAVE TO PROJECT (lira_pad.c): 0 ask for it, 1 the state: 0 SAVE, 1 SAVING, 2 SAVED, 3 FAILED */
 int lira_ui_learn(int op, int arg);          /* MIDI learn (lira_pad.c): 0 state, 1 toggle, 2 choose a control, 3 forget one, 4 forget all, 5 its controller + 1, 6 the control waiting */
 
 int lira_ui_env_text(int c, char *b);       /* an ENV control's value as shown ("3MS", "0.6S", "X1.0"); 0 if c is not one */

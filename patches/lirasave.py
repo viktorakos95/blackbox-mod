@@ -25,6 +25,8 @@ RENDER = 0x08055BB8      # voice render (pad, voice, out, src): Level, ADSR, fil
 
 PATCHES = [
     # saving: the settings go into bbmod.bin when the project is saved, and come back when it is loaded (file task)
+    # the SAVE TO PROJECT buttons: the streamer task's idle pass calls the stock preset poll here; ours saves first when a page asked for it
+    hook(0x080744D8, 0x08092F5C, "lira_file_poll"),
     hook(0x080930CE, 0x08091A5C, "lira_save_thunk"),
     hook(0x080930E0, 0x08091A74, "lira_load_thunk"),
 ]

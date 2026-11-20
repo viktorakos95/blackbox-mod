@@ -72,7 +72,7 @@ struct lu_spec {
 #define LP_CHORD  3
 #define LP_ENV    4                                               /* ENV: the envelope's times, the velocity, MIDI (to come) */
 #define LU_TABS   5
-#define LU_TABW   62                                              /* the footer's tabs: 60 px wide every 62 */
+#define LU_TABW   52                                              /* the footer's tabs: 50 px wide every 52 (the SAVE button has the rest) */
 static const char *const lu_tabname[LU_TABS] = {"VOICES", "SOUND", "MIX", "CHORD", "ENV"};
 static const uint8_t lu_taborder[LU_TABS] = {LP_VOICES, LP_SOUND, LP_CHORD, LP_MIX, LP_ENV};   /* the footer's order (the pages keep their numbers) */
 static const char *const lu_div[12] = {"OFF", "4 BAR", "2 BAR", "1 BAR", "1/2", "1/4D", "1/4", "1/8D", "1/8", "1/16D", "1/16", "1/16T"};
@@ -550,6 +550,7 @@ static void lira_footer(const struct lay *L)
         frame(LU_X0 + LU_TABW * i, L->foot_y + 2, LU_TABW - 2, FOOT - 3, page == q ? C_WHITE : LU_LINE, 1);
         text_c(LU_X0 + LU_TABW * i, L->foot_y + 4, LU_TABW - 2, lu_tabname[q], page == q ? C_WHITE : LU_DIM, 1);
     }
+    save_button(LU_X0 + LU_TABW * LU_TABS + 2, L->foot_y + 2, P->w - LU_X0 - LU_TABW * LU_TABS - 6, FOOT - 3);     /* SAVE TO PROJECT (bbmod.bin and bbgen.bin) */
 }
 
 static void lira_page_set(int p, int bank)
@@ -562,6 +563,11 @@ static void lira_page_set(int p, int bank)
 static int lira_footer_hit(int x)
 {
     int i = (x - LU_X0) / LU_TABW;
+    if (x >= LU_X0 + LU_TABW * LU_TABS) {                      /* the end of the footer: SAVE TO PROJECT (not in learn mode: it is no control to learn) */
+        lira_ui_save(0);
+        P->sig = 0;
+        return 1;
+    }
     if (x < LU_X0 || i >= LU_TABS || (x - LU_X0) % LU_TABW >= LU_TABW - 2)
         return 0;
     lira_page_set(lu_taborder[i], 2);                          /* a new tab: its first panel is the encoder group */
