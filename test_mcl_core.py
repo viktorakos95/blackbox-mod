@@ -488,28 +488,31 @@ check("... and stops at the record's end (12 steps), the file not played to its 
 check("... the RAM player was queued while it recorded, for exactly the record's end (not a record length later)",
       "slot" in seen and seen["slot"][1] == cs + rl, (seen, cs + rl))
 # ---- the record taken back (RECORD again, or NO = code 9) and its length set by the user
-def dbg(tag):
-    print("   dbg", tag, [rec(k) for k in range(7)], "cmd", c.uc.mem_read(c.b["_ZL7smp_cmd"], 1)[0])
+def sample_in_t(a_):
+    """a SAMPLE-view command with the clock ticking: MCL's loop waits for a pending transition (the record machine) while the clock stands still"""
+    global t
+    c.call("bb_mcl_sample_input", a_)
+    for _ in range(6):
+        t = ticks(t, 48)
+        c.step(20_000_000)
+        c.tick(5)
 
 
-dbg("before")
-sample_in(8)                                                         # the length: from the file -> 4 steps
-dbg("after 8")
-sample_in(0)
-dbg("after 0")
+sample_in_t(8)                                                         # the length: from the file -> 4 steps
+sample_in_t(0)
 rl4, armed4 = rec(3), rec(6) >> 2 & 1
 check("the record's length set to 4 steps (not the file's): RECORD arms with it", armed4 == 1 and rl4 == 4, (armed4, rl4))
-sample_in(0)
+sample_in_t(0)
 check("RECORD again while it waits: taken back (not armed, MCL's pending record machine gone)", rec(6) >> 2 & 1 == 0 and rec(0) == 255, (rec(6), rec(0)))
-sample_in(0)
+sample_in_t(0)
 armed_again = rec(6) >> 2 & 1
-sample_in(9)
+sample_in_t(9)
 check("NO (code 9) while it waits: taken back too", armed_again == 1 and rec(6) >> 2 & 1 == 0 and rec(0) == 255, (armed_again, rec(6), rec(0)))
 for _ in range(6):
-    sample_in(8)                                                     # back round to 'from the file'
-sample_in(0)
+    sample_in_t(8)                                                     # back round to 'from the file'
+sample_in_t(0)
 check("... the length is the file's again after the cycle (12 steps)", rec(3) == 12, rec(3))
-sample_in(9)
+sample_in_t(9)
 used = c.call("bb_mcl_isr_stack_used")
 print("     soft-interrupt stack used: %d of 6144 bytes" % used)
 check("the soft interrupts' own stack (6 KB) was used less than 2/3 over MIDI, the clock, the panel", 0 < used < 4096, used)
