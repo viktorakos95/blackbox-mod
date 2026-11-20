@@ -504,12 +504,13 @@ rl4, armed4 = rec(3), rec(6) >> 2 & 1
 check("the record's length set to 4 steps (not the file's): RECORD arms with it", armed4 == 1 and rl4 == 4, (armed4, rl4))
 sample_in_t(0)
 check("RECORD again while it waits: taken back (not armed, MCL's pending record machine gone)", rec(6) >> 2 & 1 == 0 and rec(0) == 255, (rec(6), rec(0)))
+for _ in range(5):
+    sample_in_t(8)                                                     # 4 -> 8 -> 12 -> 16 -> 24 -> 32 steps: the first step is far away (MCL's loop waits for a pending transition near its time)
 sample_in_t(0)
 armed_again = rec(6) >> 2 & 1
 sample_in_t(9)
-check("NO (code 9) while it waits: taken back too", armed_again == 1 and rec(6) >> 2 & 1 == 0 and rec(0) == 255, (armed_again, rec(6), rec(0)))
-for _ in range(6):
-    sample_in_t(8)                                                     # back round to 'from the file'
+check("NO (code 9) while it waits: taken back too", armed_again == 1 and rec(3) == 32 and rec(6) >> 2 & 1 == 0 and rec(0) == 255, (armed_again, rec(3), rec(6), rec(0)))
+sample_in_t(8)                                                         # 32 -> from the file
 sample_in_t(0)
 check("... the length is the file's again after the cycle (12 steps)", rec(3) == 12, rec(3))
 sample_in_t(9)
