@@ -1196,7 +1196,19 @@ static void draw_setup(const struct lay *L)
 static void save_button(int x, int d, int w, int h)
 {
     int st = lira_ui_save(1);
-    const char *t = st == 1 ? "SAVING" : st == 2 ? "SAVED" : st == 3 ? "FAILED" : "SAVE";
+    char why[10];
+    const char *t = st == 1 ? "SAVING" : st == 2 ? "SAVED" : st == 3 ? why : "SAVE";
+    if (st == 3) {                                                /* "F7/12": why bbmod.bin / bbgen.bin did not go out (lira_pad.c put_file; 99 = the card task never came) */
+        int c = lira_ui_save(2), m = c & 255, g = c >> 8;
+        char *q = why;
+        *q++ = 'F';
+        q = put_uint(q, (unsigned)m);
+        if (g != m) {
+            *q++ = '/';
+            q = put_uint(q, (unsigned)g);
+        }
+        *q = 0;
+    }
     int col = st == 2 ? C_GREEN : st == 3 ? C_RED : st == 1 ? C_YELLOW : C_LIGHT;
     frame(x, d, w, h, st ? col : C_RAIL, 1);
     text_c(x, d + (h - 8) / 2, w, t, col, 1);

@@ -235,7 +235,8 @@ struct gev {                     /* one recorded gesture: when (frames from the 
 struct mlearn {                  /* MIDI learn: a control (ui id) follows a controller number on a channel */
     uint8_t on, n;               /* learn mode, mappings in use */
     uint8_t stuck;               /* (not MIDI learn: the free-tune detent's memory, one bit a voice: it sits on a note and holds it) */
-    uint8_t sreq, sstate, sok;   /* SAVE TO PROJECT: requested by a page, state 0 idle / 1 waiting for the file task / 2 saved / 3 failed, the last save's result */
+    uint8_t sreq, sstate, sok, scm, scg, sroot;   /* ... scm / scg: why bbmod.bin / bbgen.bin did not go out (0 ok, see put_file), sroot: one of them went to the card's root */
+      /* SAVE TO PROJECT: requested by a page, state 0 idle / 1 waiting for the file task / 2 saved / 3 failed, the last save's result */
     uint16_t st_t;               /* when the state became 2 or 3 (low 16 bits of looper_ticks): shown for 2 s */
     uint32_t cjack, cqueue, craw, cusb;   /* messages seen: from the jack's ring, from the software queue, packets in the USB callback, messages taken from its ring (the MIDI panel's J / U / C) */
     uint32_t hi;                 /* per mapping: the controller was at 64 or over at its last message (a button presses on the way up) */
@@ -844,6 +845,12 @@ void lira_ui_tapvel(int k, int v)
         p->pg.vel[k] = (uint8_t)((v < 0 ? 0 : v > 1000 ? 1000 : v) * 255 / 1000);
 }
 
+int lira_ui_vel(int k)                                   /* a voice's last velocity (0..255: the touch height or the MIDI note's velocity) */
+{
+    struct pool *p = pool();
+    return p && k >= 0 && k < 8 ? p->pg.vel[k] : 0;
+}
+
 int lira_ui_get(int c)
 {
     struct pool *p = pool();
@@ -1101,6 +1108,8 @@ void lira_midi_msg(unsigned st, unsigned cc, unsigned val)
         int id = m->m[i].id;
         if (note) {                                       /* a note on a button: on = press, off = release (only a plate in HOLD uses the release) */
             if (ml_is_button(id)) {
+                if (ty == 0x90u && val > 0u && id >= 300 && id < 308)
+                    lira_ui_tapvel(id - 300, (int)(val * 1000u / 127u));     /* the note's velocity is the touch height: ENV VELOCITY SOURCE = TAP then follows it */
                 lira_btn_press(id, ty == 0x90u && val > 0u);
                 m->seq++;
             }
@@ -2089,68 +2098,56 @@ void lira_ui_tune_step(int v, int dir)                   /* STEP: the knob goes 
     tune_to(&p->pg, v, (float)n);
 }
 
-#define LIRA_CATCH 30
-#define LIRA_HOLD  60
-/* The free chord pitch (hundredths of a semitone) through the same detent as the knobs: caught within 30 cents of a note, held until 60 cents from it.
- * h is where the finger / encoder is; the result is what the voice gets. */
-int lira_ui_pitch_detent(int v, int h)
+/* The free chord pitch (hundredths of a semitone): every value is reachable, and the knob only stands still for a moment at each exact note. The finger's travel
+ * ("raw", the same 75 cents a pixel as ever) maps to the pitch with a flat spot of LIRA_STALL cents at each note: of every 110 raw cents, the first 10 are the note itself, the
+ * other 100 run on from it by a cent each. So the notes lie 110 raw cents apart (a few hundredths of a pixel more per note), nothing is skipped or hidden, and at 0 cents
+ * off the name shows, at +-1 cent it does not. */
+#define LIRA_STALL 10
+int lira_ui_pitch_stall(int r)                           /* raw finger position -> pitch */
 {
-    struct pool *p = pool();
-    if (!p || v < 0 || v > 7)
-        return h;
-    if (p->ml.stuck >> v & 1) {
-        int dn = h - p->ml.snote[v] * 100;
-        if (dn >= -LIRA_HOLD && dn <= LIRA_HOLD)
-            return p->ml.snote[v] * 100;
-        p->ml.stuck &= (uint8_t)~(1u << v);
-    }
-    int n = (h + 50) / 100, d = h - n * 100;
-    if (d >= -LIRA_CATCH && d <= LIRA_CATCH && n >= 0 && n < 128) {
-        p->ml.stuck |= (uint8_t)(1u << v);
-        p->ml.snote[v] = (uint8_t)n;
-        return n * 100;
-    }
-    return h;
+    if (r < 0)
+        return r;
+    int k = r / (100 + LIRA_STALL), rem = r - k * (100 + LIRA_STALL);
+    return k * 100 + (rem > LIRA_STALL ? rem - LIRA_STALL : 0);
 }
 
-/* An encoder click in FREE: adds `delta` hundredths to where the finger would be (not to the held note), through the detent. */
+int lira_ui_pitch_unstall(int h)                         /* pitch -> raw (on a note: the middle of its flat spot) */
+{
+    if (h < 0)
+        return h;
+    int k = h / 100, rem = h - k * 100;
+    return k * (100 + LIRA_STALL) + (rem ? rem + LIRA_STALL : LIRA_STALL / 2);
+}
+
+/* An encoder click in FREE: adds `delta` hundredths to the raw position kept for the voice (so a click on a note moves on from the flat spot, not from the note). */
 void lira_ui_pitch_enc(int v, int delta)
 {
     struct pool *p = pool();
     if (!p || v < 0 || v > 7)
         return;
-    int base = (p->ml.stuck >> v & 1) && lira_ui_pitch(v) == p->ml.snote[v] * 100 ? p->ml.raw[v] : lira_ui_pitch(v);      /* (a hold left over from the knob mode does not count) */
-    int h = base + delta;
-    p->ml.raw[v] = (int16_t)h;
-    lira_ui_pitch_set(v, lira_ui_pitch_detent(v, h));
+    int cur = lira_ui_pitch(v);
+    int r = lira_ui_pitch_stall(p->ml.raw[v]) == cur ? p->ml.raw[v] : lira_ui_pitch_unstall(cur);
+    r += delta;
+    if (r < 0)
+        r = 0;
+    p->ml.raw[v] = (int16_t)r;
+    lira_ui_pitch_set(v, lira_ui_pitch_stall(r));
 }
 
-int lira_ui_tune_stuck(int v)                            /* the voice sits on a note by the detent: its name keeps showing */
+int lira_ui_tune_stuck(int v)                            /* (no hold any more: the name shows only when the value is exactly a note) */
 {
-    struct pool *p = pool();
-    return p && v >= 0 && v < 8 && (p->ml.stuck >> v & 1);
+    (void)v;
+    return 0;
 }
 
-void lira_ui_tune_detent(int v)                          /* a drag lands on a note within 30 cents of one and then sticks to it until 60 cents away: a flat of 120 cents of finger travel round each note (it was 12 cents, no hold; 22 / 40 in n10, which did not feel like a cut) */
+void lira_ui_tune_detent(int v)                          /* the knob (outside chord mode): a drag lands on a note when it is within 12 cents of one, as before n10 */
 {
     struct pool *p = pool();
     if (!p || v < 0 || v > 7)
         return;
-    int h = tune_hund(&p->pg, v);
-    if (p->ml.stuck >> v & 1) {                                    /* held on a note: it stays until the finger is 60 cents away from THAT note */
-        int dn = h - p->ml.snote[v] * 100;
-        if (dn >= -LIRA_HOLD && dn <= LIRA_HOLD) {
-            tune_to(&p->pg, v, (float)p->ml.snote[v]);
-            return;
-        }
-        p->ml.stuck &= (uint8_t)~(1u << v);
-    }
-    int n = (h + 50) / 100, d = h - n * 100;
-    if (d >= -LIRA_CATCH && d <= LIRA_CATCH) {                     /* a new note is caught within 30 cents */
+    int h = tune_hund(&p->pg, v), n = (h + 50) / 100, d = h - n * 100;
+    if (d >= -12 && d <= 12)
         tune_to(&p->pg, v, (float)n);
-        p->ml.stuck |= (uint8_t)(1u << v);
-        p->ml.snote[v] = (uint8_t)n;
-    }
 }
 
 /* a voice's pitch in hundredths of a semitone (note * 100 + cents) */
@@ -2367,6 +2364,32 @@ static uint32_t blob_crc(const struct blob *b)
     return h;
 }
 
+/* One file out, with its own result: 0 ok, else why not: 1..19 the open's FatFs error (1 disk error, 3 not ready, 4 no file, 5 no path, 6 bad name, 7 denied, 9 bad object,
+ * 11 not enabled, 12 no file system ...), 20 + the write's error, 40 a short write, 60 + the close's error. The name is tried as it is (the task's current directory: the
+ * project's folder when one is open, as the stock settings.tml), then at the card's root ("0:/" + name) when that did not open: a save that works somewhere beats FAILED. */
+static int put_file(struct pool *p, const char *name, const char *root_name, const void *buf, unsigned n)
+{
+    int code = 0;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        for (unsigned i = 0; i < sizeof p->fil / 4; i++)
+            p->fil[i] = 0;
+        int rc = FF_OPEN(p->fil, attempt ? root_name : name, 0x0au);
+        if (rc != 0) {
+            code = rc < 19 ? rc : 19;
+            continue;
+        }
+        unsigned bw = 0;
+        int rw = FF_WRITE(p->fil, buf, n, &bw);
+        int rcl = FF_CLOSE(p->fil);
+        code = rw ? 20 + (rw < 19 ? rw : 19) : bw != n ? 40 : rcl ? 60 + (rcl < 19 ? rcl : 19) : 0;
+        if (code == 0) {
+            p->ml.sroot = (uint8_t)attempt;                  /* (1: it went to the card's root) */
+            return 0;
+        }
+    }
+    return code;
+}
+
 static void lira_save_(void);
 void lira_save(void)
 {
@@ -2441,14 +2464,10 @@ static void lira_save_(void)
     et->vel_src = g->vel_src;
     et->vel_to = g->vel_to;
     et->crc = env_crc(et);
-    unsigned bw = 0;
-    p->ml.sok = 0;
-    if (FF_OPEN(p->fil, "bbmod.bin", 0x0au) == 0) {
-        int rc = FF_WRITE(p->fil, b, sizeof *b + sizeof *tl + sizeof *et, &bw);
-        int rc2 = FF_CLOSE(p->fil);
-        p->ml.sok = rc == 0 && rc2 == 0 && bw == sizeof *b + sizeof *tl + sizeof *et;
-    }
-    gen_save(p);
+    p->ml.sroot = 0;
+    p->ml.scm = (uint8_t)put_file(p, "bbmod.bin", "0:/bbmod.bin", b, sizeof *b + sizeof *tl + sizeof *et);
+    gen_save(p);                                           /* (written whatever became of bbmod.bin: one failure does not hide the other) */
+    p->ml.sok = p->ml.scm == 0 && p->ml.scg == 0;
 }
 
 static void lira_load_(void);
@@ -2597,16 +2616,7 @@ static void gen_save(struct pool *p)
         }
     }
     g->crc = gen_crc(g);
-    for (unsigned i = 0; i < sizeof p->fil / 4; i++)
-        p->fil[i] = 0;
-    unsigned bw = 0;
-    int ok = 0;
-    if (FF_OPEN(p->fil, "bbgen.bin", 0x0au) == 0) {
-        int rc = FF_WRITE(p->fil, g, sizeof *g, &bw);
-        int rc2 = FF_CLOSE(p->fil);
-        ok = rc == 0 && rc2 == 0 && bw == sizeof *g;
-    }
-    p->ml.sok = p->ml.sok && ok;                           /* (both files written whole) */
+    p->ml.scg = (uint8_t)put_file(p, "bbgen.bin", "0:/bbgen.bin", g, sizeof *g);
 }
 
 static void gen_load(struct pool *p)
@@ -2646,11 +2656,12 @@ static void gen_load(struct pool *p)
  * stock preset poll (0x08092f5c, call at 0x080744d8) between taking and giving its lock; that call is wrapped here, so a stock save / load being handled is never
  * overlapped (one task, one command at a time) and the file calls are made exactly where the stock ones are. The page only sets a flag; the result comes back as a state
  * the button shows (SAVING, SAVED, FAILED for 2 s). ---- */
+#define SAVE_TIMEOUT 1125                                  /* audio blocks (6 s) */
 #define SAVE_SHOW 375                                      /* audio blocks (2 s) */
 typedef void (*preset_poll_fn)(void *mgr);
 #define stock_preset_poll ((preset_poll_fn)0x08092f5du)
 
-/* op 0: ask for a save (ignored while one waits); 1: the state to show: 0 SAVE, 1 SAVING, 2 SAVED, 3 FAILED (the last two for 2 s, then 0) */
+/* op 0: ask for a save (ignored while one waits); 1: the state to show: 0 SAVE, 1 SAVING, 2 SAVED, 3 FAILED (the last two for 2 s, then 0); 2: the reasons (bbmod.bin | bbgen.bin << 8) */
 int lira_ui_save(int op)
 {
     struct pool *p = pool();
@@ -2661,8 +2672,16 @@ int lira_ui_save(int op)
         if (m->sstate != 1) {
             m->sstate = 1;
             m->sreq = 1;
+            m->st_t = (uint16_t)looper_ticks();
         }
         return 1;
+    }
+    if (op == 2)
+        return m->scm | m->scg << 8;                       /* the reasons shown after FAILED (bbmod.bin, bbgen.bin) */
+    if (m->sstate == 1 && (uint16_t)((uint16_t)looper_ticks() - m->st_t) >= SAVE_TIMEOUT) {      /* the task never came for it (no idle pass in 6 s): FAILED, code 99 */
+        m->sstate = 3;
+        m->scm = m->scg = 99;
+        m->st_t = (uint16_t)looper_ticks();
     }
     if (m->sstate >= 2 && (uint16_t)((uint16_t)looper_ticks() - m->st_t) >= SAVE_SHOW)
         m->sstate = 0;
@@ -2679,6 +2698,7 @@ void lira_file_poll(void *mgr)
         crash_bc(BC_FILE, 0);
         p->ml.st_t = (uint16_t)looper_ticks();
         p->ml.sstate = p->ml.sok ? 2 : 3;
+        p->ml.sreq = 0;
     }
     stock_preset_poll(mgr);
 }

@@ -521,7 +521,7 @@ e.call("lira_ui_set", 2, 523)                                    # voice 3 betwe
 e.call("lira_ui_tunepitch", 2)
 off_note = e.uc.reg_read(A.UC_ARM_REG_R0) % 100
 tap(5 + 104 + 10, 215)                                           # the CHORD tab (third in the footer): QUANT lives in its VOICING panel now
-check("QUANT sits on the CHORD tab, VOICING panel, bottom left (SHUFFLE took its place on MIX)", sel() == 3 | 2 << 4, sel())
+check("QUANT sits on the CHORD tab, VOICING panel, bottom left (TUNE and SHUFFLE changed places in n14)", sel() == 3 | 2 << 4, sel())
 tap(5 + 76 + 19, 85)
 e.call("lira_ui_tunepitch", 2)
 snapped = e.uc.reg_read(A.UC_ARM_REG_R0)
@@ -565,42 +565,67 @@ check("STEP mode shows whole notes (pitch is an exact note)", pitch(0) % 100 == 
 tap(180, 7)
 check("the top-bar STEP / FREE switch selects FREE", chord(157) == 1)
 knob(1, 80)
-check("FREE: an encoder click moves the voice off the note (0.05 semitone a unit)", pitch(0) % 100 != 0 and abs(pitch(0) - n0[0] * 100) == 50, pitch(0))
+check("FREE: an encoder click moves the voice off the note (0.05 semitone a unit; 45 cents of it show: the first 5 are the flat spot's half)", pitch(0) % 100 != 0 and abs(pitch(0) - n0[0] * 100) == 45, pitch(0))
 knob(1, -80)
 check("... and back on the note it is exact again", pitch(0) == n0[0] * 100, pitch(0))
-# 2 (n12): the free chord pitch through the detent: a sweep over two octaves keeps the notes where they were (100 cents apart) and gives each a flat spot
-def detent(v, h):
-    e.call("lira_ui_pitch_detent", v, h)
+# 2 (n14): the free chord pitch: every value reachable, a short flat spot at each exact note (no catch, no hold), the name only at exactly 0 cents
+def stall(r):
+    e.call("lira_ui_pitch_stall", r)
+    v = e.uc.reg_read(A.UC_ARM_REG_R0)
+    return v - (1 << 32) if v & 0x80000000 else v
+def unstall(h):
+    e.call("lira_ui_pitch_unstall", h)
     return e.uc.reg_read(A.UC_ARM_REG_R0)
-e.call("lira_ui_pitch_detent", 0, 0)
-sweep = [detent(0, 4800 + 5 * i) for i in range(481)]               # 48.00 .. 72.00 in 5-cent steps (finger moving up)
-runs = {}
+sweep = [stall(5280 + i) for i in range(2640 + 1)]                  # the finger moving up one raw cent at a time, two octaves (raw 5280 = 48.00)
+vals = sorted(set(sweep))
+check("a slow sweep over two octaves produces EVERY integer cent value in range (nothing is hidden or skipped)", vals == list(range(vals[0], vals[-1] + 1)), (vals[0], vals[-1], len(vals)))
+runs, cur_run, prev = [], 0, None
 for h in sweep:
-    if h % 100 == 0:
-        runs[h] = runs.get(h, 0) + 1
-check("sweeping up two octaves meets 25 notes spaced exactly 100 cents (the spacing is not changed)", sorted(runs) == list(range(4800, 7300, 100)), sorted(runs)[:5])
-check("each note is a flat spot: at least 20 steps (100 cents of travel) held on it (catch 30 + hold 60 = 90..120)", all(n >= 18 for k, n in runs.items() if 4900 <= k <= 7100), {k: n for k, n in runs.items() if n < 18})
-back = [detent(0, 7200 - 5 * i) for i in range(481)]                  # and down again: the same, and it does not skip
-rb = {}
-for h in back:
-    if h % 100 == 0:
-        rb[h] = rb.get(h, 0) + 1
-check("sweeping down meets the same 25 notes, each held", sorted(rb) == sorted(runs) and all(n >= 18 for k, n in rb.items() if 4900 <= k <= 7100), sorted(rb)[:3])
-# the encoder (FREE): clicks of 5 cents from a note: it stays on the note for a few clicks, then moves on
+    if h == prev:
+        cur_run += 1
+    else:
+        if prev is not None and prev % 100 == 0 and cur_run:
+            runs.append(cur_run)
+        cur_run = 1
+    prev = h
+check("each exact note holds for a flat run of at most 11 raw cents (10 cents of finger travel); every other value just once", max(runs) <= 11 and min(runs) >= 10, (min(runs), max(runs)))
+coarse = [stall(5280 + 5 * i) for i in range(481)]                  # a 5-cent step: the flat run is at most 3 steps
+cr, c0, pv = [], 0, None
+for h in coarse:
+    if h == pv:
+        c0 += 1
+    else:
+        if pv is not None and pv % 100 == 0 and c0:
+            cr.append(c0)
+        c0 = 1
+    pv = h
+check("with 5-cent steps the flat run at a note is at most 3 steps", max(cr) <= 3, max(cr))
+notes_met = sorted({h for h in sweep if h % 100 == 0})
+check("the notes keep exactly 100 cents between them (4800 .. 7200: 25 notes)", notes_met == list(range(4800, 7300, 100)), notes_met[:4])
+check("the finger travel per note is 110 cents (10 cents more than before: a few hundredths of a pixel at 75 cents a pixel)", unstall(5000) - unstall(4900) == 110, (unstall(5000), unstall(4900)))
+check("unstall and stall are inverses off the note (every cent)", all(stall(unstall(h)) == h for h in range(4801, 7200, 7)))
+# the drag as the touch handler does it: dy pixels at 75 cents each from a note
 e.call("lira_ui_pitch_set", 0, 6000)
-e.call("lira_ui_pitch_enc", 0, 0)
+# the encoder: 5-cent clicks from a note: every value comes by, the note is held for 2-3 clicks
+e.call("lira_ui_pitch_set", 0, 5900)
 seq = []
-for _ in range(40):
+for _ in range(60):
     e.call("lira_ui_pitch_enc", 0, 5)
     e.call("lira_ui_pitch", 0)
     seq.append(e.uc.reg_read(A.UC_ARM_REG_R0))
-check("FREE encoder: 5 cents a click moves past a held note after a deliberate run of clicks (it left 6000 and went on)", seq[0] == 6000 and seq[-1] > 6000 and seq.count(6000) >= 10, (seq[:3], seq[-1], seq.count(6000)))
+check("FREE encoder, 5-cent clicks up through the note 6000: every click moves except 2-3 on the note itself", 6000 in seq and seq.count(6000) <= 3 and seq[-1] > 6000 and all(b >= a for a, b in zip(seq, seq[1:])), (seq.count(6000), seq[:4], seq[-1]))
+seqd = []
+for _ in range(60):
+    e.call("lira_ui_pitch_enc", 0, -5)
+    e.call("lira_ui_pitch", 0)
+    seqd.append(e.uc.reg_read(A.UC_ARM_REG_R0))
+check("... and back down the same way (it passes the note and goes on below it)", seqd.count(6000) <= 3 and seqd[-1] < 6000, (seqd.count(6000), seqd[-1]))
 drag(5 + 19, 140, 139)
 check("a drag moves it freely (0.75 semitone a pixel) ...", pitch(0) != n0[0] * 100, pitch(0))
 e.call("lira_ui_pitch_set", 1, 6000 + 20)
 drag(5 + 38 + 19, 140, 139)
-check("... a detent sits on each note (a pixel that lands 5 cents from one snaps onto it)", pitch(1) == 6100, pitch(1))
-# B6: the free-tune detent is wider (22 cents) and sticky (it holds a note until 40 cents away)
+check("... and no catch: a pixel that lands 5 cents from a note shows exactly that (6095), every value reachable", pitch(1) == 6095, pitch(1))
+# the knob outside chord mode: the 12-cent catch as before n10 (no hold), the name only on an exact note
 was_chord, was_free = chord(150), chord(157)
 if chord(150):
     e.call("lira_ui_action", 0)                                      # chord mode off: the knobs tune freely
@@ -616,49 +641,13 @@ def find(lo, hi, side):
         d = h - ((h + 50) // 100) * 100
         if lo <= side * d <= hi:
             return val
+    return None
+assert find(8, 12, 1) is not None
 e.call("lira_ui_tune_detent", 0)
-e.call("lira_ui_set", 0, 520)
-e.call("lira_ui_tune_detent", 0)                                  # (clear the memory: wherever it was, 520 is far from a hold)
-v18 = find(26, 30, 1)
-assert v18 is not None
+check("the knob's detent catches within 12 cents of a note (as before)", tuneh() % 100 == 0, tuneh())
+assert find(20, 30, 1) is not None
 e.call("lira_ui_tune_detent", 0)
-check("the tune detent catches a knob 26..30 cents from a note (it was 12, then 22)", tuneh() % 100 == 0, tuneh())
-held = tuneh()
-vv = None
-for val in range(v18, v18 + 40):
-    e.call("lira_ui_set", 0, val)
-    if 41 <= tuneh() - held <= 49:
-        vv = val
-        break
-assert vv is not None
-e.call("lira_ui_tune_detent", 0)
-check("... and holds it: 41..49 cents away from the held note it is still on it", tuneh() == held, (held, tuneh()))
-for val in range(vv, vv + 12):
-    e.call("lira_ui_set", 0, val)
-    if tuneh() - held > 62:
-        break
-e.call("lira_ui_tune_detent", 0)
-check("... and past 60 cents it has let go (free, or caught by the next note)", tuneh() != held, (held, tuneh()))
-# a slow drag across a note, one knob unit (about 11 cents) a step, the detent called after each like the touch handler: how long the note value stays
-e.call("lira_ui_set", 0, 300)
-e.call("lira_ui_tune_detent", 0)
-seq = []
-for val in range(300, 420):
-    e.call("lira_ui_set", 0, val)
-    e.call("lira_ui_tune_detent", 0)
-    h = tuneh()
-    seq.append(h)
-runs, cur = [], 0
-for h in seq:
-    if h % 100 == 0:
-        cur += 1
-    elif cur:
-        runs.append(cur)
-        cur = 0
-if cur:
-    runs.append(cur)
-check("a slow drag: the note value is held over a long run of steps (a deliberate move to leave it)", runs and max(runs) >= 10, (runs, seq[:3]))
-check("... and the drag does move on (several different notes met)", len({h for h in seq if h % 100 == 0}) >= 3, sorted({h for h in seq if h % 100 == 0}))
+check("... and nothing further away is caught or held (20..30 cents stays as it is)", tuneh() % 100 != 0, tuneh())
 if was_chord:
     e.call("lira_ui_action", 0)
 if chord(157) != was_free:
@@ -895,6 +884,48 @@ learn(4)
 learn(1); learn(2, 210); e.call("lira_midi_msg", 0x90, 41, 100)
 check("a knob cannot be learned from a note (it keeps waiting for a controller)", learn(5, 210) == 0 and learn(6) == 210, (learn(5, 210), learn(6)))
 learn(1)
+# 3 (n14): velocity with MIDI. A note on a plate feeds its velocity into the touch-height path; the VELOCITY controls (AMT, SOURCE, TO) are learnable
+def vel(k):
+    e.call("lira_ui_vel", k)
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+learn(4)
+learn(1); learn(2, 304); e.call("lira_midi_msg", 0x90, 70, 100); learn(1)
+e.call("lira_ui_set", 215, 1)                                              # SOURCE = TAP
+e.call("lira_midi_msg", 0x90, 70, 127)
+v127 = vel(4)
+e.call("lira_midi_msg", 0x80, 70, 0)
+e.call("lira_midi_msg", 0x90, 70, 40)
+v40 = vel(4)
+e.call("lira_midi_msg", 0x80, 70, 0)
+check("a note on a plate sets its velocity: 127 -> 255 (full), 40 -> about a third", v127 == 255 and 78 <= v40 <= 84, (v127, v40))
+e.call("lira_midi_msg", 0x90, 70, 1)
+check("... velocity 1 is the softest (not zero: that is a note off)", 0 < vel(4) < 4, vel(4))
+e.call("lira_midi_msg", 0x80, 70, 0)
+e.call("lira_midi_msg", 0x90, 70, 127)
+check("... and a note on at the same velocity again changes nothing else (full again)", vel(4) == 255, vel(4))
+e.call("lira_midi_msg", 0x80, 70, 0)
+learn(4)
+for cid, kind in ((214, "AMT knob"), (215, "SOURCE"), (216, "TO")):
+    learn(1)
+    tap({214: 5 + 152 + 19, 215: 5 + 152 + 38 + 19, 216: 5 + 152 + 19}[cid], {214: 47, 215: 47, 216: 85}[cid])
+    chosen = learn(6)
+    e.call("lira_midi_msg", 0xB0, 90 + cid - 214, 100)
+    learn(1)
+    check("VELOCITY %s: a tap in learn mode chooses it and a controller binds it (id %d)" % (kind, cid), chosen == cid and learn(5, cid) == 91 + cid - 214, (chosen, learn(5, cid)))
+e.call("lira_midi_msg", 0xB0, 90, 127)
+check("... the AMT knob follows its controller (127 -> 1000)", get(214) == 1000, get(214))
+e.call("lira_ui_set", 215, 0)
+e.call("lira_midi_msg", 0xB0, 91, 0)
+e.call("lira_midi_msg", 0xB0, 91, 127)
+check("... SOURCE steps on a controller going up (OFF -> TAP)", get(215) == 1, get(215))
+e.call("lira_ui_set", 216, 0)
+e.call("lira_midi_msg", 0xB0, 92, 0)
+e.call("lira_midi_msg", 0xB0, 92, 127)
+check("... and TO (DEPTH -> VOL)", get(216) == 1, get(216))
+e.call("lira_ui_set", 215, 0)
+e.call("lira_ui_set", 216, 0)
+e.call("lira_ui_set", 214, 0)
+learn(4)
 # the switch: lira_usb_hook = 0 leaves the callback alone
 e.uc.mem_write(e.sym["lira_usb_hook"], b"\x00")
 c1 = learn(9)
@@ -909,14 +940,16 @@ check("TO: DEPTH -> VOL", get(216) == 1, get(216))
 tap(5 + 152 + 38 + 19, 47)
 tap(5 + 152 + 19, 85)
 tap(5 + 104 + 10, 215)                                            # (back to CHORD for what follows)
-e.call("lira_ui_action", 1)                                       # SHUFFLE (a button of the MIX tab now: QUANT took its place on CHORD)
+tap(5 + 76 + 38 + 19, 47)                                         # SHUFFLE (VOICING panel, top right: swapped with TUNE in n14)
 n1 = [note(v) for v in range(8)]
 check("SHUFFLE gives another voicing", n1 != n0 and sorted(n1) != sorted(n0), (n0, n1))
 tap(5 + 76 + 38 + 19, 85)                                         # ROTATE (bottom-right)
 n2 = [note(v) for v in range(8)]
 check("ROTATE hands every note to the next voice", n2 == [n1[7]] + n1[:7], (n1, n2))
-tap(5 + 76 + 38 + 19, 47)                                         # TUNING (top-right)
-check("TUNING switches to just intonation", chord(153) == 1)
+tap(5 + 156 + 10, 215)                                            # the MIX tab: TUNE (EQUAL / JUST) is the PITCH panel's bottom right now
+tap(5 + 76 + 38 + 19, 85)
+check("TUNING (MIX tab, PITCH panel, bottom right) switches to just intonation", chord(153) == 1)
+tap(5 + 104 + 10, 215)                                            # (back to the CHORD tab)
 tap(314 - 60, 7)
 check("the WAVE switch in the top bar selects the sine", chord(154) == 1)
 tap(5 + 76 + 19, 47)

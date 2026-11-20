@@ -225,6 +225,71 @@ e.stub(0x08086534, failing_open)
 e.call("lira_file_poll", 0x24002E88)
 check("a card that does not open the files: the state is FAILED (3)", ui_save(1) == 3, str(ui_save(1)))
 e.stub(0x08086534, f_open)
+# n14: why a save fails (put_file's codes), the card's root as the fallback, the two files independent, the timeout
+def lcodes():
+    e.call("lira_ui_save", 2)
+    c = e.uc.reg_read(UC_ARM_REG_R0)
+    return c & 255, c >> 8
+def run_save():
+    ui_save(0)
+    e.call("lira_file_poll", 0x24002E88)
+    return ui_save(1)
+def make_open(fail):
+    def f():
+        path = e.cstr(e.arg(1))
+        opened.append((path, e.arg(2)))
+        cur.update(path=path, mode=e.arg(2))
+        e.uc.reg_write(UC_ARM_REG_R0, fail(path))
+    return f
+disk.clear()
+e.stub(0x08086534, make_open(lambda path: 5 if not path.startswith("0:") else 0))     # the working directory does not exist (FR_NO_PATH): the card's root takes it
+check("a relative open that fails (no path) falls back to the card's root: both files written there, SAVED", run_save() == 2 and "0:/bbmod.bin" in disk and "0:/bbgen.bin" in disk, str((list(disk), lcodes())))
+disk.clear()
+e.stub(0x08086534, make_open(lambda path: 3))                                      # a card that is not ready at all
+check("nothing opens (FR_NOT_READY): FAILED, and the reason is readable (3 for both)", run_save() == 3 and lcodes() == (3, 3), str(lcodes()))
+disk.clear()
+e.stub(0x08086534, make_open(lambda path: 7 if "bbmod" in path else 0))            # only bbmod.bin is refused (denied)
+st = run_save()
+check("bbmod.bin refused (7), bbgen.bin fine: FAILED with (7, 0), and bbgen.bin was still written (independent files)", st == 3 and lcodes() == (7, 0) and "bbgen.bin" in disk and "bbmod.bin" not in disk, str((st, lcodes(), list(disk))))
+e.stub(0x08086534, f_open)
+disk.clear()
+real_write = None
+def bad_write():
+    e.uc.reg_write(UC_ARM_REG_R0, 1)                                              # a write error (FR_DISK_ERR) on the first file only
+w_calls = []
+def counting_write():
+    w_calls.append(1)
+    if len(w_calls) <= 2:                                                           # (the file and its retry at the root)
+        e.uc.reg_write(UC_ARM_REG_R0, 1)
+    else:
+        f_write()
+e.stub(0x08086A06, counting_write)
+st = run_save()
+check("a write error on bbmod.bin (code 21): FAILED, bbgen.bin still written", st == 3 and lcodes()[0] == 21 and lcodes()[1] == 0 and "bbgen.bin" in disk, str((st, lcodes())))
+e.stub(0x08086A06, f_write)
+disk.clear()
+check("and the next save is fine again (SAVED, both files)", run_save() == 2 and "bbmod.bin" in disk and "bbgen.bin" in disk, str(lcodes()))
+# the timeout: asked, but the task never comes
+def set_ticks(n):
+    for off in range(0, 0x300, 4):
+        old = e.r32(0x38800C00 + off)
+        e.w32(0x38800C00 + off, 0x12345678)
+        e.call("looper_ticks")
+        hit = e.uc.reg_read(UC_ARM_REG_R0) == 0x12345678
+        e.w32(0x38800C00 + off, n if hit else old)
+        if hit:
+            return True
+    return False
+if set_ticks(10000):
+    for _ in range(3000):
+        pass
+    ui_save(0)
+    set_ticks(10000 + 2000)
+    check("the idle pass never comes: after 6 s the button says FAILED with code 99", ui_save(1) == 3 and lcodes() == (99, 99), str((ui_save(1), lcodes())))
+    set_ticks(10000 + 2000 + 400)
+    check("... and goes back to SAVE after 2 s", ui_save(1) == 0, ui_save(1))
+else:
+    print("(timeout test skipped: ticks not found)")
 print("SAVE TO PROJECT tests done")
 print("failures:", fails)
 sys.exit(1 if fails else 0)

@@ -146,8 +146,8 @@ static int lu_specs(int sel, struct lu_spec *o)
         static const char *const nm[4] = {"DRIVE", "DIST", "VOL", "EXT"};
         static const uint16_t gid[4] = {190, 148, 191, 193};
         static const char *const gn[4] = {"REC", "LEN", "UNDO", "LOOP"};
-        static const uint16_t pid[4] = {123, 124, 195, 151};      /* PITCH: the two global pitches on top, the two buttons below: VIB (the vibrato) and SHUFFLE (moved here from CHORD to make room for QUANT there) */
-        static const char *const pn[4] = {"P 1-4", "P 5-8", "VIB", "SHUFL"};
+        static const uint16_t pid[4] = {123, 124, 195, 153};      /* PITCH: the two global pitches on top, the two buttons below: VIB (the vibrato) and TUNE (EQUAL / JUST: swapped with SHUFFLE in n14) */
+        static const char *const pn[4] = {"P 1-4", "P 5-8", "VIB", "TUNE"};
         for (int i = 0; i < 4; i++) {
             lu_cell(0, i, &x, &d);
             LU_SP(n, ids[i], x, d, LU_COL, 38, 2, lu_enc_cell[i], LK_KNOB, LU_ACC1, 11, nm[i]);
@@ -187,8 +187,8 @@ static int lu_specs(int sel, struct lu_spec *o)
             n++;
         }
     } else {
-        static const char *const nm[8] = {"SPACE", "KEY", "OCT", "SPAN", "CHORD", "TUNE", "QUANT", "CYCLE"};      /* KEY: the C D E selector (was ROOT); QUANT (the nearest real note) moved here from MIX */
-        static const uint16_t ids[8] = {140, 141, 142, 143, 150, 153, 196, 152};
+        static const char *const nm[8] = {"SPACE", "KEY", "OCT", "SPAN", "CHORD", "SHUFL", "QUANT", "CYCLE"};      /* KEY: the C D E selector (was ROOT); QUANT (the nearest real note) moved here from MIX */
+        static const uint16_t ids[8] = {140, 141, 142, 143, 150, 151, 196, 152};
         static const uint8_t cellof[8] = {0, 1, 2, 3, 0, 1, 2, 3};
         for (int i = 0; i < 8; i++) {
             lu_cell(i >> 2, cellof[i], &x, &d);
@@ -288,7 +288,7 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             text_c(s->x, cy + s->r + 3, s->w, b, C_WHITE, 1);
         } else if (s->id < 8) {                                   /* the note the knob is on: its name on a note, else the MIDI number with a tenth (51.1, 51.2 ...) */
             int h = lira_ui_tunepitch(s->id), nn = (h + 50) / 100;
-            if ((h - nn * 100 >= -35 && h - nn * 100 <= 35) || lira_ui_tune_stuck(s->id)) {          /* (the name stays while the detent holds the note, and a little round it) */
+            if (h == nn * 100) {                                    /* (the name only when the value is exactly the note) */
                 lira_note_name(nn, lira_ui_flats(), b);
             } else {
                 q = put_uint(b, (unsigned)(h / 100));
@@ -751,8 +751,8 @@ static void lira_touch(int kind, int id, int x, int d)
                 return;                                           /* a tap (finger jitter) moves nothing: the double tap then resets cleanly */
             lira_ui_tap(0xffff, 0, 0);                            /* a drag is not the first half of a double tap */
             if (i < n && sp[i].id < 8 && lira_ui_chord_get(150)) {     /* chord mode: the voice's pitch, free (60 semitones over 80 px), with a detent on every note */
-                int h = lira_ui_drag(id, 4, 0, 0, 0, 0) + dy * 75;
-                lira_ui_pitch_set(sp[i].id, lira_ui_pitch_detent(sp[i].id, h));        /* (a real flat spot: caught within 30 cents, held to 60) */
+                int r = lira_ui_pitch_unstall(lira_ui_drag(id, 4, 0, 0, 0, 0)) + dy * 75;      /* (every value reachable; a short flat spot at each exact note) */
+                lira_ui_pitch_set(sp[i].id, lira_ui_pitch_stall(r));
             } else if (i < n) {
                 lu_set(&sp[i], lira_ui_drag(id, 4, 0, 0, 0, 0) + (lira_ui_drag(id, 3, 0, 0, 0, 0) - d) * 1000 / 80);
                 if (sp[i].id < 8 && sp[i].kind == LK_KNOB)
