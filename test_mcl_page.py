@@ -526,7 +526,7 @@ c = page_part(draw())
 lt = [r for r in c if r[0] in ("lp_text", "lp_text_c")]
 words = [r[3] if r[0] == "lp_text" else r[-1] for r in lt]
 check("SAMPLE opens the view (input 7 / 4): the file's name, its length and format, READY: PRESS RECORD, the four buttons",
-      (7, 4, 0) in opened and "KICK808.WAV" in words and any("0.42 S" in w_ and "STEREO" in w_ and "16 STEPS" in w_ for w_ in words) and "READY: PRESS RECORD" in words and all(b in words for b in ("RECORD", "SLICE", "LISTEN", "BROWSE")), (opened, words[:8]))
+      (7, 4, 0) in opened and "KICK808.WAV" in words and any("0.42 S" in w_ and "STEREO" in w_ for w_ in words) and "LENGTH 16 AUTO" in words and "OUT 3: STEREO" in words and "READY: PRESS RECORD" in words and all(b in words for b in ("RECORD", "SLICE", "LISTEN", "BROWSE")), (opened, words[:8]))
 check("... no 2x MCL picture under it", not [r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128])
 for k, (name, code) in enumerate((("RECORD", 0), ("SLICE", 3), ("LISTEN", 2), ("BROWSE", 1))):     # (the blob's codes: bb_mcl.cpp smp_apply)
     bx = x0 + 4 + k * 63 + 30
@@ -555,13 +555,13 @@ SMP.update(state=2, browsing=0)
 dn, _ = touch(NO_X, TOP + 5)
 check("NO while the record waits: it is taken back (7 / 9), the view stays", dn == [(7, 9, 0)], dn)
 SMP.update(state=1)
-dn, _ = touch(x0 + 100, TOP + 44)
-check("a tap on the info line: the record's length steps on (7 / 8)", dn == [(7, 8, 0)], dn)
+dn, _ = touch(x0 + 60, TOP + 80)
+check("the LENGTH button: the record's length steps on (7 / 8)", dn == [(7, 8, 0)], dn)
 m0 = u.mem_read(UI + 16, 1)[0]
-dn, _ = touch(x0 + 256 - 20, TOP + 5)
+dn, _ = touch(x0 + 190, TOP + 80)
 m1 = u.mem_read(UI + 16, 1)[0]
-touch(x0 + 256 - 20, TOP + 5)
-check("the title bar's MONO / STEREO tag toggles the player's output (nothing sent to MCL), and back", m0 == 0 and m1 == 1 and u.mem_read(UI + 16, 1)[0] == 0 and dn == [], (m0, m1, dn))
+touch(x0 + 190, TOP + 80)
+check("the OUT button toggles the player's output (nothing sent to MCL), and back", m0 == 0 and m1 == 1 and u.mem_read(UI + 16, 1)[0] == 0 and dn == [], (m0, m1, dn))
 SMP.update(browsing=1, state=4)
 dn, _ = touch(NO_X, TOP + 5)
 check("NO in the browser (a file chosen): back to the view (7 / 7)", dn == [(7, 7, 0)], dn)

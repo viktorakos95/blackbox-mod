@@ -28,6 +28,7 @@
 #include "GUI/Pages/CommonPages.h"
 #include "Drivers/MD/UI/Pages/RAMPage.h"
 #include "Grid/MCLActions.h"
+#include "KeyInterface.h"
 #include "Sequencer/BeatRepeat.h"
 #include "NoteInterface.h"
 
@@ -55,7 +56,8 @@ static volatile uint8_t smp_recording, smp_recorded;             /* the file is 
 static volatile uint16_t rec_len;                                /* the record's length in steps (from its first step: cable_step) */
 static volatile uint8_t smp_link_play;                           /* the record began: queue the RAM player (P1) for its last step's end */
 static uint8_t smp_len_enc;                                      /* the record's length set by the user in 4-step units (0: from the file's length) */
-static uint8_t slice_want;                                       /* SLICE pressed before the player was in place: slice once it is */
+static uint8_t slice_want;
+static uint8_t smp_view, smp_close_req;                          /* the page shows the SAMPLE view / the Machinedrum's NO asked it to close */                                       /* SLICE pressed before the player was in place: slice once it is */
 static PageIndex smp_back = GRID_PAGE;                           /* the page the browser goes back to */
 
 #include "bb_clock.h"
@@ -781,7 +783,11 @@ static void smp_apply(void)
     case 9:                                                      /* NO in the view: waiting / recording is taken back */
         smp_cancel();
         break;
+    case 10:                                                     /* (spare) */
+        break;
     case 4:                                                      /* the view opened: straight into the browser while nothing is chosen */
+        smp_view = 1;
+        smp_close_req = 0;
         if (!smp_loaded) {
             smp_back = now == SAMPLE_BROWSER ? GRID_PAGE : now;
             bb_cable_mode = 1;
@@ -789,6 +795,8 @@ static void smp_apply(void)
         }
         break;
     case 5:                                                      /* the view closed */
+        smp_view = 0;
+        smp_close_req = 0;
         bb_cable_listen = 0;
         if (!cable_armed)
             bb_player_stop();
@@ -803,6 +811,23 @@ static void smp_apply(void)
             bb_player_stop();
         break;
     }
+}
+
+/* The Machinedrum's NO key while the SAMPLE view shows (MCL's page under it would get it): a waiting / running record is taken back, else the view closes.
+ * MCL's GUI asks the platform panel first for every event (GuiClass::handleTopEvent, a call from another file: link-wrapped). In the browser MCL's own NO goes back (fork patch 0004). */
+extern "C" bool __real__Z26platform_panel_handleEventP11gui_event_s(gui_event_t *ev);
+extern "C" bool __wrap__Z26platform_panel_handleEventP11gui_event_s(gui_event_t *ev)
+{
+    if (smp_view && EVENT_CMD(ev) && ev->source == MDX_KEY_NO && mcl.currentPage() != SAMPLE_BROWSER) {
+        if (ev->mask == EVENT_BUTTON_PRESSED) {
+            if (cable_armed || smp_recording)
+                smp_cancel();
+            else
+                smp_close_req = 1;
+        }
+        return true;
+    }
+    return __real__Z26platform_panel_handleEventP11gui_event_s(ev);
 }
 
 HOOK uint32_t bb_mcl_rec_stat(int which)                            /* (tests) */
@@ -825,14 +850,16 @@ HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
     uint32_t rate = smp_rate, ch = smp_ch, fr = smp_frames;
     s->browsing = mcl.currentPage() == SAMPLE_BROWSER && bb_cable_mode;
     s->clock_running = MidiClock.state == MidiClockClass::STARTED;
-    s->listen = bb_cable_listen;
+    s->listen = bb_cable_listen || (!cable_armed && !smp_recording && bb_player()->state == 1);   /* (LISTEN lit while the file plays)*/
     s->channels = (uint8_t)ch;
     s->rate_k = (uint16_t)(rate / 100u);
     s->secs100 = rate ? (uint16_t)((uint64_t)fr * 100u / rate) : 0;
     s->steps = smp_loaded ? (uint8_t)smp_steps() : 0;
     s->len_set = smp_len_enc ? 1 : 0;
     s->slices = smp_recorded && ram_a_param3.cur > 0 ? (uint8_t)(1u << ram_a_param3.cur) : 0;
-    if (!smp_loaded)
+    if (smp_close_req)
+        s->state = BB_SMP_CLOSE;
+    else if (!smp_loaded)
         s->state = BB_SMP_NONE;
     else if (cable_armed)
         s->state = BB_SMP_WAITING;

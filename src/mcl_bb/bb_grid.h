@@ -65,7 +65,7 @@ struct bb_menu {
 
 /* The SAMPLE view (abi 9, sample()): the chosen file and where its recording stands, for the page to show with its touch buttons
  * (input kind 7: 0 RECORD, 1 BROWSE, 2 LISTEN, 3 SLICE, 4 view opened, 5 view closed, 6 listening while browsing on / off). */
-enum { BB_SMP_NONE, BB_SMP_READY, BB_SMP_WAITING, BB_SMP_RECORDING, BB_SMP_DONE };
+enum { BB_SMP_NONE, BB_SMP_READY, BB_SMP_WAITING, BB_SMP_RECORDING, BB_SMP_DONE, BB_SMP_CLOSE };   /* CLOSE: the blob asks the page to close the view (the Machinedrum's NO) */
 struct bb_sample {
     uint8_t state;                     /* BB_SMP_* */
     uint8_t browsing;                  /* MCL's sample browser shows (the page shows MCL's screen then) */

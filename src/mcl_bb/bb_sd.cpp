@@ -279,6 +279,22 @@ HOOK void bb_sd_service(void)
     req.state = ST_DONE;
 }
 
+/* After each stock f_read (patches/mclsd.py: its 30 call sites): a request is served here too, in pcmStreamer only (handle 0x24002e70, the task every card access
+ * comes from) and only with 3 KB of its stack left (the TCB's stack base at +0x30; FatFs with long names takes about 1 KB). */
+HOOK uint32_t mcl_sd_fread(uint32_t fp, uint32_t buf, uint32_t n, uint32_t br)
+{
+    uint32_t r = stock(F_READ, fp, buf, n, br);
+    uint32_t me = *(volatile uint32_t *)0x2401f2a8u, st = *(volatile uint32_t *)0x24002e70u;
+    if (st && me == st) {
+        uint32_t sp;
+        __asm volatile("mov %0, sp" : "=r"(sp));
+        uint32_t base = ((volatile uint32_t *)me)[12];
+        if (sp > base && sp - base > 3072u)
+            bb_sd_service();
+    }
+    return r;
+}
+
 HOOK uint32_t mcl_sd_pump(uint32_t queue, uint32_t item, uint32_t ticks, uint32_t peek)
 {
     if (ready == READY_MAGIC) {

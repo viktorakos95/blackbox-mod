@@ -84,6 +84,7 @@ struct mcl_ui {
     int16_t acc[4];             /* knob counts below one detent */
     uint16_t smp;               /* 1: the SAMPLE view shows (the SAMPLE shortcut) */
     uint8_t mono;               /* the file player's output: 0 stereo, 1 mono (the sum on both channels: a mono cable into one Machinedrum input) */
+    uint8_t sbp;                /* the SAMPLE view's button held down (index + 1: 1..4 the bottom row, 5 LENGTH, 6 OUT): drawn pressed */
 };
 #define UI ((volatile struct mcl_ui *)0x38800680u)
 _Static_assert(sizeof(struct mcl_ui) <= 24, "the page state must end before 0x38800698");
@@ -441,8 +442,14 @@ uint32_t mcl_page_sig(void)
     uint32_t t = mcl_abi5(e) ? e->midi(10) * 131u : 0u;                    /* the shortcut whose page shows */
     uint32_t sv = 0;
     struct bb_sample sm;
-    if (UI->smp && e && e->abi >= 9 && e->sample(&sm))
-        sv = 1u + sm.state * 7u + sm.browsing * 131u + sm.clock_running * 1031u + sm.listen * 7919u + (uint32_t)sm.name[0] * 17u + sm.secs100 * 3u;
+    if (UI->smp && e && e->abi >= 9 && e->sample(&sm)) {
+        if (sm.state == BB_SMP_CLOSE) {                       /* the Machinedrum's NO: the view closes */
+            UI->smp = 0;
+            e->input(7, 5, 0);
+        }
+        sv = 1u + sm.state * 7u + sm.browsing * 131u + sm.clock_running * 1031u + sm.listen * 7919u + (uint32_t)sm.name[0] * 17u + sm.secs100 * 3u +
+             sm.steps * 101u + sm.len_set * 313u + sm.slices * 29u + UI->mono * 4099u + UI->sbp * 65537u;
+    }
     return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + t * 977u + sv * 0x9e3779b9u;
 }
 
@@ -992,6 +999,12 @@ static const char *const sb_name[SB_N] = {"RECORD", "SLICE", "LISTEN", "BROWSE"}
 #define SB_Y   (MCL_TOP + MCL_H - 30)
 #define SB_H   26
 static int sb_x(int x0, int i) { return x0 + 4 + i * 63; }
+#define SL_Y  (MCL_TOP + 74)              /* the LENGTH / OUT buttons */
+#define SL_H  18
+#define SL_X  4
+#define SL_W  124
+#define SO_X  132
+#define SO_W  120
 static const uint8_t sb_code[SB_N] = {0, 3, 2, 1};   /* the blob's codes (input kind 7): 0 RECORD, 1 BROWSE, 2 LISTEN, 3 SLICE */
 
 static void mcl_sample_view(int x0, const struct bb_sample *s)
@@ -1001,7 +1014,6 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
     lp_frame(x0, top, MCL_W, MCL_H, MC_WHITE, 1);
     lp_box(x0 + 1, top + 1, MCL_W - 2, 12, MC_WHITE);
     lp_text(x0 + 5, top + 3, "SAMPLE  > MD TRACK 15 (RAM 1)", MC_BLACK, 1);
-    lp_text(x0 + MCL_W - 44, top + 3, UI->mono ? "MONO" : "STEREO", MC_BLACK, 1);          /* tap: the player's output mono / stereo */
     if (s->state == 0) {
         lp_text_c(x0, top + 34, MCL_W, "NO SAMPLE CHOSEN", MC_WHITE, 2);
         lp_text_c(x0, top + 58, MCL_W, "PRESS BROWSE", MC_GREY, 1);
@@ -1023,10 +1035,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
         p = put_uint(p, s->rate_k / 10u);
         *p++ = '.';
         *p++ = (char)('0' + s->rate_k % 10u);
-        for (const char *c = s->channels > 1 ? " KHZ STEREO  " : " KHZ MONO  "; *c; c++)
-            *p++ = *c;
-        p = put_uint(p, s->steps);
-        for (const char *c = s->len_set ? " STEPS SET" : " STEPS AUTO"; *c; c++)
+        for (const char *c = s->channels > 1 ? " KHZ STEREO" : " KHZ MONO"; *c; c++)
             *p++ = *c;
         *p = 0;
         lp_text_c(x0, top + 42, MCL_W, t, MC_GREY, 1);
@@ -1045,9 +1054,24 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
             st = sl;
         }
         lp_text_c(x0, top + 62, MCL_W, st, s->state == BB_SMP_RECORDING ? MC_RED : MC_HOLD, 1);
+        char lb[24];                                          /* two small buttons: the record's length (tap: file, 4 .. 32 steps) and the player's output */
+        p = lb;
+        for (const char *c = "LENGTH "; *c; c++)
+            *p++ = *c;
+        p = put_uint(p, s->steps);
+        for (const char *c = s->len_set ? " SET" : " AUTO"; *c; c++)
+            *p++ = *c;
+        *p = 0;
+        int lon = UI->sbp == 5, oon = UI->sbp == 6;
+        lp_box(x0 + SL_X, SL_Y, SL_W, SL_H, lon ? MC_HOLD : MC_BLACK);
+        lp_frame(x0 + SL_X, SL_Y, SL_W, SL_H, MC_WHITE, 1);
+        lp_text_c(x0 + SL_X, SL_Y + 5, SL_W, lb, lon ? MC_BLACK : MC_WHITE, 1);
+        lp_box(x0 + SO_X, SL_Y, SO_W, SL_H, oon ? MC_HOLD : MC_BLACK);
+        lp_frame(x0 + SO_X, SL_Y, SO_W, SL_H, MC_WHITE, 1);
+        lp_text_c(x0 + SO_X, SL_Y + 5, SO_W, UI->mono ? "OUT 3: MONO" : "OUT 3: STEREO", oon ? MC_BLACK : MC_WHITE, 1);
     }
     for (int i = 0; i < SB_N; i++) {
-        int bx = sb_x(x0, i), on = (i == SB_RECORD && (s->state == BB_SMP_WAITING || s->state == BB_SMP_RECORDING)) || (i == SB_LISTEN && s->listen);
+        int bx = sb_x(x0, i), on = (i == SB_RECORD && (s->state == BB_SMP_WAITING || s->state == BB_SMP_RECORDING)) || (i == SB_LISTEN && s->listen) || UI->sbp == i + 1;
         int live = s->state != 0 || i == SB_BROWSE;
         if (i == SB_SLICE)
             live = s->state == BB_SMP_DONE;
@@ -1158,22 +1182,28 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
             }
         return;
     }
-    if (UI->smp && e->abi >= 9 && x >= wx + ww - 48 && d >= MCL_TOP && d < MCL_TOP + 14 && x >= wx && x < wx + ww) {   /* the title bar's MONO / STEREO tag */
-        UI->mono = !UI->mono;
-        return;
-    }
-    if (UI->smp && e->abi >= 9 && x >= wx && x < wx + ww && d >= MCL_TOP + 36 && d < MCL_TOP + 54) {     /* the SAMPLE view's info line: tap = the record's length (file, 4, 8, 12, 16, 24, 32 steps) */
+    if (UI->smp && e->abi >= 9 && d >= SL_Y - 2 && d < SL_Y + SL_H + 2 && x >= wx && x < wx + ww) {   /* LENGTH (the record's length) / OUT (the player's output) */
         struct bb_sample sm;
-        if (e->sample(&sm) && !sm.browsing && sm.state != BB_SMP_NONE)
+        int xx = x - mcl_x0(w);
+        if (!e->sample(&sm) || sm.browsing || sm.state == BB_SMP_NONE)
+            return;
+        if (xx < SO_X - 2) {
+            UI->sbp = 5;
             e->input(7, 8, 0);
+        } else {
+            UI->sbp = 6;
+            UI->mono = !UI->mono;
+        }
         return;
     }
     if (UI->smp && e->abi >= 9 && x >= wx && x < wx + ww && d >= SB_Y && d < SB_Y + SB_H) {   /* the SAMPLE view's buttons */
         struct bb_sample sm;
         if (e->sample(&sm) && !sm.browsing)
             for (int k = 0; k < SB_N; k++)
-                if (x >= sb_x(mcl_x0(w), k) && x < sb_x(mcl_x0(w), k) + 60)
+                if (x >= sb_x(mcl_x0(w), k) && x < sb_x(mcl_x0(w), k) + 60) {
+                    UI->sbp = (uint8_t)(k + 1);
                     e->input(7, sb_code[k], 0);
+                }
         return;
     }
     if (x < wx)
@@ -1207,6 +1237,7 @@ void mcl_page_up(int id)
 {
     const struct mcl_entry *e = mcl_blob();
     bkp_enable();
+    UI->sbp = 0;                                              /* (a SAMPLE view button shown pressed: released) */
     int i = UI->down[id & 3] - 1;
     if (i < 0)
         return;
