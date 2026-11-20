@@ -488,8 +488,15 @@ check("... and stops at the record's end (12 steps), the file not played to its 
 check("... the RAM player was queued while it recorded, for exactly the record's end (not a record length later)",
       "slot" in seen and seen["slot"][1] == cs + rl, (seen, cs + rl))
 # ---- the record taken back (RECORD again, or NO = code 9) and its length set by the user
+def dbg(tag):
+    print("   dbg", tag, [rec(k) for k in range(7)], "cmd", c.uc.mem_read(c.b["_ZL7smp_cmd"], 1)[0])
+
+
+dbg("before")
 sample_in(8)                                                         # the length: from the file -> 4 steps
+dbg("after 8")
 sample_in(0)
+dbg("after 0")
 rl4, armed4 = rec(3), rec(6) >> 2 & 1
 check("the record's length set to 4 steps (not the file's): RECORD arms with it", armed4 == 1 and rl4 == 4, (armed4, rl4))
 sample_in(0)
