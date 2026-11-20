@@ -14,7 +14,7 @@ static uint32_t data_off, data_len, frames, fpos;            /* the data chunk; 
 static uint16_t channels, bits, format;                       /* format 1 PCM, 3 float */
 static uint8_t open_ok;
 static uint32_t rate_hz;
-static uint8_t read_errs;                                     /* failed reads in a row (the card's bad moments are retried on the next pump) */
+static uint8_t read_errs, open_err;                          /* open_err: why the last open failed: 1 file open, 2 header short, 3 not RIFF/WAVE, 4 no fmt/data chunk, 5 format not played */                                     /* failed reads in a row (the card's bad moments are retried on the next pump) */
 
 /* the file loaded: its frames, rate and channels (0 frames: none) */
 HOOK uint32_t bb_player_info(uint32_t *rate, uint32_t *chans)
@@ -58,14 +58,19 @@ HOOK void bb_player_close(void)
 }
 
 /* Opens name (relative to the current directory, as MCL's browser has it) and fills the ring. 1 if it is a WAV file we can play. */
+HOOK uint32_t bb_player_err(void) { return open_err; }
+
 HOOK int bb_player_open(const char *name)
 {
     bb_player_close();
+    open_err = 1;
     if (!file.open(name, O_READ))
         return 0;
     open_ok = 1;
     uint8_t h[12];
-    if (file.read(h, 12) != 12 || le32(h) != 0x46464952u || le32(h + 8) != 0x45564157u) {      /* "RIFF" .... "WAVE" */
+    int hn = file.read(h, 12);
+    if (hn != 12 || le32(h) != 0x46464952u || le32(h + 8) != 0x45564157u) {      /* "RIFF" .... "WAVE" */
+        open_err = hn != 12 ? 2 : 3;
         bb_player_close();
         return 0;
     }
@@ -99,9 +104,11 @@ HOOK int bb_player_open(const char *name)
     }
     uint32_t bpf = (uint32_t)channels * (bits / 8);
     if (!data_off || !rate || !channels || !bpf || !((format == 1 && (bits == 8 || bits == 16 || bits == 24 || bits == 32)) || (format == 3 && bits == 32))) {
+        open_err = !data_off || !rate ? 4 : 5;
         bb_player_close();
         return 0;
     }
+    open_err = 0;
     frames = data_len / bpf;
     rate_hz = rate;
     fpos = 0;

@@ -40,6 +40,7 @@ void bb_player_stop(void);
 void bb_player_pump(void);
 uint32_t bb_player_info(uint32_t *rate, uint32_t *chans);
 void bb_player_rewind(void);
+uint32_t bb_player_err(void);
 }
 extern "C" volatile uint8_t bb_cable_mode, bb_cable_listen;     /* (the fork's SampleBrowserPage reads them: fork patch 0004) */
 volatile uint8_t bb_cable_mode, bb_cable_listen;
@@ -473,7 +474,8 @@ extern "C" void bb_mcl_clk_tick(uint32_t ticks)
     MidiClock.uart_clock_forward3 = nullptr;
     MidiClock.handleImmediateClock();
     if (MidiClock.state == MidiClockClass::STARTED && MidiClock.mod6_counter == 0) {
-        if (cable_armed && MidiClock.div16th_counter == cable_step) {
+        uint16_t late = (uint16_t)(MidiClock.div16th_counter - cable_step);
+        if (cable_armed && (late == 0 || (late < 6 && late > 0))) {     /* (a clock that restarted or a missed tick: a few steps late still starts it) */
             cable_armed = 0;                                       /* the RAM record's first step: the file plays into the Machinedrum's input from here */
             bb_player_play();
             smp_recording = 1;
@@ -580,12 +582,34 @@ static int smp_ensure(void)
 /* YES on a file (cable mode): that file is the SAMPLE view's now; back to the page the view was opened over. Nothing is recorded until RECORD. */
 HOOK void bb_sample_record(const char *name)
 {
-    uint32_t gave = bb_sd_stat_get(8), tmo = bb_sd_stat_get(1);
+    uint32_t sub0 = bb_sd_stat_get(11);
     if (!bb_player_open(name)) {
-        if (bb_sd_stat_get(8) != gave || bb_sd_stat_get(1) != tmo)
-            oled_display.textbox("CARD ", "ERROR");                /* (the card failed it, not the file's format) */
-        else
-            oled_display.textbox("NOT A", "WAV");
+        static char l1[12], l2[12];                              /* "WAV E<why>" / "S<op>.<result>": which step failed and what the card layer said (user: 'not a wav' while a sequence plays) */
+        uint32_t why = bb_player_err(), last = bb_sd_stat_get(10);
+        char *q = l1;
+        for (const char *c = "WAV E"; *c; c++)
+            *q++ = *c;
+        *q++ = (char)('0' + why % 10u);
+        *q = 0;
+        q = l2;
+        if (bb_sd_stat_get(11) != sub0) {                        /* (a card request failed on the way: its op and result) */
+            *q++ = 'S';
+            uint32_t op = last >> 8, rs = last & 0xffu;
+            if (op >= 10u)
+                *q++ = (char)('0' + op / 10u);
+            *q++ = (char)('0' + op % 10u);
+            *q++ = '.';
+            if (rs >= 100u)
+                *q++ = (char)('0' + rs / 100u);
+            if (rs >= 10u)
+                *q++ = (char)('0' + rs / 10u % 10u);
+            *q++ = (char)('0' + rs % 10u);
+        } else {
+            for (const char *c = why >= 3 ? "NOT A WAV" : "NO FILE"; *c; c++)
+                *q++ = *c;
+        }
+        *q = 0;
+        oled_display.textbox(l1, l2);
         return;
     }
     bb_player_pump();
@@ -841,6 +865,20 @@ static void cable_loop(void)
         if (!cable_armed)
             bb_player_stop();
     }
+    static uint8_t was_started;
+    uint8_t started = MidiClock.state == MidiClockClass::STARTED;
+    if (cable_armed && started) {                                  /* the clock (re)started, its counters went back, or it ran past the start: the record's first step is worked out again, from where it is */
+        static uint16_t arm_last;
+        uint16_t now = MidiClock.div16th_counter, past = (uint16_t)(now - cable_step);
+        if (!was_started || (int16_t)(now - arm_last) < 0 || (past >= 6 && past < 0x8000u)) {
+            ram_a_param4.cur = (int)(smp_steps() / 4u);
+            ram_page_a.setup_ram_rec_mono(14, 64, 1);
+            cable_step = ram_page_a.transition_step;
+            rec_len = ram_page_a.record_len;
+        }
+        arm_last = now;
+    }
+    was_started = started;
     if (cable_armed && grid_page.active_slots[14] != SLOT_RAM_RECORD && grid_page.active_slots[14] != SLOT_PENDING) {
         cable_armed = 0;                                           /* (the record was replaced before it began) */
     }

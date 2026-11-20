@@ -312,7 +312,7 @@ extern "C" __attribute__((noinline)) void bb_sd_yield(void)
 }
 
 /* Posts the request filled in `req` and waits for the streamer. */
-static uint32_t submit(void)
+static uint32_t submit_raw(void)
 {
     if (ready != READY_MAGIC)
         return SD_NOT_READY;
@@ -359,6 +359,18 @@ static uint32_t submit(void)
     }
     uint32_t r = req.ret;
     req.state = ST_IDLE;
+    return r;
+}
+
+/* (the last request that failed, whatever the reason, for the SAMPLE button's messages: op << 8 | result, and how many) */
+static uint32_t st_sub_last, st_sub_count;
+static uint32_t submit(void)
+{
+    uint32_t op = req.op, r = submit_raw();
+    if (r) {
+        st_sub_last = op << 8 | r;
+        st_sub_count++;
+    }
     return r;
 }
 
@@ -585,6 +597,8 @@ HOOK uint32_t bb_sd_stat_get(int which)
     case 6: return st_retries;
     case 7: return st_revived;
     case 8: return st_gaveup;
-    default: return st_last_err;
+    case 9: return st_last_err;
+    case 10: return st_sub_last;
+    default: return st_sub_count;
     }
 }
