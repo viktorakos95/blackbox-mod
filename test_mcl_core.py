@@ -512,7 +512,7 @@ sample_in_t(9)
 check("NO (code 9) while it waits: taken back too", armed_again == 1 and rec(3) == 32 and rec(6) >> 2 & 1 == 0 and rec(0) == 255, (armed_again, rec(3), rec(6), rec(0)))
 sample_in_t(8)                                                         # 32 -> from the file
 sample_in_t(0)
-check("... the length is the file's again after the cycle (12 steps)", rec(3) == 12, rec(3))
+check("... the length is the file's again after the cycle (2 s at the running 120 BPM: 17 steps, in bars of 4: 20)", rec(3) == 20, rec(3))
 sample_in_t(9)
 used = c.call("bb_mcl_isr_stack_used")
 print("     soft-interrupt stack used: %d of 6144 bytes" % used)
