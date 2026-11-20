@@ -7,7 +7,7 @@
  * buttons are the same plates. Above them one of four tabs (footer), each a row of four panels of four controls:
  *   VOICES   one panel per voice pair: MOD, SHARP, FM source, TOUCH
  *   SOUND    DELAY (time 1, 2, feedback, mix), MOD + SYNC (mod 1, 2 and the tempo sync of the two lines), LFO + SYNC (LFO A, B and their sync), LFO SHAPE (shape, combine, link, delay source)
- *   MIX      OUTPUT (drive, dist, volume, ext in), PITCH (the two pitches, QUANT, VIB), GESTURE, FEEL (PAN, DRIFT, the POWER switch)
+ *   MIX      OUTPUT (drive, dist, volume, ext in), PITCH (the two pitches, QUANT, VIB), GESTURE, FEEL (SPREAD, DRIFT, the POWER switch)
  *   CHORD    TONAL SPACE (space, root, register, span), VOICING (chord on, tuning, shuffle, rotate), the notes of the voices
  * The four encoders turn the four controls of the active group (orange frame): a voice pair's square, or a panel. A touch on
  * a control makes its group the active one; INFO moves on within the part of the page the
@@ -160,7 +160,7 @@ static int lu_specs(int sel, struct lu_spec *o)
             n++;
         }
         lu_cell(3, 0, &x, &d);                                    /* FEEL: the stereo pan (0 = mono, the cheap path), the pitch drift, the send to the Blackbox's own reverb (FX page: type, size, return): three knobs, */
-        LU_SP(n, 180, x, d, LU_COL, 38, 5, lu_enc_cell[0], LK_KNOB, LU_ACC2, 11, "PAN");
+        LU_SP(n, 180, x, d, LU_COL, 38, 5, lu_enc_cell[0], LK_KNOB, LU_ACC2, 11, "SPREAD");
         n++;
         lu_cell(3, 1, &x, &d);
         LU_SP(n, 181, x, d, LU_COL, 38, 5, lu_enc_cell[1], LK_KNOB, LU_ACC2, 11, "DRIFT");
@@ -492,6 +492,28 @@ static void draw_lira(void)
         box(LU_X0 + g * 2 * LU_COL + 6, LU_STRIP, 2 * LU_COL - 12, 2, lu_pair_col[g]);
     for (int i = 0; i < n; i++)
         lu_draw_spec(&sp[i], bank, chord);
+    if (page == LP_ENV) {                                         /* the MIDI panel's fourth cell: what has arrived since boot (J jack, U USB, C raw USB packets): tells whether USB reaches the unit at all */
+        int sx, sd;
+        lu_cell(3, 3, &sx, &sd);
+        char t1[12], t2[12], *w;
+        int vals[3] = {lira_ui_learn(7, 0), lira_ui_learn(8, 0), lira_ui_learn(9, 0)};
+        for (int k = 0; k < 3; k++)
+            vals[k] = vals[k] > 999 ? 999 : vals[k] < 0 ? 0 : vals[k];
+        w = t1;
+        *w++ = 'J';
+        w = put_uint(w, (unsigned)vals[0]);
+        *w = 0;
+        w = t2;
+        *w++ = 'U';
+        w = put_uint(w, (unsigned)vals[1]);
+        *w++ = ' ';
+        *w++ = 'C';
+        w = put_uint(w, (unsigned)vals[2]);
+        *w = 0;
+        text_c(sx, sd + 10, 2 * LU_COL / 2, "IN", LU_DIM, 1);
+        text_c(sx, sd + 19, LU_COL, t1, vals[0] ? C_WHITE : LU_DIM, 1);
+        text_c(sx - 4, sd + 28, LU_COL + 8, t2, vals[1] || vals[2] ? C_WHITE : LU_DIM, 1);
+    }
     for (int g = 0; g < 4; g++) {                                 /* the squares' frames, over everything of theirs: the one the encoders are on is orange */
         int x = LU_X0 + g * 2 * LU_COL;
         frame(x + 1, LU_STRIP, 2 * LU_COL - 2, LU_PLATE - LU_STRIP - 3, bank == lu_pb(g) ? LU_SEL : LU_LINE, 1);
@@ -723,8 +745,8 @@ static void lira_touch(int kind, int id, int x, int d)
                 return;                                           /* a tap (finger jitter) moves nothing: the double tap then resets cleanly */
             lira_ui_tap(0xffff, 0, 0);                            /* a drag is not the first half of a double tap */
             if (i < n && sp[i].id < 8 && lira_ui_chord_get(150)) {     /* chord mode: the voice's pitch, free (60 semitones over 80 px), with a detent on every note */
-                int h = lira_ui_drag(id, 4, 0, 0, 0, 0) + dy * 75, nn = (h + 50) / 100;
-                lira_ui_pitch_set(sp[i].id, h - nn * 100 >= -12 && h - nn * 100 <= 12 ? nn * 100 : h);
+                int h = lira_ui_drag(id, 4, 0, 0, 0, 0) + dy * 75;
+                lira_ui_pitch_set(sp[i].id, lira_ui_pitch_detent(sp[i].id, h));        /* (a real flat spot: caught within 30 cents, held to 60) */
             } else if (i < n) {
                 lu_set(&sp[i], lira_ui_drag(id, 4, 0, 0, 0, 0) + (lira_ui_drag(id, 3, 0, 0, 0, 0) - d) * 1000 / 80);
                 if (sp[i].id < 8 && sp[i].kind == LK_KNOB)
@@ -824,7 +846,7 @@ static void lira_knob(int knob, int counts)
             if (sp[i].kind == LK_NOTE || (sp[i].kind == LK_KNOB && sp[i].id < 8 && chord)) {
                 int v = sp[i].kind == LK_NOTE ? sp[i].id - 200 : sp[i].id;
                 if (chord && lira_ui_chord_get(157)) {               /* FREE: 0.05 semitone per unit, like the tune knob's own encoder feel */
-                    lira_ui_pitch_set(v, lira_ui_pitch(v) + d * 5);
+                    lira_ui_pitch_enc(v, d * 5);                         /* (through the same detent) */
                 } else if (chord) {                                  /* STEP: a semitone every ~100 counts; off a note, the next one in that direction */
                     int st = lira_ui_accum(knob, counts, 100);
                     for (int k = 0; k < (st < 0 ? -st : st); k++) {

@@ -235,8 +235,10 @@ struct gev {                     /* one recorded gesture: when (frames from the 
 struct mlearn {                  /* MIDI learn: a control (ui id) follows a controller number on a channel */
     uint8_t on, n;               /* learn mode, mappings in use */
     uint8_t stuck;               /* (not MIDI learn: the free-tune detent's memory, one bit a voice: it sits on a note and holds it) */
+    uint32_t cjack, cqueue, craw, cusb;   /* messages seen: from the jack's ring, from the software queue, packets in the USB callback, messages taken from its ring (the MIDI panel's J / U / C) */
     uint32_t hi;                 /* per mapping: the controller was at 64 or over at its last message (a button presses on the way up) */
-    uint8_t snote[8];            /* the note each voice's detent holds */
+    uint8_t snote[8];
+    int16_t raw[8];              /* the chord voices' free pitch before the detent (hundredths): an encoder adds to it, not to the held note */            /* the note each voice's detent holds */
     uint8_t rwr, rrd;            /* controller changes from the USB interrupt, waiting for the audio task */
     uint16_t seq;                /* counts the values MIDI has set (the page redraws when it moves) */
     uint8_t rq[16][3];
@@ -396,6 +398,7 @@ void lira_register(void *table)
     p->ml.on = p->ml.n = p->ml.stuck = p->ml.rwr = p->ml.rrd = 0;
     p->ml.seq = 0;
     p->ml.hi = 0;
+    p->ml.cjack = p->ml.cqueue = p->ml.craw = p->ml.cusb = 0;
     p->gen_loaded = 0;
     p->ml.target = 0xffff;
     struct pg *g = &p->pg;
@@ -1052,26 +1055,36 @@ static void ml_apply(struct pool *p, int id, unsigned val)
     p->ml.seq++;
 }
 
+static int ml_is_button(int id)
+{
+    return (id >= 100 && id < 108) || (id >= 144 && id < 154) || (id >= 160 && id < 164) || (id >= 190 && id < 197) || id == 215 || id == 216 || id >= 300;
+}
+
+#define ML_NOTE 0x10u                                      /* in a mapping's ch byte: the mapping is a note (else a controller); bits 0..3 the channel */
+
+/* One incoming message: a controller change (0xBn cc value) or a note (0x9n / 0x8n note velocity). In learn mode with a control waiting, the first controller
+ * moved is bound to it; a button also takes a note (note on = press, note off = release). Otherwise a bound message acts on its control. */
 void lira_midi_msg(unsigned st, unsigned cc, unsigned val)
 {
+    unsigned ty = st & 0xf0u;
     struct pool *p = pool();
-    if ((st & 0xf0u) != 0xb0u || !p || cc > 127u)
+    if (!p || cc > 127u || (ty != 0xb0u && ty != 0x90u && ty != 0x80u))
         return;
     struct mlearn *m = &p->ml;
-    unsigned ch = st & 15u;
+    unsigned ch = st & 15u, note = ty != 0xb0u, kind = note ? ML_NOTE : 0u;
     if (m->on) {
-        if (m->target != 0xffffu) {
-            int id = m->target;
+        int id = m->target;
+        if (id != 0xffff && (!note || (ty == 0x90u && val > 0u && ml_is_button(id)))) {      /* (a note only for a button; note off never binds) */
             ml_unbind(m, id);
             m->hi = 0;
-            for (int i = 0; i < m->n; i++)               /* a controller drives one control */
-                if (m->m[i].cc == cc && m->m[i].ch == ch) {
+            for (int i = 0; i < m->n; i++)               /* a message drives one control */
+                if (m->m[i].cc == cc && m->m[i].ch == (ch | kind)) {
                     m->m[i] = m->m[--m->n];
                     break;
                 }
             if (m->n < ML_MAX) {
                 m->m[m->n].cc = (uint8_t)cc;
-                m->m[m->n].ch = (uint8_t)ch;
+                m->m[m->n].ch = (uint8_t)(ch | kind);
                 m->m[m->n].id = (uint16_t)id;
                 m->n++;
             }
@@ -1079,41 +1092,67 @@ void lira_midi_msg(unsigned st, unsigned cc, unsigned val)
         }
         return;
     }
-    for (int i = 0; i < m->n; i++)
-        if (m->m[i].cc == cc && m->m[i].ch == ch) {
-            int id = m->m[i].id;
-            if ((id >= 100 && id < 108) || (id >= 144 && id < 154) || (id >= 160 && id < 164) || (id >= 190 && id < 197) || id == 215 || id == 216 || id >= 300) {
-                int hi = val >= 64u, was = m->hi >> i & 1u;           /* a button: it presses on the way up through 64 (a plate in HOLD also lets go on the way down) */
-                m->hi = (m->hi & ~(1u << i)) | (uint32_t)hi << i;
-                if (hi != was && (hi || (id >= 300 && id < 308)))
-                    lira_btn_press(id, hi);
+    for (int i = 0; i < m->n; i++) {
+        if (m->m[i].cc != cc || m->m[i].ch != (ch | kind))
+            continue;
+        int id = m->m[i].id;
+        if (note) {                                       /* a note on a button: on = press, off = release (only a plate in HOLD uses the release) */
+            if (ml_is_button(id)) {
+                lira_btn_press(id, ty == 0x90u && val > 0u);
                 m->seq++;
-            } else if (id >= 140 && id < 144) {                       /* a stepped knob (SPACE, KEY, OCT, SPAN): the controller's range over its steps */
-                int mx = lira_step_max(id);
-                lira_ui_chord_set(id, (int)((val * (unsigned)mx + 63u) / 127u));
-                m->seq++;
-            } else {
-                ml_apply(p, id, val);
             }
-            return;
+        } else if (ml_is_button(id)) {
+            int hi = val >= 64u, was = m->hi >> i & 1u;           /* a button: it presses on the way up through 64 (a plate in HOLD also lets go on the way down) */
+            m->hi = (m->hi & ~(1u << i)) | (uint32_t)hi << i;
+            if (hi != was && (hi || (id >= 300 && id < 308)))
+                lira_btn_press(id, hi);
+            m->seq++;
+        } else if (id >= 140 && id < 144) {                       /* a stepped knob (SPACE, KEY, OCT, SPAN): the controller's range over its steps */
+            int mx = lira_step_max(id);
+            lira_ui_chord_set(id, (int)((val * (unsigned)mx + 63u) / 127u));
+            m->seq++;
+        } else {
+            ml_apply(p, id, val);
         }
+        return;
+    }
 }
 
-/* From the USB MIDI receive callback (interrupt context, src/clkmon.c clkmon_usb_rx): a controller change goes into a small ring; the audio task takes it with the
- * next poll. Nothing happens when no device is attached (no packets come). */
-void lira_usb_cc(unsigned st, unsigned cc, unsigned val)
+#define LIRA_USB_ON lira_usb_hook
+const volatile uint8_t lira_usb_hook = 1;                  /* 1: the USB host receive callback is looked at (a switch: 0 leaves it to the stock firmware alone) */
+
+static inline int bkp_ok(void)                             /* the pool pointer is in the backup SRAM: only once its clock and write access are on (an interrupt can come before that) */
 {
-    struct pool *p = pool();
-    if (!p || (st & 0xf0u) != 0xb0u)
-        return;
-    uint8_t w = p->ml.rwr, n = (uint8_t)((w + 1u) & 15u);
-    if (n == p->ml.rrd)
-        return;
-    p->ml.rq[w][0] = (uint8_t)st;
-    p->ml.rq[w][1] = (uint8_t)cc;
-    p->ml.rq[w][2] = (uint8_t)val;
-    __asm volatile("dmb" ::: "memory");
-    p->ml.rwr = n;
+    return (*(volatile uint32_t *)0x580244e0u & (1u << 28)) && (*(volatile uint32_t *)0x58024800u & (1u << 8));
+}
+
+typedef void (*usb_rx_fn)(void *mgr, const uint8_t *buf, uint32_t len, uint32_t z);
+#define stock_usb_rx ((usb_rx_fn)0x080446dbu)
+
+/* The stock USB host MIDI class driver (the class code at 0x08046630: FindInterface 1 / 3, then receive transfers of 512 bytes) hands every received buffer
+ * to the callback at 0x08044f1c, which copies it into the stock slot ring with 0x080446da (the render turns the slots into messages in the software queue,
+ * where the poll finds them). This hook (patches/lira.py, the call at 0x08044f2c) runs first, in interrupt context: it counts the packets, puts controller
+ * changes and notes into a small ring for the audio task, and calls the stock copy unchanged. Nothing happens when no device is attached (no buffers come). */
+void lira_usb_rx(void *mgr, const uint8_t *buf, uint32_t len, uint32_t z)
+{
+    struct pool *p = LIRA_USB_ON && bkp_ok() ? pool() : 0;
+    if (p) {
+        for (uint32_t i = 0; i + 4 <= len && (buf[i] & 0x0fu); i += 4) {
+            unsigned cin = buf[i] & 0x0fu;
+            p->ml.craw++;
+            if (cin != 0x8u && cin != 0x9u && cin != 0xbu)
+                continue;
+            uint8_t w = p->ml.rwr, n = (uint8_t)((w + 1u) & 15u);
+            if (n == p->ml.rrd)
+                continue;
+            p->ml.rq[w][0] = buf[i + 1];
+            p->ml.rq[w][1] = buf[i + 2];
+            p->ml.rq[w][2] = buf[i + 3];
+            __asm volatile("dmb" ::: "memory");
+            p->ml.rwr = n;
+        }
+    }
+    stock_usb_rx(mgr, buf, len, z);
 }
 
 int lira_midi_get(void *mgr, uint8_t *out, uint8_t *flag)
@@ -1121,17 +1160,27 @@ int lira_midi_get(void *mgr, uint8_t *out, uint8_t *flag)
     struct pool *q = pool();
     while (q && q->ml.rrd != q->ml.rwr) {                    /* what the USB callback left */
         uint8_t r0 = q->ml.rrd;
+        q->ml.cusb++;
         lira_midi_msg(q->ml.rq[r0][0], q->ml.rq[r0][1], q->ml.rq[r0][2]);
         q->ml.rrd = (uint8_t)((r0 + 1u) & 15u);
     }
     int r = stock_midi_get(mgr, out, flag);
-    if (r)
-        lira_midi_msg(out[0], out[1], out[2]);
+    if (r && q) {
+        if (*flag == 0) {                                    /* the jack's ring */
+            q->ml.cjack++;
+            lira_midi_msg(out[0], out[1], out[2]);
+        } else {                                             /* the software queue (USB host, Trigger2MIDI's INT) or the stock's other rings: counted; acted on only while the USB callback has never been seen
+                                                              (else the same message would be handled twice: once from the callback's ring, once here) */
+            q->ml.cqueue++;
+            if (q->ml.craw == 0)
+                lira_midi_msg(out[0], out[1], out[2]);
+        }
+    }
     return r;
 }
 
 /* op 0: the state (bit 0 learn on, bits 8.. the mappings), 1: toggle learn mode (clears the waiting control), 2: choose the control to learn (only in learn mode),
- * 3: forget the control arg's mapping (arg < 0: the one last touched), 4: forget all, 5: arg's mapping as cc + 1 (0 none), 6: the waiting control (0xffff none) */
+ * 3: forget the control arg's mapping (arg < 0: the one last touched), 4: forget all, 5: arg's mapping as cc / note + 1 (0 none), 6: the waiting control (0xffff none), 7: messages from the jack, 8: from USB (queue or callback ring, the larger), 9: USB packets in the callback */
 int lira_ui_learn(int op, int arg)
 {
     struct pool *p = pool();
@@ -1149,6 +1198,9 @@ int lira_ui_learn(int op, int arg)
             if (m->m[i].id == arg)
                 return m->m[i].cc + 1;
         return 0;
+    case 7: return (int)m->cjack;
+    case 8: return (int)(m->cusb > m->cqueue ? m->cusb : m->cqueue);
+    case 9: return (int)m->craw;
     default: return m->target;
     }
 }
@@ -2036,6 +2088,40 @@ void lira_ui_tune_step(int v, int dir)                   /* STEP: the knob goes 
 
 #define LIRA_CATCH 30
 #define LIRA_HOLD  60
+/* The free chord pitch (hundredths of a semitone) through the same detent as the knobs: caught within 30 cents of a note, held until 60 cents from it.
+ * h is where the finger / encoder is; the result is what the voice gets. */
+int lira_ui_pitch_detent(int v, int h)
+{
+    struct pool *p = pool();
+    if (!p || v < 0 || v > 7)
+        return h;
+    if (p->ml.stuck >> v & 1) {
+        int dn = h - p->ml.snote[v] * 100;
+        if (dn >= -LIRA_HOLD && dn <= LIRA_HOLD)
+            return p->ml.snote[v] * 100;
+        p->ml.stuck &= (uint8_t)~(1u << v);
+    }
+    int n = (h + 50) / 100, d = h - n * 100;
+    if (d >= -LIRA_CATCH && d <= LIRA_CATCH && n >= 0 && n < 128) {
+        p->ml.stuck |= (uint8_t)(1u << v);
+        p->ml.snote[v] = (uint8_t)n;
+        return n * 100;
+    }
+    return h;
+}
+
+/* An encoder click in FREE: adds `delta` hundredths to where the finger would be (not to the held note), through the detent. */
+void lira_ui_pitch_enc(int v, int delta)
+{
+    struct pool *p = pool();
+    if (!p || v < 0 || v > 7)
+        return;
+    int base = (p->ml.stuck >> v & 1) && lira_ui_pitch(v) == p->ml.snote[v] * 100 ? p->ml.raw[v] : lira_ui_pitch(v);      /* (a hold left over from the knob mode does not count) */
+    int h = base + delta;
+    p->ml.raw[v] = (int16_t)h;
+    lira_ui_pitch_set(v, lira_ui_pitch_detent(v, h));
+}
+
 int lira_ui_tune_stuck(int v)                            /* the voice sits on a note by the detent: its name keeps showing */
 {
     struct pool *p = pool();

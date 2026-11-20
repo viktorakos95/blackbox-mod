@@ -25,6 +25,7 @@ RENDER = 0x08055BB8      # voice render (pad, voice, out, src): Level, ADSR, fil
 
 PATCHES = [
     # MIDI learn: the render's three calls of the incoming-message poll (0x0804495e) look at controller changes first (src/lira_pad.c lira_midi_get)
+    hook(0x08044F2C, 0x080446DA, "lira_usb_rx"),    # the USB host MIDI receive callback's copy of the buffer into the stock slot ring: looked at first (counts, controller changes, notes)
     hook(0x0804CB80, 0x0804495E, "lira_midi_get"),
     hook(0x0804CC78, 0x0804495E, "lira_midi_get"),
     hook(0x0804D0DE, 0x0804495E, "lira_midi_get"),

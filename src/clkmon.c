@@ -87,15 +87,9 @@ void clkmon_rx(void *mgr, uint32_t byte, uint32_t port)
 /* USB MIDI receive callback: replaces the call that copies the 512-byte packet buffer into the stock ring. USB-MIDI event
  * packets are 4 bytes: cable / code index, status, data 1, data 2; code index 0xF is a single byte (system real-time here).
  * The buffer is zeroed after every transfer, so a code index of 0 ends the packets. */
-void lira_usb_cc(unsigned st, unsigned cc, unsigned val);      /* src/lira_pad.c: DRONE-8's MIDI learn */
-
 void clkmon_usb_rx(void *mgr, const uint8_t *buf, uint32_t len, uint32_t z)
 {
     uint32_t t0 = DWT_CYCCNT;
-    if (bkp_on())                                                          /* (the pool pointer is in the backup SRAM: only once it is switched on) */
-        for (uint32_t i = 0; i + 4 <= len && (buf[i] & 0x0f); i += 4)         /* controller changes (cable / code index 0xB): DRONE-8's MIDI learn, from a USB device */
-        if ((buf[i] & 0x0f) == 0x0b)
-            lira_usb_cc(buf[i + 1], buf[i + 2], buf[i + 3]);
     int on = bkp_on();
     if (on) {
         volatile struct clk_isr_src *s = &ISR->s[1];

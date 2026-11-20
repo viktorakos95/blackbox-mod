@@ -164,6 +164,7 @@ static int rowh(void);
 #define OPT_X      84                      /* SETUP: where the choices start */
 #define CHOICE_W   52
 #define SLIDER_W   150
+#define PANIC_WAIT 375                                            /* audio blocks (2 s): the SURE? state of SAMPLR's PANIC */
 #define DTAP 100                                                  /* audio blocks (530 ms): two taps this close are a double tap (the same window on every page) */
 #define TAP_DEAD 4                                                /* px: a finger that moves less than this on a knob is a tap, it changes nothing */
 #define CLEAR_SHOW 375                     /* audio blocks (2 s) to show CLEARED! */
@@ -198,6 +199,7 @@ struct page {
     uint8_t scr_h[8];                               /* the last distinct screen ids the app showed (newest first) */
     uint8_t lead_eff, _le[3];                       /* the leader that counts: lead, once its page has stayed open for a while */
     uint32_t lead_t;                                /* when lead last changed (looper_ticks) */
+    uint16_t panic_t;                               /* SAMPLR's PANIC: when it was armed (the first tap, the low 16 bits of looper_ticks, 0 = not armed); a second tap within 2 s fires it */
     uint16_t in_peak;                               /* the input's level (peak, 0..65535 of full scale, falling a little each block): the page's thin line */
 };
 #define P ((volatile struct page *)0x38800f00u)
@@ -1220,7 +1222,7 @@ static void draw_footer(const struct lay *L)
     }
     if (looper_paused() && P->mode < M_SMPLR)             /* (the Looper's own state: not carried onto the other pages) */
         text(x0, L->foot_y + 4, "PAUSE", C_RED, 1);
-    else if (P->info_on == 1)
+    else if (P->info_on == 1 && P->mode != M_SMPLR)               /* (not on the SAMPLR page: the word was only noise there) */
         text(x0, L->foot_y + 4, "SHIFT", C_RED, 1);
 }
 
@@ -1398,6 +1400,17 @@ static void draw_samplr(void)
             box(P->w - 7, wy, 5, wh, C_DARK);
             box(P->w - 7, wy + wh - vh, 5, vh, C_YELLOW);
         }
+        {                                                         /* which encoder is which, in the corners of the waveform (2 x 2 like the encoders): top-left / top-right: attack, release (grain: spray, drift); bottom-left: the division (the slicer's count); bottom-right: the volume */
+            int g = s->mode == SM_GRAIN;
+            const char *tl = g ? "SPRAY" : "ATK", *tr = g ? "DRIFT" : "REL", *bl = s->mode == SM_SLICER ? "SLICES" : s->mode == SM_ARP || g ? "DIV" : "", *br = "VOL";
+            int n_tr = g ? 5 : 3, n_bl = s->mode == SM_SLICER ? 6 : 3;
+            text(wx + 4, wy + 3, tl, C_GREY, 1);
+            text(wx + SM_W - 12 - 6 * n_tr, wy + 3, tr, C_GREY, 1);
+            if (*bl)
+                text(wx + 4, wy + wh - 11, bl, C_GREY, 1);
+            text(wx + SM_W - 12 - 18, wy + wh - 11, br, C_GREY, 1);
+            (void)n_bl;
+        }
         if (!s->ov_ok) {                                          /* a streamed sample still loading */
             char b[12], *q = b;
             q = put_uint(q, s->filled * 100u / SM_COLS);
@@ -1524,7 +1537,8 @@ static void draw_samplr(void)
             char d[3] = {'L', (char)('1' + L), 0};
             text_c(155 + 38 * L, r1 + (SM_BH - 8) / 2, 36, d, recL ? C_RED : have ? C_CYAN : C_GREY, 1);
         }
-        sm_button(271, r1, 40, "PANIC", 0);                        /* silences every track: loops, latches, clouds, sequences */
+        int armed = P->panic_t && (uint16_t)(looper_ticks() - P->panic_t) < PANIC_WAIT;
+        sm_button(271, r1, 40, armed ? "SURE?" : "PANIC", armed);   /* silences every track: loops, latches, clouds, sequences (two taps: the first only asks) */
     } else if (sh == SMS_FX) {                                    /* FX: filter, resonance, reverb and delay send of this track (the four encoders turn them, pink 1-4), attack and release */
         static const char *const fxn[6] = {"FILT", "RES", "REV", "DLY", "A", "R"};   /* the encoders 1-4: top-left, top-right, bottom-left, bottom-right */
         static const uint8_t fx_which[4] = {0, 1, 3, 2};
@@ -1706,8 +1720,14 @@ static int sm_touch(int kind, int id, int x, int d)
                 samplr_gest(3);
             else if (x >= 93 && x < 151)
                 samplr_gest(4);
-            else if (x >= 271)
-                samplr_stop_all();
+            else if (x >= 271) {
+                if (P->panic_t && (uint16_t)(looper_ticks() - P->panic_t) < PANIC_WAIT) {   /* the second tap within 2 s: really panic */
+                    P->panic_t = 0;
+                    samplr_stop_all();
+                } else {
+                    P->panic_t = (uint16_t)looper_ticks() ? (uint16_t)looper_ticks() : 1u;         /* the first tap: the button asks SURE? */
+                }
+            }
         } else {
             if (x < 39)
                 samplr_select(-1);
@@ -1750,6 +1770,7 @@ static uint32_t signature(void)
               (uint32_t)(P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) << 29 | (uint32_t)(P->clear_arm == 2 && looper_ticks() - P->clear_t < CLEAR_SHOW) << 28)) * 16777619u;
     for (int o = 0; o < LOOPER_OPTS; o++)
         h = (h ^ (uint32_t)(looper_get_opt(o) * 1000.f + .5f)) * 16777619u;
+    h = (h ^ (uint32_t)(P->panic_t && (uint16_t)(looper_ticks() - P->panic_t) < PANIC_WAIT)) * 16777619u;               /* (SAMPLR's PANIC asking SURE?, and back after 2 s) */
     h = (h ^ (uint32_t)looper_overload_level()) * 16777619u;
     return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : P->mode == M_TRIG ? t2m_page_sig() : 0u) ^ (P->mode == M_LIRA ? lira_ui_sig() : P->mode == M_MCL ? mcl_page_sig() : 0u);
 }
@@ -2394,7 +2415,7 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
         int counts = *(const int16_t *)((const uint8_t *)msg + 0x10);
         if (knob >= 0 && knob < LOOPER_TRACKS) {
             if (P->mode == M_SMPLR && SM_SHEET != SMS_FX) {
-                static const uint8_t sm_knob[4] = {2, 1, 3, 0};   /* SAMPLR's knobs 0..3 (0 = the sample's volume): volume on the bottom-right encoder; the others follow the top bar's row of parameters (mode / count, attack, release) left to right: top-left 1, bottom-left 2, top-right 3 */
+                static const uint8_t sm_knob[4] = {1, 2, 3, 0};   /* SAMPLR's knobs 0..3 (0 = the sample's volume): volume on the bottom-right encoder, bottom-left the arp division (the slicer's count, grain's division), top-left attack, top-right release */
                 knob = sm_knob[knob];
             } else if (P->mode == M_MAIN || P->mode == M_SMPLR || P->mode == M_TRIG)
                 knob = knob_slot[knob];                           /* a row of four, as on DRONE-8: top-left, top-right, bottom-left, bottom-right */

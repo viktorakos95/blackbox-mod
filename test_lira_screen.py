@@ -568,6 +568,33 @@ knob(1, 80)
 check("FREE: an encoder click moves the voice off the note (0.05 semitone a unit)", pitch(0) % 100 != 0 and abs(pitch(0) - n0[0] * 100) == 50, pitch(0))
 knob(1, -80)
 check("... and back on the note it is exact again", pitch(0) == n0[0] * 100, pitch(0))
+# 2 (n12): the free chord pitch through the detent: a sweep over two octaves keeps the notes where they were (100 cents apart) and gives each a flat spot
+def detent(v, h):
+    e.call("lira_ui_pitch_detent", v, h)
+    return e.uc.reg_read(A.UC_ARM_REG_R0)
+e.call("lira_ui_pitch_detent", 0, 0)
+sweep = [detent(0, 4800 + 5 * i) for i in range(481)]               # 48.00 .. 72.00 in 5-cent steps (finger moving up)
+runs = {}
+for h in sweep:
+    if h % 100 == 0:
+        runs[h] = runs.get(h, 0) + 1
+check("sweeping up two octaves meets 25 notes spaced exactly 100 cents (the spacing is not changed)", sorted(runs) == list(range(4800, 7300, 100)), sorted(runs)[:5])
+check("each note is a flat spot: at least 20 steps (100 cents of travel) held on it (catch 30 + hold 60 = 90..120)", all(n >= 18 for k, n in runs.items() if 4900 <= k <= 7100), {k: n for k, n in runs.items() if n < 18})
+back = [detent(0, 7200 - 5 * i) for i in range(481)]                  # and down again: the same, and it does not skip
+rb = {}
+for h in back:
+    if h % 100 == 0:
+        rb[h] = rb.get(h, 0) + 1
+check("sweeping down meets the same 25 notes, each held", sorted(rb) == sorted(runs) and all(n >= 18 for k, n in rb.items() if 4900 <= k <= 7100), sorted(rb)[:3])
+# the encoder (FREE): clicks of 5 cents from a note: it stays on the note for a few clicks, then moves on
+e.call("lira_ui_pitch_set", 0, 6000)
+e.call("lira_ui_pitch_enc", 0, 0)
+seq = []
+for _ in range(40):
+    e.call("lira_ui_pitch_enc", 0, 5)
+    e.call("lira_ui_pitch", 0)
+    seq.append(e.uc.reg_read(A.UC_ARM_REG_R0))
+check("FREE encoder: 5 cents a click moves past a held note after a deliberate run of clicks (it left 6000 and went on)", seq[0] == 6000 and seq[-1] > 6000 and seq.count(6000) >= 10, (seq[:3], seq[-1], seq.count(6000)))
 drag(5 + 19, 140, 139)
 check("a drag moves it freely (0.75 semitone a pixel) ...", pitch(0) != n0[0] * 100, pitch(0))
 e.call("lira_ui_pitch_set", 1, 6000 + 20)
@@ -793,17 +820,74 @@ slow_tap(233 + 38 + 19, 28 + 19) if sel() & 15 == 4 else None
 learn(3, 302)
 check("FORGET / unlearn removes a button's mapping too", learn(5, 302) == 0, learn(5, 302))
 learn(4)
-# 15: a controller change from the USB callback (interrupt side) goes through the ring to the audio side
-bind(211, 13)
-e.call("lira_usb_cc", 0xB0, 13, 127)
-check("USB: nothing is applied in the interrupt (it only queues the message)", get(211) != 1000 or True)
+# 15 / 7 (n12): the USB host path. The stock host class driver hands each received buffer to the callback whose copy (0x080446da) lira_usb_rx wraps
+stock_copies = []
+e.stub(0x080446DA, lambda: stock_copies.append(e.arg(2)))
 e.stub(0x0804495E, lambda: e.uc.reg_write(A.UC_ARM_REG_R0, 0))
-e.call("lira_midi_get", 0x24002E88, 0x24038200, 0x24038210)
-check("USB host MIDI (the interrupt side's ring, drained by the next poll): CC 13 at 127 sets control 211 to 1000", get(211) == 1000, get(211))
-e.call("lira_usb_cc", 0xE0, 13, 5)
-e.call("lira_usb_cc", 0x90, 13, 5)
-e.call("lira_midi_get", 0x24002E88, 0x24038200, 0x24038210)
-check("... notes and pitch bend from USB are ignored", get(211) == 1000)
+UB = 0x24038400
+def usb_buffer(packets):
+    raw = b"".join(bytes(pk) for pk in packets).ljust(0x200, b"\0")
+    e.uc.mem_write(UB, raw)
+    e.call("lira_usb_rx", 0x24002E88, UB, 0x200, 0)
+def poll():
+    e.call("lira_midi_get", 0x24002E88, 0x24038200, 0x24038210)
+bind(211, 13)
+c0 = learn(9)
+usb_buffer([(0x0B, 0xB0, 13, 127), (0x09, 0x90, 60, 100)])
+check("USB host: the callback counts the packets (2) and still calls the stock copy with the same buffer", learn(9) == c0 + 2 and stock_copies[-1] == 0x200, (c0, learn(9), stock_copies))
+check("... and applies nothing in the interrupt (it only queues the messages)", get(211) != 1000)
+poll()
+check("USB host MIDI (the callback's ring, drained by the next poll): CC 13 at 127 sets control 211 to 1000", get(211) == 1000, get(211))
+check("... the MIDI panel's USB count (U) follows", learn(8) >= 2, learn(8))
+usb_buffer([(0x0E, 0xE0, 5, 5), (0x0F, 0xF8, 0, 0)])
+poll()
+check("... pitch bend and clock from USB are ignored", get(211) == 1000)
+# a queue message (flag != 0) is not handled twice once the callback has been seen
+e.uc.mem_write(0x24038210, b"\x01")
+j0, q0 = learn(7), learn(8)
+learn(4)
+# notes (n12 item 1): a plate mapped to a note: on = press, off = release
+learn(1); learn(2, 303); e.call("lira_midi_msg", 0xB0, 1, 1)           # (a controller first: bound as CC, to prove a note can replace it)
+learn(2, 303)
+e.call("lira_midi_msg", 0x91, 62, 100)                                  # note 62 on channel 2 while a plate waits: bound as a note
+learn(1)
+k0 = key(3)
+e.call("lira_midi_msg", 0x91, 62, 100)
+check("a plate learned from a NOTE: note on presses it (latched: on)", key(3) == 1 - k0, (k0, key(3)))
+e.call("lira_midi_msg", 0x81, 62, 0)
+check("... note off does nothing to a latched plate", key(3) == 1 - k0, key(3))
+e.call("lira_midi_msg", 0x90, 62, 100)
+check("... another channel's note does nothing", key(3) == 1 - k0, key(3))
+e.call("lira_midi_msg", 0x91, 62, 0)
+check("... a note on with velocity 0 is a note off", key(3) == 1 - k0, key(3))
+e.call("lira_midi_msg", 0x91, 62, 90)
+check("... the next note on presses it again (off)", key(3) == k0, (k0, key(3)))
+# HOLD: note on = down, note off = up
+if not momentary():
+    e.call("lira_ui_momentary", 1)
+e.call("lira_midi_msg", 0x91, 62, 90)
+check("HOLD plate on a note: note on = down", key(3) == 1, key(3))
+e.call("lira_midi_msg", 0x81, 62, 0)
+check("... note off = up", key(3) == 0, key(3))
+e.call("lira_ui_momentary", 1)                                          # (back to LATCH)
+# a note for a cycling button: steps on note on only
+learn(4)
+learn(1); learn(2, 105); e.call("lira_midi_msg", 0x90, 40, 100); learn(1)
+f0 = get(105)
+e.call("lira_midi_msg", 0x90, 40, 100)
+e.call("lira_midi_msg", 0x80, 40, 0)
+check("a cycling button on a note: note on steps it, note off does not", get(105) == (f0 + 1) % 9, (f0, get(105)))
+# a knob does not take a note
+learn(4)
+learn(1); learn(2, 210); e.call("lira_midi_msg", 0x90, 41, 100)
+check("a knob cannot be learned from a note (it keeps waiting for a controller)", learn(5, 210) == 0 and learn(6) == 210, (learn(5, 210), learn(6)))
+learn(1)
+# the switch: lira_usb_hook = 0 leaves the callback alone
+e.uc.mem_write(e.sym["lira_usb_hook"], b"\x00")
+c1 = learn(9)
+usb_buffer([(0x0B, 0xB0, 14, 127)])
+check("the switch (lira_usb_hook = 0): the callback only calls the stock copy", learn(9) == c1 and stock_copies[-1] == 0x200, (c1, learn(9)))
+e.uc.mem_write(e.sym["lira_usb_hook"], b"\x01")
 learn(4)
 tap(5 + 152 + 38 + 19, 47)                                        # SOURCE (top-right of VELOCITY)
 check("SOURCE: OFF -> TAP (the height of the touch on a plate)", get(215) == 1, get(215))
