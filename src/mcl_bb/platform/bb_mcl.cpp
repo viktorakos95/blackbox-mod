@@ -57,7 +57,8 @@ static volatile uint16_t rec_len;                                /* the record's
 static volatile uint8_t smp_link_play;                           /* the record began: queue the RAM player (P1) for its last step's end */
 static uint8_t smp_len_enc;                                      /* the record's length set by the user in 4-step units (0: from the file's length) */
 static uint8_t slice_want;
-static uint8_t smp_view, smp_close_req;                          /* the page shows the SAMPLE view / the Machinedrum's NO asked it to close */                                       /* SLICE pressed before the player was in place: slice once it is */
+static uint8_t smp_view, smp_close_req, smp_listen_ask;          /* ... / LISTEN asks before it makes track 15 an R1 */
+static uint32_t smp_listen_t;                          /* the page shows the SAMPLE view / the Machinedrum's NO asked it to close */                                       /* SLICE pressed before the player was in place: slice once it is */
 static PageIndex smp_back = GRID_PAGE;                           /* the page the browser goes back to */
 
 #include "bb_clock.h"
@@ -753,8 +754,27 @@ static void smp_apply(void)
         bb_cable_mode = 1;
         mcl.setPage(SAMPLE_BROWSER);
         break;
-    case 2:                                                      /* LISTEN: the chosen file once, from its start, on Out 3 */
-        if (!cable_armed && smp_ensure())
+    case 2:                                                      /* LISTEN: the chosen file once, from its start, on Out 3, heard through the Machinedrum: track 15 an R1 with its input A up and CUE
+                                                                    up (user: CUE makes the input audible on the MD's outputs). Not an R1 yet: the first press asks (it erases track 15), a second within 4 s does it */
+        if (cable_armed || smp_recording)
+            break;
+        if (MD.connected) {
+            if (MD.kit.get_model(14) != RAM_R1_MODEL) {
+                if (!smp_listen_ask || millis() - smp_listen_t > 4000u) {
+                    smp_listen_ask = 1;
+                    smp_listen_t = millis();
+                    break;
+                }
+                MD.assignMachine(14, RAM_R1_MODEL);
+                MD.kit.models[14] = RAM_R1_MODEL;
+            }
+            smp_listen_ask = 0;
+            MD.setTrackParam(14, RAM_R_MLEV, 0);
+            MD.setTrackParam(14, RAM_R_ILEV, 100);
+            MD.setTrackParam(14, RAM_R_IBAL, 64);
+            MD.setTrackParam(14, RAM_R_CUE1, 110);
+        }
+        if (smp_ensure())
             bb_player_play();
         break;
     case 3:                                                      /* SLICE: into 2, 4, 8, 16, 32 slices, then whole again (as NO on MCL's RAM page, with its slice count stepped) */
@@ -839,6 +859,7 @@ HOOK uint32_t bb_mcl_rec_stat(int which)                            /* (tests) *
     case 3: return rec_len;
     case 4: return bb_player()->state;
     case 5: return MidiClock.div16th_counter;
+    case 7: return MD.kit.get_model(14);
     default: return (uint32_t)smp_recording | (uint32_t)smp_recorded << 1 | (uint32_t)cable_armed << 2;
     }
 }
@@ -850,7 +871,9 @@ HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
     uint32_t rate = smp_rate, ch = smp_ch, fr = smp_frames;
     s->browsing = mcl.currentPage() == SAMPLE_BROWSER && bb_cable_mode;
     s->clock_running = MidiClock.state == MidiClockClass::STARTED;
-    s->listen = bb_cable_listen || (!cable_armed && !smp_recording && bb_player()->state == 1);   /* (LISTEN lit while the file plays)*/
+    if (smp_listen_ask && millis() - smp_listen_t > 4000u)
+        smp_listen_ask = 0;
+    s->listen = smp_listen_ask ? 2 : bb_cable_listen || (!cable_armed && !smp_recording && bb_player()->state == 1);   /* (LISTEN lit while the file plays; 2: it asks)*/
     s->channels = (uint8_t)ch;
     s->rate_k = (uint16_t)(rate / 100u);
     s->secs100 = rate ? (uint16_t)((uint64_t)fr * 100u / rate) : 0;

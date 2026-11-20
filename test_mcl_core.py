@@ -514,6 +514,27 @@ sample_in_t(8)                                                         # 32 -> f
 sample_in_t(0)
 check("... the length is the file's again after the cycle (2 s at the running 120 BPM: 17 steps, in bars of 4: 20)", rec(3) == 20, rec(3))
 sample_in_t(9)
+# ---- LISTEN through the Machinedrum: track 15 must be an R1 (asked first: it erases the track), then its input and CUE up and the file plays
+def smp_listen():
+    c.uc.mem_write(SBUF, bytes(48))
+    c.call("bb_mcl_sample", SBUF)
+    return c.uc.mem_read(SBUF + 8, 1)[0]
+
+
+MDO = c.b["MD"]
+c.e.uc.mem_write(MDO + 4, b"\x01")                                  # (a Machinedrum connected)
+m0 = rec(7)
+sample_in_t(2)
+ask, pl1 = smp_listen(), rec(4)
+sample_in_t(2)
+m1, pl2 = rec(7), rec(4)
+check("LISTEN with something else on track 15: it asks first (nothing played), LISTEN again: track 15 is an R1 (160) and the file plays",
+      m0 != 160 and ask == 2 and pl1 == 0 and m1 == 160 and pl2 == 1, (m0, ask, pl1, m1, pl2))
+c.call("bb_player_stop")
+sample_in_t(2)
+check("... LISTEN with the R1 already there: no question, it plays", smp_listen() != 2 and rec(4) == 1, (smp_listen(), rec(4)))
+c.call("bb_player_stop")
+c.e.uc.mem_write(MDO + 4, b"\x00")
 used = c.call("bb_mcl_isr_stack_used")
 print("     soft-interrupt stack used: %d of 6144 bytes" % used)
 check("the soft interrupts' own stack (6 KB) was used less than 2/3 over MIDI, the clock, the panel", 0 < used < 4096, used)

@@ -1053,7 +1053,9 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
             *p = 0;
             st = sl;
         }
-        lp_text_c(x0, top + 62, MCL_W, st, s->state == BB_SMP_RECORDING ? MC_RED : MC_HOLD, 1);
+        if (s->listen == 2)
+            st = "LISTEN AGAIN: TRACK 15 BECOMES AN R1";
+        lp_text_c(x0, top + 62, MCL_W, st, s->state == BB_SMP_RECORDING || s->listen == 2 ? MC_RED : MC_HOLD, 1);
         char lb[24];                                          /* two small buttons: the record's length (tap: file, 4 .. 32 steps) and the player's output */
         p = lb;
         for (const char *c = "LENGTH "; *c; c++)
