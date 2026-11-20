@@ -865,12 +865,11 @@ static void cable_loop(void)
         if (!cable_armed)
             bb_player_stop();
     }
-    static uint8_t was_started;
     uint8_t started = MidiClock.state == MidiClockClass::STARTED;
-    if (cable_armed && started) {                                  /* the clock (re)started, its counters went back, or it ran past the start: the record's first step is worked out again, from where it is */
+    if (cable_armed && started) {                                  /* its counters went back (a clock that restarted from 0), or it ran past the start: the record's first step is worked out again, from where it is */
         static uint16_t arm_last;
         uint16_t now = MidiClock.div16th_counter, past = (uint16_t)(now - cable_step);
-        if (!was_started || (int16_t)(now - arm_last) < 0 || (past >= 6 && past < 0x8000u)) {
+        if ((int16_t)(now - arm_last) < 0 || (past >= 6 && past < 0x8000u)) {
             ram_a_param4.cur = (int)(smp_steps() / 4u);
             ram_page_a.setup_ram_rec_mono(14, 64, 1);
             cable_step = ram_page_a.transition_step;
@@ -878,7 +877,6 @@ static void cable_loop(void)
         }
         arm_last = now;
     }
-    was_started = started;
     if (cable_armed && grid_page.active_slots[14] != SLOT_RAM_RECORD && grid_page.active_slots[14] != SLOT_PENDING) {
         cable_armed = 0;                                           /* (the record was replaced before it began) */
     }
