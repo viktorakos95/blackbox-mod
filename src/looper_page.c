@@ -198,10 +198,10 @@ struct page {
     int32_t tw2, tw3;                               /* the touch event's third and fourth words (a finger id?) */
     int32_t vrect[4];                               /* the mixer view's own rectangle, while the page widens it */
     uint8_t scr_h[8];                               /* the last distinct screen ids the app showed (newest first) */
-    uint8_t lead_eff, _le[3];                       /* the leader that counts: lead, once its page has stayed open for a while */
+    uint8_t lead_eff, _le[3];                       /* (_le[0]: blocks the input peak is still held, the thin level line) */                       /* the leader that counts: lead, once its page has stayed open for a while */
     uint32_t lead_t;                                /* when lead last changed (looper_ticks) */
     uint16_t panic_t;                               /* SAMPLR's PANIC: when it was armed (the first tap, the low 16 bits of looper_ticks, 0 = not armed); a second tap within 2 s fires it */
-    uint16_t in_peak;                               /* the input's level (peak, 0..65535 of full scale, falling a little each block): the page's thin line */
+    uint16_t in_peak;                               /* the input's level (peak, 0..65535 of full scale; held ~300 ms, then falling): the page's thin line */
 };
 #define P ((volatile struct page *)0x38800f00u)
 #define PMAGIC 0x50414732u
@@ -747,6 +747,16 @@ static void dial(int x, int d, const char *name, float v, int selected)
     dial_h(x, d, BTN, name, v, selected, 0);
 }
 
+/* 20 log10 of a positive amplitude (dB), without libm: the exponent plus a polynomial for the mantissa's log2 (error about 0.03 dB) */
+static float lin_db(float x)
+{
+    union { float f; uint32_t u; } b = {x};
+    float e = (float)((int)(b.u >> 23 & 255u) - 127);
+    b.u = (b.u & 0x7fffffu) | 0x3f800000u;
+    float m = b.f;
+    return 6.0206f * (e + (-0.34484843f * m + 2.02466578f) * m - 1.67487759f);
+}
+
 /* A percentage, "0".."100" */
 static char *put_pct(char *p, float v)
 {
@@ -975,10 +985,11 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
     }
     dot(fx, hy, C_WHITE);
     if (P->sel == t) {                                            /* the input level, a thin line beside the selected track's fader (what the track would record) */
-        float ip = (float)P->in_peak * (1.f / 65535.f);
-        int ih = (int)(pos_of(ip) * (float)h + .5f);
+        float db = P->in_peak ? lin_db((float)P->in_peak * (1.f / 65535.f)) : -99.f;      /* dBFS across the line: -60 at the bottom, 0 at the top (-12 dBFS = 80 %) */
+        int ih = (int)((db + 60.f) * (1.f / 60.f) * (float)h + .5f);
+        ih = ih < 0 ? 0 : ih > h ? h : ih;
         vline(fx + 6, d, h, C_RAIL);
-        vline(fx + 6, d + h - ih, ih, ip > .95f ? C_RED : C_GREEN);
+        vline(fx + 6, d + h - ih, ih, db > -1.5f ? C_RED : db > -6.f ? C_YELLOW : C_GREEN);
     }
     /* the level, small */
     char lv[12], *q = put_db(lv, k->level);
@@ -1811,13 +1822,20 @@ static uint32_t signature(void)
     return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : P->mode == M_TRIG ? t2m_page_sig() : 0u) ^ (P->mode == M_LIRA ? lira_ui_sig() : P->mode == M_MCL ? mcl_page_sig() : 0u);
 }
 
-/* From looper_in, every audio block: the input's peak (the page's thin level line). Falls by 1/16 a block. */
+/* From looper_in, every audio block: the input's peak (the page's thin line): it rises at once, is held for ~300 ms (56 blocks) and then falls by 1/16 a block. */
 void looper_page_inpeak(float pk)
 {
     uint32_t v = (uint32_t)(pk * 65535.f);
     v = v > 65535u ? 65535u : v;
     uint32_t old = P->in_peak;
-    P->in_peak = (uint16_t)(v > old ? v : old - old / 16u);
+    if (v >= old) {
+        P->in_peak = (uint16_t)v;
+        P->_le[0] = 56;
+    } else if (P->_le[0]) {
+        P->_le[0]--;
+    } else {
+        P->in_peak = (uint16_t)(old - old / 16u);
+    }
 }
 
 /* Called for every mixer cell while the page shows: the first cell draws the whole page, the others nothing.

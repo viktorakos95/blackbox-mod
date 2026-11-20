@@ -43,7 +43,9 @@ def f_open():
     path = e.cstr(e.arg(1))
     mode = e.arg(2)
     opened.append((path, mode))
-    cur.update(path=path, mode=mode)
+    cur.update(path=path, mode=mode, pos=0)
+    if mode == 0x0A:
+        disk[path] = b""                                                          # (create always: an empty file, the writes append)
     if mode == 1 and path not in disk:
         e.uc.reg_write(UC_ARM_REG_R0, 4)                                          # FR_NO_FILE
         return
@@ -52,13 +54,14 @@ def f_open():
 
 def f_write():
     data = bytes(e.uc.mem_read(e.arg(1), e.arg(2)))
-    disk[cur["path"]] = data
+    disk[cur["path"]] = disk.get(cur["path"], b"") + data
     e.w32(e.arg(3), len(data))
     e.uc.reg_write(UC_ARM_REG_R0, 0)
 
 
 def f_read():
-    data = disk.get(cur["path"], b"")[:e.arg(2)]
+    data = disk.get(cur["path"], b"")[cur["pos"]:cur["pos"] + e.arg(2)]
+    cur["pos"] += len(data)
     e.uc.mem_write(e.arg(1), data)
     e.w32(e.arg(3), len(data))
     e.uc.reg_write(UC_ARM_REG_R0, 0)
@@ -84,7 +87,7 @@ def chord(i):
 # a missing file changes nothing
 before = (get(16), get(125), chord(140))
 e.call("lira_load")
-check("no file: the settings stay as they are", (get(16), get(125), chord(140)) == before and opened[-1] == ("bbmod.bin", 1), str(opened[-1:]))
+check("no file: the settings stay as they are", (get(16), get(125), chord(140)) == before and opened[-2:] == [("bbmod.bin", 1), ("0:/bbmod.bin", 1)], str(opened[-2:]))
 # set things, save
 e.call("lira_ui_set", 16, 321)
 e.call("lira_ui_set", 125, 777)
@@ -99,7 +102,7 @@ e.call("lira_ui_action", 3)
 e.call("lira_ui_action", 4)
 notes = [None] * 8
 e.call("lira_save")
-check("save: bbmod.bin written with create-always (mode 0x0a), then the general file bbgen.bin", opened[-2:] == [("bbmod.bin", 0x0A), ("bbgen.bin", 0x0A)] and len(disk["bbmod.bin"]) > 1000, str(opened[-2:]) + " %d bytes" % len(disk.get("bbmod.bin", b"")))
+check("save: bbmod.bin written with create-always (mode 0x0a), then the general file bbgen.bin", all(x in opened for x in (("bbmod.bin", 0x0A), ("0:/bbmod.bin", 0x0A), ("bbgen.bin", 0x0A), ("0:/bbgen.bin", 0x0A))) and len(disk["bbmod.bin"]) > 1000 and disk["bbmod.bin"] == disk["0:/bbmod.bin"], str(opened[-8:]) + " %d bytes" % len(disk.get("bbmod.bin", b"")))
 gen = disk.get("bbgen.bin", b"")
 check("bbgen.bin: magic 8GEN, version 1, its own size, the Looper's 15 options and a crc", gen[:4] == b"8GEN" and struct.unpack("<HH", gen[4:8])[0] == 1 and struct.unpack("<HH", gen[4:8])[1] == len(gen) and len(gen) > 200, str((gen[:8], len(gen))))
 e.call("lira_ui_learn", 1, 0)
@@ -170,7 +173,7 @@ e.stub(0x08091A5C, lambda: order.append(("stock save", e.arg(0), e.arg(1))))
 e.stub(0x08091A74, lambda: order.append(("stock load", e.arg(0), e.arg(1))))
 disk["bbmod.bin"] = good
 e.call("lira_save_thunk", 0x2401F508, 0x24072000)
-check("save thunk: the stock save handler runs with its arguments, then the file is written", order[-1] == ("stock save", 0x2401F508, 0x24072000) and opened[-1][1] == 0x0A, str(order))
+check("save thunk: the stock save handler runs with its arguments, then the file is written", order[-1] == ("stock save", 0x2401F508, 0x24072000) and any(o[1] == 0x0A for o in opened[-8:]), str(order))
 disk["bbmod.bin"] = good
 # the ENV tab (build 95) in a tail after that one: envelope times and velocity
 for c, v in ((210, 300), (211, 800), (212, 100), (213, 900), (214, 250), (215, 1), (216, 1)):
@@ -213,8 +216,9 @@ def fnv(b):
 check("... crc ok", struct.unpack("<I", g[-4:])[0] == fnv(g[:-4]))
 m = disk["bbmod.bin"]
 check("bbmod.bin: magic 8RND, version 3, and its crc", m[:4] == struct.pack("<I", 0x444e5238), str(m[:4]))
+n_open = len(opened)
 e.call("lira_file_poll", 0x24002E88)
-check("with nothing asked, the idle pass only calls the stock poll (no file calls)", polls == [0x24002E88, 0x24002E88] and opened[-1][0] in ("bbgen.bin",), str((polls, opened[-2:])))
+check("with nothing asked, the idle pass only calls the stock poll (no file calls)", polls == [0x24002E88, 0x24002E88] and len(opened) == n_open, str((polls, opened[-2:])))
 ui_save(0)
 # a failing card: f_open returns an error
 real_open = f_open
@@ -238,8 +242,11 @@ def make_open(fail):
     def f():
         path = e.cstr(e.arg(1))
         opened.append((path, e.arg(2)))
-        cur.update(path=path, mode=e.arg(2))
-        e.uc.reg_write(UC_ARM_REG_R0, fail(path))
+        cur.update(path=path, mode=e.arg(2), pos=0)
+        rc = fail(path)
+        if rc == 0 and e.arg(2) == 0x0A:
+            disk[path] = b""
+        e.uc.reg_write(UC_ARM_REG_R0, rc)
     return f
 disk.clear()
 e.stub(0x08086534, make_open(lambda path: 5 if not path.startswith("0:") else 0))     # the working directory does not exist (FR_NO_PATH): the card's root takes it

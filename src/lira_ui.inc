@@ -70,10 +70,10 @@ struct lu_spec {
 #define LP_SOUND  1
 #define LP_MIX    2
 #define LP_CHORD  3
-#define LP_ENV    4                                               /* ENV: the envelope's times, the velocity, MIDI (to come) */
+#define LP_ENV    4                                               /* CTRL (was ENV): the envelope's times, the velocity, MIDI learn and its status */
 #define LU_TABS   5
 #define LU_TABW   52                                              /* the footer's tabs: 50 px wide every 52 (the SAVE button has the rest) */
-static const char *const lu_tabname[LU_TABS] = {"VOICES", "SOUND", "MIX", "CHORD", "ENV"};
+static const char *const lu_tabname[LU_TABS] = {"VOICES", "SOUND", "MIX", "CHORD", "CTRL"};
 static const uint8_t lu_taborder[LU_TABS] = {LP_VOICES, LP_SOUND, LP_CHORD, LP_MIX, LP_ENV};   /* the footer's order (the pages keep their numbers) */
 static const char *const lu_div[12] = {"OFF", "4 BAR", "2 BAR", "1 BAR", "1/2", "1/4D", "1/4", "1/8D", "1/8", "1/16D", "1/16", "1/16T"};
 static const char *const lu_len[4] = {"1 BAR", "2 BAR", "4 BAR", "8 BAR"};
@@ -134,7 +134,7 @@ static int lu_specs(int sel, struct lu_spec *o)
            LFO + SYNC (the two rates and their tempo sync) | LFO SHAPE (shape, combine, link, and what modulates the delay) */
         static const uint16_t ids[16] = {16, 17, 18, 19, 125, 126, 146, 147, 14, 15, 144, 145, 160, 161, 162, 163};
         static const char *const nm[16] = {"TIME1", "TIME2", "FDBK", "MIX", "MOD1", "MOD2", "SYNC1", "SYNC2",
-                                           "LFO A", "LFO B", "SYNCA", "SYNCB", "SHAPE", "COMB", "LINK", "D.SRC"};
+                                           "LFO A", "LFO B", "SYNCA", "SYNCB", "SHAPE", "COMB", "LINK", "DLYMD"};
         for (int i = 0; i < 16; i++) {
             int btn = ids[i] >= 144;                              /* (tempo sync: how long one cycle / one echo is, in the Blackbox clock's beats) */
             lu_cell(i >> 2, i & 3, &x, &d);
@@ -173,7 +173,7 @@ static int lu_specs(int sel, struct lu_spec *o)
         n++;
     } else if (page == LP_ENV) {                                  /* FAST: attack, release | SLOW: attack, release | VELOCITY: amount, source, target | MIDI (to come) */
         static const uint16_t ids[7] = {210, 211, 212, 213, 214, 215, 216};
-        static const char *const nm[7] = {"ATTACK", "RELEASE", "ATTACK", "RELEASE", "AMT", "SOURCE", "TO"};
+        static const char *const nm[7] = {"ATTACK", "RELEASE", "ATTACK", "RELEASE", "AMT", "SOURCE", "EFFECT"};
         static const uint8_t pan[7] = {0, 0, 1, 1, 2, 2, 2}, cel[7] = {0, 1, 0, 1, 0, 1, 2};
         for (int i = 0; i < 7; i++) {
             lu_cell(pan[i], cel[i], &x, &d);
@@ -230,6 +230,8 @@ static int lu_value(const struct lu_spec *s)
 {
     if (s->kind == LK_STEP)
         return lira_ui_chord_get(s->id) * 1000 / lu_stepmax(s->id);
+    if (s->kind == LK_KNOB && lira_ui_syncdiv(s->id))                 /* a synced LFO / delay time: the knob shows the division */
+        return (lira_ui_syncdiv(s->id) - 1) * 100;
     return lira_ui_get(s->id);
 }
 
@@ -320,6 +322,8 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             t[0] = (char)((s->id & 1) ? 'R' : 'A');            /* (six characters fit under a knob) */
             lira_ui_env_text(s->id, t + 1);
             text_c(s->x, cy + s->r + 3, s->w, t, hot ? LU_SEL : LU_DIM, 1);
+        } else if (s->kind == LK_KNOB && lira_ui_syncdiv(s->id)) {     /* synced: the division (1/4, 1/8 ...) in place of the name */
+            text_c(s->x, cy + s->r + 3, s->w, lu_div[lira_ui_syncdiv(s->id)], hot ? LU_SEL : LU_DIM, 1);
         } else if (s->r != 8) {                                   /* (the small level knobs carry no label) */
             text_c(s->x, cy + s->r + 3, s->w, s->name, hot ? LU_SEL : LU_DIM, 1);
         }
@@ -352,10 +356,13 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
             st = lira_ui_chord_get(150) ? "ON" : "OFF", on = lira_ui_chord_get(150);
         else if (s->id == 153)
             st = lira_ui_chord_get(153) ? "JUST" : "EQUAL", on = lira_ui_chord_get(153);
-        else if (s->id == 215)
-            st = lira_ui_get(215) ? "TAP" : "OFF", on = lira_ui_get(215);
-        else if (s->id == 216)
-            st = lira_ui_get(216) ? "VOL" : "DEPTH", on = 1;
+        else if (s->id == 215) {
+            static const char *const sn[4] = {"STEADY", "TOUCH", "SLIDE", "MIDI"};
+            st = sn[lira_ui_get(215) & 3], on = lira_ui_get(215) != 0;
+        } else if (s->id == 216) {
+            static const char *const en[3] = {"SOUND", "VOLUME", "BOTH"};
+            st = en[lira_ui_get(216) % 3], on = lira_ui_get(215) != 0;      /* (lit only when there is a velocity to apply it to) */
+        }
         else if (s->id == 220)
             st = lira_ui_learn(0, 0) & 1 ? "ON" : "OFF", on = lira_ui_learn(0, 0) & 1;
         else if (s->id == 221)
@@ -492,6 +499,13 @@ static void draw_lira(void)
         box(LU_X0 + g * 2 * LU_COL + 6, LU_STRIP, 2 * LU_COL - 12, 2, lu_pair_col[g]);
     for (int i = 0; i < n; i++)
         lu_draw_spec(&sp[i], bank, chord);
+    if (page == LP_ENV) {                                         /* VELOCITY's free fourth cell: what the SOURCE chosen means, in a few words */
+        static const char *const hint[4][4] = {{"EVERY", "PLATE", "PLAYS", "FULL"}, {"HIT", "HEIGHT", "TOP=", "LOUD"}, {"SLIDE", "UP/DN", "WHILE", "HELD"}, {"MIDI", "NOTE", "VELO-", "CITY"}};
+        int hx, hd;
+        lu_cell(2, 3, &hx, &hd);
+        for (int i = 0; i < 4; i++)
+            text_c(hx, hd + 4 + 9 * i, LU_COL, hint[lira_ui_get(215) & 3][i], LU_DIM, 1);
+    }
     if (page == LP_ENV) {                                         /* the MIDI panel's fourth cell: what has arrived since boot (J jack, U USB, C raw USB packets): tells whether USB reaches the unit at all */
         int sx, sd;
         lu_cell(3, 3, &sx, &sd);
@@ -624,6 +638,8 @@ static void lu_set(const struct lu_spec *s, int v)
     if (s->kind == LK_STEP) {
         int mx = lu_stepmax(s->id);
         lira_ui_chord_set(s->id, (v * mx + 500) / 1000);
+    } else if (s->kind == LK_KNOB && lira_ui_syncdiv(s->id)) {
+        lira_ui_syncpos(s->id, v);
     } else if (s->kind == LK_KNOB && !(s->id < 8 && lira_ui_chord_get(150))) {
         lira_ui_set(s->id, v);
     }
@@ -632,7 +648,7 @@ static void lu_set(const struct lu_spec *s, int v)
 /* the buttons that cycle through choices and have a first one to go back to (FM, TOUCH, the sync divisions, LEN, the velocity switches) */
 static int lu_btn_resets(int id)
 {
-    return (id >= 100 && id < 108) || (id >= 144 && id < 149) || id == 215 || id == 216;
+    return (id >= 100 && id < 108) || id == 148 || id == 215 || id == 216;
 }
 
 /* a control back to its default (the double tap) */
@@ -661,8 +677,8 @@ static void lu_press(const struct lu_spec *s, int dir)
         lira_ui_set(id, (lira_ui_get(id) + (dir < 0 ? 8 : 1)) % 9);
     else if (id >= 160 && id < 164)
         lira_ui_action(10 + id - 160);
-    else if (id >= 144 && id < 148)
-        lira_ui_chord_set(id, (lira_ui_chord_get(id) + (dir < 0 ? 11 : 1)) % 12);
+    else if (id >= 144 && id < 148)                               /* a tap (or a MIDI press): sync on / off (the knob beside it chooses the division) */
+        lira_ui_sync_toggle(id);
     else if (id == 148)
         lira_ui_chord_set(148, (lira_ui_chord_get(148) + (dir < 0 ? 3 : 1)) & 3);
     else if (id == 190)
@@ -685,8 +701,10 @@ static void lu_press(const struct lu_spec *s, int dir)
         lira_ui_action(2);
     else if (id == 153)
         lira_ui_action(3);
-    else if (id == 215 || id == 216)
-        lira_ui_set(id, !lira_ui_get(id));
+    else if (id == 215)                                           /* VELOCITY SOURCE: STEADY, TOUCH, SLIDE, MIDI */
+        lira_ui_set(id, (lira_ui_get(id) + (dir < 0 ? 3 : 1)) % 4);
+    else if (id == 216)                                           /* VELOCITY EFFECT: SOUND, VOLUME, BOTH */
+        lira_ui_set(id, (lira_ui_get(id) + (dir < 0 ? 2 : 1)) % 3);
     else if (id == 220)
         lira_ui_learn(1, 0);
     else if (id == 221)
@@ -745,6 +763,14 @@ static void lira_touch(int kind, int id, int x, int d)
         return;
     }
     if (kind == 1) {
+        int dk = lira_ui_drag(id, 1, 0, 0, 0, 0);
+        if ((dk == 1 || dk == 4) && lira_ui_get(215) == 2) {         /* VELOCITY SOURCE = SLIDE: a plate held follows the finger's height, live (top full, bottom soft) */
+            int v = lira_ui_drag(id, 2, 0, 0, 0, 0), px, pd, pw, ph;
+            lu_plate_rect(v, &px, &pd, &pw, &ph);
+            int hgt = ph > 0 ? 1000 - (d - pd) * 1000 / ph : 1000;
+            lira_ui_tapvel(v, hgt < 0 ? 0 : hgt > 1000 ? 1000 : hgt);
+            return;
+        }
         if (lira_ui_drag(id, 1, 0, 0, 0, 0) == 3) {
             int i = lira_ui_drag(id, 2, 0, 0, 0, 0), dy = lira_ui_drag(id, 3, 0, 0, 0, 0) - d;
             if (dy > -4 && dy < 4 && !(i < n && sp[i].id < 8 && lira_ui_chord_get(150)))
@@ -761,6 +787,8 @@ static void lira_touch(int kind, int id, int x, int d)
         }
         return;
     }
+    if (lira_ui_drag(id, 1, 0, 0, 0, 0) == 1)                     /* this finger's slot still holds a plate (its lift never came): let it go */
+        lira_ui_key(lira_ui_drag(id, 2, 0, 0, 0, 0), 0);
     lira_ui_drag(id, 0, 0, 0, 0, 0);
     if (d <= TOPBAR + 1) {
         int k = x < P->w - 13 ? (P->w - 13 - x) / 33 : -1;                              /* the switches: 0 LATCH, 1 TRI / SINE, 2 X:, 3 STEP / FREE, 4 REC, 5 BTN */
@@ -798,6 +826,8 @@ static void lira_touch(int kind, int id, int x, int d)
                 lira_ui_drag(id, 0, 1, v, 0, 0);
             } else {
                 lira_ui_key(v, !lira_ui_key_get(v));
+                if (lira_ui_get(215) == 2)
+                    lira_ui_drag(id, 0, 4, v, 0, 0);                  /* (a latched plate can be slid while the finger stays on it: the lift does not switch it off) */
             }
             return;
         }
@@ -860,6 +890,16 @@ static void lira_knob(int knob, int counts)
                         lira_ui_pitch_set(v, nh < 3300 && nh < h ? (h < 3300 ? nh : 3300) : nh > 9300 && nh > h ? (h > 9300 ? nh : 9300) : nh);   /* STEP stays within A1..A6 (FREE and the drag go the oscillator's whole range) */
                     }
                 }
+            } else if (sp[i].kind == LK_KNOB && lira_ui_syncdiv(sp[i].id)) {     /* a synced LFO / delay time: a click per division, no wrap */
+                lira_ui_chord_set(sp[i].id + 130, lira_ui_syncdiv(sp[i].id) + lira_ui_accum(knob, counts, 300));
+                if (!lira_ui_chord_get(sp[i].id + 130))
+                    lira_ui_chord_set(sp[i].id + 130, 1);                   /* (stepping below 1/... stays on: the button switches it off) */
+            } else if (sp[i].kind == LK_BTN && sp[i].id >= 144 && sp[i].id < 148) {   /* the SYNC button's own encoder: also steps the division (on / off stays the button's) */
+                int st = lira_ui_accum(knob, counts, 300), v = lira_ui_chord_get(sp[i].id);
+                if (st && v)
+                    lira_ui_chord_set(sp[i].id, v + st < 1 ? 1 : v + st);
+                else if (st > 0)
+                    lira_ui_sync_toggle(sp[i].id);
             } else if (sp[i].kind == LK_BTN || sp[i].kind == LK_STEP) {   /* like the stock lists: a step per ~300 counts */
                 int st = lira_ui_accum(knob, counts, 300);
                 if (sp[i].kind == LK_STEP && st)

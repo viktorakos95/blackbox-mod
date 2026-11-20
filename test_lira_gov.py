@@ -384,5 +384,43 @@ e.call("lira_ui_prev", 5)
 w = e.uc.reg_read(UC_ARM_REG_R0)
 check("... and the whole audio task's worst block (cpu.c)", w == 95, w)
 check("the next boot keeps them as the run before (peak load %)", ok == 1 and 84 <= peak <= 99, "valid %d peak %d" % (ok, peak))
+# n15: notes that never end. A plate still down when the take ends has an on and no off in the loop; every cycle then starts it and nothing stops it
+e.call("lira_ui_action", 14)
+for _ in range(5):
+    block(0.3)
+e.call("lira_ui_key", 2, 0)
+e.call("lira_ui_action", 7)
+block(0.3)
+for _ in range(10):
+    block(0.3)
+e.call("lira_ui_key", 2, 1)                                          # the finger goes down and stays down past the end of the take
+for _ in range(450):
+    block(0.3)
+    if rv("lira_ui_chord_get", 158) == 3:
+        break
+check("the take is over and plays (the plate was down at its end)", rv("lira_ui_chord_get", 158) == 3, rv("lira_ui_chord_get", 158))
+e.call("lira_ui_key", 2, 0)                                          # the finger lifts after the take: not recorded
+seq = []
+for _ in range(800):                                                 # two cycles of the loop
+    block(0.3)
+    seq.append(rv("lira_ui_key_get", 2))
+ons = [i for i in range(1, len(seq)) if seq[i] and not seq[i - 1]]
+offs = [i for i in range(1, len(seq)) if not seq[i] and seq[i - 1]]
+check("the loop plays the plate on in every cycle and ends it in every cycle (%d ons, %d offs)" % (len(ons), len(offs)), len(ons) >= 2 and len(offs) >= 2 and abs(len(ons) - len(offs)) <= 1, (ons, offs))
+for _ in range(800):
+    block(0.3)
+    if rv("lira_ui_key_get", 2):
+        break
+e.call("lira_ui_action", 16)
+block(0.3)
+block(0.3)
+check("STOP with a loop note sounding lets it go", rv("lira_ui_chord_get", 158) == 6 and rv("lira_ui_key_get", 2) == 0, (rv("lira_ui_chord_get", 158), rv("lira_ui_key_get", 2)))
+e.call("lira_ui_action", 17)
+for _ in range(800):
+    block(0.3)
+    if rv("lira_ui_key_get", 2):
+        break
+e.call("lira_ui_action", 14)
+check("CLEAR with a loop note sounding lets it go", rv("lira_ui_key_get", 2) == 0, rv("lira_ui_key_get", 2))
 print("failures:", fails)
 raise SystemExit(1 if fails else 0)

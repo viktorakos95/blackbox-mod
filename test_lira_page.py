@@ -95,7 +95,7 @@ check("momentary toggles", rv("lira_ui_momentary", 0) == 0 and rv("lira_ui_momen
       rv("lira_ui_momentary", 1) == 0)
 rv("lira_ui_drag", 2, 0, 3, 7, 123, 456)
 check("drag state per finger", rv("lira_ui_drag", 2, 1, 0, 0, 0, 0) == 3 and rv("lira_ui_drag", 2, 2, 0, 0, 0, 0) == 7
-      and rv("lira_ui_drag", 6, 3, 0, 0, 0, 0) == 123 and rv("lira_ui_drag", 2, 4, 0, 0, 0, 0) == 456)
+      and rv("lira_ui_drag", 2, 3, 0, 0, 0, 0) == 123 and rv("lira_ui_drag", 6, 1, 0, 0, 0, 0) == 0 and rv("lira_ui_drag", 2, 4, 0, 0, 0, 0) == 456)
 e.call("lira_ui_key", 0, 0)
 e.call("lira_ui_key", 3, 0)
 e.call("lira_ui_set", 121, 900)

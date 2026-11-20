@@ -27,6 +27,10 @@ PATCHES = [
     # saving: the settings go into bbmod.bin when the project is saved, and come back when it is loaded (file task)
     # the SAVE TO PROJECT buttons: the streamer task's idle pass calls the stock preset poll here; ours saves first when a page asked for it
     hook(0x080744D8, 0x08092F5C, "lira_file_poll"),
+    # ... and the two places MCL's card requests are served from: the loop's top and the end of the inner work loop (the idle pass above is not reached while samples stream).
+    # patches/mclsd.py, when it is in the set, leaves these two calls to us and only points lira_sd_next_top / lira_sd_next_inner at the blob's hooks.
+    hook(0x080743E8, 0x08088756, "lira_sd_top"),
+    hook(0x0807443E, 0x08092F5C, "lira_sd_inner"),
     hook(0x080930CE, 0x08091A5C, "lira_save_thunk"),
     hook(0x080930E0, 0x08091A74, "lira_load_thunk"),
 ]

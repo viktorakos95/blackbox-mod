@@ -14,6 +14,9 @@ unsigned lira_ui_sig(void);
 int lira_ui_drag(int id, int op, int kind, int idx, int y0, int v0);
 int lira_ui_button(int idx, uint32_t now, uint32_t gap);
 int lira_ui_chord_get(int id);
+int lira_ui_syncdiv(int id);
+void lira_ui_syncpos(int id, int pos);
+void lira_ui_sync_toggle(int sid);
 void lira_ui_chord_set(int id, int idx);
 void lira_ui_action(int a);
 int lira_ui_note(int v);
@@ -42,6 +45,8 @@ int lira_ui_learn(int op, int arg);          /* MIDI learn (lira_pad.c): 0 state
 
 int lira_ui_env_text(int c, char *b);       /* an ENV control's value as shown ("3MS", "0.6S", "X1.0"); 0 if c is not one */
 int lira_ui_vel(int k);
+int lira_ui_vel_eff(int k);
+void lira_ui_midivel(int k, int v127);
 void lira_ui_tapvel(int k, int v);           /* a plate touched at a height (0 bottom .. 1000 top): voice k's velocity for TAP */
 
 #endif

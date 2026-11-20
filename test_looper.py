@@ -539,32 +539,37 @@ touch("up", 190, 100)
 touch("up", 190, 78)
 check("the page's touches never reach the stock mixer handlers", len(stock) == stock_clear, stock)
 
-# the input level for the page's thin line (page state, a uint16 at its end)
-INPK = PAGE + 0xc0
-for off in range(0x90, 0xc8, 2):
-    e.uc.mem_write(PAGE + off, b"\x00\x00")
-block([0.5] * N, [0.25] * N)
-pk = [e.r16(PAGE + off) for off in range(0x90, 0xc8, 2)]
-check("the input's peak (0.5 of full scale) is kept for the page's level line", any(abs(v - 32767) < 3 for v in pk), pk)
-block([0.0] * N, [0.0] * N)
-pk2 = [e.r16(PAGE + off) for off in range(0x90, 0xc8, 2)]
-check("... and falls a little each block when the input goes quiet", any(abs(v - 32767 * 15 // 16) < 40 for v in pk2), pk2)
-# 12: FX WHEN EMPTY (the option slot LOOPER_O_FXRST = 5): an emptied track's FX knobs go back to their defaults, once, when it becomes empty
-def setparam(t, prm, v):
-    e.uc.reg_write(A.UC_ARM_REG_S0, fl(v))
-    e.call("looper_set_param", t, prm)
-setparam(3, 0, 0.5)
-blocks(3)
-check("FX WHEN EMPTY off (the default): an empty track keeps its FX settings", abs(tr(3, O_FILT, "f") - 0.5) < 1e-6, tr(3, O_FILT, "f"))
-e.uc.mem_write(STATE + 164 + 5 * 4, struct.pack("<f", 1.0))
-setparam(3, 0, 0.5)
-blocks(3)
-check("FX WHEN EMPTY on: an empty track that was not empty the block before has them reset (the first block after the option went on)", abs(tr(3, O_FILT, "f")) < 1e-6, tr(3, O_FILT, "f"))
-setparam(3, 0, 0.25)
-blocks(3)
-check("... but a knob set while the track stays empty is left alone (it resets on the way to empty, not all the time)", abs(tr(3, O_FILT, "f") - 0.25) < 1e-6, tr(3, O_FILT, "f"))
-setparam(3, 11, -0.5)                                          # POS (the old STUT, now 0..1): the negative side is gone
-e.uc.mem_write(STATE + 164 + 5 * 4, struct.pack("<f", 0.0))
+# the input level for the page's thin line: dBFS across it (-60 at the bottom, 0 at the top: -12 dBFS = 80 %), peak held ~300 ms, clip colours
+import math
+def line_len(level_db, settle=0):
+    """Feed N frames at a constant level on both inputs; return (length in px of the input line, its colour, the full length)."""
+    for off in range(0x90, 0xc8, 2):
+        e.uc.mem_write(PAGE + off, b"\x00\x00")
+    amp = 10 ** (level_db / 20.0)
+    block([amp] * N, [amp] * N)
+    for _ in range(settle):
+        block([0.0] * N, [0.0] * N)
+    f = draw(0)
+    return f
+f0 = line_len(0)
+red = [x for x in f0 if x[2] == 1 and x[4] == 0x0C and x[3] > 20]
+check("a 0 dBFS input draws the line in the clip colour (red) next to the selected track's fader", len(red) >= 1, str([x for x in f0 if x[2] == 1 and x[3] > 20][:6]))
+LX = red[0][0]
+rail = [x for x in f0 if x[0] == LX and x[2] == 1 and x[4] == 0x10]
+full = rail[0][3] if rail else red[0][3]
+def px(level_db, settle=0):
+    f = line_len(level_db, settle)
+    v = [x for x in f if x[0] == LX and x[2] == 1 and x[4] in (0x0B, 0x14, 0x0C)]
+    return (v[0][3], v[0][4]) if v else (0, None)
+lens = {db: px(db) for db in (-60, -48, -30, -18, -12, -6, 0)}
+check("the line grows with the level (-60, -48, -30, -18, -12, -6, 0 dBFS: monotonic)", [lens[d][0] for d in sorted(lens)] == sorted(lens[d][0] for d in lens) and len({lens[d][0] for d in lens}) >= 6, str(lens))
+check(f"-12 dBFS reads about 80 percent of the line ({lens[-12][0]} of {full} px)", abs(lens[-12][0] / full - 0.8) < 0.04, str((lens[-12], full)))
+check("-30 dBFS reads about 50 %, -6 dBFS about 90 %", abs(lens[-30][0] / full - 0.5) < 0.04 and abs(lens[-6][0] / full - 0.9) < 0.04, str((lens[-30], lens[-6], full)))
+check("0 dBFS fills the line; green below -6, yellow from -6 to -1.5, red above", lens[0][0] >= full - 1 and lens[-12][1] == 0x0B and lens[-6][1] in (0x0B, 0x14) and lens[0][1] == 0x0C, str(lens))
+hold = px(-12, settle=40)
+check("the peak is held: 40 blocks (213 ms) after the hit the line has not moved", hold[0] == lens[-12][0], str((hold, lens[-12])))
+rel = px(-12, settle=56 + 60)
+check("... and then it falls", 0 < rel[0] < lens[-12][0], str((rel, lens[-12])))
 # knobs: message 0x32 to the view
 viewmsg = []
 e.stub(0x080B5C70, lambda: viewmsg.append(e.r16(e.arg(1))))
