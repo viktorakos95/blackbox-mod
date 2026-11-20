@@ -10,7 +10,7 @@
  *               playhead along its bottom. It is the record button: hold = record while held, double tap =
  *               latch, tap = keep (the engine times the gestures).
  *   fader       a hairline with ticks and a round handle (the white dot), a 2 px line in the track colour up to
- *               it, and a thin meter on each side for the left and right output (level and pan together).
+ *               it (n16: the two thin side meters for the outputs are gone: the pan dial shows the pan).
  *               Touch or drag anywhere in it, or turn the track's knob. The level is written below.
  *   pan dial    drawn like the pad config's knobs (label, arc, pointer); tap it (pink frame) and the track's knob
  *               turns the pan instead of the level; tap again to give the knob back.
@@ -198,7 +198,7 @@ struct page {
     int32_t tw2, tw3;                               /* the touch event's third and fourth words (a finger id?) */
     int32_t vrect[4];                               /* the mixer view's own rectangle, while the page widens it */
     uint8_t scr_h[8];                               /* the last distinct screen ids the app showed (newest first) */
-    uint8_t lead_eff, _le[3];                       /* (_le[0]: blocks the input peak is still held, the thin level line) */                       /* the leader that counts: lead, once its page has stayed open for a while */
+    uint8_t lead_eff, _le[3];                       /* (_le[0]: the tick of the last paint a DRONE-8 encoder click did) */                       /* the leader that counts: lead, once its page has stayed open for a while */
     uint32_t lead_t;                                /* when lead last changed (looper_ticks) */
     uint16_t panic_t;                               /* SAMPLR's PANIC: when it was armed (the first tap, the low 16 bits of looper_ticks, 0 = not armed); a second tap within 2 s fires it */
     uint16_t in_peak;                               /* the input's level (peak, 0..65535 of full scale; held ~300 ms, then falling): the page's thin line */
@@ -970,23 +970,16 @@ static void draw_column(int t, const struct lay *L, const struct looper_info *k)
     draw_rec(t, L, k);
     /* the fader: a hairline with ticks, a 2 px line in the track colour up to a round handle */
     int d = L->bars_y, h = L->bars_h, fx = x + w / 2;
-    float gl = k->pan > 0.f ? 1.f - k->pan : 1.f, gr = k->pan < 0.f ? 1.f + k->pan : 1.f;
     vline(fx, d, h, C_RAIL);
     for (int q = 0; q <= 4; q++)
         hline(fx - 3, d + q * (h - 1) / 4, 7, C_GREY);
     int hy = d + h - (int)(pos_of(k->level) * (float)h + .5f);
     int lc = k->muted ? C_GREY : colour;
     box(fx, hy, 2, d + h - hy, lc);
-    for (int c = 0; c < 2; c++) {                                 /* a thin meter for each output */
-        int mx = c ? x + w - 9 : x + 8;
-        int m = live ? (int)(pos_of(k->level * (c ? gr : gl)) * (float)h + .5f) : 0;
-        vline(mx, d, h, C_RAIL);
-        vline(mx, d + h - m, m, lc);
-    }
     dot(fx, hy, C_WHITE);
     if (P->sel == t) {                                            /* the input level, a thin line beside the selected track's fader (what the track would record) */
-        float db = P->in_peak ? lin_db((float)P->in_peak * (1.f / 65535.f)) : -99.f;      /* dBFS across the line: -60 at the bottom, 0 at the top (-12 dBFS = 80 %) */
-        int ih = (int)((db + 60.f) * (1.f / 60.f) * (float)h + .5f);
+        float db = P->in_peak ? lin_db((float)P->in_peak * (1.f / 65535.f)) : -99.f;      /* dBFS across the line: -48 at the bottom, 0 at the top (-12 dBFS = 75 %; below -48 nothing shows) */
+        int ih = (int)((db + 48.f) * (1.f / 48.f) * (float)h + .5f);
         ih = ih < 0 ? 0 : ih > h ? h : ih;
         vline(fx + 6, d, h, C_RAIL);
         vline(fx + 6, d + h - ih, ih, db > -1.5f ? C_RED : db > -6.f ? C_YELLOW : C_GREEN);
@@ -1328,7 +1321,7 @@ static void draw_sm_top(struct sm *s, const char *info)
         st = "ARMED";
         col = C_YELLOW;
     } else if (s->g_run) {
-        st = "LOOP";
+        st = "PLAYING";
     }
     if (!st && looper_clock_on()) {
         st = "CLK";                                               /* SAMPLR is on the sequencer's clock (else its own free-running grid) */
@@ -1819,10 +1812,11 @@ static uint32_t signature(void)
     h = (h ^ (uint32_t)lira_ui_save(1) * 7919u) * 16777619u;                           /* (the SAVE button's SAVING / SAVED / FAILED) */
     h = (h ^ (uint32_t)(P->panic_t && (uint16_t)(looper_ticks() - P->panic_t) < PANIC_WAIT)) * 16777619u;               /* (SAMPLR's PANIC asking SURE?, and back after 2 s) */
     h = (h ^ (uint32_t)looper_overload_level()) * 16777619u;
+    h = (h ^ (uint32_t)(P->in_peak >> 9)) * 16777619u;                                  /* (the input level line: redrawn as it moves, 128 steps of the linear peak) */
     return h ^ looper_len() ^ (P->mode == M_SMPLR ? samplr_sig() : P->mode == M_TRIG ? t2m_page_sig() : 0u) ^ (P->mode == M_LIRA ? lira_ui_sig() : P->mode == M_MCL ? mcl_page_sig() : 0u);
 }
 
-/* From looper_in, every audio block: the input's peak (the page's thin line): it rises at once, is held for ~300 ms (56 blocks) and then falls by 1/16 a block. */
+/* From looper_in, every audio block: the input's peak (the page's thin line): it rises at once and falls by 1/12 a block (~150 ms for 20 dB at 5.3 ms a block), no hold. */
 void looper_page_inpeak(float pk)
 {
     uint32_t v = (uint32_t)(pk * 65535.f);
@@ -1830,11 +1824,8 @@ void looper_page_inpeak(float pk)
     uint32_t old = P->in_peak;
     if (v >= old) {
         P->in_peak = (uint16_t)v;
-        P->_le[0] = 56;
-    } else if (P->_le[0]) {
-        P->_le[0]--;
     } else {
-        P->in_peak = (uint16_t)(old - old / 16u);
+        P->in_peak = (uint16_t)(old - (old + 11u) / 12u);
     }
 }
 
@@ -2481,7 +2472,13 @@ void looper_view_msg(uint8_t *view, const uint16_t *msg)
             float step = (float)counts * KNOB_SCALE;
             if (P->mode == M_LIRA) {
                 lira_knob(knob, counts);
-                dirty_now(view);
+                if ((uint8_t)((uint8_t)looper_ticks() - P->_le[0]) >= 4u) {    /* a click paints at once, but not again within ~20 ms of the last one: the page is a heavy draw (text), and a fast turn queued a paint per click (the knob lagged behind the encoder) */
+                    P->_le[0] = (uint8_t)looper_ticks();
+                    dirty_now(view);
+                } else {
+                    dirty(view);
+                    P->sig = 0;                                   /* (the next poll, 5 ms later, paints the latest value) */
+                }
                 return;
             }
             if (P->mode == M_SMPLR) {

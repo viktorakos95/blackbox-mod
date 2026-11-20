@@ -220,7 +220,7 @@ struct pg {                      /* the LIRA page's own instance (Mixer screen p
     uint8_t nv_hold;             /* voices sounding when it went out (dhold was their cost) */
     int16_t env[4];              /* ENV tab (ids 210..213): FAST attack, FAST release, slow attack, slow release (0..1000, see env_secs) */
     int16_t vel_amt;             /* ... VELOCITY: how much the velocity counts (214) */
-    uint8_t vel_src, vel_to;     /* ... where it comes from (215: 0 STEADY = none, 1 TOUCH = where on the plate it was hit, 2 SLIDE = the finger's height while held, 3 MIDI = the note's velocity) and what it changes (216: 0 SOUND = how far the sound opens (envelope, level and tone), 1 VOLUME = the level only, 2 BOTH) */
+    uint8_t vel_src, vel_to;     /* ... where it comes from (215: 0 STEADY = none, 1 TOUCH = where on the plate it was hit, 2 SLIDE = the finger's height while held, 3 MIDI = the note's velocity) and what it changes (vel_to: always 1, the level only; the SOUND / BOTH choices of n15 are gone, kept for the file format) */
     uint8_t vel[8];              /* each voice's touch height (0..255), live while held when SLIDE */
     uint8_t mvel[8], mflag[8];   /* the velocity of the last MIDI note on a plate (0..255) and that it is waiting to be used by the engine */
     uint8_t env_set;             /* the ENV values have been given their defaults (pools made before them start at 0) */
@@ -244,6 +244,8 @@ struct mlearn {                  /* MIDI learn: a control (ui id) follows a cont
     uint32_t cjack, cqueue, craw, cusb;   /* messages seen: from the jack's ring, from the software queue, packets in the USB callback, messages taken from its ring (the MIDI panel's J / U / C) */
     uint32_t hi;                 /* per mapping: the controller was at 64 or over at its last message (a button presses on the way up) */
     uint8_t snote[8];
+    uint8_t sretry;              /* disk errors a save or load got over by trying again (counter, for the tests)
+    */
     uint8_t sdiv[4];             /* the division each tempo sync had when it was switched off (it comes back on at that one; 0 = 1/4) */
     int16_t raw[8];              /* the FREE encoder's catch: clicks still to absorb at a note (sign = direction) */            /* the note each voice's detent holds */
     uint8_t rwr, rrd;            /* controller changes from the USB interrupt, waiting for the audio task */
@@ -791,7 +793,7 @@ static void env_defaults(struct pg *g)
         g->env[i] = env_def[i];
     g->vel_amt = 700;
     g->vel_src = 0;
-    g->vel_to = 0;
+    g->vel_to = 1;
     for (int k = 0; k < 8; k++)
         g->vel[k] = 255;
     g->env_set = 1;
@@ -920,7 +922,7 @@ int lira_ui_get(int c)
     if (c == 215)
         return g->vel_src;
     if (c == 216)
-        return g->vel_to;
+        return 1;                                             /* (the EFFECT choice is gone: velocity is the volume) */
     return c == 120 ? g->level : 0;
 }
 
@@ -960,8 +962,6 @@ void lira_ui_set(int c, int v)
         g->vel_amt = (int16_t)(v < 0 ? 0 : v > 1000 ? 1000 : v);
     else if (c == 215)
         g->vel_src = (uint8_t)(v < 0 ? 0 : v > 3 ? 3 : v);
-    else if (c == 216)
-        g->vel_to = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
     grec(g, c, lira_ui_get(c));
 }
 
@@ -1107,7 +1107,7 @@ static void ml_apply(struct pool *p, int id, unsigned val)
 
 static int ml_is_button(int id)
 {
-    return (id >= 100 && id < 108) || (id >= 144 && id < 154) || (id >= 160 && id < 164) || (id >= 190 && id < 197) || id == 215 || id == 216 || id >= 300;
+    return (id >= 100 && id < 108) || (id >= 144 && id < 154) || (id >= 160 && id < 164) || (id >= 190 && id < 197) || id == 215 || id >= 300;
 }
 
 #define ML_NOTE 0x10u                                      /* in a mapping's ch byte: the mapping is a note (else a controller); bits 0..3 the channel */
@@ -1158,10 +1158,7 @@ void lira_midi_msg(unsigned st, unsigned cc, unsigned val)
             if (ml_is_button(id)) {
                 if (ty == 0x90u && val > 0u && id >= 300 && id < 308)
                     lira_ui_midivel(id - 300, (int)val);                         /* the note's velocity: VELOCITY SOURCE = MIDI uses it (a touch plays full then) */
-                if (id >= 300 && id < 308)
-                    lira_ui_key(id - 300, ty == 0x90u && val > 0u);      /* a plate played by a NOTE follows the key: on at note on, off at note off (whatever the LATCH / HOLD switch says: a latched plate would stay on) */
-                else
-                    lira_btn_press(id, ty == 0x90u && val > 0u);
+                lira_btn_press(id, ty == 0x90u && val > 0u);              /* (a plate in LATCH toggles on the note on and ignores the off; in HOLD it follows the key) */
                 m->seq++;
             }
         } else if (ml_is_button(id)) {
@@ -1566,11 +1563,11 @@ void lira_page_run(float *l, float *r, int n)
             g->keyed[k] = g->want[k];
             /* the velocity (CTRL tab): SOURCE STEADY = none, every plate plays full; TOUCH = where on the plate it was hit; SLIDE = that, then the finger's height while held (below);
                MIDI = the note's velocity (a plate touched with the finger plays full). AMOUNT says how much of it counts. EFFECT: SOUND = how far the sound opens (the envelope, so
-               level and tone), VOLUME = the level only, BOTH. */
+               level and tone), VOLUME = the level only, BOTH. (n16: only the level is left.) */
             float x = vel_x(g, k, 1);
             if (g->want[k]) {
-                lira_touch(&s->l, k, g->vel_to != 1 ? x : 1.0f);
-                lira_vgain(&s->l, k, g->vel_to != 0 ? x * x : 1.0f);
+                lira_touch(&s->l, k, 1.0f);
+                lira_vgain(&s->l, k, x * x);
             } else {
                 lira_key(&s->l, k, 0);
             }
@@ -1579,8 +1576,8 @@ void lira_page_run(float *l, float *r, int n)
         for (int k = 0; k < 8; k++)
             if (g->want[k] && g->keyed[k]) {
                 float x = vel_x(g, k, 0);
-                lira_touch(&s->l, k, g->vel_to != 1 ? x : 1.0f);
-                lira_vgain(&s->l, k, g->vel_to != 0 ? x * x : 1.0f);
+                lira_touch(&s->l, k, 1.0f);
+                lira_vgain(&s->l, k, x * x);
             }
     if ((s->ticks++ & 1) == 0) {
         apply_row(g->row, s, 0, g->chord_on ? 2 : 1);
@@ -2522,7 +2519,7 @@ static uint32_t blob_crc(const struct blob *b)
  * project's folder when one is open, as the stock settings.tml), then at the card's root ("0:/" + name) when that did not open: a save that works somewhere beats FAILED. */
 #define CHUNK 256u
 
-static int put_one(struct pool *p, const char *path, const void *buf, unsigned n)
+static int put_try(struct pool *p, const char *path, const void *buf, unsigned n)
 {
     for (unsigned i = 0; i < sizeof p->fil / 4; i++)
         p->fil[i] = 0;
@@ -2562,6 +2559,35 @@ static int put_one(struct pool *p, const char *path, const void *buf, unsigned n
     return 0;
 }
 
+/* The stock SD driver fails now and then under load (FR_DISK_ERR from one transfer, or a card that is not ready for a moment), as MCL's card layer found: there the answer is
+ * to try again about a millisecond later with the file opened afresh. Every step of a save (open, each write, close, the read-back) is part of put_try, and any failure
+ * that is not a permanent one (no path / no file / bad name / denied / no file system) starts the whole file again, up to 4 tries; only then is the code reported. */
+#define DWT_CYC (*(volatile uint32_t *)0xe0001004u)
+static void sd_settle(void)                              /* ~1 ms (the cycle counter, bounded so that a stopped counter cannot hang the task) */
+{
+    uint32_t t0 = DWT_CYC;
+    for (unsigned i = 0; i < 60000u && DWT_CYC - t0 < 400000u; i++)
+        __asm volatile("nop");
+}
+
+static int sd_transient(int rc)
+{
+    return rc == 1 || rc == 2 || rc == 3 || rc == 9 || rc >= 20;
+}
+
+static int put_one(struct pool *p, const char *path, const void *buf, unsigned n)
+{
+    int rc = 0;
+    for (int attempt = 0; attempt < 4; attempt++) {
+        rc = put_try(p, path, buf, n);
+        if (rc == 0 || !sd_transient(rc))
+            break;
+        p->ml.sretry++;
+        sd_settle();
+    }
+    return rc;
+}
+
 /* The file is written twice: under its name (the task's current directory: the project's folder while one is open) and at the card's root ("last saved" copy, which is what
  * a load finds when the directory it runs in is not the one the save ran in, e.g. at boot before a project is chosen). Each copy is read back and compared. The result is 0 when at
  * least one of them is on the card, else the first one's code; sroot says only the root copy made it. */
@@ -2587,7 +2613,7 @@ void lira_save(void)
 static void gen_save(struct pool *p);
 /* One file in: the name as it is (the task's current directory), then at the card's root. 0 ok (br = bytes read); 4 / 5 no such file or path at either; else the open's or the
  * read's FatFs error (a card that is not ready yet: the caller may try again later). */
-static int get_file(struct pool *p, const char *name, const char *root_name, void *buf, unsigned n, unsigned *got)
+static int get_file1(struct pool *p, const char *name, const char *root_name, void *buf, unsigned n, unsigned *got)
 {
     int code = 4;
     for (int attempt = 0; attempt < 2; attempt++) {
@@ -2615,6 +2641,19 @@ static int get_file(struct pool *p, const char *name, const char *root_name, voi
         return 0;
     }
     return code;
+}
+
+static int get_file(struct pool *p, const char *name, const char *root_name, void *buf, unsigned n, unsigned *got)
+{
+    int rc = 4;
+    for (int attempt = 0; attempt < 4; attempt++) {          /* (the same retries as a save: a disk error or a card not ready is tried again ~1 ms later) */
+        rc = get_file1(p, name, root_name, buf, n, got);
+        if (rc == 0 || !sd_transient(rc))
+            break;
+        p->ml.sretry++;
+        sd_settle();
+    }
+    return rc;
 }
 
 static int gen_load(struct pool *p);
@@ -2741,7 +2780,7 @@ static void lira_load_(void)
             g->env[i] = (int16_t)(et->env[i] < 0 ? 0 : et->env[i] > 1000 ? 1000 : et->env[i]);
         g->vel_amt = (int16_t)(et->vel_amt < 0 ? 0 : et->vel_amt > 1000 ? 1000 : et->vel_amt);
         g->vel_src = et->vel_src > 3 ? 0 : et->vel_src;               /* (files before n15: 0 / 1 = STEADY / TOUCH; the old OFF is the new STEADY) */
-        g->vel_to = et->vel_to > 2 ? 0 : et->vel_to;
+        g->vel_to = 1;                                                /* (older files saved SOUND / BOTH here: velocity is the volume only now) */
     }
     g->chord_on = b->misc[0] & 1;
     g->space = (uint8_t)(b->misc[1] < lira_space_count() ? b->misc[1] : 0);
@@ -2889,6 +2928,8 @@ int lira_ui_save(int op)
         }
         return 1;
     }
+    if (op == 3)
+        return m->sretry;                                  /* disk errors got over by trying again */
     if (op == 2)
         return m->scm | m->scg << 8;                       /* the reasons shown after FAILED (bbmod.bin, bbgen.bin) */
     if (m->sstate == 1 && (uint16_t)((uint16_t)looper_ticks() - m->st_t) >= SAVE_TIMEOUT) {      /* the task never came for it (no idle pass in 6 s): FAILED, code 99 */

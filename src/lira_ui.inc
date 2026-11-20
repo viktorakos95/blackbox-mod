@@ -172,10 +172,10 @@ static int lu_specs(int sel, struct lu_spec *o)
         LU_SP(n, 194, x, d, LU_COL, 38, 5, lu_enc_cell[3], LK_BTN, LU_ACC2, 0, "POWER");
         n++;
     } else if (page == LP_ENV) {                                  /* FAST: attack, release | SLOW: attack, release | VELOCITY: amount, source, target | MIDI (to come) */
-        static const uint16_t ids[7] = {210, 211, 212, 213, 214, 215, 216};
-        static const char *const nm[7] = {"ATTACK", "RELEASE", "ATTACK", "RELEASE", "AMT", "SOURCE", "EFFECT"};
-        static const uint8_t pan[7] = {0, 0, 1, 1, 2, 2, 2}, cel[7] = {0, 1, 0, 1, 0, 1, 2};
-        for (int i = 0; i < 7; i++) {
+        static const uint16_t ids[6] = {210, 211, 212, 213, 214, 215};
+        static const char *const nm[6] = {"ATTACK", "RELEASE", "ATTACK", "RELEASE", "AMT", "SOURCE"};
+        static const uint8_t pan[6] = {0, 0, 1, 1, 2, 2}, cel[6] = {0, 1, 0, 1, 0, 1};
+        for (int i = 0; i < 6; i++) {
             lu_cell(pan[i], cel[i], &x, &d);
             LU_SP(n, ids[i], x, d, LU_COL, 38, 2 + pan[i], lu_enc_cell[cel[i]], i < 5 ? LK_KNOB : LK_BTN, pan[i] == 1 ? LU_ACC2 : LU_ACC1, i < 5 ? 11 : 0, nm[i]);
             n++;
@@ -359,9 +359,6 @@ static void lu_draw_spec(const struct lu_spec *s, int bank, int chord)
         else if (s->id == 215) {
             static const char *const sn[4] = {"STEADY", "TOUCH", "SLIDE", "MIDI"};
             st = sn[lira_ui_get(215) & 3], on = lira_ui_get(215) != 0;
-        } else if (s->id == 216) {
-            static const char *const en[3] = {"SOUND", "VOLUME", "BOTH"};
-            st = en[lira_ui_get(216) % 3], on = lira_ui_get(215) != 0;      /* (lit only when there is a velocity to apply it to) */
         }
         else if (s->id == 220)
             st = lira_ui_learn(0, 0) & 1 ? "ON" : "OFF", on = lira_ui_learn(0, 0) & 1;
@@ -502,9 +499,17 @@ static void draw_lira(void)
     if (page == LP_ENV) {                                         /* VELOCITY's free fourth cell: what the SOURCE chosen means, in a few words */
         static const char *const hint[4][4] = {{"EVERY", "PLATE", "PLAYS", "FULL"}, {"HIT", "HEIGHT", "TOP=", "LOUD"}, {"SLIDE", "UP/DN", "WHILE", "HELD"}, {"MIDI", "NOTE", "VELO-", "CITY"}};
         int hx, hd;
-        lu_cell(2, 3, &hx, &hd);
-        for (int i = 0; i < 4; i++)
-            text_c(hx, hd + 4 + 9 * i, LU_COL, hint[lira_ui_get(215) & 3][i], LU_DIM, 1);
+        lu_cell(2, 2, &hx, &hd);                                  /* (the bottom row of the panel: two lines across both cells) */
+        for (int i = 0; i < 2; i++) {
+            char hb[14], *hq = hb;
+            for (const char *w = hint[lira_ui_get(215) & 3][2 * i]; *w; w++)
+                *hq++ = *w;
+            *hq++ = ' ';
+            for (const char *w = hint[lira_ui_get(215) & 3][2 * i + 1]; *w; w++)
+                *hq++ = *w;
+            *hq = 0;
+            text_c(hx, hd + 8 + 11 * i, 2 * LU_COL, hb, LU_DIM, 1);
+        }
     }
     if (page == LP_ENV) {                                         /* the MIDI panel's fourth cell: what has arrived since boot (J jack, U USB, C raw USB packets): tells whether USB reaches the unit at all */
         int sx, sd;
@@ -648,7 +653,7 @@ static void lu_set(const struct lu_spec *s, int v)
 /* the buttons that cycle through choices and have a first one to go back to (FM, TOUCH, the sync divisions, LEN, the velocity switches) */
 static int lu_btn_resets(int id)
 {
-    return (id >= 100 && id < 108) || id == 148 || id == 215 || id == 216;
+    return (id >= 100 && id < 108) || id == 148 || id == 215;
 }
 
 /* a control back to its default (the double tap) */
@@ -703,8 +708,6 @@ static void lu_press(const struct lu_spec *s, int dir)
         lira_ui_action(3);
     else if (id == 215)                                           /* VELOCITY SOURCE: STEADY, TOUCH, SLIDE, MIDI */
         lira_ui_set(id, (lira_ui_get(id) + (dir < 0 ? 3 : 1)) % 4);
-    else if (id == 216)                                           /* VELOCITY EFFECT: SOUND, VOLUME, BOTH */
-        lira_ui_set(id, (lira_ui_get(id) + (dir < 0 ? 2 : 1)) % 3);
     else if (id == 220)
         lira_ui_learn(1, 0);
     else if (id == 221)

@@ -456,12 +456,12 @@ blocks(2)
 f = draw(0)
 bars = [x for x in f if x[2] == 2 and x[3] > 5 and x[4] == 0x1B]
 meters = [x for x in f if x[2] == 1 and x[3] > 5 and x[4] == 0x1B and x[1] > 20]
-check("gain 0.5 sits at 0.375 of the travel (24 of 64 px): the 2 px line and both thin meters", len(bars) == 1 and bars[0][3] == 24 and len(meters) == 2 and meters[0][3] == meters[1][3] == 24, (bars, meters))
+check("gain 0.5 sits at 0.375 of the travel (24 of 64 px): the 2 px line; the two thin side meters are gone (n16)", len(bars) == 1 and bars[0][3] == 24 and len(meters) == 0, (bars, meters))
 pan(0, 0.5)
 blocks(2)
 f = draw(0)
 meters = sorted([x for x in f if x[2] == 1 and x[3] > 5 and x[4] == 0x1B and x[1] > 20], key=lambda x: x[0])
-check("pan half right: the left meter is half as tall as the right", len(meters) == 2 and abs(meters[0][3] * 2 - meters[1][3]) <= 2, meters)
+check("pan half right: still no side meters (the pan dial shows the pan)", len(meters) == 0, meters)
 pan(0, 0.0)
 level(0, 1.0)
 
@@ -539,7 +539,7 @@ touch("up", 190, 100)
 touch("up", 190, 78)
 check("the page's touches never reach the stock mixer handlers", len(stock) == stock_clear, stock)
 
-# the input level for the page's thin line: dBFS across it (-60 at the bottom, 0 at the top: -12 dBFS = 80 %), peak held ~300 ms, clip colours
+# the input level for the page's thin line: dBFS across it (-48 at the bottom, 0 at the top: -12 dBFS = 75 %), instant attack, ~150 ms for 20 dB down, clip colours
 import math
 def line_len(level_db, settle=0):
     """Feed N frames at a constant level on both inputs; return (length in px of the input line, its colour, the full length)."""
@@ -561,15 +561,27 @@ def px(level_db, settle=0):
     f = line_len(level_db, settle)
     v = [x for x in f if x[0] == LX and x[2] == 1 and x[4] in (0x0B, 0x14, 0x0C)]
     return (v[0][3], v[0][4]) if v else (0, None)
-lens = {db: px(db) for db in (-60, -48, -30, -18, -12, -6, 0)}
-check("the line grows with the level (-60, -48, -30, -18, -12, -6, 0 dBFS: monotonic)", [lens[d][0] for d in sorted(lens)] == sorted(lens[d][0] for d in lens) and len({lens[d][0] for d in lens}) >= 6, str(lens))
-check(f"-12 dBFS reads about 80 percent of the line ({lens[-12][0]} of {full} px)", abs(lens[-12][0] / full - 0.8) < 0.04, str((lens[-12], full)))
-check("-30 dBFS reads about 50 %, -6 dBFS about 90 %", abs(lens[-30][0] / full - 0.5) < 0.04 and abs(lens[-6][0] / full - 0.9) < 0.04, str((lens[-30], lens[-6], full)))
+lens = {db: px(db) for db in (-60, -54, -48, -42, -30, -18, -12, -6, 0)}
+check("the line grows with the level (monotonic from -48 to 0 dBFS)", [lens[d][0] for d in sorted(lens)] == sorted(lens[d][0] for d in lens) and len({lens[d][0] for d in lens}) >= 6, str(lens))
+check("the noise floor shows nothing: -60, -54 and -48 dBFS draw no line at all", lens[-60][0] == 0 and lens[-54][0] == 0 and lens[-48][0] == 0, str(lens))
+check(f"-12 dBFS reads 75 percent of the line ({lens[-12][0]} of {full} px)", abs(lens[-12][0] / full - 0.75) < 0.04, str((lens[-12], full)))
+check("-30 dBFS reads about 37.5 %, -6 dBFS about 87.5 %", abs(lens[-30][0] / full - 0.375) < 0.04 and abs(lens[-6][0] / full - 0.875) < 0.04, str((lens[-30], lens[-6], full)))
 check("0 dBFS fills the line; green below -6, yellow from -6 to -1.5, red above", lens[0][0] >= full - 1 and lens[-12][1] == 0x0B and lens[-6][1] in (0x0B, 0x14) and lens[0][1] == 0x0C, str(lens))
-hold = px(-12, settle=40)
-check("the peak is held: 40 blocks (213 ms) after the hit the line has not moved", hold[0] == lens[-12][0], str((hold, lens[-12])))
-rel = px(-12, settle=56 + 60)
-check("... and then it falls", 0 < rel[0] < lens[-12][0], str((rel, lens[-12])))
+rel = px(-6, settle=28)
+check("it falls fast: ~150 ms (28 blocks) after a -6 dBFS hit it is ~20 dB lower (about -26 dBFS)", 0 < rel[0] and abs(rel[0] / full - (48 - 26) / 48) < 0.08, str((rel, lens[-6], full)))
+gone = px(-6, settle=120)
+check("... and a moment later it is gone", gone[0] == 0, str(gone))
+# the page redraws as the level moves (the signature includes the meter)
+e.call("looper_page_enter")
+for off in range(0x90, 0xc8, 2):
+    e.uc.mem_write(PAGE + off, b"\x00\x00")
+e.call("looper_page_poke", VIEW)
+for i in range(16):
+    e.uc.mem_write(VIEW + 0x3AC + i * 0x1A0 + 0x17C, b"\x00")
+amp = 10 ** (-20 / 20.0)
+block([amp] * N, [amp] * N)
+e.call("looper_page_poke", VIEW)
+check("an input level change marks the page for a redraw at the next poll", all(e.r8(VIEW + 0x3AC + i * 0x1A0 + 0x17C) == 1 for i in range(16)))
 # knobs: message 0x32 to the view
 viewmsg = []
 e.stub(0x080B5C70, lambda: viewmsg.append(e.r16(e.arg(1))))
@@ -1229,6 +1241,9 @@ touch("up", 255, 27)
 check("SMPLR: REC arms the take", e.r8(SMPLR_P + G_ARMED) == 1, e.r8(SMPLR_P + G_ARMED))
 touch("down", 255, 27)                                           # REC again cancels
 touch("up", 255, 27)
+# n16: the top-right status of the SAMPLR page while the gesture loop plays reads PLAYING (it read LOOP). Only the string is checked (the drawing path
+# of the status was not reachable from this harness's page state); the code is `else if (s->g_run) st = "PLAYING"`, in draw_sm_top beside REC / ARMED / CLK.
+check("SAMPLR top right: the loop-playing status text is PLAYING (in the image's code)", b"PLAYING\0" in open("out/cave.bin", "rb").read())
 # SAVE TO PROJECT on the SAMPLR page: the end of the footer, right of the four sheets
 saves = []
 e.stub(e.sym["lira_ui_save"] & ~1, lambda: saves.append(e.arg(0)))

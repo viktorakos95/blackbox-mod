@@ -18,6 +18,12 @@ e.uc.mem_map(0xC0000000, 0x400000)
 e.uc.mem_map(0x38800000, 0x1000)
 e.uc.mem_map(0x58024000, 0x1000)
 e.uc.mem_map(0xE0000000, 0x10000)
+from unicorn import UC_HOOK_MEM_READ
+_dwt = [0]
+def _dwt_read(uc, access, address, size, value, user):                         # the cycle counter runs (the retry pause waits on it)
+    _dwt[0] = (_dwt[0] + 100000) & 0xFFFFFFFF
+    uc.mem_write(0xE0001004, struct.pack("<I", _dwt[0]))
+e.uc.hook_add(UC_HOOK_MEM_READ, _dwt_read, begin=0xE0001004, end=0xE0001007)
 fails = 0
 
 
@@ -183,10 +189,10 @@ env = lambda: [get(c) for c in range(210, 217)]
 for c in range(210, 217):
     e.call("lira_ui_set", c, 0)
 e.call("lira_load")
-check("the ENV tab comes back (attacks, releases, velocity amount, source, target)", env() == [300, 800, 100, 900, 250, 1, 1], str(env()))
+check("the ENV tab comes back (attacks, releases, velocity amount, source, target)", env() == [300, 800, 100, 900, 250, 1, 1], str(env()))      # (216, the old EFFECT, always reads 1: velocity is the volume)
 disk["bbmod.bin"] = tone_file
 e.call("lira_load")
-check("a file from before the ENV tab loads with its defaults (FAST attack a 3 ms snap, the rest as built, velocity off)", env() == [81, 500, 607, 500, 700, 0, 0], str(env()))
+check("a file from before the ENV tab loads with its defaults (FAST attack a 3 ms snap, the rest as built, velocity off)", env() == [81, 500, 607, 500, 700, 0, 1], str(env()))
 e.call("lira_ui_set", 16, 1)
 e.call("lira_load_thunk", 0x2401F508, 0x24072000)
 check("load thunk: the stock load handler runs, then the file is read", order[-1][0] == "stock load" and get(16) == want[0], str(order[-1]))
@@ -266,7 +272,7 @@ def bad_write():
 w_calls = []
 def counting_write():
     w_calls.append(1)
-    if len(w_calls) <= 2:                                                           # (the file and its retry at the root)
+    if "bbmod" in cur["path"]:                                                      # (every try of both copies of bbmod.bin fails; bbgen.bin is fine)
         e.uc.reg_write(UC_ARM_REG_R0, 1)
     else:
         f_write()
@@ -298,5 +304,99 @@ if set_ticks(10000):
 else:
     print("(timeout test skipped: ticks not found)")
 print("SAVE TO PROJECT tests done")
+# n16: a disk error now and then (FR_DISK_ERR) is tried again with the file reopened: SAVED, no F code; only if all 4 tries fail the code is shown
+disk.clear()
+e.stub(0x08086A06, f_write)
+e.stub(0x08086534, f_open)
+def flaky(counter, every, code, which):
+    n = [0]
+    def f():
+        n[0] += 1
+        if n[0] in every:
+            e.uc.reg_write(UC_ARM_REG_R0, code)
+        else:
+            which()
+    return f
+def sretry():
+    e.call("lira_ui_save", 3)
+    return e.uc.reg_read(UC_ARM_REG_R0)
+r0 = sretry()
+e.stub(0x08086A06, flaky(0, {1, 5}, 1, f_write))                            # two sporadic write errors (DISK_ERR)
+st = run_save()
+check("two sporadic write errors (FR_DISK_ERR): the files are written again, SAVED, and the content is whole", st == 2 and "bbmod.bin" in disk and "bbgen.bin" in disk and len(disk["bbgen.bin"]) > 20, str((st, lcodes(), sretry() - r0)))
+check("... it needed retries (counted), none shown on the button", sretry() - r0 >= 1 and lcodes() == (0, 0), str((sretry(), lcodes())))
+disk.clear()
+e.stub(0x08086A06, f_write)
+def flaky_open(every):
+    n = [0]
+    def f():
+        n[0] += 1
+        path = e.cstr(e.arg(1))
+        opened.append((path, e.arg(2)))
+        cur.update(path=path, mode=e.arg(2), pos=0)
+        rc = 1 if n[0] in every else 0
+        if rc == 0 and e.arg(2) == 0x0A:
+            disk[path] = b""
+        if rc == 0 and e.arg(2) == 1 and path not in disk:
+            rc = 4
+        e.uc.reg_write(UC_ARM_REG_R0, rc)
+    return f
+e.stub(0x08086534, flaky_open({1, 2, 3}))                                    # the first three opens fail (disk error), the fourth works
+st = run_save()
+check("three failed opens in a row (DISK_ERR): the fourth try works, SAVED", st == 2 and "bbmod.bin" in disk and "bbgen.bin" in disk, str((st, lcodes(), list(disk))))
+disk.clear()
+e.stub(0x08086534, flaky_open(set(range(1, 9))))        # every try of bbmod.bin, under its name and at the root, fails: F1; bbgen.bin gets its own tries
+st = run_save()
+check("four failed tries at both places of one file: only then FAILED with F1 (the other file is saved on its own)", st == 3 and lcodes() == (1, 0) and "bbgen.bin" in disk, str((st, lcodes())))
+disk.clear()
+e.stub(0x08086534, f_open)
+cl = [0]
+def flaky_close():
+    cl[0] += 1
+    e.uc.reg_write(UC_ARM_REG_R0, 1 if cl[0] == 1 else 0)
+e.stub(0x08086D76, flaky_close)
+st = run_save()
+check("a failed close (DISK_ERR) is tried again with a fresh write", st == 2 and "bbmod.bin" in disk, str((st, lcodes())))
+e.stub(0x08086D76, lambda: e.uc.reg_write(UC_ARM_REG_R0, 0))
+disk.clear()
+rd = [0]
+def flaky_read_once():
+    rd[0] += 1
+    if rd[0] == 1:
+        e.uc.reg_write(UC_ARM_REG_R0, 1)                                      # the read-back fails once
+    else:
+        f_read()
+e.stub(0x08086866, flaky_read_once)
+st = run_save()
+check("a read-back error (DISK_ERR) is tried again (the whole file again), SAVED", st == 2 and lcodes() == (0, 0), str((st, lcodes())))
+e.stub(0x08086866, f_read)
+# the project-save hook uses the same routine: the same retries
+disk.clear()
+wn = [0]
+def flaky_w2():
+    wn[0] += 1
+    if wn[0] == 2:
+        e.uc.reg_write(UC_ARM_REG_R0, 1)
+    else:
+        f_write()
+e.stub(0x08086A06, flaky_w2)
+e.call("lira_save")
+check("the project-save path (lira_save) retries a write error too: bbmod.bin on the card, whole", "bbmod.bin" in disk and len(disk["bbmod.bin"]) > 100, str(list(disk)))
+e.stub(0x08086A06, f_write)
+# a load that hits a disk error once is tried again
+disk["bbmod.bin"] = good
+ld = [0]
+def flaky_open_load():
+    ld[0] += 1
+    if ld[0] == 1:
+        opened.append((e.cstr(e.arg(1)), e.arg(2)))
+        e.uc.reg_write(UC_ARM_REG_R0, 1)
+    else:
+        f_open()
+e.stub(0x08086534, flaky_open_load)
+e.call("lira_ui_set", 16, 5)
+e.call("lira_load")
+check("a load whose first open fails (DISK_ERR) is tried again and restores the settings", get(16) != 5, str(get(16)))
+e.stub(0x08086534, f_open)
 print("failures:", fails)
 sys.exit(1 if fails else 0)
