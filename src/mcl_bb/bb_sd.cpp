@@ -206,7 +206,8 @@ static uint32_t execute(void)
     uint32_t r = 0;
     for (int attempt = 0;; attempt++) {
         r = exec_once();
-        if (r == 0 || !transient(r))
+        int lookup = op == OP_STAT || op == OP_OPENDIR || (op == OP_OPEN && req.mode == SD_READ);
+        if (r == 0 || !(transient(r) || (lookup && (r == 4u || r == 5u))))     /* (a lookup that finds nothing while the streamer is busy: tried again, the folder / file is there: user, n16 'E1 S11.4') */
             break;
         if (op == OP_CLOSE && !(fmode[h] & SD_WRITE))
             return 0;                                            /* a read-only file: nothing to write back, it is closed either way */

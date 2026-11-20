@@ -548,6 +548,30 @@ check("... while its browser shows: MCL's screen, and SAMPLE toggles listening (
 SMP.update(browsing=0, state=1)
 dn, _ = touch(tile("SAMPLE"), STRIP)
 check("... SAMPLE again closes the view (7 / 5)", dn == [(7, 5, 0)] and not [r for r in page_part(draw()) if r[0] == "lp_text_c" and r[-1] == "READY: PRESS RECORD"], dn)
+# --- NO, the record's length, MONO in the SAMPLE view (n17)
+touch(tile("SAMPLE"), STRIP)                                      # the view opens again
+NO_X = max(2, x0 - 6)
+SMP.update(state=2, browsing=0)
+dn, _ = touch(NO_X, TOP + 5)
+check("NO while the record waits: it is taken back (7 / 9), the view stays", dn == [(7, 9, 0)], dn)
+SMP.update(state=1)
+dn, _ = touch(x0 + 100, TOP + 44)
+check("a tap on the info line: the record's length steps on (7 / 8)", dn == [(7, 8, 0)], dn)
+m0 = u.mem_read(UI + 16, 1)[0]
+dn, _ = touch(x0 + 256 - 20, TOP + 5)
+m1 = u.mem_read(UI + 16, 1)[0]
+touch(x0 + 256 - 20, TOP + 5)
+check("the title bar's MONO / STEREO tag toggles the player's output (nothing sent to MCL), and back", m0 == 0 and m1 == 1 and u.mem_read(UI + 16, 1)[0] == 0 and dn == [], (m0, m1, dn))
+SMP.update(browsing=1, state=4)
+dn, _ = touch(NO_X, TOP + 5)
+check("NO in the browser (a file chosen): back to the view (7 / 7)", dn == [(7, 7, 0)], dn)
+SMP.update(browsing=1, state=0)
+dn, _ = touch(NO_X, TOP + 5)
+check("NO in the browser (nothing chosen): back, and the view closes (7 / 7, 7 / 5)", dn == [(7, 7, 0), (7, 5, 0)], dn)
+touch(tile("SAMPLE"), STRIP)
+SMP.update(browsing=0, state=1)
+dn, _ = touch(NO_X, TOP + 5)
+check("NO in the view: it closes (7 / 5)", dn == [(7, 5, 0)], dn)
 e.w32(e.sym["mcl_hires"], 1)
 
 # --- the footer line: no buttons

@@ -83,6 +83,7 @@ struct mcl_ui {
     uint16_t mask;              /* tiles shown pressed */
     int16_t acc[4];             /* knob counts below one detent */
     uint16_t smp;               /* 1: the SAMPLE view shows (the SAMPLE shortcut) */
+    uint8_t mono;               /* the file player's output: 0 stereo, 1 mono (the sum on both channels: a mono cable into one Machinedrum input) */
 };
 #define UI ((volatile struct mcl_ui *)0x38800680u)
 _Static_assert(sizeof(struct mcl_ui) <= 24, "the page state must end before 0x38800698");
@@ -735,8 +736,11 @@ void mcl_player_mix(float *l, float *r, int n)
             break;
         const int16_t *a = p->ring + 2u * (rd & (BB_PLAYER_RING - 1u)), *b = p->ring + 2u * ((rd + 1u) & (BB_PLAYER_RING - 1u));
         float f = (float)frac * (1.f / 65536.f);
-        l[i] += ((float)a[0] + (float)(b[0] - a[0]) * f) * g;
-        r[i] += ((float)a[1] + (float)(b[1] - a[1]) * f) * g;
+        float vl = ((float)a[0] + (float)(b[0] - a[0]) * f) * g, vr = ((float)a[1] + (float)(b[1] - a[1]) * f) * g;
+        if (UI->mono)
+            vl = vr = (vl + vr) * .5f;
+        l[i] += vl;
+        r[i] += vr;
         frac += step;
         rd += frac >> 16;
         frac &= 0xffffu;
@@ -997,6 +1001,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
     lp_frame(x0, top, MCL_W, MCL_H, MC_WHITE, 1);
     lp_box(x0 + 1, top + 1, MCL_W - 2, 12, MC_WHITE);
     lp_text(x0 + 5, top + 3, "SAMPLE  > MD TRACK 15 (RAM 1)", MC_BLACK, 1);
+    lp_text(x0 + MCL_W - 44, top + 3, UI->mono ? "MONO" : "STEREO", MC_BLACK, 1);          /* tap: the player's output mono / stereo */
     if (s->state == 0) {
         lp_text_c(x0, top + 34, MCL_W, "NO SAMPLE CHOSEN", MC_WHITE, 2);
         lp_text_c(x0, top + 58, MCL_W, "PRESS BROWSE", MC_GREY, 1);
@@ -1021,7 +1026,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
         for (const char *c = s->channels > 1 ? " KHZ STEREO  " : " KHZ MONO  "; *c; c++)
             *p++ = *c;
         p = put_uint(p, s->steps);
-        for (const char *c = " STEPS"; *c; c++)
+        for (const char *c = s->len_set ? " STEPS SET" : " STEPS AUTO"; *c; c++)
             *p++ = *c;
         *p = 0;
         lp_text_c(x0, top + 42, MCL_W, t, MC_GREY, 1);
@@ -1153,6 +1158,16 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
             }
         return;
     }
+    if (UI->smp && e->abi >= 9 && x >= wx + ww - 48 && d >= MCL_TOP && d < MCL_TOP + 14 && x >= wx && x < wx + ww) {   /* the title bar's MONO / STEREO tag */
+        UI->mono = !UI->mono;
+        return;
+    }
+    if (UI->smp && e->abi >= 9 && x >= wx && x < wx + ww && d >= MCL_TOP + 36 && d < MCL_TOP + 54) {     /* the SAMPLE view's info line: tap = the record's length (file, 4, 8, 12, 16, 24, 32 steps) */
+        struct bb_sample sm;
+        if (e->sample(&sm) && !sm.browsing && sm.state != BB_SMP_NONE)
+            e->input(7, 8, 0);
+        return;
+    }
     if (UI->smp && e->abi >= 9 && x >= wx && x < wx + ww && d >= SB_Y && d < SB_Y + SB_H) {   /* the SAMPLE view's buttons */
         struct bb_sample sm;
         if (e->sample(&sm) && !sm.browsing)
@@ -1167,6 +1182,22 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
         i = d < MCL_SPLIT ? 3 : 2;                            /* YES / SHIFT */
     if (i < 0)
         return;
+    if (i == 0 && UI->smp && e->abi >= 9) {                       /* NO in the SAMPLE view: the record waiting / running is taken back; in the browser: back to the view (nothing chosen: closed); else the view closes */
+        struct bb_sample sm;
+        if (e->sample(&sm) && (sm.state == BB_SMP_WAITING || sm.state == BB_SMP_RECORDING)) {
+            e->input(7, 9, 0);
+        } else if (sm.browsing) {
+            e->input(7, 7, 0);
+            if (sm.state == BB_SMP_NONE) {
+                UI->smp = 0;
+                e->input(7, 5, 0);
+            }
+        } else {
+            UI->smp = 0;
+            e->input(7, 5, 0);
+        }
+        return;
+    }
     UI->down[id & 3] = (uint8_t)(i + 1);
     UI->mask |= (uint16_t)(1u << i);
     e->input(2, i, 0);

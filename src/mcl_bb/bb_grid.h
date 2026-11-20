@@ -76,6 +76,6 @@ struct bb_sample {
     uint8_t listen;                    /* listening while browsing */
     uint8_t steps;                     /* the record's length in steps */
     uint8_t slices;                    /* the recording is sliced into this many (0: not sliced) */
-    uint8_t _r;
+    uint8_t len_set;                   /* the record's length was set by the user (else it comes from the file)  */
     char name[32];
 };

@@ -27,6 +27,7 @@
 #include "GUI/MCLMenus.h"
 #include "GUI/Pages/CommonPages.h"
 #include "Drivers/MD/UI/Pages/RAMPage.h"
+#include "Grid/MCLActions.h"
 #include "Sequencer/BeatRepeat.h"
 #include "NoteInterface.h"
 
@@ -53,6 +54,7 @@ static uint32_t smp_frames, smp_rate, smp_ch;                    /* the chosen f
 static volatile uint8_t smp_recording, smp_recorded;             /* the file is playing into the record / it was recorded */
 static volatile uint16_t rec_len;                                /* the record's length in steps (from its first step: cable_step) */
 static volatile uint8_t smp_link_play;                           /* the record began: queue the RAM player (P1) for its last step's end */
+static uint8_t smp_len_enc;                                      /* the record's length set by the user in 4-step units (0: from the file's length) */
 static uint8_t slice_want;                                       /* SLICE pressed before the player was in place: slice once it is */
 static PageIndex smp_back = GRID_PAGE;                           /* the page the browser goes back to */
 
@@ -650,7 +652,7 @@ static uint32_t smp_steps(void)
         tempo = 120.f;
     float secs = smp_rate ? (float)smp_frames / (float)smp_rate : 0.f;
     uint32_t steps = (uint32_t)(secs * tempo / 15.f) + 1u;
-    uint32_t enc = (steps + 3u) / 4u;
+    uint32_t enc = smp_len_enc ? smp_len_enc : (steps + 3u) / 4u;
     enc = enc < 1 ? 1 : enc > 8 ? 8 : enc;
     return enc * 4u;
 }
@@ -659,8 +661,50 @@ static uint32_t smp_steps(void)
 static volatile uint8_t smp_cmd = 0xff;
 HOOK void bb_mcl_sample_input(uint32_t a)
 {
-    if (a < 8)
+    if (a < 16)
         smp_cmd = (uint8_t)a;
+}
+
+/* RECORD again, or NO, while the record waits for its first step: it is taken back (MCL's pending RAM record machine on track 15 too); while the file plays into it:
+ * the file stops and what is there is the recording */
+static void smp_cancel(void)
+{
+    if (smp_recording) {
+        bb_player_stop();
+        smp_recording = 0;
+        smp_recorded = 1;
+        return;
+    }
+    if (!cable_armed)
+        return;
+    cable_armed = 0;
+    smp_link_play = 0;
+    slice_want = 0;
+    uint8_t g = grid_page.active_slots[14];
+    if (g == SLOT_PENDING || g == SLOT_RAM_RECORD) {
+        USE_LOCK();
+        SET_LOCK();
+        mcl_actions.next_transitions[14] = (uint16_t)-1;
+        mcl_actions.transition_offsets[14] = 0;
+        mcl_actions.transition_level[14] = 0;
+        mcl_actions.send_machine[14] = 0;
+        grid_page.active_slots[14] = SLOT_DISABLED;
+        RAMPage::rec_states[0] = RAMPage::rec_states[1] = 0;
+        mcl_actions.calc_next_transition();
+        CLEAR_LOCK();
+    }
+    bb_player_stop();
+}
+
+/* NO (MCL's key, the Machinedrum's, or the page's NO tile) in the sample browser: back to the page the SAMPLE view was opened over */
+extern "C" void bb_sample_back(void)
+{
+    bb_cable_mode = 0;
+    bb_cable_listen = 0;
+    if (!cable_armed && !smp_recording)
+        bb_player_stop();
+    smp_in_player = 0;
+    mcl.setPage(smp_back);
 }
 
 static void smp_slice_next(void)
@@ -681,8 +725,12 @@ static void smp_apply(void)
     smp_cmd = 0xff;
     PageIndex now = mcl.currentPage();
     switch (a) {
-    case 0:                                                      /* RECORD: MCL's RAM record (RAM page A: track 15, input A), the file played from its first step */
-        if (cable_armed || !smp_ensure())
+    case 0:                                                      /* RECORD: MCL's RAM record (RAM page A: track 15, input A), the file played from its first step; again while waiting / recording: taken back */
+        if (cable_armed || smp_recording) {
+            smp_cancel();
+            break;
+        }
+        if (!smp_ensure())
             break;
         ram_a_param4.cur = (int)(smp_steps() / 4u);
         ram_a_param1.cur = 1;                                    /* SOURCE_INPA */
@@ -717,6 +765,21 @@ static void smp_apply(void)
                 ram_page_a.setup_ram_play_mono(14);              /* (still the recorder: the player from the next bar) */
             slice_want = 1;
         }
+        break;
+    case 7:                                                      /* NO in the browser: back to the view */
+        bb_sample_back();
+        break;
+    case 8:                                                      /* the record's length: from the file, then 4, 8, 12, 16, 24, 32 steps (not while it waits or records) */
+        if (!cable_armed && !smp_recording) {
+            static const uint8_t seq[7] = {0, 1, 2, 3, 4, 6, 8};
+            int i = 0;
+            while (i < 6 && seq[i] != smp_len_enc)
+                i++;
+            smp_len_enc = seq[(i + 1) % 7];
+        }
+        break;
+    case 9:                                                      /* NO in the view: waiting / recording is taken back */
+        smp_cancel();
         break;
     case 4:                                                      /* the view opened: straight into the browser while nothing is chosen */
         if (!smp_loaded) {
@@ -767,6 +830,7 @@ HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
     s->rate_k = (uint16_t)(rate / 100u);
     s->secs100 = rate ? (uint16_t)((uint64_t)fr * 100u / rate) : 0;
     s->steps = smp_loaded ? (uint8_t)smp_steps() : 0;
+    s->len_set = smp_len_enc ? 1 : 0;
     s->slices = smp_recorded && ram_a_param3.cur > 0 ? (uint8_t)(1u << ram_a_param3.cur) : 0;
     if (!smp_loaded)
         s->state = BB_SMP_NONE;

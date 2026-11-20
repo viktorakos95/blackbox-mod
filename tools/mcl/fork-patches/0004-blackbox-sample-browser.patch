@@ -70,10 +70,10 @@ index 660b990..bedb2f5 100644
    static char str_save[16];
    uint8_t cur_row;
 diff --git a/src/mcl/MCL/GUI/Pages/SampleBrowserPage.cpp b/src/mcl/MCL/GUI/Pages/SampleBrowserPage.cpp
-index 0449f80..ce11789 100644
+index 0449f80..c484d7b 100644
 --- a/src/mcl/MCL/GUI/Pages/SampleBrowserPage.cpp
 +++ b/src/mcl/MCL/GUI/Pages/SampleBrowserPage.cpp
-@@ -14,13 +14,29 @@ static const char *const c_syx_suffix = ".syx";
+@@ -14,13 +14,30 @@ static const char *const c_syx_suffix = ".syx";
  
  static bool s_query_returned = false;
  
@@ -82,6 +82,7 @@ index 0449f80..ce11789 100644
 +// "cable mode" plays the file from the Blackbox into the MD's input while its RAM
 +// record runs, instead of sending it over SDS; listening while browsing is optional.
 +extern "C" volatile uint8_t bb_cable_mode;
++extern "C" void bb_sample_back(void);
 +extern "C" void bb_sample_browse(const char *name);
 +extern "C" void bb_sample_record(const char *name);
 +#endif
@@ -103,7 +104,7 @@ index 0449f80..ce11789 100644
    position.reset();
  }
  
-@@ -42,8 +58,18 @@ void SampleBrowserPage::display() {
+@@ -42,8 +59,18 @@ void SampleBrowserPage::display() {
      uint8_t len = strlen(temp_entry);
  
      if (len > 4) {
@@ -122,7 +123,20 @@ index 0449f80..ce11789 100644
        Wav wav_file;
  
        uint32_t size = 0;
-@@ -241,6 +267,12 @@ void SampleBrowserPage::on_cancel() {
+@@ -231,6 +258,12 @@ void SampleBrowserPage::on_new() {
+ 
+ void SampleBrowserPage::on_cancel() {
+   pending_action = 0;
++#ifdef MCL_BLACKBOX
++  if (bb_cable_mode && !show_samplemgr) {                      // the Blackbox's SAMPLE view: NO (MCL's or the Machinedrum's key) goes back to it
++    bb_sample_back();
++    return;
++  }
++#endif
+   if (show_samplemgr) {
+     show_samplemgr = false;
+     //init(false);
+@@ -241,6 +274,12 @@ void SampleBrowserPage::on_cancel() {
  }
  
  void SampleBrowserPage::on_select(const char *__) {
