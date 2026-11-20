@@ -493,7 +493,7 @@ def sample_in_t(a_):
     global t
     c.call("bb_mcl_sample_input", a_)
     for _ in range(6):
-        t = ticks(t, 48)
+        t = ticks(t, 4)                                              # (a fraction of a step: an armed record must not reach its first step while the checks look at it)
         c.step(20_000_000)
         c.tick(5)
 
