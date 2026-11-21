@@ -14,6 +14,8 @@ static uint32_t data_off, data_len, frames, fpos;            /* the data chunk; 
 static uint16_t channels, bits, format;                       /* format 1 PCM, 3 float */
 static uint8_t open_ok;
 static uint32_t rate_hz;
+static uint32_t file_at;                                      /* where the card file is (bytes): no seek before a read that follows the last one */
+static uint8_t pbuf[8192];                                     /* (a read: 2048 frames of 16-bit stereo) */
 static uint8_t read_errs, open_err;                          /* open_err: why the last open failed: 1 file open, 2 header short, 3 not RIFF/WAVE, 4 no fmt/data chunk, 5 format not played */                                     /* failed reads in a row (the card's bad moments are retried on the next pump) */
 
 /* the file loaded: its frames, rate and channels (0 frames: none) */
@@ -34,6 +36,7 @@ HOOK void bb_player_rewind(void)
     pl.state = 0;
     fpos = 0;
     read_errs = 0;
+    file_at = 0xffffffffu;
     pl.end = frames;                                          /* (a play cut short by read errors gets its whole length back) */
     pl.rd = pl.wr = pl.frac = 0;
 }
@@ -116,6 +119,7 @@ HOOK int bb_player_open(const char *name)
     pl.step = (uint32_t)(((uint64_t)rate << 16) / 48000u);
     pl.end = frames;
     read_errs = 0;
+    file_at = 0xffffffffu;
     return 1;
 }
 
@@ -141,22 +145,27 @@ HOOK void bb_player_pump(void)
     if (!open_ok || fpos >= pl.end)
         return;
     uint32_t bps = bits / 8, bpf = channels * bps;
-    for (int k = 0; k < 8; k++) {
+    for (int k = 0; k < 4; k++) {
         uint32_t room = BB_PLAYER_RING - (pl.wr - pl.rd) - 2;   /* (the audio stage reads frame rd + 1 too) */
         if ((int32_t)room <= 0 || fpos >= pl.end)
             return;
-        uint8_t buf[2048];
-        uint32_t n = sizeof buf / bpf;
+        uint8_t *buf = pbuf;
+        uint32_t n = sizeof pbuf / bpf;
         if (n > room)
             n = room;
         if (n > frames - fpos)
             n = frames - fpos;
-        if (!n || !file.seekSet(data_off + fpos * bpf) || file.read(buf, n * bpf) != (int)(n * bpf)) {
+        uint32_t at = data_off + fpos * bpf;
+        if (n && at != file_at && !file.seekSet(at))
+            n = 0;
+        if (!n || file.read(buf, n * bpf) != (int)(n * bpf)) {
+            file_at = 0xffffffffu;
             if (++read_errs >= 8)                             /* (the card keeps failing: this play ends here; the file keeps its length) */
                 pl.end = fpos;
             return;
         }
         read_errs = 0;
+        file_at = at + n * bpf;
         for (uint32_t i = 0; i < n; i++) {
             const uint8_t *p = buf + i * bpf;
             uint32_t w = (pl.wr + i) & (BB_PLAYER_RING - 1);
@@ -174,4 +183,11 @@ HOOK void bb_player_play(void)
 {
     if (pl.end)
         pl.state = 1;
+}
+
+/* Before a play starts: the ring as full as the file allows (a long file then has 170 ms in hand before the card has to keep up) */
+HOOK void bb_player_fill(void)
+{
+    for (int k = 0; k < 4; k++)
+        bb_player_pump();
 }

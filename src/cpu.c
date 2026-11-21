@@ -85,7 +85,7 @@ struct mcl_ui {
     uint16_t smp;               /* 1: the SAMPLE view shows (the SAMPLE shortcut) */
     uint8_t mono;               /* the file player's output: 0 stereo, 1 mono (the sum on both channels: a mono cable into one Machinedrum input) */
     uint8_t sbp;                /* the SAMPLE view's button held down (index + 1: 1..4 the bottom row, 5..9 LENGTH OUT LEVEL TRACK MONITOR): drawn pressed */
-    uint8_t lvl;                /* the file player's level on Out 3: 0 100 %, 1 75 %, 2 50 %, 3 25 % */
+    uint8_t lvl;                /* the file player's level on Out 3: 100, 150, 200, 25, 50, 75 % */
 };
 #define UI ((volatile struct mcl_ui *)0x38800680u)
 _Static_assert(sizeof(struct mcl_ui) <= 24, "the page state must end before 0x38800698");
@@ -747,9 +747,12 @@ void mcl_player_mix(float *l, float *r, int n)
         float vl = ((float)a[0] + (float)(b[0] - a[0]) * f) * g, vr = ((float)a[1] + (float)(b[1] - a[1]) * f) * g;
         if (UI->mono)
             vl = vr = (vl + vr) * .5f;
-        static const float lv[4] = {1.f, .75f, .5f, .25f};
-        vl *= lv[UI->lvl & 3];
-        vr *= lv[UI->lvl & 3];
+        static const float lv[6] = {1.f, 1.5f, 2.f, .25f, .5f, .75f};
+        float g2 = lv[UI->lvl % 6u];
+        vl *= g2;
+        vr *= g2;
+        vl = vl > 1.f ? 1.f : vl < -1.f ? -1.f : vl;           /* (above 100 %: the peaks clip, the player never wraps) */
+        vr = vr > 1.f ? 1.f : vr < -1.f ? -1.f : vr;
         l[i] += vl;
         r[i] += vr;
         frac += step;
@@ -1073,7 +1076,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
             st = "OPENING THE BROWSER ...";
         lp_text_c(x0, top + 62, MCL_W, st, s->state == BB_SMP_RECORDING || s->listen == 2 ? MC_RED : MC_HOLD, 1);
         static const char *const cap[SL_N] = {"LENGTH", "OUT 3", "LEVEL", "TRACK", "MONITOR"};
-        static const char *const lvn[4] = {"100%", "75%", "50%", "25%"}, *const mon[4] = {"OFF", "LOW", "MID", "HIGH"};
+        static const char *const lvn[6] = {"100%", "150%", "200%", "25%", "50%", "75%"}, *const mon[4] = {"OFF", "LOW", "MID", "HIGH"};
         for (int i = 0; i < SL_N; i++) {
             char v[12];
             p = v;
@@ -1082,7 +1085,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
                 for (const char *c = s->len_set ? " SET" : " AUTO"; *c; c++)
                     *p++ = *c;
             } else {
-                const char *c = i == 1 ? (UI->mono ? "MONO" : "STEREO") : i == 2 ? lvn[UI->lvl & 3] : i == 3 ? (s->_r2 & 1 ? "16" : "15") : mon[(s->_r2 >> 1) & 3];
+                const char *c = i == 1 ? (UI->mono ? "MONO" : "STEREO") : i == 2 ? lvn[UI->lvl % 6u] : i == 3 ? (s->_r2 & 1 ? "16" : "15") : mon[(s->_r2 >> 1) & 3];
                 while (*c)
                     *p++ = *c++;
             }
@@ -1156,12 +1159,15 @@ void mcl_page_draw(int w, int foot_y)
     if (!mcl_abi5(e) || !fb || MCL_STRIP_Y + MCL_STRIP_H >= foot_y)
         return;
     uint32_t now = e->midi(10);
+    struct bb_sample bs;
+    int browsing = UI->smp && e->abi >= 9 && e->sample(&bs) && bs.browsing, listening = browsing && bs.listen;
     for (int i = 0; i < SC_N; i++) {
         int x = sc_x(w, i), cw = sc_w[i], on = i == SC_SAMPLE ? UI->smp != 0 : now == (uint32_t)i && !UI->smp;
-        lp_box(x, MCL_STRIP_Y, cw, MCL_STRIP_H, MC_BLACK);
+        lp_box(x, MCL_STRIP_Y, cw, MCL_STRIP_H, i == SC_SAMPLE && listening ? MC_HOLD : MC_BLACK);
         lp_frame(x, MCL_STRIP_Y, cw, MCL_STRIP_H, on ? MC_HOLD : MC_EDGE, on ? 2 : 1);
         sc_icon(i, x + (cw - 26) / 2, MCL_STRIP_Y + 3);
-        lp_text_c(x, MCL_STRIP_Y + 32, cw, sc_name[i], on ? MC_HOLD : MC_WHITE, 1);
+        const char *nm = i == SC_SAMPLE && browsing ? "LISTEN" : sc_name[i];   /* (while the browser shows, the SAMPLE tile is its LISTEN: lit while on) */
+        lp_text_c(x, MCL_STRIP_Y + 32, cw, nm, i == SC_SAMPLE && listening ? MC_BLACK : on ? MC_HOLD : MC_WHITE, 1);
     }
 }
 
@@ -1217,7 +1223,7 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
         else if (i == 1)
             UI->mono = !UI->mono;
         else if (i == 2)
-            UI->lvl = (uint8_t)((UI->lvl + 1u) & 3u);
+            UI->lvl = (uint8_t)((UI->lvl + 1u) % 6u);
         else
             e->input(7, i == 3 ? 11 : 12, 0);                 /* the record's track / LISTEN's monitor level */
         return;

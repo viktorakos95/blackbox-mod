@@ -543,8 +543,8 @@ SMP.update(slices=8)
 words = [r[3] if r[0] == "lp_text" else r[-1] for r in page_part(draw()) if r[0] in ("lp_text", "lp_text_c")]
 check("... sliced: SLICED INTO 8: SLICE FOR MORE", "SLICED INTO 8: SLICE FOR MORE" in words, words[:8])
 SMP.update(slices=0, browsing=1)
-dn, _ = touch(tile("SAMPLE"), STRIP)
-check("... while its browser shows: MCL's screen, and SAMPLE toggles listening (7 / 6)", dn == [(7, 6, 0)], dn)
+dn, _ = touch(tile("LISTEN"), STRIP)
+check("... while its browser shows: MCL's screen, the SAMPLE tile reads LISTEN and toggles listening (7 / 6)", dn == [(7, 6, 0)], dn)
 SMP.update(browsing=0, state=1)
 dn, _ = touch(tile("SAMPLE"), STRIP)
 check("... SAMPLE again closes the view (7 / 5)", dn == [(7, 5, 0)] and not [r for r in page_part(draw()) if r[0] == "lp_text_c" and r[-1] == "READY: PRESS RECORD"], dn)
@@ -565,9 +565,9 @@ check("the OUT button toggles the player's output (nothing sent to MCL), and bac
 l0 = u.mem_read(UI + 18, 1)[0]
 touch(x0 + 128, TOP + 82)
 l1 = u.mem_read(UI + 18, 1)[0]
-for _ in range(3):
+for _ in range(5):
     touch(x0 + 128, TOP + 82)
-check("the LEVEL button steps the player's level 100 / 75 / 50 / 25 % and round", l0 == 0 and l1 == 1 and u.mem_read(UI + 18, 1)[0] == 0, (l0, l1))
+check("the LEVEL button steps the player's level 100 / 150 / 200 / 25 / 50 / 75 % and round", l0 == 0 and l1 == 1 and u.mem_read(UI + 18, 1)[0] == 0, (l0, l1))
 dn, _ = touch(x0 + 178, TOP + 82)
 check("the TRACK button: 7 / 11 (the blob switches 15 / 16)", dn == [(7, 11, 0)], dn)
 dn, _ = touch(x0 + 228, TOP + 82)

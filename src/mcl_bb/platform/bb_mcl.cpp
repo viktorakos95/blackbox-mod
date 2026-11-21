@@ -43,6 +43,7 @@ void bb_player_pump(void);
 uint32_t bb_player_info(uint32_t *rate, uint32_t *chans);
 void bb_player_rewind(void);
 uint32_t bb_player_err(void);
+void bb_player_fill(void);
 }
 extern "C" volatile uint8_t bb_cable_mode, bb_cable_listen;     /* (the fork's SampleBrowserPage reads them: fork patch 0004) */
 volatile uint8_t bb_cable_mode, bb_cable_listen;
@@ -587,7 +588,7 @@ HOOK void bb_sample_browse(const char *name)
     char full[192];
     smp_abs(name, full, sizeof full);
     if (bb_player_open(full)) {
-        bb_player_pump();
+        bb_player_fill();
         bb_player_play();
     }
     smp_in_player = 0;                                           /* (the chosen file is opened again when it is needed) */
@@ -604,7 +605,7 @@ static int smp_ensure(void)
         smp_in_player = 1;
     }
     bb_player_rewind();
-    bb_player_pump();
+    bb_player_fill();
     return 1;
 }
 
@@ -728,6 +729,38 @@ extern "C" void bb_sample_back(void)
     mcl.setPage(smp_back);
 }
 
+/* LISTEN's Machinedrum side (the SAMPLE view's LISTEN, and listening while browsing): the record track an R machine with its input A up, main level off
+ * and CUE1 at the MONITOR level (user: CUE makes the input audible on the MD's outputs). Another machine there: the first call asks (it is replaced),
+ * a second within 4 s replaces it and triggers it once (an R machine passes its input only after a trig). 1: ready (or no Machinedrum), 0: asked. */
+static int smp_md_listen(int browsing)
+{
+    if (!MD.connected)
+        return 1;
+    uint8_t fresh = 0;
+    if (MD.kit.get_model(ST) != RAM_RX) {
+        if (!smp_listen_ask || millis() - smp_listen_t > 4000u) {
+            smp_listen_ask = 1;
+            smp_listen_t = millis();
+            if (browsing)
+                oled_display.textbox(smp_trk ? "REPLACE TRACK 16?" : "REPLACE TRACK 15?", " SAMPLE AGAIN");
+            return 0;
+        }
+        MD.assignMachine(ST, RAM_RX);
+        MD.kit.models[ST] = RAM_RX;
+        fresh = 1;
+    }
+    smp_listen_ask = 0;
+    MD.setTrackParam(ST, RAM_R_MLEV, 0);
+    MD.setTrackParam(ST, RAM_R_ILEV, 100);
+    MD.setTrackParam(ST, RAM_R_IBAL, 64);
+    static const uint8_t cue[4] = {0, 40, 80, 110};
+    MD.setTrackParam(ST, RAM_R_CUE1, cue[smp_mon & 3]);
+    MD.setTrackParam(ST, RAM_R_CUE2, 0);
+    if (fresh)
+        MD.triggerTrack(ST, 127);
+    return 1;
+}
+
 static void smp_slice_next(void)
 {
     uint32_t c = (uint32_t)RP.encoders[2]->cur + 1u;
@@ -778,30 +811,12 @@ static void smp_apply(void)
                                                                     up (user: CUE makes the input audible on the MD's outputs). Not an R1 yet: the first press asks (it erases track 15), a second within 4 s does it */
         if (cable_armed || smp_recording)
             break;
-        if (MD.connected) {
-            uint8_t fresh = 0;
-            if (MD.kit.get_model(ST) != RAM_RX) {
-                if (!smp_listen_ask || millis() - smp_listen_t > 4000u) {
-                    smp_listen_ask = 1;
-                    smp_listen_t = millis();
-                    break;
-                }
-                MD.assignMachine(ST, RAM_RX);
-                MD.kit.models[ST] = RAM_RX;
-                fresh = 1;
-            }
-            smp_listen_ask = 0;
-            MD.setTrackParam(ST, RAM_R_MLEV, 0);
-            MD.setTrackParam(ST, RAM_R_ILEV, 100);
-            MD.setTrackParam(ST, RAM_R_IBAL, 64);
-            static const uint8_t cue[4] = {0, 40, 80, 110};
-            MD.setTrackParam(ST, RAM_R_CUE1, cue[smp_mon & 3]);
-            MD.setTrackParam(ST, RAM_R_CUE2, 0);
-            if (fresh)
-                MD.triggerTrack(ST, 127);                        /* (a RAM record machine passes its input to the cue only once it has been triggered: user, n19) */
-        }
-        if (smp_ensure())
+        if (!smp_md_listen(0))
+            break;
+        if (smp_ensure()) {
+            bb_player_fill();
             bb_player_play();
+        }
         break;
     case 3:                                                      /* SLICE: into 2, 4, 8, 16, 32 slices, then whole again (as NO on MCL's RAM page, with its slice count stepped) */
         if (!smp_recorded)
@@ -863,7 +878,9 @@ static void smp_apply(void)
             mcl.setPage(smp_back);
         }
         break;
-    case 6:                                                      /* listening while browsing on / off */
+    case 6:                                                      /* listening while browsing on / off (on: the Machinedrum set up as for LISTEN, asked first if track 15 / 16 is something else) */
+        if (!bb_cable_listen && !cable_armed && !smp_recording && !smp_md_listen(1))
+            break;
         bb_cable_listen = !bb_cable_listen;
         if (!bb_cable_listen && !cable_armed)
             bb_player_stop();

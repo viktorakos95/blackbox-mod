@@ -104,10 +104,17 @@ static uint32_t exec_once(void)
         return r;
     }
     case OP_CLOSE: return stock(F_CLOSE, (uint32_t)&fils[req.h]);
-    case OP_READ: {
-        uint32_t got = 0;
-        uint32_t r = stock(F_READ, (uint32_t)&fils[req.h], (uint32_t)req.buf, req.n, (uint32_t)&got);
-        req.count = got;
+    case OP_READ: {                                              /* up to SD_READ_MAX bytes a request, 511 at a time (the rule in the header): one round trip, not eight */
+        uint32_t total = 0, r = 0;
+        uint8_t *b = (uint8_t *)req.buf;
+        while (total < req.n) {
+            uint32_t c = req.n - total > 511u ? 511u : req.n - total, got = 0;
+            r = stock(F_READ, (uint32_t)&fils[req.h], (uint32_t)(b + total), c, (uint32_t)&got);
+            total += got;
+            if (r || got < c)
+                break;
+        }
+        req.count = total;
         return r;
     }
     case OP_WRITE: {
@@ -492,7 +499,7 @@ HOOK int32_t bb_sd_read(int h, void *buf, uint32_t n)
     uint32_t total = 0;
     uint8_t *p = (uint8_t *)buf;
     while (total < n) {
-        uint32_t c = n - total > 511u ? 511u : n - total;        /* never 512 or more in one FatFs call: see the header */
+        uint32_t c = n - total > 4096u ? 4096u : n - total;      /* (the streamer reads it 511 bytes a FatFs call: see the header) */
         req.op = OP_READ;
         req.h = (uint32_t)h;
         req.buf = p + total;
