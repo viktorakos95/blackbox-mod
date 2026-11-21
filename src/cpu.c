@@ -86,6 +86,7 @@ struct mcl_ui {
     uint8_t mono;               /* the file player's output: 0 stereo, 1 mono (the sum on both channels: a mono cable into one Machinedrum input) */
     uint8_t sbp;                /* the SAMPLE view's button held down (index + 1: 1..4 the bottom row, 5..9 LENGTH OUT LEVEL TRACK MONITOR): drawn pressed */
     uint8_t lvl;                /* the file player's level on Out 3: 100, 150, 200, 25, 50, 75 % */
+    uint8_t starve;             /* audio blocks left to show BUFFERING (the file player ran out of data: set by its mix, counted down there) */
 };
 #define UI ((volatile struct mcl_ui *)0x38800680u)
 _Static_assert(sizeof(struct mcl_ui) <= 24, "the page state must end before 0x38800698");
@@ -449,7 +450,7 @@ uint32_t mcl_page_sig(void)
             e->input(7, 5, 0);
         }
         sv = 1u + sm.state * 7u + sm.browsing * 131u + sm.clock_running * 1031u + sm.listen * 7919u + (uint32_t)sm.name[0] * 17u + sm.secs100 * 3u +
-             sm.steps * 101u + sm.len_set * 313u + sm.slices * 29u + UI->mono * 4099u + UI->sbp * 65537u + sm._r2 * 257u + UI->lvl * 8191u + sm.nerr * 3u;
+             sm.steps * 101u + sm.len_set * 313u + sm.slices * 29u + UI->mono * 4099u + UI->sbp * 65537u + sm._r2 * 257u + UI->lvl * 8191u + sm.nerr * 3u + (UI->starve != 0) * 524287u;
     }
     return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + t * 977u + sv * 0x9e3779b9u;
 }
@@ -740,8 +741,10 @@ void mcl_player_mix(float *l, float *r, int n)
             p->state = 0;
             break;
         }
-        if (rd + 1u >= p->wr)                                 /* (not there yet: silence for the rest of this block) */
+        if (rd + 1u >= p->wr) {                               /* (not there yet: silence for the rest of this block; BUFFERING shows for a moment) */
+            UI->starve = 120;
             break;
+        }
         const int16_t *a = p->ring + 2u * (rd & (BB_PLAYER_RING - 1u)), *b = p->ring + 2u * ((rd + 1u) & (BB_PLAYER_RING - 1u));
         float f = (float)frac * (1.f / 65536.f);
         float vl = ((float)a[0] + (float)(b[0] - a[0]) * f) * g, vr = ((float)a[1] + (float)(b[1] - a[1]) * f) * g;
@@ -759,6 +762,8 @@ void mcl_player_mix(float *l, float *r, int n)
         rd += frac >> 16;
         frac &= 0xffffu;
     }
+    if (UI->starve)
+        UI->starve--;
     p->frac = frac;
     __asm volatile("dmb" ::: "memory");
     p->rd = rd;
@@ -1074,6 +1079,8 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
             st = s->_r2 & 1 ? "REPLACE TRACK 16? PRESS LISTEN AGAIN" : "REPLACE TRACK 15? PRESS LISTEN AGAIN";
         if (s->_r2 & 8)
             st = "OPENING THE BROWSER ...";
+        if (UI->starve)
+            st = "BUFFERING ...";
         lp_text_c(x0, top + 62, MCL_W, st, s->state == BB_SMP_RECORDING || s->listen == 2 ? MC_RED : MC_HOLD, 1);
         static const char *const cap[SL_N] = {"LENGTH", "OUT 3", "LEVEL", "TRACK", "MONITOR"};
         static const char *const lvn[6] = {"100%", "150%", "200%", "25%", "50%", "75%"}, *const mon[4] = {"OFF", "LOW", "MID", "HIGH"};
@@ -1150,6 +1157,8 @@ void mcl_page_draw(int w, int foot_y)
             }
         }
     }
+    if (UI->smp && UI->starve)
+        lp_text(wx + ww - 64, MCL_WIN_Y + 4, "BUFFERING", MC_RED, 1);   /* (the sample player ran short of data: shown over MCL's browser too) */
     int m = UI->mask;                                         /* B1 NO, B2 PAGE, B3 SHIFT, B4 YES */
     int low_d = MCL_WIN_Y + MCL_WIN_H + 1;                    /* the lower buttons' names: under the window's bottom edge, where they have room */
     mcl_button(1, MCL_WIN_Y + 2, MC_RED, m & 1, "SAVE", "NO", MCL_WIN_Y + 51, 1, MCL_COL_W);
