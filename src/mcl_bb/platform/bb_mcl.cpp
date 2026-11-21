@@ -558,11 +558,29 @@ static void md_follow_blackbox(void)
  * record runs (bb_player.cpp streams it, the cave's audio stage plays it). Listening while browsing is optional (SAMPLE pressed again). ---- */
 
 /* The browser's selection settled on a file (cable mode, listening on): play it from the start. */
+/* The browser's folder (lwd) and a name: the full path. MCL's current folder is shared with its grid / project files, which move it while a sequence plays
+ * (user, n17-n20: 'E1 S11.4', the file was there): names are never opened relative to it. */
+static void smp_abs(const char *name, char *out, uint32_t cap)
+{
+    uint32_t n = 0;
+    if (name[0] != '/') {
+        for (const char *d = sample_browser.lwd; *d && n < cap - 2; d++)
+            out[n++] = *d;
+        if (!n || out[n - 1] != '/')
+            out[n++] = '/';
+    }
+    for (uint32_t i = 0; name[i] && n < cap - 1; i++)
+        out[n++] = name[i];
+    out[n] = 0;
+}
+
 HOOK void bb_sample_browse(const char *name)
 {
     if (!bb_cable_mode || !bb_cable_listen || cable_armed)
         return;
-    if (bb_player_open(name)) {
+    char full[192];
+    smp_abs(name, full, sizeof full);
+    if (bb_player_open(full)) {
         bb_player_pump();
         bb_player_play();
     }
@@ -588,7 +606,9 @@ static int smp_ensure(void)
 HOOK void bb_sample_record(const char *name)
 {
     uint32_t sub0 = bb_sd_stat_get(11);
-    if (!bb_player_open(name)) {
+    char full[192];
+    smp_abs(name, full, sizeof full);
+    if (!bb_player_open(full)) {
         static char l1[12], l2[12];                              /* "WAV E<why>" / "S<op>.<result>": which step failed and what the card layer said (user: 'not a wav' while a sequence plays) */
         uint32_t why = bb_player_err(), last = bb_sd_stat_get(10);
         char *q = l1;
@@ -625,15 +645,7 @@ HOOK void bb_sample_record(const char *name)
     char *sl = strrchr(smp_name, '/');
     if (sl)
         memmove(smp_name, sl + 1, strlen(sl + 1) + 1);
-    uint32_t n = 0;                                              /* the full path: the browser's folder (lwd) and the name */
-    const char *d = sample_browser.lwd;
-    for (; d[n] && n < sizeof smp_path - 2; n++)
-        smp_path[n] = d[n];
-    if (n && smp_path[n - 1] != '/')
-        smp_path[n++] = '/';
-    for (uint32_t i = 0; name[i] && n < sizeof smp_path - 1; i++)
-        smp_path[n++] = name[i];
-    smp_path[n] = 0;
+    smp_abs(name, smp_path, sizeof smp_path);                    /* the full path: the browser's folder (lwd) and the name */
     smp_frames = bb_player_info(&smp_rate, &smp_ch);
     smp_in_player = 1;
     smp_loaded = 1;
@@ -974,8 +986,16 @@ static void xport_follow(void)
     }
 }
 
+static const char *volatile rec_req;                             /* (tests: YES on a file in the browser, from MCL's task) */
+HOOK void bb_sample_record_req(const char *name) { rec_req = name; }
+
 static void cable_loop(void)
 {
+    if (rec_req) {
+        const char *nm = rec_req;
+        rec_req = 0;
+        bb_sample_record(nm);
+    }
     if (open_req) {
         const char *nm = open_req;
         open_req = 0;

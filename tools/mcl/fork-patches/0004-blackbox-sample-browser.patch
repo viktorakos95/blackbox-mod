@@ -1,5 +1,5 @@
 diff --git a/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.cpp b/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.cpp
-index 9b628d1..a7dc43d 100644
+index 9b628d1..36f36f5 100644
 --- a/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.cpp
 +++ b/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.cpp
 @@ -385,7 +385,11 @@ void FileBrowserPage::_cd_up() {
@@ -41,6 +41,19 @@ index 9b628d1..a7dc43d 100644
      child = mcl_sd.full_path(child, rooted_child, sizeof(rooted_child));
    }
  #endif
+@@ -471,6 +483,12 @@ bool FileBrowserPage::_cd(const char *child) {
+     return false;
+   }
+   const char *ptr = child;
++#ifdef MCL_BLACKBOX
++  if (!absolute_child && lwd[0] != '\0') {
++    // the card's current folder is MCL-wide: other parts (grid / project files while a sequence plays) move it; a child is relative to the folder shown here
++    SD.chdir(lwd);
++  }
++#endif
+ 
+   if (child[0] == '/' && child[1] != '\0') {
+     SD.chdir("/");
 diff --git a/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.h b/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.h
 index 660b990..bedb2f5 100644
 --- a/src/mcl/MCL/GUI/Pages/Project/FileBrowserPage.h

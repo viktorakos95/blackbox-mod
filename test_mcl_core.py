@@ -514,6 +514,17 @@ sample_in_t(8)                                                         # 32 -> f
 sample_in_t(0)
 check("... the length is the file's again after the cycle (2 s at the running 120 BPM: 17 steps, in bars of 4: 20)", rec(3) == 20, rec(3))
 sample_in_t(9)
+# ---- MCL's current folder moved by another part of MCL (its grid / project files while a sequence plays): a file chosen in the browser still opens
+c.uc.mem_write(c.b["_ZL8smp_path"], bytes(16))
+c.uc.mem_write(c.b["_ZN12_GLOBAL__N_13cwdE"], b"/MCL\0")
+c.uc.mem_write(NAMEBUF, b"ramp24.wav\0")
+c.call("bb_sample_record_req", NAMEBUF)
+for _ in range(20):
+    c.step(20_000_000)
+    c.tick(5)
+pth = bytes(c.uc.mem_read(c.b["_ZL8smp_path"], 64)).split(b"\0")[0].decode("latin-1")
+check("a file chosen while MCL's current folder is elsewhere (/MCL): opened by the browser's own folder, chosen", pth.endswith("/ramp24.wav") and c.uc.mem_read(c.b["_ZL10smp_loaded"], 1)[0] == 1, pth)
+c.uc.mem_write(c.b["_ZN12_GLOBAL__N_13cwdE"], b"/\0")
 # ---- LISTEN through the Machinedrum: track 15 must be an R1 (asked first: it erases the track), then its input and CUE up and the file plays
 def smp_listen():
     c.uc.mem_write(SBUF, bytes(48))
