@@ -80,5 +80,5 @@ struct bb_sample {
     char name[32];
     uint16_t err[3];                   /* the card layer's last failed requests since the view opened, newest first (op << 8 | result) */
     uint8_t nerr;                      /* how many failed since the view opened (255 = more) */
-    uint8_t _r2;
+    uint8_t _r2;                       /* bit 0: the record goes to track 16 (else 15), bits 1-2: LISTEN's monitor level (0 off .. 3 high), bit 3: the browser is opening */
 };

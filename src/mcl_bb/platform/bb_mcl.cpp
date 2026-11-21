@@ -57,6 +57,12 @@ static volatile uint16_t rec_len;                                /* the record's
 static volatile uint8_t smp_link_play;                           /* the record began: queue the RAM player (P1) for its last step's end */
 static uint8_t smp_len_enc;                                      /* the record's length set by the user in 4-step units (0: from the file's length) */
 static uint8_t slice_want;
+static volatile uint8_t smp_opening;
+static uint8_t smp_trk;                                          /* the record's track: 0 = 15 (RAM page A, RAM 1), 1 = 16 (RAM page B, RAM 2) */
+static uint8_t smp_mon = 1;                                      /* LISTEN's monitor (the R machine's CUE1): 0 off, 1..3 low / mid / high */
+#define ST (14 + smp_trk)
+#define RP (smp_trk ? ram_page_b : ram_page_a)
+#define RAM_RX (smp_trk ? RAM_R2_MODEL : RAM_R1_MODEL)
 static uint8_t smp_view, smp_close_req, smp_listen_ask;          /* ... / LISTEN asks before it makes track 15 an R1 */
 static uint32_t smp_listen_t, smp_err_base;                    /* ... / the card layer's failure count when the view opened */                          /* the page shows the SAMPLE view / the Machinedrum's NO asked it to close */                                       /* SLICE pressed before the player was in place: slice once it is */
 static PageIndex smp_back = GRID_PAGE;                           /* the page the browser goes back to */
@@ -695,15 +701,15 @@ static void smp_cancel(void)
     cable_armed = 0;
     smp_link_play = 0;
     slice_want = 0;
-    uint8_t g = grid_page.active_slots[14];
+    uint8_t g = grid_page.active_slots[ST];
     if (g == SLOT_PENDING || g == SLOT_RAM_RECORD) {
         USE_LOCK();
         SET_LOCK();
-        mcl_actions.next_transitions[14] = (uint16_t)-1;
-        mcl_actions.transition_offsets[14] = 0;
-        mcl_actions.transition_level[14] = 0;
-        mcl_actions.send_machine[14] = 0;
-        grid_page.active_slots[14] = SLOT_DISABLED;
+        mcl_actions.next_transitions[ST] = (uint16_t)-1;
+        mcl_actions.transition_offsets[ST] = 0;
+        mcl_actions.transition_level[ST] = 0;
+        mcl_actions.send_machine[ST] = 0;
+        grid_page.active_slots[ST] = SLOT_DISABLED;
         RAMPage::rec_states[0] = RAMPage::rec_states[1] = 0;
         mcl_actions.calc_next_transition();
         CLEAR_LOCK();
@@ -724,12 +730,12 @@ extern "C" void bb_sample_back(void)
 
 static void smp_slice_next(void)
 {
-    uint32_t c = (uint32_t)ram_a_param3.cur + 1u;
+    uint32_t c = (uint32_t)RP.encoders[2]->cur + 1u;
     if (c > 5u || (1u << c) > rec_len)                           /* (no more slices than steps) */
         c = 0;
-    ram_a_param3.cur = (int)c;
-    RAMPage::slice_modes[0] = 0;
-    ram_page_a.slice(14, 255);
+    RP.encoders[2]->cur = (int)c;
+    RAMPage::slice_modes[smp_trk] = 0;
+    RP.slice(ST, 255);
 }
 
 static void smp_apply(void)
@@ -747,12 +753,12 @@ static void smp_apply(void)
         }
         if (!smp_ensure())
             break;
-        ram_a_param4.cur = (int)(smp_steps() / 4u);
-        ram_a_param1.cur = 1;                                    /* SOURCE_INPA */
-        ram_a_param3.cur = 0;                                    /* (not sliced) */
-        ram_page_a.setup_ram_rec_mono(14, 64, 1);
-        cable_step = ram_page_a.transition_step;
-        rec_len = ram_page_a.record_len;
+        RP.encoders[3]->cur = (int)(smp_steps() / 4u);
+        RP.encoders[0]->cur = 1;                                    /* SOURCE_INPA */
+        RP.encoders[2]->cur = 0;                                    /* (not sliced) */
+        RP.setup_ram_rec_mono(ST, 64, 1);
+        cable_step = RP.transition_step;
+        rec_len = RP.record_len;
         smp_recording = 0;
         smp_recorded = 0;
         smp_link_play = 0;
@@ -764,7 +770,9 @@ static void smp_apply(void)
         if (now != SAMPLE_BROWSER)
             smp_back = now;
         bb_cable_mode = 1;
+        smp_opening = 1;                                         /* (the folder is listed before the browser shows: the view says so meanwhile) */
         mcl.setPage(SAMPLE_BROWSER);
+        smp_opening = 0;
         break;
     case 2:                                                      /* LISTEN: the chosen file once, from its start, on Out 3, heard through the Machinedrum: track 15 an R1 with its input A up and CUE
                                                                     up (user: CUE makes the input audible on the MD's outputs). Not an R1 yet: the first press asks (it erases track 15), a second within 4 s does it */
@@ -772,23 +780,25 @@ static void smp_apply(void)
             break;
         if (MD.connected) {
             uint8_t fresh = 0;
-            if (MD.kit.get_model(14) != RAM_R1_MODEL) {
+            if (MD.kit.get_model(ST) != RAM_RX) {
                 if (!smp_listen_ask || millis() - smp_listen_t > 4000u) {
                     smp_listen_ask = 1;
                     smp_listen_t = millis();
                     break;
                 }
-                MD.assignMachine(14, RAM_R1_MODEL);
-                MD.kit.models[14] = RAM_R1_MODEL;
+                MD.assignMachine(ST, RAM_RX);
+                MD.kit.models[ST] = RAM_RX;
                 fresh = 1;
             }
             smp_listen_ask = 0;
-            MD.setTrackParam(14, RAM_R_MLEV, 0);
-            MD.setTrackParam(14, RAM_R_ILEV, 100);
-            MD.setTrackParam(14, RAM_R_IBAL, 64);
-            MD.setTrackParam(14, RAM_R_CUE1, 110);
+            MD.setTrackParam(ST, RAM_R_MLEV, 0);
+            MD.setTrackParam(ST, RAM_R_ILEV, 100);
+            MD.setTrackParam(ST, RAM_R_IBAL, 64);
+            static const uint8_t cue[4] = {0, 40, 80, 110};
+            MD.setTrackParam(ST, RAM_R_CUE1, cue[smp_mon & 3]);
+            MD.setTrackParam(ST, RAM_R_CUE2, 0);
             if (fresh)
-                MD.triggerTrack(14, 127);                        /* (a RAM record machine passes its input to the cue only once it has been triggered: user, n19) */
+                MD.triggerTrack(ST, 127);                        /* (a RAM record machine passes its input to the cue only once it has been triggered: user, n19) */
         }
         if (smp_ensure())
             bb_player_play();
@@ -796,11 +806,11 @@ static void smp_apply(void)
     case 3:                                                      /* SLICE: into 2, 4, 8, 16, 32 slices, then whole again (as NO on MCL's RAM page, with its slice count stepped) */
         if (!smp_recorded)
             break;
-        if (grid_page.active_slots[14] == SLOT_RAM_PLAY) {
+        if (grid_page.active_slots[ST] == SLOT_RAM_PLAY) {
             smp_slice_next();
         } else {
-            if (grid_page.active_slots[14] != SLOT_PENDING)
-                ram_page_a.setup_ram_play_mono(14);              /* (still the recorder: the player from the next bar) */
+            if (grid_page.active_slots[ST] != SLOT_PENDING)
+                RP.setup_ram_play_mono(ST);              /* (still the recorder: the player from the next bar) */
             slice_want = 1;
         }
         break;
@@ -821,6 +831,15 @@ static void smp_apply(void)
         break;
     case 10:                                                     /* (spare) */
         break;
+    case 11:                                                     /* TRACK: the record goes to MD track 15 (RAM 1) or 16 (RAM 2); not while it waits or records */
+        if (!cable_armed && !smp_recording) {
+            smp_trk ^= 1;
+            smp_recorded = 0;
+        }
+        break;
+    case 12:                                                     /* MONITOR: LISTEN's cue level on the R machine, off / low / mid / high */
+        smp_mon = (uint8_t)((smp_mon + 1u) & 3u);
+        break;
     case 4:                                                      /* the view opened: straight into the browser while nothing is chosen */
         smp_view = 1;
         smp_close_req = 0;
@@ -828,7 +847,9 @@ static void smp_apply(void)
         if (!smp_loaded) {
             smp_back = now == SAMPLE_BROWSER ? GRID_PAGE : now;
             bb_cable_mode = 1;
+            smp_opening = 1;
             mcl.setPage(SAMPLE_BROWSER);
+            smp_opening = 0;
         }
         break;
     case 5:                                                      /* the view closed */
@@ -870,18 +891,18 @@ extern "C" bool __wrap__Z26platform_panel_handleEventP11gui_event_s(gui_event_t 
 HOOK uint32_t bb_mcl_rec_stat(int which)                            /* (tests) */
 {
     switch (which) {
-    case 0: return grid_page.active_slots[14];
-    case 1: return ram_page_a.transition_step;
+    case 0: return grid_page.active_slots[ST];
+    case 1: return RP.transition_step;
     case 2: return cable_step;
     case 3: return rec_len;
     case 4: return bb_player()->state;
     case 5: return MidiClock.div16th_counter;
-    case 7: return MD.kit.get_model(14);
+    case 7: return MD.kit.get_model(ST);
     default: return (uint32_t)smp_recording | (uint32_t)smp_recorded << 1 | (uint32_t)cable_armed << 2;
     }
 }
 
-HOOK void bb_mcl_rec_slot(uint32_t v) { grid_page.active_slots[14] = (uint8_t)v; }   /* (tests: what GridTask does once the Machinedrum has the machine) */
+HOOK void bb_mcl_rec_slot(uint32_t v) { grid_page.active_slots[ST] = (uint8_t)v; }   /* (tests: what GridTask does once the Machinedrum has the machine) */
 
 HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
 {
@@ -896,7 +917,8 @@ HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
     s->secs100 = rate ? (uint16_t)((uint64_t)fr * 100u / rate) : 0;
     s->steps = smp_loaded ? (uint8_t)smp_steps() : 0;
     s->len_set = smp_len_enc ? 1 : 0;
-    s->slices = smp_recorded && ram_a_param3.cur > 0 ? (uint8_t)(1u << ram_a_param3.cur) : 0;
+    s->_r2 = (uint8_t)(smp_trk | (smp_mon & 3u) << 1 | (smp_opening ? 8u : 0u));    /* track (16 if set), monitor level, the browser opening */
+    s->slices = smp_recorded && RP.encoders[2]->cur > 0 ? (uint8_t)(1u << RP.encoders[2]->cur) : 0;
     if (smp_close_req)
         s->state = BB_SMP_CLOSE;
     else if (!smp_loaded)
@@ -1013,14 +1035,14 @@ static void cable_loop(void)
         static uint16_t arm_last;
         uint16_t now = MidiClock.div16th_counter, past = (uint16_t)(now - cable_step);
         if ((int16_t)(now - arm_last) < 0 || (past >= 6 && past < 0x8000u)) {
-            ram_a_param4.cur = (int)(smp_steps() / 4u);
-            ram_page_a.setup_ram_rec_mono(14, 64, 1);
-            cable_step = ram_page_a.transition_step;
-            rec_len = ram_page_a.record_len;
+            RP.encoders[3]->cur = (int)(smp_steps() / 4u);
+            RP.setup_ram_rec_mono(ST, 64, 1);
+            cable_step = RP.transition_step;
+            rec_len = RP.record_len;
         }
         arm_last = now;
     }
-    if (cable_armed && grid_page.active_slots[14] != SLOT_RAM_RECORD && grid_page.active_slots[14] != SLOT_PENDING) {
+    if (cable_armed && grid_page.active_slots[ST] != SLOT_RAM_RECORD && grid_page.active_slots[ST] != SLOT_PENDING) {
         cable_armed = 0;                                           /* (the record was replaced before it began) */
     }
     if (smp_recording && MidiClock.state != MidiClockClass::STARTED) {   /* stopped in the middle of the record: what is there is the recording */
@@ -1030,14 +1052,14 @@ static void cable_loop(void)
     }                                                              /* (a file shorter than the record ends by itself; the record still runs to its end) */
     if (smp_link_play) {                                           /* the record runs: the RAM player (P1) is queued for its end (MCL's NO would only
                                                                       take effect a whole record length after it was pressed) */
-        if (grid_page.active_slots[14] == SLOT_RAM_RECORD) {
+        if (grid_page.active_slots[ST] == SLOT_RAM_RECORD) {
             smp_link_play = 0;
-            ram_page_a.setup_ram_play_mono(14);
+            RP.setup_ram_play_mono(ST);
         } else if (!smp_recording) {
             smp_link_play = 0;                                     /* (the recorder never took its place: nothing to follow it) */
         }
     }
-    if (slice_want && grid_page.active_slots[14] == SLOT_RAM_PLAY) {
+    if (slice_want && grid_page.active_slots[ST] == SLOT_RAM_PLAY) {
         slice_want = 0;
         smp_slice_next();
     }

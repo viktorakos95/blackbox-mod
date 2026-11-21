@@ -42,7 +42,7 @@ static uint8_t info[320] __attribute__((aligned(8)));          /* FILINFO */
 #define INFO_NAME      ((const char *)(info + 26))
 #define INFO_ALT       ((const char *)(info + 13))
 
-enum { OP_OPEN = 1, OP_CLOSE, OP_READ, OP_WRITE, OP_SEEK, OP_SYNC, OP_TRUNCATE, OP_OPENDIR, OP_READDIR, OP_CLOSEDIR, OP_STAT, OP_MKDIR, OP_UNLINK, OP_RENAME };
+enum { OP_OPEN = 1, OP_CLOSE, OP_READ, OP_WRITE, OP_SEEK, OP_SYNC, OP_TRUNCATE, OP_OPENDIR, OP_READDIR, OP_CLOSEDIR, OP_STAT, OP_MKDIR, OP_UNLINK, OP_RENAME, OP_READDIRN };
 enum { ST_IDLE = 0, ST_POSTED = 1, ST_RUNNING = 3, ST_DONE = 2 };
 
 static struct {
@@ -272,13 +272,42 @@ static uint32_t execute(void)
     return 0;
 }
 
+/* A folder is listed RD_BATCH entries a request (one entry a request made a folder of 100 files 100 round trips through the busy streamer: the browser
+ * took seconds to show while a sequence played; user, n21) */
+#define RD_BATCH 8
+static BbDirEnt rd_buf[RD_BATCH];
+static int rd_d = -1;
+static uint32_t rd_n, rd_i, rd_end, rd_err;
+
+static uint32_t execute_batch(void)
+{
+    uint32_t k = 0, r = 0;
+    for (; k < RD_BATCH; k++) {
+        req.op = OP_READDIR;
+        r = execute();
+        if (r || !req.name_out[0])
+            break;
+        BbDirEnt *e = &rd_buf[k];
+        e->size = req.size_out;
+        e->attr = req.attr_out;
+        copy_name(e->name, req.name_out);
+        for (unsigned i = 0; i < 13; i++)
+            e->alt[i] = req.alt_out[i];
+    }
+    req.op = OP_READDIRN;
+    req.count = k;
+    req.size_out = r;                                            /* (the error that ended the batch, if any) */
+    req.attr_out = (uint8_t)(r != 0 || k < RD_BATCH);            /* the folder ends after these (or an error follows them) */
+    return k ? 0 : r;
+}
+
 HOOK void bb_sd_service(void)
 {
     if (ready != READY_MAGIC || req.state != ST_POSTED)
         return;
     req.state = ST_RUNNING;
     uint32_t t0 = DWT_CYCCNT;
-    req.ret = execute();
+    req.ret = req.op == OP_READDIRN ? execute_batch() : execute();
     uint32_t us = (uint32_t)((uint64_t)(DWT_CYCCNT - t0) * 1000000u / ((SYST_RVR + 1u) * 1000u));
     if (us > st_call_us)
         st_call_us = us;
@@ -587,6 +616,8 @@ HOOK int bb_sd_opendir(const char *path)
         return -(int)SD_BUSY;
     for (unsigned i = 0; i < sizeof dirs[d].b; i++)
         dirs[d].b[i] = 0;
+    if (rd_d == d)
+        rd_d = -1;
     req.op = OP_OPENDIR;
     req.h = (uint32_t)d;
     set_path(req.path, path);
@@ -601,15 +632,43 @@ HOOK uint32_t bb_sd_readdir(int d, BbDirEnt *out)
 {
     if (d < 0 || d >= SD_DIRS || !dir_used[d])
         return SD_BAD_HANDLE;
-    req.op = OP_READDIR;
-    req.h = (uint32_t)d;
-    return finish_ent(submit(), out);
+    if (rd_d != d) {
+        rd_d = d;
+        rd_n = rd_i = rd_end = rd_err = 0;
+    }
+    if (rd_i >= rd_n) {
+        if (rd_end) {
+            if (out)
+                out->name[0] = out->alt[0] = 0;
+            return rd_err;
+        }
+        req.op = OP_READDIRN;
+        req.h = (uint32_t)d;
+        uint32_t r = submit();
+        if (r)
+            return r;
+        rd_n = req.count;
+        rd_i = 0;
+        rd_end = req.attr_out;
+        rd_err = (uint32_t)req.size_out;
+        if (!rd_n) {
+            if (out)
+                out->name[0] = out->alt[0] = 0;
+            return rd_err;
+        }
+    }
+    if (out)
+        *out = rd_buf[rd_i];
+    rd_i++;
+    return SD_OK;
 }
 
 HOOK uint32_t bb_sd_closedir(int d)
 {
     if (d < 0 || d >= SD_DIRS || !dir_used[d])
         return SD_BAD_HANDLE;
+    if (rd_d == d)
+        rd_d = -1;
     req.op = OP_CLOSEDIR;
     req.h = (uint32_t)d;
     uint32_t r = submit();

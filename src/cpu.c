@@ -84,7 +84,8 @@ struct mcl_ui {
     int16_t acc[4];             /* knob counts below one detent */
     uint16_t smp;               /* 1: the SAMPLE view shows (the SAMPLE shortcut) */
     uint8_t mono;               /* the file player's output: 0 stereo, 1 mono (the sum on both channels: a mono cable into one Machinedrum input) */
-    uint8_t sbp;                /* the SAMPLE view's button held down (index + 1: 1..4 the bottom row, 5 LENGTH, 6 OUT): drawn pressed */
+    uint8_t sbp;                /* the SAMPLE view's button held down (index + 1: 1..4 the bottom row, 5..9 LENGTH OUT LEVEL TRACK MONITOR): drawn pressed */
+    uint8_t lvl;                /* the file player's level on Out 3: 0 100 %, 1 75 %, 2 50 %, 3 25 % */
 };
 #define UI ((volatile struct mcl_ui *)0x38800680u)
 _Static_assert(sizeof(struct mcl_ui) <= 24, "the page state must end before 0x38800698");
@@ -448,7 +449,7 @@ uint32_t mcl_page_sig(void)
             e->input(7, 5, 0);
         }
         sv = 1u + sm.state * 7u + sm.browsing * 131u + sm.clock_running * 1031u + sm.listen * 7919u + (uint32_t)sm.name[0] * 17u + sm.secs100 * 3u +
-             sm.steps * 101u + sm.len_set * 313u + sm.slices * 29u + UI->mono * 4099u + UI->sbp * 65537u;
+             sm.steps * 101u + sm.len_set * 313u + sm.slices * 29u + UI->mono * 4099u + UI->sbp * 65537u + sm._r2 * 257u + UI->lvl * 8191u + sm.nerr * 3u;
     }
     return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + t * 977u + sv * 0x9e3779b9u;
 }
@@ -746,6 +747,9 @@ void mcl_player_mix(float *l, float *r, int n)
         float vl = ((float)a[0] + (float)(b[0] - a[0]) * f) * g, vr = ((float)a[1] + (float)(b[1] - a[1]) * f) * g;
         if (UI->mono)
             vl = vr = (vl + vr) * .5f;
+        static const float lv[4] = {1.f, .75f, .5f, .25f};
+        vl *= lv[UI->lvl & 3];
+        vr *= lv[UI->lvl & 3];
         l[i] += vl;
         r[i] += vr;
         frac += step;
@@ -999,12 +1003,10 @@ static const char *const sb_name[SB_N] = {"RECORD", "SLICE", "LISTEN", "BROWSE"}
 #define SB_Y   (MCL_TOP + MCL_H - 30)
 #define SB_H   26
 static int sb_x(int x0, int i) { return x0 + 4 + i * 63; }
-#define SL_Y  (MCL_TOP + 74)              /* the LENGTH / OUT buttons */
-#define SL_H  18
-#define SL_X  4
-#define SL_W  124
-#define SO_X  132
-#define SO_W  120
+#define SL_Y  (MCL_TOP + 72)              /* the row of settings: LENGTH, OUT 3, LEVEL, TRACK, MONITOR (two lines: what, its value) */
+#define SL_H  22
+#define SL_N  5
+static int sl_x(int x0, int i) { return x0 + 4 + i * 50; }
 static const uint8_t sb_code[SB_N] = {0, 3, 2, 1};   /* the blob's codes (input kind 7): 0 RECORD, 1 BROWSE, 2 LISTEN, 3 SLICE */
 
 static void mcl_sample_view(int x0, const struct bb_sample *s)
@@ -1013,7 +1015,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
     char t[48], *p;
     lp_frame(x0, top, MCL_W, MCL_H, MC_WHITE, 1);
     lp_box(x0 + 1, top + 1, MCL_W - 2, 12, MC_WHITE);
-    lp_text(x0 + 5, top + 3, "SAMPLE  > MD TRACK 15 (RAM 1)", MC_BLACK, 1);
+    lp_text(x0 + 5, top + 3, s->_r2 & 1 ? "SAMPLE  > MD TRACK 16 (RAM 2)" : "SAMPLE  > MD TRACK 15 (RAM 1)", MC_BLACK, 1);
     if (s->nerr) {                                            /* the card's last failures (op.result), for the user to report: 8.5 = a folder not found ... */
         p = t;
         *p++ = 'E';
@@ -1066,23 +1068,31 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
             st = sl;
         }
         if (s->listen == 2)
-            st = "REPLACE TRACK 15? PRESS LISTEN AGAIN";
+            st = s->_r2 & 1 ? "REPLACE TRACK 16? PRESS LISTEN AGAIN" : "REPLACE TRACK 15? PRESS LISTEN AGAIN";
+        if (s->_r2 & 8)
+            st = "OPENING THE BROWSER ...";
         lp_text_c(x0, top + 62, MCL_W, st, s->state == BB_SMP_RECORDING || s->listen == 2 ? MC_RED : MC_HOLD, 1);
-        char lb[24];                                          /* two small buttons: the record's length (tap: file, 4 .. 32 steps) and the player's output */
-        p = lb;
-        for (const char *c = "LENGTH "; *c; c++)
-            *p++ = *c;
-        p = put_uint(p, s->steps);
-        for (const char *c = s->len_set ? " SET" : " AUTO"; *c; c++)
-            *p++ = *c;
-        *p = 0;
-        int lon = UI->sbp == 5, oon = UI->sbp == 6;
-        lp_box(x0 + SL_X, SL_Y, SL_W, SL_H, lon ? MC_HOLD : MC_BLACK);
-        lp_frame(x0 + SL_X, SL_Y, SL_W, SL_H, MC_WHITE, 1);
-        lp_text_c(x0 + SL_X, SL_Y + 5, SL_W, lb, lon ? MC_BLACK : MC_WHITE, 1);
-        lp_box(x0 + SO_X, SL_Y, SO_W, SL_H, oon ? MC_HOLD : MC_BLACK);
-        lp_frame(x0 + SO_X, SL_Y, SO_W, SL_H, MC_WHITE, 1);
-        lp_text_c(x0 + SO_X, SL_Y + 5, SO_W, UI->mono ? "OUT 3: MONO" : "OUT 3: STEREO", oon ? MC_BLACK : MC_WHITE, 1);
+        static const char *const cap[SL_N] = {"LENGTH", "OUT 3", "LEVEL", "TRACK", "MONITOR"};
+        static const char *const lvn[4] = {"100%", "75%", "50%", "25%"}, *const mon[4] = {"OFF", "LOW", "MID", "HIGH"};
+        for (int i = 0; i < SL_N; i++) {
+            char v[12];
+            p = v;
+            if (i == 0) {
+                p = put_uint(p, s->steps);
+                for (const char *c = s->len_set ? " SET" : " AUTO"; *c; c++)
+                    *p++ = *c;
+            } else {
+                const char *c = i == 1 ? (UI->mono ? "MONO" : "STEREO") : i == 2 ? lvn[UI->lvl & 3] : i == 3 ? (s->_r2 & 1 ? "16" : "15") : mon[(s->_r2 >> 1) & 3];
+                while (*c)
+                    *p++ = *c++;
+            }
+            *p = 0;
+            int on = UI->sbp == 5 + i, bx = sl_x(x0, i);
+            lp_box(bx, SL_Y, 48, SL_H, on ? MC_HOLD : MC_BLACK);
+            lp_frame(bx, SL_Y, 48, SL_H, MC_WHITE, 1);
+            lp_text_c(bx, SL_Y + 2, 48, cap[i], on ? MC_BLACK : MC_GREY, 1);
+            lp_text_c(bx, SL_Y + 12, 48, v, on ? MC_BLACK : MC_WHITE, 1);
+        }
     }
     for (int i = 0; i < SB_N; i++) {
         int bx = sb_x(x0, i), on = (i == SB_RECORD && (s->state == BB_SMP_WAITING || s->state == BB_SMP_RECORDING)) || (i == SB_LISTEN && s->listen) || UI->sbp == i + 1;
@@ -1196,18 +1206,20 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
             }
         return;
     }
-    if (UI->smp && e->abi >= 9 && d >= SL_Y - 2 && d < SL_Y + SL_H + 2 && x >= wx && x < wx + ww) {   /* LENGTH (the record's length) / OUT (the player's output) */
+    if (UI->smp && e->abi >= 9 && d >= SL_Y - 1 && d < SL_Y + SL_H + 1 && x >= wx && x < wx + ww) {   /* the settings row */
         struct bb_sample sm;
-        int xx = x - mcl_x0(w);
-        if (!e->sample(&sm) || sm.browsing || sm.state == BB_SMP_NONE)
+        int i = (x - mcl_x0(w) - 4) / 50;
+        if (!e->sample(&sm) || sm.browsing || sm.state == BB_SMP_NONE || i < 0 || i >= SL_N)
             return;
-        if (xx < SO_X - 2) {
-            UI->sbp = 5;
-            e->input(7, 8, 0);
-        } else {
-            UI->sbp = 6;
+        UI->sbp = (uint8_t)(5 + i);
+        if (i == 0)
+            e->input(7, 8, 0);                                /* the record's length */
+        else if (i == 1)
             UI->mono = !UI->mono;
-        }
+        else if (i == 2)
+            UI->lvl = (uint8_t)((UI->lvl + 1u) & 3u);
+        else
+            e->input(7, i == 3 ? 11 : 12, 0);                 /* the record's track / LISTEN's monitor level */
         return;
     }
     if (UI->smp && e->abi >= 9 && x >= wx && x < wx + ww && d >= SB_Y && d < SB_Y + SB_H) {   /* the SAMPLE view's buttons */
