@@ -1176,7 +1176,7 @@ void mcl_page_draw(int w, int foot_y)
         lp_box(x, MCL_STRIP_Y, cw, MCL_STRIP_H, i == SC_SAMPLE && listening ? MC_HOLD : MC_BLACK);
         lp_frame(x, MCL_STRIP_Y, cw, MCL_STRIP_H, on ? MC_HOLD : MC_EDGE, on ? 2 : 1);
         sc_icon(i, x + (cw - 26) / 2, MCL_STRIP_Y + 3);
-        const char *nm = i == SC_SAMPLE && browsing ? "LISTEN" : sc_name[i];   /* (while the browser shows, the SAMPLE tile is its LISTEN: lit while on) */
+        const char *nm = sc_name[i];
         lp_text_c(x, MCL_STRIP_Y + 32, cw, nm, i == SC_SAMPLE && listening ? MC_BLACK : on ? MC_HOLD : MC_WHITE, 1);
     }
 }
@@ -1202,12 +1202,9 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
                 if (x < sc_x(w, k) || x >= sc_x(w, k) + sc_w[k])
                     continue;
                 if (k == SC_SAMPLE && e->abi >= 9) {          /* SAMPLE: the view on / off; while its browser shows, listening on / off */
-                    struct bb_sample sm;
                     if (!UI->smp) {
                         UI->smp = 1;
                         e->input(7, 4, 0);
-                    } else if (e->sample(&sm) && sm.browsing) {
-                        e->input(7, 6, 0);
                     } else {
                         UI->smp = 0;
                         e->input(7, 5, 0);

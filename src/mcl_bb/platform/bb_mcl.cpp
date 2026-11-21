@@ -732,12 +732,41 @@ extern "C" void bb_sample_back(void)
 /* LISTEN's Machinedrum side (the SAMPLE view's LISTEN, and listening while browsing): the record track an R machine with its input A up, main level off
  * and CUE1 at the MONITOR level (user: CUE makes the input audible on the MD's outputs). Another machine there: the first call asks (it is replaced),
  * a second within 4 s replaces it and triggers it once (an R machine passes its input only after a trig). 1: ready (or no Machinedrum), 0: asked. */
+/* Param 0 of the sample track is an R machine's main level (MLEV) and a P machine's pitch (user, n23: the recorded sample played at another pitch, and
+ * re-recording fed back as if MLEV went up). Nothing but this file may write it on an R machine there (MCL's chromatic / poly / transpose / page
+ * resets address param 0 as pitch), nor on a P machine there while the file plays into it or is heard. MCL's two param writers are link-wrapped. */
+static uint8_t own_param;
+static int param_guard(uint8_t track, uint8_t param)
+{
+    if (own_param || param != 0 || track != ST || !smp_loaded)
+        return 0;
+    uint8_t m = MD.kit.get_model(track);
+    if (m == RAM_R1_MODEL || m == RAM_R2_MODEL || m == RAM_R3_MODEL || m == RAM_R4_MODEL)
+        return 1;
+    if ((m == RAM_P1_MODEL || m == RAM_P2_MODEL || m == RAM_P3_MODEL || m == RAM_P4_MODEL) && (cable_armed || smp_recording || bb_player()->state == 1))
+        return 1;
+    return 0;
+}
+extern "C" void __real__ZN7MDClass13setTrackParamEhhhP13MidiUartClassb(MDClass *md, uint8_t t, uint8_t p, uint8_t v, MidiUartClass *u, bool k);
+extern "C" void __wrap__ZN7MDClass13setTrackParamEhhhP13MidiUartClassb(MDClass *md, uint8_t t, uint8_t p, uint8_t v, MidiUartClass *u, bool k)
+{
+    if (!param_guard(t, p))
+        __real__ZN7MDClass13setTrackParamEhhhP13MidiUartClassb(md, t, p, v, u, k);
+}
+extern "C" void __real__ZN7MDClass20setTrackParam_inlineEhhhP13MidiUartClassb(MDClass *md, uint8_t t, uint8_t p, uint8_t v, MidiUartClass *u, bool k);
+extern "C" void __wrap__ZN7MDClass20setTrackParam_inlineEhhhP13MidiUartClassb(MDClass *md, uint8_t t, uint8_t p, uint8_t v, MidiUartClass *u, bool k)
+{
+    if (!param_guard(t, p))
+        __real__ZN7MDClass20setTrackParam_inlineEhhhP13MidiUartClassb(md, t, p, v, u, k);
+}
+
 static int smp_md_listen(int browsing)
 {
     if (!MD.connected)
         return 1;
     uint8_t fresh = 0;
-    if (MD.kit.get_model(ST) != RAM_RX) {
+    uint8_t sl = grid_page.active_slots[ST];
+    if (MD.kit.get_model(ST) != RAM_RX || sl == SLOT_RAM_PLAY || sl == SLOT_PENDING) {   /* (MCL's kit can still say R while its grid has put the P machine there) */
         if (!smp_listen_ask || millis() - smp_listen_t > 4000u) {
             smp_listen_ask = 1;
             smp_listen_t = millis();
@@ -750,12 +779,14 @@ static int smp_md_listen(int browsing)
         fresh = 1;
     }
     smp_listen_ask = 0;
+    own_param = 1;
     MD.setTrackParam(ST, RAM_R_MLEV, 0);
     MD.setTrackParam(ST, RAM_R_ILEV, 100);
     MD.setTrackParam(ST, RAM_R_IBAL, 64);
     static const uint8_t cue[4] = {0, 40, 80, 110};
     MD.setTrackParam(ST, RAM_R_CUE1, cue[smp_mon & 3]);
     MD.setTrackParam(ST, RAM_R_CUE2, 0);
+    own_param = 0;
     if (fresh)
         MD.triggerTrack(ST, 127);
     return 1;
@@ -879,8 +910,7 @@ static void smp_apply(void)
         }
         break;
     case 6:                                                      /* listening while browsing on / off (on: the Machinedrum set up as for LISTEN, asked first if track 15 / 16 is something else) */
-        if (!bb_cable_listen && !cable_armed && !smp_recording && !smp_md_listen(1))
-            break;
+        break;                                                   /* (listening while browsing: off for now, user n23) */
         bb_cable_listen = !bb_cable_listen;
         if (!bb_cable_listen && !cable_armed)
             bb_player_stop();
