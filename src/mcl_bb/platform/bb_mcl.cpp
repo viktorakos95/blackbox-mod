@@ -759,6 +759,7 @@ static void smp_apply(void)
         if (cable_armed || smp_recording)
             break;
         if (MD.connected) {
+            uint8_t fresh = 0;
             if (MD.kit.get_model(14) != RAM_R1_MODEL) {
                 if (!smp_listen_ask || millis() - smp_listen_t > 4000u) {
                     smp_listen_ask = 1;
@@ -767,12 +768,15 @@ static void smp_apply(void)
                 }
                 MD.assignMachine(14, RAM_R1_MODEL);
                 MD.kit.models[14] = RAM_R1_MODEL;
+                fresh = 1;
             }
             smp_listen_ask = 0;
             MD.setTrackParam(14, RAM_R_MLEV, 0);
             MD.setTrackParam(14, RAM_R_ILEV, 100);
             MD.setTrackParam(14, RAM_R_IBAL, 64);
             MD.setTrackParam(14, RAM_R_CUE1, 110);
+            if (fresh)
+                MD.triggerTrack(14, 127);                        /* (a RAM record machine passes its input to the cue only once it has been triggered: user, n19) */
         }
         if (smp_ensure())
             bb_player_play();
