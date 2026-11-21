@@ -253,7 +253,7 @@ l0 = c.uc.mem_read(c.b["bb_cable_listen"], 1)[0]
 sample_in(6)
 l1 = c.uc.mem_read(c.b["bb_cable_listen"], 1)[0]
 sample_in(6)
-check("... SAMPLE while browsing (7 / 6): listening on, and off again", l0 == 0 and l1 == 1 and c.uc.mem_read(c.b["bb_cable_listen"], 1)[0] == 0, (l0, l1))
+check("... 7 / 6 while browsing: listening stays off (listening while browsing is off for now)", l0 == 0 and l1 == 0 and c.uc.mem_read(c.b["bb_cable_listen"], 1)[0] == 0, (l0, l1))
 c.uc.mem_write(NAMEBUF, b"ramp24.wav\0")
 c.call("bb_sample_record", NAMEBUF) if False else None
 sample_in(5)
