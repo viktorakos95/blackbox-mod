@@ -437,6 +437,7 @@ static int sc_x(int w, int i)
 }
 
 
+int mcl_player_active(void);
 uint32_t mcl_page_sig(void)
 {
     const struct mcl_entry *e = mcl_blob();
@@ -450,7 +451,7 @@ uint32_t mcl_page_sig(void)
             e->input(7, 5, 0);
         }
         sv = 1u + sm.state * 7u + sm.browsing * 131u + sm.clock_running * 1031u + sm.listen * 7919u + (uint32_t)sm.name[0] * 17u + sm.secs100 * 3u +
-             sm.steps * 101u + sm.len_set * 313u + sm.slices * 29u + UI->mono * 4099u + UI->sbp * 65537u + sm._r2 * 257u + UI->lvl * 8191u + sm.nerr * 3u + (UI->starve != 0) * 524287u;
+             sm.steps * 101u + sm.len_set * 313u + sm.slices * 29u + UI->mono * 4099u + UI->sbp * 65537u + sm._r2 * 257u + UI->lvl * 8191u + sm.nerr * 3u + (UI->starve != 0 && mcl_player_active()) * 524287u;
     }
     return (e ? e->sig() : 0u) * 31u + UI->mask + 1u + t * 977u + sv * 0x9e3779b9u;
 }
@@ -1079,7 +1080,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
             st = s->_r2 & 1 ? "REPLACE TRACK 16? PRESS LISTEN AGAIN" : "REPLACE TRACK 15? PRESS LISTEN AGAIN";
         if (s->_r2 & 8)
             st = "OPENING THE BROWSER ...";
-        if (UI->starve)
+        if (UI->starve && mcl_player_active())
             st = "BUFFERING ...";
         lp_text_c(x0, top + 62, MCL_W, st, s->state == BB_SMP_RECORDING || s->listen == 2 ? MC_RED : MC_HOLD, 1);
         static const char *const cap[SL_N] = {"LENGTH", "OUT 3", "LEVEL", "TRACK", "MONITOR"};
@@ -1157,7 +1158,7 @@ void mcl_page_draw(int w, int foot_y)
             }
         }
     }
-    if (UI->smp && UI->starve)
+    if (UI->smp && UI->starve && mcl_player_active())
         lp_text(wx + ww - 64, MCL_WIN_Y + 4, "BUFFERING", MC_RED, 1);   /* (the sample player ran short of data: shown over MCL's browser too) */
     int m = UI->mask;                                         /* B1 NO, B2 PAGE, B3 SHIFT, B4 YES */
     int low_d = MCL_WIN_Y + MCL_WIN_H + 1;                    /* the lower buttons' names: under the window's bottom edge, where they have room */
