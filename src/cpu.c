@@ -1014,6 +1014,18 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
     lp_frame(x0, top, MCL_W, MCL_H, MC_WHITE, 1);
     lp_box(x0 + 1, top + 1, MCL_W - 2, 12, MC_WHITE);
     lp_text(x0 + 5, top + 3, "SAMPLE  > MD TRACK 15 (RAM 1)", MC_BLACK, 1);
+    if (s->nerr) {                                            /* the card's last failures (op.result), for the user to report: 8.5 = a folder not found ... */
+        p = t;
+        *p++ = 'E';
+        for (int k = 0; k < 2 && k < s->nerr; k++) {
+            *p++ = ' ';
+            p = put_uint(p, s->err[k] >> 8);
+            *p++ = '.';
+            p = put_uint(p, s->err[k] & 255u);
+        }
+        *p = 0;
+        lp_text(x0 + MCL_W - 6 - 6 * (int)(p - t), top + 3, t, MC_RED, 1);
+    }
     if (s->state == 0) {
         lp_text_c(x0, top + 34, MCL_W, "NO SAMPLE CHOSEN", MC_WHITE, 2);
         lp_text_c(x0, top + 58, MCL_W, "PRESS BROWSE", MC_GREY, 1);

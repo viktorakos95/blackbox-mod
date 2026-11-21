@@ -58,7 +58,7 @@ static volatile uint8_t smp_link_play;                           /* the record b
 static uint8_t smp_len_enc;                                      /* the record's length set by the user in 4-step units (0: from the file's length) */
 static uint8_t slice_want;
 static uint8_t smp_view, smp_close_req, smp_listen_ask;          /* ... / LISTEN asks before it makes track 15 an R1 */
-static uint32_t smp_listen_t;                          /* the page shows the SAMPLE view / the Machinedrum's NO asked it to close */                                       /* SLICE pressed before the player was in place: slice once it is */
+static uint32_t smp_listen_t, smp_err_base;                    /* ... / the card layer's failure count when the view opened */                          /* the page shows the SAMPLE view / the Machinedrum's NO asked it to close */                                       /* SLICE pressed before the player was in place: slice once it is */
 static PageIndex smp_back = GRID_PAGE;                           /* the page the browser goes back to */
 
 #include "bb_clock.h"
@@ -808,6 +808,7 @@ static void smp_apply(void)
     case 4:                                                      /* the view opened: straight into the browser while nothing is chosen */
         smp_view = 1;
         smp_close_req = 0;
+        smp_err_base = bb_sd_stat_get(11);
         if (!smp_loaded) {
             smp_back = now == SAMPLE_BROWSER ? GRID_PAGE : now;
             bb_cable_mode = 1;
@@ -895,6 +896,10 @@ HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
     for (uint32_t k = 0; k < sizeof s->name; k++)
         s->name[k] = smp_name[k];
     s->name[sizeof s->name - 1] = 0;
+    uint32_t ne = bb_sd_stat_get(11) - smp_err_base;
+    s->nerr = (uint8_t)(ne > 255u ? 255u : ne);
+    for (int k = 0; k < 3; k++)
+        s->err[k] = (uint16_t)bb_sd_stat_get(12 + k);
     return 1;
 }
 

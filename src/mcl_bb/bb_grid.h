@@ -78,4 +78,7 @@ struct bb_sample {
     uint8_t slices;                    /* the recording is sliced into this many (0: not sliced) */
     uint8_t len_set;                   /* the record's length was set by the user (else it comes from the file)  */
     char name[32];
+    uint16_t err[3];                   /* the card layer's last failed requests since the view opened, newest first (op << 8 | result) */
+    uint8_t nerr;                      /* how many failed since the view opened (255 = more) */
+    uint8_t _r2;
 };

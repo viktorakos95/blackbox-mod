@@ -198,6 +198,17 @@ static int reopen_dir(uint32_t d)
     return 1;
 }
 
+/* FatFs keeps one sector of the volume in its window (FATFS +0x3c, the sector's number at +0x38, dirty flag at +3; the volume at FatFs[0] = *0x24016150). While a
+ * sequence plays, lookups of folders and files that are there failed with 'no file' (user, n17-n19: 'E1 S11.4', folders would not open, all fine 10-20 s after STOP),
+ * as if the window held something else than the sector it is marked with. Before each of MCL's requests (and each retry) a clean window is marked empty, so the
+ * request reads its sectors from the card. Costs one sector read a request. */
+static void fresh_window(void)
+{
+    volatile uint8_t *fs = *(volatile uint8_t *volatile *)0x24016150u;
+    if (fs && fs[3] == 0)
+        *(volatile uint32_t *)(fs + 0x38) = 0xffffffffu;
+}
+
 static uint32_t execute(void)
 {
     uint32_t op = req.op, h = req.h;
@@ -205,6 +216,7 @@ static uint32_t execute(void)
     uint64_t pos = file_op ? FIL_FPTR(fils[h]) : 0;
     uint32_t r = 0;
     for (int attempt = 0;; attempt++) {
+        fresh_window();
         r = exec_once();
         int lookup = op == OP_STAT || op == OP_OPENDIR || (op == OP_OPEN && req.mode == SD_READ);
         if (r == 0 || !(transient(r) || (lookup && (r == 4u || r == 5u))))     /* (a lookup that finds nothing while the streamer is busy: tried again, the folder / file is there: user, n16 'E1 S11.4') */
@@ -381,12 +393,16 @@ static uint32_t submit_raw(void)
 
 /* (the last request that failed, whatever the reason, for the SAMPLE button's messages: op << 8 | result, and how many) */
 static uint32_t st_sub_last, st_sub_count;
+static uint16_t st_ring[4];                                     /* the last four failed requests, newest first (op << 8 | result) */
 static uint32_t submit(void)
 {
     uint32_t op = req.op, r = submit_raw();
     if (r) {
         st_sub_last = op << 8 | r;
         st_sub_count++;
+        for (int k = 3; k > 0; k--)
+            st_ring[k] = st_ring[k - 1];
+        st_ring[0] = (uint16_t)(op << 8 | (r > 255u ? 255u : r));
     }
     return r;
 }
@@ -616,6 +632,7 @@ HOOK uint32_t bb_sd_stat_get(int which)
     case 8: return st_gaveup;
     case 9: return st_last_err;
     case 10: return st_sub_last;
+    case 12: case 13: case 14: case 15: return st_ring[which - 12];
     default: return st_sub_count;
     }
 }
