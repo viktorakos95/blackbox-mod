@@ -457,6 +457,8 @@ int looper_page_hit(int x, int d, int *track, float *val)
                     *track = 92;                                       /* SAVE TO PROJECT */
                     return Z_OPTC;
                 }
+                if (x < OPT_X - 4)
+                    return Z_DBG;                                      /* the BPM text: the restart record */
                 return x >= OPT_X && x < OPT_X + 110 ? Z_CLEAR : Z_NONE;
             }
 #ifdef BANK2
@@ -1087,8 +1089,27 @@ static void draw_column_fx(int t, const struct lay *L, const struct looper_info 
 }
 
 /* SETUP and MORE tabs: the option rows, then a row of buttons. */
+/* Why the unit last restarted (crash.c, the record kept in the backup SRAM): SETUP, tap the BPM text at the bottom left (red RESTART? when there is a new one); any tap closes it and marks it seen */
+static void draw_restart(const struct lay *L)
+{
+    box(1, L->col_y, P->w - 2, L->col_h, C_BG);
+    char b[72];
+    int y = L->col_y + 2;
+    for (int i = 0; i < 12; i++) {
+        if (!crash_line(i, b, sizeof b))
+            continue;
+        text(4, y, b, i == 0 ? C_YELLOW : C_LIGHT, 1);
+        y += 9;
+    }
+    text(4, y + 4, "TAP ANYWHERE TO CLOSE", C_GREY, 1);
+}
+
 static void draw_setup(const struct lay *L)
 {
+    if (P->mode == M_SETUP && P->_r6[0]) {
+        draw_restart(L);
+        return;
+    }
     box(1, L->col_y, P->w - 2, L->col_h, C_BG);
     const struct optrow *rows = page_rows();
     for (int r = 0; r < OPT_ROWS; r++) {
@@ -1142,7 +1163,10 @@ static void draw_setup(const struct lay *L)
         for (const char *q = looper_running() ? " RUN" : " STOP"; *q; q++)
             *p++ = *q;
         *p = 0;
-        text(6, d + (ROW_H - 11) / 2 + 1, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);               /* (BPM and the transport, left of CLEAR ALL) */
+        if (crash_pending())
+            text(6, d + (ROW_H - 11) / 2 + 1, "RESTART? TAP", C_RED, 1);                          /* (a restart nobody has looked at: tap here) */
+        else
+            text(6, d + (ROW_H - 11) / 2 + 1, b, bpm > 0.f ? C_LIGHT : C_GREY, 1);               /* (BPM and the transport, left of CLEAR ALL) */
     } else {
         /* one diagnostic line: the last button message, the sequencer clock's position and rate, the screens visited */
         for (const char *q = "LAST "; *q; q++)
@@ -2232,6 +2256,14 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
     probe(id, 0);
     P->pressed = P_NONE;
     to_page(pt, &x, &d);
+    if (P->mode == M_SETUP && P->_r6[0]) {                        /* the restart record shows: a tap closes it, and it is seen */
+        P->_r6[0] = 0;
+        crash_clear();
+        P->sig = 0;
+        P->entered = 0;
+        dirty_now(view);
+        return;
+    }
     if (P->mode == M_SMPLR || P->mode == M_LIRA) {
         struct lay L;
         layout(0, &L);
@@ -2275,7 +2307,7 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
         return;
     P->track = (uint8_t)t;
     int was_sel = P->sel == t;
-    if (zone != Z_TAB && zone != Z_OPTC && zone != Z_SLIDER && zone != Z_CLEAR)
+    if (zone != Z_TAB && zone != Z_OPTC && zone != Z_SLIDER && zone != Z_CLEAR && zone != Z_DBG)
         P->sel = (uint8_t)t;                                      /* touching a track's column selects it */
     if (P->info_on)
         info_touch();
@@ -2322,6 +2354,10 @@ void looper_page_down(uint8_t *view, const int *pt, int id)
             P->drag_opt = (uint8_t)t;
             P->pressed = P_SLIDER;
         }
+    } else if (zone == Z_DBG) {
+        P->_r6[0] = 1;                                            /* the restart record */
+        P->sig = 0;
+        P->entered = 0;
     } else if (zone == Z_CLEAR) {
         if (P->clear_arm == 1 && looper_ticks() - P->clear_t < CLEAR_WAIT) {
             P->clear_arm = 2;                                     /* asked twice within 3 s: CLEARED! for a while */
