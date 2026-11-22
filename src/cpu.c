@@ -753,6 +753,9 @@ void mcl_player_mix(float *l, float *r, int n)
             vl = vr = (vl + vr) * .5f;
         static const float lv[6] = {1.f, 1.5f, 2.f, .25f, .5f, .75f};
         float g2 = lv[UI->lvl % 6u];
+        float fi = rd < 240u ? (float)rd * (1.f / 240.f) : 1.f;                   /* a 5 ms fade at the start and at the end: no click, no burst into the Machinedrum's input */
+        float fo = end - rd < 240u ? (float)(end - rd) * (1.f / 240.f) : 1.f;
+        g2 *= fi < fo ? fi : fo;
         vl *= g2;
         vr *= g2;
         vl = vl > 1.f ? 1.f : vl < -1.f ? -1.f : vl;           /* (above 100 %: the peaks clip, the player never wraps) */
@@ -1106,7 +1109,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
         }
     }
     for (int i = 0; i < SB_N; i++) {
-        int bx = sb_x(x0, i), on = (i == SB_RECORD && (s->state == BB_SMP_WAITING || s->state == BB_SMP_RECORDING)) || (i == SB_LISTEN && s->listen) || UI->sbp == i + 1;
+        int bx = sb_x(x0, i), on = (i == SB_RECORD && (s->state == BB_SMP_WAITING || s->state == BB_SMP_RECORDING)) || (i == SB_LISTEN && s->listen == 1) || UI->sbp == i + 1;
         int live = s->state != 0 || i == SB_BROWSE;
         if (i == SB_SLICE)
             live = s->state == BB_SMP_DONE;

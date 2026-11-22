@@ -776,8 +776,20 @@ static int smp_md_listen(int browsing)
         }
         MD.assignMachine(ST, RAM_RX);
         MD.kit.models[ST] = RAM_RX;
-        fresh = 1;
+        {                                                        /* (MCL's grid must not still think a P machine plays there: the next LISTEN would ask again, for ever) */
+            USE_LOCK();
+            SET_LOCK();
+            mcl_actions.next_transitions[ST] = (uint16_t)-1;
+            mcl_actions.transition_offsets[ST] = 0;
+            mcl_actions.transition_level[ST] = 0;
+            mcl_actions.send_machine[ST] = 0;
+            grid_page.active_slots[ST] = SLOT_DISABLED;
+            RAMPage::rec_states[0] = RAMPage::rec_states[1] = 0;
+            mcl_actions.calc_next_transition();
+            CLEAR_LOCK();
+        }
     }
+    fresh = 1;                                                   /* (every LISTEN starts the R machine over: parameters again, then one trig) */
     smp_listen_ask = 0;
     own_param = 1;
     MD.setTrackParam(ST, RAM_R_MLEV, 0);

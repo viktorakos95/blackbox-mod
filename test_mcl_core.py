@@ -47,7 +47,7 @@ with open("out/sd/ramp24.wav", "wb") as f:
     data = b"".join(struct.pack("<i", (k & 0x7FFF) << 8)[:3] + struct.pack("<i", (-(k & 0x7FFF)) << 8)[:3] for k in range(RAMP_N))
     fmt = struct.pack("<HHIIHH", 1, 2, 48000, 48000 * 6, 6, 24)
     f.write(b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data)) + b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(data)) + data)
-c = R.Core(d, files=[("out/sd/long.wav", "::/Samples/Drums/" + LONG_WAV), ("out/sd/long.wav", "::/" + LONG_WAV), ("out/sd/ramp24.wav", "::/ramp24.wav"), ("out/sd/rec2s.wav", "::/rec2s.wav")])
+c = R.Core(d, files=[("out/sd/long.wav", "::/Samples/Drums/" + LONG_WAV), ("out/sd/long.wav", "::/" + LONG_WAV), ("out/sd/ramp24.wav", "::/ramp24.wav"), ("out/sd/rec2s.wav", "::/rec2s.wav"), ("out/sd/rec2s.wav", "::/._hidden.wav")])
 b = c.b
 sd_ops = []
 orig_service = c.service
@@ -199,6 +199,7 @@ names = [n for _, n in ents]
 check("sample manager: it starts at the card's root (the Blackbox's folders and MCL's)", "Samples" in names and "MCL" in names, names[:10])
 
 
+check("... dot files (the Mac's ._ resource forks) are not listed", not any(n.startswith(".") and n != ".." for n in names) and any(n.upper().startswith("REC2S") for n in names), names[:10])
 roots = [n for _, n in ents]
 check("... a file whose name is longer than MCL's lists hold (39 characters) is listed by its 8.3 short name, a .WAV (case does not matter)",
       any(n.upper().endswith(".WAV") and "~" in n and len(n) <= 12 for n in roots), roots[:8])
@@ -544,6 +545,14 @@ check("LISTEN with something else on track 15: it asks first (nothing played), L
 c.call("bb_player_stop")
 sample_in_t(2)
 check("... LISTEN with the R1 already there: no question, it plays", smp_listen() != 2 and rec(4) == 1, (smp_listen(), rec(4)))
+c.call("bb_player_stop")
+c.call("bb_mcl_rec_slot", 251)                                       # (the grid says a P machine plays on the track, as after a recording)
+sample_in_t(2)
+ask2 = smp_listen()
+sample_in_t(2)
+sample_in_t(2)
+ask3, pl3 = smp_listen(), rec(4)
+check("LISTEN with the P machine on the track: asks once, then plays on every press (no endless question)", ask2 == 2 and ask3 != 2 and pl3 == 1 and rec(0) == 255, (ask2, ask3, pl3, rec(0)))
 c.call("bb_player_stop")
 c.e.uc.mem_write(MDO + 4, b"\x00")
 used = c.call("bb_mcl_isr_stack_used")

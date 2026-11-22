@@ -289,17 +289,20 @@ static uint32_t rd_n, rd_i, rd_end, rd_err;
 static uint32_t execute_batch(void)
 {
     uint32_t k = 0, r = 0;
-    for (; k < RD_BATCH; k++) {
+    while (k < RD_BATCH) {
         req.op = OP_READDIR;
         r = execute();
         if (r || !req.name_out[0])
             break;
+        if (req.name_out[0] == '.' || (req.attr_out & 0x06u))      /* (hidden / system entries and dot files: the Mac's "._Name" resource forks listed next to every file and folder; skipped) */
+            continue;
         BbDirEnt *e = &rd_buf[k];
         e->size = req.size_out;
         e->attr = req.attr_out;
         copy_name(e->name, req.name_out);
         for (unsigned i = 0; i < 13; i++)
             e->alt[i] = req.alt_out[i];
+        k++;
     }
     req.op = OP_READDIRN;
     req.count = k;
