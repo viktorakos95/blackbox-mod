@@ -209,7 +209,7 @@ static int reopen_dir(uint32_t d)
  * sequence plays, lookups of folders and files that are there failed with 'no file' (user, n17-n19: 'E1 S11.4', folders would not open, all fine 10-20 s after STOP),
  * as if the window held something else than the sector it is marked with. Before each of MCL's requests (and each retry) a clean window is marked empty, so the
  * request reads its sectors from the card. Costs one sector read a request. */
-static void fresh_window(void)
+__attribute__((unused)) static void fresh_window(void)
 {
     volatile uint8_t *fs = *(volatile uint8_t *volatile *)0x24016150u;
     if (fs && fs[3] == 0)
@@ -223,8 +223,7 @@ static uint32_t execute(void)
     uint64_t pos = file_op ? FIL_FPTR(fils[h]) : 0;
     uint32_t r = 0;
     for (int attempt = 0;; attempt++) {
-        fresh_window();
-        r = exec_once();
+        r = exec_once();                                         /* (fresh_window() before it: out in n29, see below) */
         int lookup = op == OP_STAT || op == OP_OPENDIR || (op == OP_OPEN && req.mode == SD_READ);
         if (r == 0 || !(transient(r) || (lookup && (r == 4u || r == 5u))))     /* (a lookup that finds nothing while the streamer is busy: tried again, the folder / file is there: user, n16 'E1 S11.4') */
             break;

@@ -25,11 +25,5 @@ else:
         (0x0807443E, bl(0x0807443E, 0x08092F5C), bl(0x0807443E, bsym["mcl_sd_inner"])),
     ]
 
-# MCL's requests are also served right after every f_read the stock code makes in pcmStreamer (user, n16/n17: while a sequence plays the streamer can sit in one long
-# command, loading samples, for many seconds without reaching the two places above; MCL's requests then timed out and folders / WAV files failed until 10-20 s after STOP).
-# mcl_sd_fread runs the stock f_read, then serves a request only in the streamer task and only with room on its stack.
-F_READ = 0x08086866
-FREAD_SITES = [0x0806F984, 0x0806FA04, 0x0806FA4A, 0x08076B54, 0x08076BC0, 0x08076C14, 0x08076C50, 0x08076C5C, 0x08076C68, 0x08076C74, 0x08076CD0, 0x08076D22,
-               0x08076D4C, 0x08076DAE, 0x08076E2A, 0x08076ECE, 0x08076F12, 0x08076F1E, 0x08076F2A, 0x08076F36, 0x08076F84, 0x08076FA8, 0x08076FBC, 0x0807700A,
-               0x0807702C, 0x0807704C, 0x08077072, 0x08077188, 0x08091DD4, 0x0809723A]
-PATCHES = PATCHES + [(a, bl(a, F_READ), bl(a, bsym["mcl_sd_fread"])) for a in FREAD_SITES]
+# (n29: the per-f_read hook (mcl_sd_fread, 30 call sites in pcmStreamer) is out again. It was added for folders failing while a sequence played; the cause was MCL's shared
+# current folder (fixed in the browser), and the unit restarted by itself with MCL open. The function stays in the blob, unused.)
