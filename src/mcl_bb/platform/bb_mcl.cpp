@@ -737,16 +737,29 @@ extern "C" void bb_sample_back(void)
 /* Param 0 of the sample track is an R machine's main level (MLEV) and a P machine's pitch (user, n23: the recorded sample played at another pitch, and
  * re-recording fed back as if MLEV went up). Nothing but this file may write it on an R machine there (MCL's chromatic / poly / transpose / page
  * resets address param 0 as pitch), nor on a P machine there while the file plays into it or is heard. MCL's two param writers are link-wrapped. */
-static uint8_t own_param;
+static uint8_t own_param, p0_w, p0_b;                            /* parameter 0 of the sample track: written from outside / blocked, since the view opened (shown in the view) */
 static int param_guard(uint8_t track, uint8_t param)
 {
-    if (own_param || param != 0 || track != ST || !smp_loaded)
+    if (own_param || param != 0 || track != ST)
         return 0;
+    if (!smp_loaded) {
+        if (p0_w < 255)
+            p0_w++;
+        return 0;
+    }
     uint8_t m = MD.kit.get_model(track);
-    if (m == RAM_R1_MODEL || m == RAM_R2_MODEL || m == RAM_R3_MODEL || m == RAM_R4_MODEL)
+    if (m == RAM_R1_MODEL || m == RAM_R2_MODEL || m == RAM_R3_MODEL || m == RAM_R4_MODEL) {
+        if (p0_b < 255)
+            p0_b++;
         return 1;
-    if ((m == RAM_P1_MODEL || m == RAM_P2_MODEL || m == RAM_P3_MODEL || m == RAM_P4_MODEL) && (cable_armed || smp_recording || bb_player()->state == 1))
+    }
+    if ((m == RAM_P1_MODEL || m == RAM_P2_MODEL || m == RAM_P3_MODEL || m == RAM_P4_MODEL) && (cable_armed || smp_recording || bb_player()->state == 1)) {
+        if (p0_b < 255)
+            p0_b++;
         return 1;
+    }
+    if (p0_w < 255)
+        p0_w++;
     return 0;
 }
 extern "C" void __real__ZN7MDClass13setTrackParamEhhhP13MidiUartClassb(MDClass *md, uint8_t t, uint8_t p, uint8_t v, MidiUartClass *u, bool k);
@@ -913,6 +926,7 @@ static void smp_apply(void)
     case 4:                                                      /* the view opened: straight into the browser while nothing is chosen */
         smp_view = 1;
         smp_close_req = 0;
+        p0_w = p0_b = 0;
         smp_err_base = bb_sd_stat_get(11);
         smp_back = GRID_PAGE;
         if (smp_loaded && now != GRID_PAGE && now != SAMPLE_BROWSER)
@@ -990,6 +1004,9 @@ HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
     s->secs100 = rate ? (uint16_t)((uint64_t)fr * 100u / rate) : 0;
     s->steps = smp_loaded ? (uint8_t)smp_steps() : 0;
     s->len_set = smp_len_enc ? 1 : 0;
+    s->p0 = MD.kit.params[ST][0];
+    s->p0w = p0_w;
+    s->p0b = p0_b;
     s->_r2 = (uint8_t)(smp_trk | (smp_mon & 3u) << 1 | (smp_opening ? 8u : 0u));    /* track (16 if set), monitor level, the browser opening */
     s->slices = smp_recorded && RP.encoders[2]->cur > 0 ? (uint8_t)(1u << RP.encoders[2]->cur) : 0;
     if (smp_close_req)

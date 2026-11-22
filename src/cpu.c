@@ -1028,6 +1028,21 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
     lp_frame(x0, top, MCL_W, MCL_H, MC_WHITE, 1);
     lp_box(x0 + 1, top + 1, MCL_W - 2, 12, MC_WHITE);
     lp_text(x0 + 5, top + 3, s->_r2 & 1 ? "SAMPLE  > MD TRACK 16 (RAM 2)" : "SAMPLE  > MD TRACK 15 (RAM 1)", MC_BLACK, 1);
+    {                                                         /* parameter 0 of the track (R: main level, P: pitch) and the writes to it from outside: P0 64 W2 B1 */
+        p = t;
+        for (const char *c = "P0 "; *c; c++)
+            *p++ = *c;
+        p = put_uint(p, s->p0);
+        *p++ = ' ';
+        *p++ = 'W';
+        p = put_uint(p, s->p0w);
+        *p++ = ' ';
+        *p++ = 'B';
+        p = put_uint(p, s->p0b);
+        *p = 0;
+        if (s->state != 0)
+            lp_text(x0 + MCL_W - 6 - 6 * (int)(p - t), top + 52, t, MC_GREY, 1);
+    }
     if (s->nerr) {                                            /* the card's last failures (op.result), for the user to report: 8.5 = a folder not found ... */
         p = t;
         *p++ = 'E';

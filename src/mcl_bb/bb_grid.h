@@ -80,5 +80,7 @@ struct bb_sample {
     char name[32];
     uint16_t err[3];                   /* the card layer's last failed requests since the view opened, newest first (op << 8 | result) */
     uint8_t nerr;                      /* how many failed since the view opened (255 = more) */
+    uint8_t p0;                        /* the sample track's parameter 0 as MCL has it (R: main level, P: pitch) */
+    uint8_t p0w, p0b;                  /* writes to it from outside this file since the view opened / blocked ones (255 = more) */
     uint8_t _r2;                       /* bit 0: the record goes to track 16 (else 15), bits 1-2: LISTEN's monitor level (0 off .. 3 high), bit 3: the browser is opening */
 };
