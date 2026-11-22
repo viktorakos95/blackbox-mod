@@ -488,6 +488,18 @@ check("the record runs from its first step: the file plays (recording), the play
 check("... and stops at the record's end (12 steps), the file not played to its end", "end" in seen and 0 <= seen["end"][0] - (cs + rl) <= 1 and seen["end"][1] == 0, (seen, cs, rl))
 check("... the RAM player was queued while it recorded, for exactly the record's end (not a record length later)",
       "slot" in seen and seen["slot"][1] == cs + rl, (seen, cs + rl))
+# ---- the SAMPLE view opened over another MCL page (chromatic): MCL's own page goes to the grid, so the encoders / keys do not play the chromatic page
+c.call("bb_mcl_page_req", 3)                                           # a non-grid page (the mixer): current
+for _ in range(20):
+    c.step(20_000_000)
+    c.tick(5)
+sample_in(5)                                                           # (the view closed, if it was open)
+sample_in(4)                                                           # the view opened (a file is chosen: it stays on the page)
+for _ in range(10):
+    c.step(20_000_000)
+    c.tick(5)
+check("the SAMPLE view opened over another page: MCL's page under it is the grid (shortcut now = 4)", c.call("bb_mcl_shortcut_now") == 4, c.call("bb_mcl_shortcut_now"))
+sample_in(5)
 # ---- the record taken back (RECORD again, or NO = code 9) and its length set by the user
 def sample_in_t(a_):
     """a SAMPLE-view command with the clock ticking: MCL's loop waits for a pending transition (the record machine) while the clock stands still"""

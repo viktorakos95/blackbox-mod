@@ -855,8 +855,7 @@ static void smp_apply(void)
         smp_done = 0;
         break;
     case 1:                                                      /* BROWSE */
-        if (now != SAMPLE_BROWSER)
-            smp_back = now;
+        smp_back = GRID_PAGE;
         bb_cable_mode = 1;
         smp_opening = 1;                                         /* (the folder is listed before the browser shows: the view says so meanwhile) */
         mcl.setPage(SAMPLE_BROWSER);
@@ -915,8 +914,10 @@ static void smp_apply(void)
         smp_view = 1;
         smp_close_req = 0;
         smp_err_base = bb_sd_stat_get(11);
+        smp_back = GRID_PAGE;
+        if (smp_loaded && now != GRID_PAGE && now != SAMPLE_BROWSER)
+            mcl.setPage(GRID_PAGE);                              /* (the page under the view gets the Blackbox's encoders and the Machinedrum's keys: not the chromatic / poly / FX page it was opened over: user, n25) */
         if (!smp_loaded) {
-            smp_back = now == SAMPLE_BROWSER ? GRID_PAGE : now;
             bb_cable_mode = 1;
             smp_opening = 1;
             mcl.setPage(SAMPLE_BROWSER);
@@ -1267,8 +1268,7 @@ static void shortcut_apply(void)
         fx.page_mode = !fx.page_mode;
         fx.update_encoders();
     } else if (n == 5) {                                         /* (the SAMPLE view: the page sends input kind 7 now; this opens the browser) */
-        if (now != SAMPLE_BROWSER)
-            smp_back = now;
+        smp_back = GRID_PAGE;
         bb_cable_mode = 1;
         mcl.setPage(SAMPLE_BROWSER);
     } else if (now != want) {
