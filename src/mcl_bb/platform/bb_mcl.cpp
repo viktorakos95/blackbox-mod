@@ -275,6 +275,31 @@ static inline uint32_t clk_lock(void)                             /* masks TIM6'
 }
 static inline void clk_unlock(uint32_t old) { __asm volatile("msr basepri, %0" ::"r"(old) : "memory"); }
 
+/* While the SAMPLE view is open, note messages from outside (the jack: the Machinedrum's own trig notes; port 2: a keyboard, Trigger2MIDI's INT output) are not given to MCL:
+ * on its chromatic / poly channels they play the selected track, the sample's (user, n26: P1 an octave below what was heard, a different pitch each cycle). The dropped
+ * ones are counted and shown in the view (N<jack>/<port 2>). */
+static uint8_t nd_drop[2], nd_left[2], nd_cnt[2];
+static int note_drop(int port, uint8_t b)
+{
+    if (!smp_view) {
+        nd_left[port] = 0;
+        return 0;
+    }
+    if (b >= 0x80 && b < 0xa0) {
+        nd_left[port] = 2;
+        if (nd_cnt[port] < 255)
+            nd_cnt[port]++;
+        return 1;
+    }
+    if (b < 0x80 && nd_left[port]) {
+        nd_left[port]--;
+        return 1;
+    }
+    if (b >= 0x80)
+        nd_left[port] = 0;
+    return 0;
+}
+
 static void midi_rx_pump(void)
 {
     int c;
@@ -294,6 +319,8 @@ static void midi_rx_pump(void)
             MidiUart.recvActiveSenseTimer = 0;                     /* (still a sign of life of the device on the jack, as any byte is on MCL's own hardware: peering) */
             continue;                                              /* clock and transport are the Blackbox's (bb_clock): not the jack's */
         }
+        if (note_drop(0, b))
+            continue;
         st_rx_in++;
         uint32_t lk = clk_lock();                                  /* (the transport side also writes this ring, from the clock interrupt) */
         MidiUart.desktop_ingress(&b, 1);
@@ -306,6 +333,8 @@ static void midi_rx_pump(void)
             st_ext_clk++;
             continue;                                              /* (the Blackbox is the clock master here too) */
         }
+        if (note_drop(1, b))
+            continue;
         st_ext_in++;
         MidiUart2.desktop_ingress(&b, 1);
     }
@@ -927,6 +956,7 @@ static void smp_apply(void)
         smp_view = 1;
         smp_close_req = 0;
         p0_w = p0_b = 0;
+        nd_cnt[0] = nd_cnt[1] = 0;
         smp_err_base = bb_sd_stat_get(11);
         smp_back = GRID_PAGE;
         if (smp_loaded && now != GRID_PAGE && now != SAMPLE_BROWSER)
@@ -1007,6 +1037,8 @@ HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
     s->p0 = MD.kit.params[ST][0];
     s->p0w = p0_w;
     s->p0b = p0_b;
+    s->nd1 = nd_cnt[0];
+    s->nd2 = nd_cnt[1];
     s->_r2 = (uint8_t)(smp_trk | (smp_mon & 3u) << 1 | (smp_opening ? 8u : 0u));    /* track (16 if set), monitor level, the browser opening */
     s->slices = smp_recorded && RP.encoders[2]->cur > 0 ? (uint8_t)(1u << RP.encoders[2]->cur) : 0;
     if (smp_close_req)

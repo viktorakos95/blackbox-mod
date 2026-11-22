@@ -143,7 +143,7 @@ SMP = {"on": True, "state": 1, "browsing": 0, "clock": 0, "listen": 0, "slices":
 
 
 def sample_fn():
-    b = struct.pack("<BBBBHHBBBB", SMP["state"], SMP["browsing"], SMP["clock"], 2, 42, 480, SMP["listen"], 16, SMP["slices"], 0) + b"KICK808.WAV".ljust(32, b"\0") + bytes(11)
+    b = struct.pack("<BBBBHHBBBB", SMP["state"], SMP["browsing"], SMP["clock"], 2, 42, 480, SMP["listen"], 16, SMP["slices"], 0) + b"KICK808.WAV".ljust(32, b"\0") + bytes(13)
     u.mem_write(e.arg(0), b)
     e.ret(1)
 

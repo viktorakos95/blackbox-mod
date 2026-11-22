@@ -1039,6 +1039,11 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
         *p++ = ' ';
         *p++ = 'B';
         p = put_uint(p, s->p0b);
+        for (const char *c = " N"; *c; c++)
+            *p++ = *c;
+        p = put_uint(p, s->nd1);
+        *p++ = '/';
+        p = put_uint(p, s->nd2);
         *p = 0;
         if (s->state != 0)
             lp_text(x0 + MCL_W - 6 - 6 * (int)(p - t), top + 52, t, MC_GREY, 1);
