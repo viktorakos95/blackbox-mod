@@ -28,6 +28,8 @@
 #include "GUI/Pages/CommonPages.h"
 #include "Drivers/MD/UI/Pages/RAMPage.h"
 #include "Grid/MCLActions.h"
+#include "Sequencer/SeqTrackUtil.h"
+#include "Drivers/Generic/Sequencer/ArpSeqTrack.h"
 #include "KeyInterface.h"
 #include "Sequencer/BeatRepeat.h"
 #include "NoteInterface.h"
@@ -793,7 +795,7 @@ static int smp_md_listen(int browsing)
     smp_listen_ask = 0;
     own_param = 1;
     MD.setTrackParam(ST, RAM_R_MLEV, 0);
-    MD.setTrackParam(ST, RAM_R_ILEV, 100);
+    MD.setTrackParam(ST, RAM_R_ILEV, 64);                     /* (the level RECORD records at: setup_ram_rec_mono(.., 64, ..) — what is heard is what P1 will play) */
     MD.setTrackParam(ST, RAM_R_IBAL, 64);
     static const uint8_t cue[4] = {0, 40, 80, 110};
     MD.setTrackParam(ST, RAM_R_CUE1, cue[smp_mon & 3]);
@@ -802,6 +804,15 @@ static int smp_md_listen(int browsing)
     if (fresh)
         MD.triggerTrack(ST, 127);
     return 1;
+}
+
+/* The sample track's chromatic / arp state: MCL keeps an arp per track and a P1 coming on the track (a recording played back) found it enabled (user, n25: "the arp gets
+ * enabled in step mode, the notes are played again and again, a different pitch each cycle"): off and empty whenever this file puts a RAM machine on the track */
+static void smp_arp_off(void)
+{
+    ArpSeqTrack &arp = SeqTrackUtil::arp_track(DeviceIdx::Primary, ST);
+    arp.mode = ARP_OFF;
+    arp.clear_notes();
 }
 
 static void smp_slice_next(void)
@@ -833,6 +844,7 @@ static void smp_apply(void)
         RP.encoders[0]->cur = 1;                                    /* SOURCE_INPA */
         RP.encoders[2]->cur = 0;                                    /* (not sliced) */
         RP.setup_ram_rec_mono(ST, 64, 1);
+        smp_arp_off();
         cable_step = RP.transition_step;
         rec_len = RP.record_len;
         smp_recording = 0;
@@ -868,7 +880,8 @@ static void smp_apply(void)
             smp_slice_next();
         } else {
             if (grid_page.active_slots[ST] != SLOT_PENDING)
-                RP.setup_ram_play_mono(ST);              /* (still the recorder: the player from the next bar) */
+                RP.setup_ram_play_mono(ST);
+            smp_arp_off();                                       /* (still the recorder: the player from the next bar) */
             slice_want = 1;
         }
         break;
@@ -1096,6 +1109,7 @@ static void cable_loop(void)
         if ((int16_t)(now - arm_last) < 0 || (past >= 6 && past < 0x8000u)) {
             RP.encoders[3]->cur = (int)(smp_steps() / 4u);
             RP.setup_ram_rec_mono(ST, 64, 1);
+            smp_arp_off();
             cable_step = RP.transition_step;
             rec_len = RP.record_len;
         }
@@ -1114,6 +1128,7 @@ static void cable_loop(void)
         if (grid_page.active_slots[ST] == SLOT_RAM_RECORD) {
             smp_link_play = 0;
             RP.setup_ram_play_mono(ST);
+            smp_arp_off();
         } else if (!smp_recording) {
             smp_link_play = 0;                                     /* (the recorder never took its place: nothing to follow it) */
         }
