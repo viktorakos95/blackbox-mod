@@ -216,8 +216,24 @@ __attribute__((unused)) static void fresh_window(void)
         *(volatile uint32_t *)(fs + 0x38) = 0xffffffffu;
 }
 
+/* A card that is gone (pulled out while MCL is on) or stuck makes every stock transfer wait several seconds before it fails; four tries of one request then held the
+ * streamer task for 20 s or more and the stock watchdog (loop A, 20 s) restarted the unit (user, n28: pulled the card with MCL on). So: no more tries once a try has taken
+ * 200 ms in all, and after such a slow failure every request fails at once for 3 s (MCL's loops that keep asking get the answer without another wait). */
+static uint8_t trouble;
+static uint32_t trouble_t0;
+#define TROUBLE_CYC (3u * (SYST_RVR + 1u) * 1000u)
+#define SLOW_CYC    ((SYST_RVR + 1u) * 200u)
+
 static uint32_t execute(void)
 {
+    if (trouble) {
+        if (DWT_CYCCNT - trouble_t0 < TROUBLE_CYC) {
+            st_last_err = req.op << 8 | 102u;
+            return SD_NOT_READY;
+        }
+        trouble = 0;
+    }
+    uint32_t t_begin = DWT_CYCCNT;
     uint32_t op = req.op, h = req.h;
     int file_op = op == OP_READ || op == OP_WRITE || op == OP_SEEK || op == OP_SYNC || op == OP_TRUNCATE || op == OP_CLOSE;
     uint64_t pos = file_op ? FIL_FPTR(fils[h]) : 0;
@@ -233,8 +249,12 @@ static uint32_t execute(void)
             return 0;
         if ((op == OP_MKDIR || op == OP_UNLINK || op == OP_RENAME) && r != 3u)
             break;                                               /* it may have been half done: not again */
-        if (attempt >= 3) {
+        if (attempt >= 3 || DWT_CYCCNT - t_begin > SLOW_CYC) {
             st_gaveup++;
+            if (DWT_CYCCNT - t_begin > SLOW_CYC) {               /* (slow as well as failed: the card is gone or stuck) */
+                trouble = 1;
+                trouble_t0 = DWT_CYCCNT;
+            }
             break;
         }
         st_retries++;
