@@ -500,6 +500,16 @@ for _ in range(10):
     c.tick(5)
 check("the SAMPLE view opened over another page: MCL's page under it is the grid (shortcut now = 4)", c.call("bb_mcl_shortcut_now") == 4, c.call("bb_mcl_shortcut_now"))
 sample_in(5)
+# ---- the sample track's arp (MCL's ArpSeqData.enabled: OFF / ON / LATCH / LOCK) is switched off while the view is open (user: LOCK with the TRIG rate stepped a note on every trig)
+if True:
+    c.call("bb_mcl_arp_set", 3)                                        # the track's arp: LOCK
+    sample_in(5)
+    sample_in(4)
+    for _ in range(10):
+        c.step(20_000_000)
+        c.tick(5)
+    check("the sample track's arp is switched off again while the view is open (it was LOCK)", c.call("bb_mcl_arp_get") == 0, c.call("bb_mcl_arp_get"))
+    sample_in(5)
 # ---- the record taken back (RECORD again, or NO = code 9) and its length set by the user
 def sample_in_t(a_):
     """a SAMPLE-view command with the clock ticking: MCL's loop waits for a pending transition (the record machine) while the clock stands still"""

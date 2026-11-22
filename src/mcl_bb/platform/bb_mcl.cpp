@@ -853,7 +853,7 @@ static int smp_md_listen(int browsing)
 static void smp_arp_off(void)
 {
     ArpSeqTrack &arp = SeqTrackUtil::arp_track(DeviceIdx::Primary, ST);
-    arp.mode = ARP_OFF;
+    arp.enabled = ARP_OFF;                                       /* (the switch: OFF / ON / LATCH / LOCK; `mode` is the pattern: the user saw LOCK with the TRIG rate: every trig stepped a note) */
     arp.clear_notes();
 }
 
@@ -1005,6 +1005,9 @@ extern "C" bool __wrap__Z26platform_panel_handleEventP11gui_event_s(gui_event_t 
     return __real__Z26platform_panel_handleEventP11gui_event_s(ev);
 }
 
+HOOK void bb_mcl_arp_set(uint32_t v) { SeqTrackUtil::arp_track(DeviceIdx::Primary, ST).enabled = (uint8_t)v; }     /* (tests) */
+HOOK uint32_t bb_mcl_arp_get(void) { return SeqTrackUtil::arp_track(DeviceIdx::Primary, ST).enabled; }
+
 HOOK uint32_t bb_mcl_rec_stat(int which)                            /* (tests) */
 {
     switch (which) {
@@ -1135,6 +1138,11 @@ HOOK void bb_sample_record_req(const char *name) { rec_req = name; }
 
 static void cable_loop(void)
 {
+    if (smp_view && smp_loaded) {
+        ArpSeqTrack &arp = SeqTrackUtil::arp_track(DeviceIdx::Primary, ST);
+        if (arp.enabled != ARP_OFF)
+            smp_arp_off();                                       /* (anything that switched the track's arp on again while the sample view is open) */
+    }
     if (rec_req) {
         const char *nm = rec_req;
         rec_req = 0;
