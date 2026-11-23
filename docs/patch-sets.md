@@ -31,8 +31,8 @@ Order: the table order is the order `patch.py` takes and the web patcher applies
 | `hide_drone` | pages | `looper` | 0 | 0 | Leave out the DRONE-8 page |
 | `clkmon` | diag | `looper` | 3 | 12 | MIDI clock monitor (diagnostics) |
 | `lira` | drone | `filter` | 18 | 72 | DRONE-8 engine: Fidelity LIRA on Sample pads, MIDI learn |
-| `lirarec` | drone | `lira` | 3 | 12 | Record DRONE-8 / Looper onto a pad (Rec Input) |
-| `lirasave` | drone | `lira` | 5 | 20 | Save DRONE-8 / Looper / SAMPLR settings with the project (bbmod.bin, bbgen.bin) and the SAVE buttons |
+| `lirarec` | drone | - | 3 | 12 | Record DRONE-8 / Looper / SAMPLR onto a pad (Rec Input) |
+| `lirasave` | save | - | 5 | 20 | Save DRONE-8 / Looper / SAMPLR / Trigger2MIDI settings with the project (bbmod.bin, bbgen.bin) and the SAVE buttons |
 | `crash` | diag | - | 18 | 72 | Restart record (fault vectors, watchdog stamps) |
 | `cave` | base | - | 3 | 973080 | The compiled code (all of it) + the 3.1.<letter> version string |
 | `mclblob` | mcl | `looper`, `cpu` | (blob) | (blob) | MCL program (separate block, ~386 KB) + its MIDI / clock hooks |
@@ -44,8 +44,8 @@ Notes:
 - `looper`: The SONG button cycles Looper -> SAMPLR -> TRIG -> DRONE-8 -> (MCL) -> stock song screen (solo.c solo_song_pressed). All those pages are tabs of the Looper page (looper_page.c), so SAMPLR, Trigger2MIDI and the DRONE-8 page cannot be left out while `looper` is in, nor offered without it.
 - `hide_drone`: Without `hide_drone` the DRONE-8 page is in the round, and it needs the engine: `lira` (see PAGE_NEEDS).
 - `lira`: The DRONE-8 page itself is part of `looper`; without `looper` the engine is only the pad mode.
-- `lirarec`: The LOOPER choice records the looper's output, so it is useful with `looper` (not enforced: the tests run it with and without).
-- `lirasave`: Shares two hook points in the card task (0x080743E8, 0x0807443E) with `mclsd`: with both in the image the cave's hook runs first and calls MCL's.
+- `lirarec`: Does not need `lira`: test_lira_rec passes on an image without it (checked). The list only offers the machines whose page is in the image.
+- `lirasave`: Comes with every part (tools/combo.py from_parts). Does not need `lira`: the state is allocated by a `filter` hook, and test_lira_save / test_lira_roundtrip pass on an image with `lirasave` and no `lira` (checked). Shares two hook points in the card task (0x080743E8, 0x0807443E) with `mclsd`: with both in the image the cave's hook runs first and calls MCL's.
 - `mclblob`: Needs `looper` (the MCL page is a tab of it) and `cpu` (cpu_boot starts the blob). Must be applied after `cave`.
 - `mclsd`: TWO forms: with `lirasave` in the image it writes cave variables (the chain above), without it it hooks the card task itself. The form is chosen by whether `lirasave` is in the list (patches/mclsd.py reads sys.argv), so a per-set export needs both.
 
@@ -56,7 +56,7 @@ Dependency evidence: every `requires` comes from the module's own docstring and 
 | preset | sets | what |
 |---|---|---|
 | `core` | 13 | 3.1.n features only (no machines) |
-| `looper-family` | 16 | Looper, SAMPLR, Trigger2MIDI + Tools settings (no DRONE-8) |
+| `looper-family` | 17 | Looper, SAMPLR, Trigger2MIDI + Tools settings (no DRONE-8) |
 | `drone-family` | 18 | DRONE-8 with Looper, SAMPLR, Trigger2MIDI |
 | `all` | 20 | Everything except MCL |
 | `all+mcl` | 22 | Everything with MCL (experimental) |
@@ -78,8 +78,7 @@ Pick any parts; the page leaves out whatever is not picked. All the pages are ta
 | add-on | sets |
 |---|---|
 | Tools settings (`tools`) | `tools` |
-| Save DRONE-8 / Looper / SAMPLR settings with the project (`save`) | `lira`, `lirasave` |
-| Record DRONE-8 / Looper / SAMPLR onto a pad (`rec`) | `lira`, `lirarec` |
+| Record DRONE-8 / Looper / SAMPLR onto a pad (`rec`) | `lirarec` |
 | MIDI clock monitor (`clkmon`) | `looper`, `clkmon` |
 | Restart record (`crash`) | `crash` |
 
@@ -96,7 +95,7 @@ Not decided by the parts yet: the Tools settings page lists all its machine sett
 | preset | status | tests | tested | source |
 |---|---|---|---|---|
 | `core` | **pass** | 14/14 | 2026-11-23 | `196718f` |
-| `looper-family` | **pass** | 20/20 | 2026-11-23 | `196718f` |
+| `looper-family` | **pass** | 20/20 | 2026-11-23 | `e414ef3` |
 | `drone-family` | **pass** | 31/31 | 2026-11-23 | `196718f` |
 | `all` | **pass** | 33/33 | 2026-11-23 | `196718f` |
 | `all+mcl` | **untested** - no real MCL blob here: no out/mcl.bin / out/mcl.elf (build the blob: MCL_DIR=... MCL_GFX=... tools/mcl/build_mcl.sh) | 0/0 | 2026-11-23 | `196718f` |
@@ -106,67 +105,67 @@ Not decided by the parts yet: the Tools settings page lists all its machine sett
 | parts | add-ons | status | scope | tests |
 |---|---|---|---|---|
 | drone | none | **pass** | full | 26/26 |
-| drone | all five | **pass** | fast | 12/12 |
+| drone | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
 | looper | none | **pass** | full | 19/19 |
-| looper | all five | **pass** | fast | 12/12 |
+| looper | tools, rec, clkmon, crash | **pass** | fast | 10/10 |
 | samplr | none | **pass** | full | 19/19 |
-| samplr | all five | **pass** | fast | 12/12 |
+| samplr | tools, rec, clkmon, crash | **pass** | fast | 10/10 |
 | trig | none | **pass** | full | 19/19 |
-| trig | all five | **pass** | fast | 12/12 |
+| trig | tools, rec, clkmon, crash | **pass** | fast | 10/10 |
 | looper, drone | none | **pass** | fast | 9/9 |
-| looper, drone | all five | **pass** | fast | 12/12 |
+| looper, drone | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
 | looper, samplr | none | **pass** | fast | 8/8 |
-| looper, samplr | all five | **pass** | fast | 12/12 |
+| looper, samplr | tools, rec, clkmon, crash | **pass** | fast | 10/10 |
 | looper, trig | none | **pass** | fast | 8/8 |
-| looper, trig | all five | **pass** | fast | 12/12 |
+| looper, trig | tools, rec, clkmon, crash | **pass** | fast | 10/10 |
 | samplr, drone | none | **pass** | fast | 9/9 |
-| samplr, drone | all five | **pass** | fast | 12/12 |
+| samplr, drone | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
 | samplr, trig | none | **pass** | fast | 8/8 |
-| samplr, trig | all five | **pass** | fast | 12/12 |
+| samplr, trig | tools, rec, clkmon, crash | **pass** | fast | 10/10 |
 | trig, drone | none | **pass** | fast | 9/9 |
-| trig, drone | all five | **pass** | fast | 12/12 |
+| trig, drone | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
 | looper, samplr, drone | none | **pass** | fast | 10/10 |
-| looper, samplr, drone | all five | **pass** | fast | 13/13 |
+| looper, samplr, drone | tools, rec, clkmon, crash | **pass** | fast | 13/13 |
 | looper, samplr, trig | none | **pass** | fast | 8/8 |
-| looper, samplr, trig | all five | **pass** | fast | 12/12 |
+| looper, samplr, trig | tools, rec, clkmon, crash | **pass** | fast | 10/10 |
 | looper, trig, drone | none | **pass** | fast | 9/9 |
-| looper, trig, drone | all five | **pass** | fast | 12/12 |
+| looper, trig, drone | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
 | samplr, trig, drone | none | **pass** | fast | 9/9 |
-| samplr, trig, drone | all five | **pass** | fast | 12/12 |
+| samplr, trig, drone | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
 | looper, samplr, trig, drone | none | **pass** | fast | 13/13 |
-| looper, samplr, trig, drone | all five | **pass** | fast | 16/16 |
+| looper, samplr, trig, drone | tools, rec, clkmon, crash | **pass** | fast | 16/16 |
 | mcl | none | **untested** | - | 0/0 |
-| mcl | all five | **untested** | - | 0/0 |
+| mcl | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, drone | none | **untested** | - | 0/0 |
-| mcl, drone | all five | **untested** | - | 0/0 |
+| mcl, drone | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, looper | none | **untested** | - | 0/0 |
-| mcl, looper | all five | **untested** | - | 0/0 |
+| mcl, looper | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, samplr | none | **untested** | - | 0/0 |
-| mcl, samplr | all five | **untested** | - | 0/0 |
+| mcl, samplr | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, trig | none | **untested** | - | 0/0 |
-| mcl, trig | all five | **untested** | - | 0/0 |
+| mcl, trig | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, looper, drone | none | **untested** | - | 0/0 |
-| mcl, looper, drone | all five | **untested** | - | 0/0 |
+| mcl, looper, drone | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, looper, samplr | none | **untested** | - | 0/0 |
-| mcl, looper, samplr | all five | **untested** | - | 0/0 |
+| mcl, looper, samplr | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, looper, trig | none | **untested** | - | 0/0 |
-| mcl, looper, trig | all five | **untested** | - | 0/0 |
+| mcl, looper, trig | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, samplr, drone | none | **untested** | - | 0/0 |
-| mcl, samplr, drone | all five | **untested** | - | 0/0 |
+| mcl, samplr, drone | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, samplr, trig | none | **untested** | - | 0/0 |
-| mcl, samplr, trig | all five | **untested** | - | 0/0 |
+| mcl, samplr, trig | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, trig, drone | none | **untested** | - | 0/0 |
-| mcl, trig, drone | all five | **untested** | - | 0/0 |
+| mcl, trig, drone | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, looper, samplr, drone | none | **untested** | - | 0/0 |
-| mcl, looper, samplr, drone | all five | **untested** | - | 0/0 |
+| mcl, looper, samplr, drone | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, looper, samplr, trig | none | **untested** | - | 0/0 |
-| mcl, looper, samplr, trig | all five | **untested** | - | 0/0 |
+| mcl, looper, samplr, trig | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, looper, trig, drone | none | **untested** | - | 0/0 |
-| mcl, looper, trig, drone | all five | **untested** | - | 0/0 |
+| mcl, looper, trig, drone | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, samplr, trig, drone | none | **untested** | - | 0/0 |
-| mcl, samplr, trig, drone | all five | **untested** | - | 0/0 |
+| mcl, samplr, trig, drone | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 | mcl, looper, samplr, trig, drone | none | **untested** | - | 0/0 |
-| mcl, looper, samplr, trig, drone | all five | **untested** | - | 0/0 |
+| mcl, looper, samplr, trig, drone | tools, rec, clkmon, crash | **untested** | - | 0/0 |
 
 **What a pass proves.** 17 of the 32 image tests still pass on an image with NO hooks (stock + the code block): they drive the cave's functions directly. They show the code works, not that a combination's hooks reach it (that is what the wiring check and the hook-sensitive tests are for). The list is `docs/test-sensitivity.json` (`python3 tools/combo.py control`). The page logic of every combination of hidden pages (SONG round, BACK, MIX, Rec Input list) is `test_pages.py`, in the host tier. Nothing here has been run on the unit.
 

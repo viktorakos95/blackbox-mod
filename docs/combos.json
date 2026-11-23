@@ -313,10 +313,10 @@
     "test_solo.py",
     "test_t2m_bb.py"
    ],
-   "host_tests": "not recorded: run `combo.py host --record`",
+   "host_tests": "pass",
    "id": "looper-family",
    "image_bytes": 1701768,
-   "image_sha256": "aa79c27cc5c696f98009fd1596dd32c8b36ecb08d271bf562f2400202e04f4b5",
+   "image_sha256": "e3afbcd12a41f28de35a16d4735039a1573cd88a3f7e8496a21d49e50dadf106",
    "n_a": [
     "test_clkmon.py",
     "test_crash.py",
@@ -349,9 +349,10 @@
     "munchi",
     "looper",
     "hide_drone",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -406,7 +407,7 @@
    "host_tests": "pass",
    "id": "p-drone",
    "image_bytes": 1701768,
-   "image_sha256": "2e7d900c33dc053c4774a21a09d3512cdf5a3965dce2d13b3a9ec0f92d53f2e8",
+   "image_sha256": "846a0f9eca31be9db5064310d721897da06f0ce688999eccafcb020954b8141f",
    "n_a": [
     "test_clkmon.py",
     "test_crash.py",
@@ -438,9 +439,10 @@
     "hide_samplr",
     "hide_trig",
     "lira",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -473,10 +475,9 @@
    },
    "title": "parts: drone"
   },
-  "p-drone_a-tools-save-rec-clkmon-crash": {
+  "p-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -487,7 +488,7 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
    "image_sha256": "898ddb41d2fbc913b0e4c441c723bb2949e3d686ba205cdd181f815a3572b9a4",
    "n_a": [
@@ -542,7 +543,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -559,7 +560,7 @@
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: drone; add-ons: tools, rec, clkmon, crash"
   },
   "p-looper": {
    "addons": [],
@@ -583,7 +584,7 @@
    "host_tests": "pass",
    "id": "p-looper",
    "image_bytes": 1701768,
-   "image_sha256": "6b8ab3e447d78792909d21b80d80562b3e2354a44d0deecad00b61b63471cd31",
+   "image_sha256": "0087f8ce6a962182663e4fa6274de9615058d37fa00efb5cd1b2c5655247617f",
    "n_a": [
     "test_clkmon.py",
     "test_crash.py",
@@ -621,9 +622,10 @@
     "hide_samplr",
     "hide_trig",
     "hide_drone",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -659,7 +661,7 @@
    "host_tests": "pass",
    "id": "p-looper-drone",
    "image_bytes": 1701768,
-   "image_sha256": "76f44594612e0320913bca80b8b0d110cecb59a8a18d243e4d24cf28d21992e4",
+   "image_sha256": "a8ab8ad932f7e4c14de36f15d81d34f2831beb4aa10c1cdc3d8a44a05c616402",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -708,9 +710,10 @@
     "hide_samplr",
     "hide_trig",
     "lira",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -726,10 +729,9 @@
    },
    "title": "parts: looper, drone"
   },
-  "p-looper-drone_a-tools-save-rec-clkmon-crash": {
+  "p-looper-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -740,7 +742,7 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-looper-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-looper-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
    "image_sha256": "addc75002419d7843f2cdcc63b125fa6b8ad63f6d7c644e6e5fb49a351be18be",
    "n_a": [
@@ -795,7 +797,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -812,7 +814,7 @@
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: looper, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: looper, drone; add-ons: tools, rec, clkmon, crash"
   },
   "p-looper-samplr": {
    "addons": [],
@@ -824,7 +826,7 @@
    "host_tests": "pass",
    "id": "p-looper-samplr",
    "image_bytes": 1701768,
-   "image_sha256": "2acf7e316561d0433558728cbb9f4f5d2fd2c13ceb6640702ba57c9c874e860c",
+   "image_sha256": "126c80b4feb88290d07dda52437143a9903bbc1e3ec6da930c3d200c89e4d968",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -873,9 +875,10 @@
     "looper",
     "hide_trig",
     "hide_drone",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -900,7 +903,7 @@
    "host_tests": "pass",
    "id": "p-looper-samplr-drone",
    "image_bytes": 1701768,
-   "image_sha256": "e33a5164693a468dbfafcf8c3d11811f35a89dd161652e4ae89a3d484861fcce",
+   "image_sha256": "444d32886888132975beffc7effde964869c24c73e84e904123602517f40445a",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -948,9 +951,10 @@
     "looper",
     "hide_trig",
     "lira",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -967,10 +971,9 @@
    },
    "title": "parts: looper, samplr, drone"
   },
-  "p-looper-samplr-drone_a-tools-save-rec-clkmon-crash": {
+  "p-looper-samplr-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -981,7 +984,7 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-looper-samplr-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-looper-samplr-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
    "image_sha256": "4da6b7b114491d44edd4d8df740ec93cbda830cb1350e0edaadfe41b2d185edc",
    "n_a": [
@@ -1035,7 +1038,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -1053,7 +1056,7 @@
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: looper, samplr, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: looper, samplr, drone; add-ons: tools, rec, clkmon, crash"
   },
   "p-looper-samplr-trig": {
    "addons": [],
@@ -1065,7 +1068,7 @@
    "host_tests": "pass",
    "id": "p-looper-samplr-trig",
    "image_bytes": 1701768,
-   "image_sha256": "af1d9ed4eabb30c10b723cae8d9fc2188564fb326b207fdf51ad683c952e753c",
+   "image_sha256": "5c0cfce67f86193cf4d91e002f5a9cbaad166c359cc7b784e97bff6f474b1f95",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -1114,9 +1117,10 @@
     "munchi",
     "looper",
     "hide_drone",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -1141,7 +1145,7 @@
    "host_tests": "pass",
    "id": "p-looper-samplr-trig-drone",
    "image_bytes": 1701768,
-   "image_sha256": "660c7f900f55fc76cf84068ae3fe8978e1b2076674eb4614e72b796c12e3bf06",
+   "image_sha256": "81078f4e49c2f49392e75eaefa561960a8238dc72b5b8f6086595e7dbf7d1fb9",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -1186,9 +1190,10 @@
     "munchi",
     "looper",
     "lira",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -1208,10 +1213,9 @@
    },
    "title": "parts: looper, samplr, trig, drone"
   },
-  "p-looper-samplr-trig-drone_a-tools-save-rec-clkmon-crash": {
+  "p-looper-samplr-trig-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -1222,7 +1226,7 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-looper-samplr-trig-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-looper-samplr-trig-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
    "image_sha256": "a53295b55437f8257a629f409272d5d88f4afc5e8e9a50f121ce1a7806576b4b",
    "n_a": [
@@ -1273,7 +1277,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -1294,12 +1298,11 @@
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: looper, samplr, trig, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: looper, samplr, trig, drone; add-ons: tools, rec, clkmon, crash"
   },
-  "p-looper-samplr-trig_a-tools-save-rec-clkmon-crash": {
+  "p-looper-samplr-trig_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -1310,11 +1313,12 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-looper-samplr-trig_a-tools-save-rec-clkmon-crash",
+   "id": "p-looper-samplr-trig_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
-   "image_sha256": "86cbd29f6163508639a669fc0a0eea43e852dd9c8983e4217f366c3d247e2a69",
+   "image_sha256": "fde45d79ca4af764ddb7ec1bd54d70f201c0e639f7730062447bfb239f889dad",
    "n_a": [
     "test_clkout.py",
+    "test_crash.py",
     "test_duck.py",
     "test_fx2.py",
     "test_guard.py",
@@ -1326,6 +1330,7 @@
     "test_lira_roundtrip.py",
     "test_lira_save.py",
     "test_lira_screen.py",
+    "test_lira_ui.py",
     "test_looper.py",
     "test_looper_v4.py",
     "test_munchi.py",
@@ -1359,13 +1364,12 @@
     "looper",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -1374,20 +1378,17 @@
     "test_comp.py": "pass",
     "test_cond.py": "pass",
     "test_cpu.py": "pass",
-    "test_crash.py": "pass",
     "test_filter.py": "pass",
-    "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: looper, samplr, trig; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: looper, samplr, trig; add-ons: tools, rec, clkmon, crash"
   },
-  "p-looper-samplr_a-tools-save-rec-clkmon-crash": {
+  "p-looper-samplr_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -1398,11 +1399,12 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-looper-samplr_a-tools-save-rec-clkmon-crash",
+   "id": "p-looper-samplr_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
-   "image_sha256": "321d204992ad4294ef3f0d5c00b60e5953f01d13d12e5b8dc7b5b81b7b79fb2a",
+   "image_sha256": "676fb6c4c1922b34081e0588017510cecdbfdf4cc939ad91ed7a9dea7b51c8bf",
    "n_a": [
     "test_clkout.py",
+    "test_crash.py",
     "test_duck.py",
     "test_fx2.py",
     "test_guard.py",
@@ -1414,6 +1416,7 @@
     "test_lira_roundtrip.py",
     "test_lira_save.py",
     "test_lira_screen.py",
+    "test_lira_ui.py",
     "test_looper.py",
     "test_looper_v4.py",
     "test_munchi.py",
@@ -1447,13 +1450,12 @@
     "hide_trig",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -1462,15 +1464,13 @@
     "test_comp.py": "pass",
     "test_cond.py": "pass",
     "test_cpu.py": "pass",
-    "test_crash.py": "pass",
     "test_filter.py": "pass",
-    "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: looper, samplr; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: looper, samplr; add-ons: tools, rec, clkmon, crash"
   },
   "p-looper-trig": {
    "addons": [],
@@ -1482,7 +1482,7 @@
    "host_tests": "pass",
    "id": "p-looper-trig",
    "image_bytes": 1701768,
-   "image_sha256": "54454b632e698b8f009a97bc671b2a777df143e278d5cddc1416c56e92450c8a",
+   "image_sha256": "e8fe2cd77b67328bcfaa5fb2490bd5d6d75ac3d46b58645a95089294e5048a08",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -1531,9 +1531,10 @@
     "looper",
     "hide_samplr",
     "hide_drone",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -1558,7 +1559,7 @@
    "host_tests": "pass",
    "id": "p-looper-trig-drone",
    "image_bytes": 1701768,
-   "image_sha256": "121a0964062f07605ba883e9c73fd05968e4621905044667089d62183285af13",
+   "image_sha256": "c3f8f159014fa37df8b4e1cf70daed0d8555e9d8af7d6c71f9b1ccc0355a459d",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -1607,9 +1608,10 @@
     "looper",
     "hide_samplr",
     "lira",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -1625,10 +1627,9 @@
    },
    "title": "parts: looper, trig, drone"
   },
-  "p-looper-trig-drone_a-tools-save-rec-clkmon-crash": {
+  "p-looper-trig-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -1639,7 +1640,7 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-looper-trig-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-looper-trig-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
    "image_sha256": "b56aed129da85a05ffa018397931f2917926e8b46d7ed4cb989198d3bc855805",
    "n_a": [
@@ -1694,7 +1695,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -1711,12 +1712,11 @@
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: looper, trig, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: looper, trig, drone; add-ons: tools, rec, clkmon, crash"
   },
-  "p-looper-trig_a-tools-save-rec-clkmon-crash": {
+  "p-looper-trig_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -1727,11 +1727,12 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-looper-trig_a-tools-save-rec-clkmon-crash",
+   "id": "p-looper-trig_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
-   "image_sha256": "9c2c8263f09152a2b50eac4137c49fec33d96becb7c7837f16618d6d11df86c2",
+   "image_sha256": "1f62a78992d9f0c351d19f7785feee742696dff08b6c35d1279aa8127734a13e",
    "n_a": [
     "test_clkout.py",
+    "test_crash.py",
     "test_duck.py",
     "test_fx2.py",
     "test_guard.py",
@@ -1743,6 +1744,7 @@
     "test_lira_roundtrip.py",
     "test_lira_save.py",
     "test_lira_screen.py",
+    "test_lira_ui.py",
     "test_looper.py",
     "test_looper_v4.py",
     "test_munchi.py",
@@ -1776,13 +1778,12 @@
     "hide_samplr",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -1791,20 +1792,17 @@
     "test_comp.py": "pass",
     "test_cond.py": "pass",
     "test_cpu.py": "pass",
-    "test_crash.py": "pass",
     "test_filter.py": "pass",
-    "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: looper, trig; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: looper, trig; add-ons: tools, rec, clkmon, crash"
   },
-  "p-looper_a-tools-save-rec-clkmon-crash": {
+  "p-looper_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -1815,11 +1813,12 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-looper_a-tools-save-rec-clkmon-crash",
+   "id": "p-looper_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
-   "image_sha256": "ec0ebc3816cbb8c0c27697a81cc87765995aeddc1583ff640d35799f7d2c4d30",
+   "image_sha256": "5a0542ce88107291920078befa6c9731e2f34861300a6ca4ff826b947eeb55ac",
    "n_a": [
     "test_clkout.py",
+    "test_crash.py",
     "test_duck.py",
     "test_fx2.py",
     "test_guard.py",
@@ -1831,6 +1830,7 @@
     "test_lira_roundtrip.py",
     "test_lira_save.py",
     "test_lira_screen.py",
+    "test_lira_ui.py",
     "test_looper.py",
     "test_looper_v4.py",
     "test_munchi.py",
@@ -1864,13 +1864,12 @@
     "hide_trig",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -1879,15 +1878,13 @@
     "test_comp.py": "pass",
     "test_cond.py": "pass",
     "test_cpu.py": "pass",
-    "test_crash.py": "pass",
     "test_filter.py": "pass",
-    "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: looper; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: looper; add-ons: tools, rec, clkmon, crash"
   },
   "p-mcl": {
    "addons": [],
@@ -1918,11 +1915,12 @@
     "hide_samplr",
     "hide_trig",
     "hide_drone",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
@@ -1958,20 +1956,20 @@
     "hide_samplr",
     "hide_trig",
     "lira",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
    "title": "parts: mcl, drone"
   },
-  "p-mcl-drone_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -1980,7 +1978,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-drone_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "drone"
@@ -2013,11 +2011,11 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, drone; add-ons: tools, rec, clkmon, crash"
   },
   "p-mcl-looper": {
    "addons": [],
@@ -2048,11 +2046,12 @@
     "hide_samplr",
     "hide_trig",
     "hide_drone",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
@@ -2088,20 +2087,20 @@
     "hide_samplr",
     "hide_trig",
     "lira",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
    "title": "parts: mcl, looper, drone"
   },
-  "p-mcl-looper-drone_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-looper-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -2110,7 +2109,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-looper-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-looper-drone_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "looper",
@@ -2143,11 +2142,11 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, looper, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, looper, drone; add-ons: tools, rec, clkmon, crash"
   },
   "p-mcl-looper-samplr": {
    "addons": [],
@@ -2178,11 +2177,12 @@
     "looper",
     "hide_trig",
     "hide_drone",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
@@ -2218,20 +2218,20 @@
     "looper",
     "hide_trig",
     "lira",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
    "title": "parts: mcl, looper, samplr, drone"
   },
-  "p-mcl-looper-samplr-drone_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-looper-samplr-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -2240,7 +2240,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-looper-samplr-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-looper-samplr-drone_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "looper",
@@ -2273,11 +2273,11 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, looper, samplr, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, looper, samplr, drone; add-ons: tools, rec, clkmon, crash"
   },
   "p-mcl-looper-samplr-trig": {
    "addons": [],
@@ -2308,11 +2308,12 @@
     "munchi",
     "looper",
     "hide_drone",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
@@ -2348,20 +2349,20 @@
     "munchi",
     "looper",
     "lira",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
    "title": "parts: mcl, looper, samplr, trig, drone"
   },
-  "p-mcl-looper-samplr-trig-drone_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-looper-samplr-trig-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -2370,7 +2371,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-looper-samplr-trig-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-looper-samplr-trig-drone_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "looper",
@@ -2403,16 +2404,15 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, looper, samplr, trig, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, looper, samplr, trig, drone; add-ons: tools, rec, clkmon, crash"
   },
-  "p-mcl-looper-samplr-trig_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-looper-samplr-trig_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -2421,7 +2421,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-looper-samplr-trig_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-looper-samplr-trig_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "looper",
@@ -2446,7 +2446,6 @@
     "looper",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
@@ -2454,16 +2453,15 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, looper, samplr, trig; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, looper, samplr, trig; add-ons: tools, rec, clkmon, crash"
   },
-  "p-mcl-looper-samplr_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-looper-samplr_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -2472,7 +2470,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-looper-samplr_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-looper-samplr_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "looper",
@@ -2497,7 +2495,6 @@
     "hide_trig",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
@@ -2505,11 +2502,11 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, looper, samplr; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, looper, samplr; add-ons: tools, rec, clkmon, crash"
   },
   "p-mcl-looper-trig": {
    "addons": [],
@@ -2540,11 +2537,12 @@
     "looper",
     "hide_samplr",
     "hide_drone",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
@@ -2580,20 +2578,20 @@
     "looper",
     "hide_samplr",
     "lira",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
    "title": "parts: mcl, looper, trig, drone"
   },
-  "p-mcl-looper-trig-drone_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-looper-trig-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -2602,7 +2600,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-looper-trig-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-looper-trig-drone_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "looper",
@@ -2635,16 +2633,15 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, looper, trig, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, looper, trig, drone; add-ons: tools, rec, clkmon, crash"
   },
-  "p-mcl-looper-trig_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-looper-trig_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -2653,7 +2650,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-looper-trig_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-looper-trig_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "looper",
@@ -2678,7 +2675,6 @@
     "hide_samplr",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
@@ -2686,16 +2682,15 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, looper, trig; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, looper, trig; add-ons: tools, rec, clkmon, crash"
   },
-  "p-mcl-looper_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-looper_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -2704,7 +2699,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-looper_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-looper_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "looper"
@@ -2729,7 +2724,6 @@
     "hide_trig",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
@@ -2737,11 +2731,11 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, looper; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, looper; add-ons: tools, rec, clkmon, crash"
   },
   "p-mcl-samplr": {
    "addons": [],
@@ -2772,11 +2766,12 @@
     "hide_looper",
     "hide_trig",
     "hide_drone",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
@@ -2812,20 +2807,20 @@
     "hide_looper",
     "hide_trig",
     "lira",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
    "title": "parts: mcl, samplr, drone"
   },
-  "p-mcl-samplr-drone_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-samplr-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -2834,7 +2829,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-samplr-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-samplr-drone_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "samplr",
@@ -2867,11 +2862,11 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, samplr, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, samplr, drone; add-ons: tools, rec, clkmon, crash"
   },
   "p-mcl-samplr-trig": {
    "addons": [],
@@ -2902,11 +2897,12 @@
     "looper",
     "hide_looper",
     "hide_drone",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
@@ -2942,20 +2938,20 @@
     "looper",
     "hide_looper",
     "lira",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
    "title": "parts: mcl, samplr, trig, drone"
   },
-  "p-mcl-samplr-trig-drone_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-samplr-trig-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -2964,7 +2960,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-samplr-trig-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-samplr-trig-drone_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "samplr",
@@ -2997,16 +2993,15 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, samplr, trig, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, samplr, trig, drone; add-ons: tools, rec, clkmon, crash"
   },
-  "p-mcl-samplr-trig_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-samplr-trig_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -3015,7 +3010,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-samplr-trig_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-samplr-trig_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "samplr",
@@ -3040,7 +3035,6 @@
     "hide_looper",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
@@ -3048,16 +3042,15 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, samplr, trig; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, samplr, trig; add-ons: tools, rec, clkmon, crash"
   },
-  "p-mcl-samplr_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-samplr_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -3066,7 +3059,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-samplr_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-samplr_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "samplr"
@@ -3091,7 +3084,6 @@
     "hide_trig",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
@@ -3099,11 +3091,11 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, samplr; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, samplr; add-ons: tools, rec, clkmon, crash"
   },
   "p-mcl-trig": {
    "addons": [],
@@ -3134,11 +3126,12 @@
     "hide_looper",
     "hide_samplr",
     "hide_drone",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
@@ -3174,20 +3167,20 @@
     "hide_looper",
     "hide_samplr",
     "lira",
+    "lirasave",
     "cave",
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
    "title": "parts: mcl, trig, drone"
   },
-  "p-mcl-trig-drone_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-trig-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -3196,7 +3189,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-trig-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-trig-drone_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "trig",
@@ -3229,16 +3222,15 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, trig, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, trig, drone; add-ons: tools, rec, clkmon, crash"
   },
-  "p-mcl-trig_a-tools-save-rec-clkmon-crash": {
+  "p-mcl-trig_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -3247,7 +3239,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl-trig_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl-trig_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl",
     "trig"
@@ -3272,7 +3264,6 @@
     "hide_samplr",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
@@ -3280,16 +3271,15 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl, trig; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl, trig; add-ons: tools, rec, clkmon, crash"
   },
-  "p-mcl_a-tools-save-rec-clkmon-crash": {
+  "p-mcl_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -3298,7 +3288,7 @@
    "cave_limit": 188808,
    "cave_sha256": "8967765999ffda911e0f939c9e1ee444b464332a5c45903cccf0c9834b41461b",
    "experimental": false,
-   "id": "p-mcl_a-tools-save-rec-clkmon-crash",
+   "id": "p-mcl_a-tools-rec-clkmon-crash",
    "parts": [
     "mcl"
    ],
@@ -3323,7 +3313,6 @@
     "hide_trig",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
@@ -3331,11 +3320,11 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "untested",
    "tested_at": "2026-11-23",
    "tests": {},
-   "title": "parts: mcl; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: mcl; add-ons: tools, rec, clkmon, crash"
   },
   "p-samplr": {
    "addons": [],
@@ -3359,7 +3348,7 @@
    "host_tests": "pass",
    "id": "p-samplr",
    "image_bytes": 1701768,
-   "image_sha256": "130c1ce6b884485d9e253ba53f213af4b28951db1edcd3b6f38cdebf747e8da2",
+   "image_sha256": "5695663d9b82d946e68290337e08ee87bfffd32ab6d509a22cfd876afee6243f",
    "n_a": [
     "test_clkmon.py",
     "test_crash.py",
@@ -3397,9 +3386,10 @@
     "hide_looper",
     "hide_trig",
     "hide_drone",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -3435,7 +3425,7 @@
    "host_tests": "pass",
    "id": "p-samplr-drone",
    "image_bytes": 1701768,
-   "image_sha256": "6f65f2049e52546cb7a8661981c4d41f6c9fe1c23bc002e7dd67138bcdea8da9",
+   "image_sha256": "c7ff7f26d6f4d48f8e0721f0bd70b170e6c056c03e7c58df6bca005ccebb3292",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -3484,9 +3474,10 @@
     "hide_looper",
     "hide_trig",
     "lira",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -3502,10 +3493,9 @@
    },
    "title": "parts: samplr, drone"
   },
-  "p-samplr-drone_a-tools-save-rec-clkmon-crash": {
+  "p-samplr-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -3516,7 +3506,7 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-samplr-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-samplr-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
    "image_sha256": "032a4f04d8533ff3f43000103a87c6ae3c33fedafad200eaf650f2dea9a3b097",
    "n_a": [
@@ -3571,7 +3561,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -3588,7 +3578,7 @@
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: samplr, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: samplr, drone; add-ons: tools, rec, clkmon, crash"
   },
   "p-samplr-trig": {
    "addons": [],
@@ -3600,7 +3590,7 @@
    "host_tests": "pass",
    "id": "p-samplr-trig",
    "image_bytes": 1701768,
-   "image_sha256": "88239a91f0ff181d3726b28294907ac05a1d07b6b0e5bbbe66c4aadda7074927",
+   "image_sha256": "3a7670215559f177a8010d926c5c94b0d02c487ac4b3d965d0da9052a4ff41c2",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -3649,9 +3639,10 @@
     "looper",
     "hide_looper",
     "hide_drone",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -3676,7 +3667,7 @@
    "host_tests": "pass",
    "id": "p-samplr-trig-drone",
    "image_bytes": 1701768,
-   "image_sha256": "a2984c5931e8169f58c573202c69b57699ccef93f57063e69e4dd1810116c923",
+   "image_sha256": "e964ecd6e8b76a52a094f249cf3e5aa043992c1825f1c8d27be74bb0b9979c93",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -3725,9 +3716,10 @@
     "looper",
     "hide_looper",
     "lira",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -3743,10 +3735,9 @@
    },
    "title": "parts: samplr, trig, drone"
   },
-  "p-samplr-trig-drone_a-tools-save-rec-clkmon-crash": {
+  "p-samplr-trig-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -3757,7 +3748,7 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-samplr-trig-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-samplr-trig-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
    "image_sha256": "3f8e0253c531c191139a36875ffdc02259d716f977fb04012611043b8c76e8dc",
    "n_a": [
@@ -3812,7 +3803,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -3829,12 +3820,11 @@
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: samplr, trig, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: samplr, trig, drone; add-ons: tools, rec, clkmon, crash"
   },
-  "p-samplr-trig_a-tools-save-rec-clkmon-crash": {
+  "p-samplr-trig_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -3845,11 +3835,12 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-samplr-trig_a-tools-save-rec-clkmon-crash",
+   "id": "p-samplr-trig_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
-   "image_sha256": "7f806cc73252c37af8aaedf89ca869629337ff8ffcd4258aae57d858b6bba1fb",
+   "image_sha256": "d39560581fb18e986bc296633b0e1946d95a0184db5e32eee93311023d28373a",
    "n_a": [
     "test_clkout.py",
+    "test_crash.py",
     "test_duck.py",
     "test_fx2.py",
     "test_guard.py",
@@ -3861,6 +3852,7 @@
     "test_lira_roundtrip.py",
     "test_lira_save.py",
     "test_lira_screen.py",
+    "test_lira_ui.py",
     "test_looper.py",
     "test_looper_v4.py",
     "test_munchi.py",
@@ -3894,13 +3886,12 @@
     "hide_looper",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -3909,20 +3900,17 @@
     "test_comp.py": "pass",
     "test_cond.py": "pass",
     "test_cpu.py": "pass",
-    "test_crash.py": "pass",
     "test_filter.py": "pass",
-    "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: samplr, trig; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: samplr, trig; add-ons: tools, rec, clkmon, crash"
   },
-  "p-samplr_a-tools-save-rec-clkmon-crash": {
+  "p-samplr_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -3933,11 +3921,12 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-samplr_a-tools-save-rec-clkmon-crash",
+   "id": "p-samplr_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
-   "image_sha256": "698a6c311168af8e1c1c56ca9f4794985fb1f4762bdec7f2830556e994266363",
+   "image_sha256": "89fc82b4c1df9767b93d0682c20d15e9cf9b6c5feacfcd8d77d1851a22d82e56",
    "n_a": [
     "test_clkout.py",
+    "test_crash.py",
     "test_duck.py",
     "test_fx2.py",
     "test_guard.py",
@@ -3949,6 +3938,7 @@
     "test_lira_roundtrip.py",
     "test_lira_save.py",
     "test_lira_screen.py",
+    "test_lira_ui.py",
     "test_looper.py",
     "test_looper_v4.py",
     "test_munchi.py",
@@ -3982,13 +3972,12 @@
     "hide_trig",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -3997,15 +3986,13 @@
     "test_comp.py": "pass",
     "test_cond.py": "pass",
     "test_cpu.py": "pass",
-    "test_crash.py": "pass",
     "test_filter.py": "pass",
-    "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: samplr; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: samplr; add-ons: tools, rec, clkmon, crash"
   },
   "p-trig": {
    "addons": [],
@@ -4029,7 +4016,7 @@
    "host_tests": "pass",
    "id": "p-trig",
    "image_bytes": 1701768,
-   "image_sha256": "1a6f9b2c96c440aa5f8bfdf42c0a5d80142e078409f2d0eeb96552665bc112cd",
+   "image_sha256": "47a8838761aaee12df676a9f6b7311b5a0cfefc54b44b7cb32f43d8b6e6b6114",
    "n_a": [
     "test_clkmon.py",
     "test_crash.py",
@@ -4067,9 +4054,10 @@
     "hide_looper",
     "hide_samplr",
     "hide_drone",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -4105,7 +4093,7 @@
    "host_tests": "pass",
    "id": "p-trig-drone",
    "image_bytes": 1701768,
-   "image_sha256": "31cff97f8f483e36dc073d1d621b883bd9a834dfdaf4c3f087f3f0b0b97e1a54",
+   "image_sha256": "e48311fc82c05cf58c2a0b502cc94c7d30eaa8558a2433180637700c6017b730",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -4154,9 +4142,10 @@
     "hide_looper",
     "hide_samplr",
     "lira",
+    "lirasave",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -4172,10 +4161,9 @@
    },
    "title": "parts: trig, drone"
   },
-  "p-trig-drone_a-tools-save-rec-clkmon-crash": {
+  "p-trig-drone_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -4186,7 +4174,7 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-trig-drone_a-tools-save-rec-clkmon-crash",
+   "id": "p-trig-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
    "image_sha256": "d50216f97a3de995e4aeb5122b1193a7d74b59eb89f1877b7617585f9f46fc53",
    "n_a": [
@@ -4241,7 +4229,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -4258,12 +4246,11 @@
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: trig, drone; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: trig, drone; add-ons: tools, rec, clkmon, crash"
   },
-  "p-trig_a-tools-save-rec-clkmon-crash": {
+  "p-trig_a-tools-rec-clkmon-crash": {
    "addons": [
     "tools",
-    "save",
     "rec",
     "clkmon",
     "crash"
@@ -4274,11 +4261,12 @@
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
-   "id": "p-trig_a-tools-save-rec-clkmon-crash",
+   "id": "p-trig_a-tools-rec-clkmon-crash",
    "image_bytes": 1701768,
-   "image_sha256": "577a46f8a8accc8c420264e0e206ecc9c9e833a40693cc955e1f181acd9d2f8a",
+   "image_sha256": "d3dd98fe38d9473ea57da30792f1d49239d9b2c47d6f18d0ba3be456d83268ba",
    "n_a": [
     "test_clkout.py",
+    "test_crash.py",
     "test_duck.py",
     "test_fx2.py",
     "test_guard.py",
@@ -4290,6 +4278,7 @@
     "test_lira_roundtrip.py",
     "test_lira_save.py",
     "test_lira_screen.py",
+    "test_lira_ui.py",
     "test_looper.py",
     "test_looper_v4.py",
     "test_munchi.py",
@@ -4323,13 +4312,12 @@
     "hide_samplr",
     "hide_drone",
     "clkmon",
-    "lira",
     "lirarec",
     "lirasave",
     "crash",
     "cave"
    ],
-   "source_rev": "196718f",
+   "source_rev": "e414ef3",
    "status": "pass",
    "tested_at": "2026-11-23",
    "tests": {
@@ -4338,15 +4326,13 @@
     "test_comp.py": "pass",
     "test_cond.py": "pass",
     "test_cpu.py": "pass",
-    "test_crash.py": "pass",
     "test_filter.py": "pass",
-    "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
     "wiring": "pass"
    },
-   "title": "parts: trig; add-ons: tools, save, rec, clkmon, crash"
+   "title": "parts: trig; add-ons: tools, rec, clkmon, crash"
   }
  },
  "host": {
