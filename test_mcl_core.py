@@ -578,6 +578,35 @@ c.call("bb_mcl_page_req", 0)
 for _ in range(20):
     c.step(20_000_000)
     c.tick(5)
+# ---- LISTEN through the Machinedrum: track 15 must be an R1 (asked first: it erases the track), then its input and CUE up and the file plays
+def smp_listen():
+    c.uc.mem_write(SBUF, bytes(48))
+    c.call("bb_mcl_sample", SBUF)
+    return c.uc.mem_read(SBUF + 8, 1)[0]
+
+
+MDO = c.b["MD"]
+c.e.uc.mem_write(MDO + 4, b"\x01")                                  # (a Machinedrum connected)
+m0 = rec(7)
+sample_in_t(2)
+ask, pl1 = smp_listen(), rec(4)
+sample_in_t(2)
+m1, pl2 = rec(7), rec(4)
+check("LISTEN with something else on track 15: it asks first (nothing played), LISTEN again: track 15 is an R1 (160) and the file plays",
+      m0 != 160 and ask == 2 and pl1 == 0 and m1 == 160 and pl2 == 1, (m0, ask, pl1, m1, pl2))
+c.call("bb_player_stop")
+sample_in_t(2)
+check("... LISTEN with the R1 already there: no question, it plays", smp_listen() != 2 and rec(4) == 1, (smp_listen(), rec(4)))
+c.call("bb_player_stop")
+c.call("bb_mcl_rec_slot", 251)                                       # (the grid says a P machine plays on the track, as after a recording)
+sample_in_t(2)
+ask2 = smp_listen()
+sample_in_t(2)
+sample_in_t(2)
+ask3, pl3 = smp_listen(), rec(4)
+check("LISTEN with the P machine on the track: asks once, then plays on every press (no endless question)", ask2 == 2 and ask3 != 2 and pl3 == 1 and rec(0) == 255, (ask2, ask3, pl3, rec(0)))
+c.call("bb_player_stop")
+c.e.uc.mem_write(MDO + 4, b"\x00")
 # ---- the Machinedrum's BANK / GROUP key (its key sysex F0 7F 0D 1E F7 from the jack) with the view open: MCL's page selection, the view asked to close
 def md_key(k):
     for byte in (0xF0, 0x7F, 0x0D, k, 0xF7):
@@ -604,38 +633,6 @@ c.call("bb_mcl_page_req", 0)
 for _ in range(20):
     c.step(20_000_000)
     c.tick(5)
-# ---- LISTEN through the Machinedrum: track 15 must be an R1 (asked first: it erases the track), then its input and CUE up and the file plays
-def smp_listen():
-    c.uc.mem_write(SBUF, bytes(48))
-    c.call("bb_mcl_sample", SBUF)
-    return c.uc.mem_read(SBUF + 8, 1)[0]
-
-
-print("     (debug) MCL page before LISTEN:", rec(11), "listen:", smp_listen(), "ask:", c.uc.mem_read(c.b["_ZL14smp_listen_ask"], 1)[0] if "_ZL14smp_listen_ask" in c.b else -1)
-MDO = c.b["MD"]
-c.e.uc.mem_write(MDO + 4, b"\x01")                                  # (a Machinedrum connected)
-m0 = rec(7)
-sample_in_t(2)
-ask, pl1 = smp_listen(), rec(4)
-sample_in_t(2)
-m1, pl2 = rec(7), rec(4)
-rd = lambda n, k=1: int.from_bytes(bytes(c.uc.mem_read(c.b[n], k)), "little")
-print("     (debug) after LISTEN x2: cmd %d ask %d listen_t %d armed %d rec %d page %d clk %d" % (rd("_ZL7smp_cmd"), rd("_ZL14smp_listen_ask"), rd("_ZL12smp_listen_t", 4), rd("_ZL11cable_armed"), rd("_ZL13smp_recording"), rec(11), stat(0)))
-check("LISTEN with something else on track 15: it asks first (nothing played), LISTEN again: track 15 is an R1 (160) and the file plays",
-      m0 != 160 and ask == 2 and pl1 == 0 and m1 == 160 and pl2 == 1, (m0, ask, pl1, m1, pl2))
-c.call("bb_player_stop")
-sample_in_t(2)
-check("... LISTEN with the R1 already there: no question, it plays", smp_listen() != 2 and rec(4) == 1, (smp_listen(), rec(4)))
-c.call("bb_player_stop")
-c.call("bb_mcl_rec_slot", 251)                                       # (the grid says a P machine plays on the track, as after a recording)
-sample_in_t(2)
-ask2 = smp_listen()
-sample_in_t(2)
-sample_in_t(2)
-ask3, pl3 = smp_listen(), rec(4)
-check("LISTEN with the P machine on the track: asks once, then plays on every press (no endless question)", ask2 == 2 and ask3 != 2 and pl3 == 1 and rec(0) == 255, (ask2, ask3, pl3, rec(0)))
-c.call("bb_player_stop")
-c.e.uc.mem_write(MDO + 4, b"\x00")
 used = c.call("bb_mcl_isr_stack_used")
 print("     soft-interrupt stack used: %d of 6144 bytes" % used)
 check("the soft interrupts' own stack (6 KB) was used less than 2/3 over MIDI, the clock, the panel", 0 < used < 4096, used)
