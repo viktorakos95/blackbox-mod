@@ -1,0 +1,692 @@
+/*
+ * Trigger2MIDI page: the third page of the SONG button (SAMPLR, TRIG, then the stock song screen). src/looper_page.c
+ * draws the frame and the footer and hands over the area between the top bar and the footer, the touches there and the
+ * four knobs. The footer's sheets: HITS, DETECT, OUT, CLK.
+ *
+ *   top bar    TRIG  L <hits> v<last>   R <hits> v<last>
+ *   row        [IN L] [IN R]   [ON]   [TRS] [USB] [INT]   the input shown, its switch, its outputs (every sheet): the MIDI jack, USB, and
+ *              the Blackbox's own MIDI in (its pads and keys play what their MIDI settings say for that channel and note)
+ *   HITS       two pads that light up on a hit (colour = velocity, note and velocity in them), the input levels with the
+ *              threshold, and the last 4 s of hits per input as bars (height = velocity). The knobs turn SENS, THRESH,
+ *              RETRIG, MASK of the input shown, to set the threshold while watching the meter.
+ *   DETECT     SENS THRESH RETRIG MASK / SCAN STRICT SPEED CURVE / BLEED RANGE FLOOR, and the meter
+ *   OUT        NOTE VEL LEN CHAN / CC CC VAL
+ * On DETECT and OUT a tap on a row hands it to the four knobs (pink frame): knob n turns the row's n-th value (the
+ * Looper page's knob order). NOTE OFF = no MIDI note (hits still show); CC OFF = no CC; VEL / CC VAL / LEN at their lowest = DYN.
+ * INT sends the same notes and CCs into the Blackbox's own MIDI in: a pad plays when its MIDI settings take that channel and note.
+ * Knobs: 40 counts a step (the SAMPLR envelope's rate).
+ *   CLK        a measurement, not a setting (src/clkmon.c): how the MIDI clock arriving on the TRS jack and on USB is seen,
+ *              timings in microseconds; a tap anywhere on the sheet resets the numbers. No switch row, the knobs do nothing.
+ */
+#include <stdint.h>
+
+#include "t2m_bb.h"
+
+void lp_box(int x, int d, int w, int h, int color);
+void lp_frame(int x, int d, int w, int h, int color, int th);
+void lp_text(int x, int d, const char *s, int color, int scale);
+void lp_text_c(int x, int d, int w, const char *s, int color, int scale);
+void lp_hline(int x, int d, int w, int color);
+void lp_vline(int x, int d, int h, int color);
+
+/* palette (looper_page.c's) */
+#define C_BG     0x02
+#define C_BLACK  0x0e
+#define C_RAIL   0x10
+#define C_GREY   0x09
+#define C_LIGHT  0x16
+#define C_WHITE  0x0f
+#define C_GREEN  0x0b
+#define C_RED    0x0c
+#define C_REC    0x06
+#define C_YELLOW 0x14
+#define C_CYAN   0x1b
+#define C_PINK   0x20
+
+#define TOP   16                 /* first line below the top bar */
+#define BAR_H 20                 /* the switch row */
+#define MET_H 12                 /* a meter */
+#define STEP_COUNTS 40
+#define LIT_BLOCKS  30           /* a pad is lit this long after a hit (160 ms) */
+
+enum { SH_HITS, SH_DETECT, SH_OUT, SHEETS };
+enum { V_SENS, V_THRESH, V_RETRIG, V_MASK, V_SCAN, V_STRICT, V_SPEED, V_CURVE, V_NOTE, V_VEL, V_LEN, V_CHAN, V_CC, V_CCVAL,
+       V_BLEED, V_RANGE, V_FLOOR, VALUES, V_NONE = -1 };
+static const char *const val_name[VALUES] = {"SENSITIVITY", "THRESHOLD", "RING GUARD", "DEAD TIME", "PEAK WINDOW", "SHARPNESS", "REACTION", "TOUCH CURVE", "NOTE", "VELOCITY", "NOTE LENGTH", "CHANNEL", "CC NUMBER", "CC VALUE", "BLEED GUARD", "GUARD REACH", "NOISE FLOOR"};
+/* what a value does, in plain words: shown under the settings for the one last touched (two lines of at most 50 characters) */
+static const char *const hint[VALUES][2] = {
+    {"Input gain before detection.", "Raise for soft pads, lower for loud ones."},
+    {"How loud a hit must be to count.", "Raise to ignore bleed from other drums."},
+    {"After a hit, the level to beat fades slowly.", "Higher = ringing and echoes ignored longer."},
+    {"After a hit everything is ignored this long.", "Shorter = faster rolls, more double hits."},
+    {"Time spent finding the hit's loudest point,", "which sets velocity. 0 with fixed velocity."},
+    {"How sharply the sound must jump above the", "background. Higher = only crisp hits count."},
+    {"How fast the detector reacts to an attack.", "Lower = quicker (delay 3 x this), more false hits."},
+    {"Velocity feel. Below 1: soft hits come out", "louder. Above 1: you have to hit harder."},
+    {"MIDI note sent for each hit. OFF = no note,", "the hits still show on this page."},
+    {"DYN = velocity follows how hard you hit.", "A number = every hit sends that velocity."},
+    {"DYN = the note ends when the hit has died away.", "A number = it ends after that many ms."},
+    {"MIDI channel of the notes and CCs.", ""},
+    {"Also send this CC number with every hit.", "OFF = no CC."},
+    {"DYN = CC value follows how hard you hit.", "A number = always that value."},
+    {"Rejects hits that ring on one pitch (bleed from", "other drums, resonance). OFF = never rejects."},
+    {"How far above the threshold the bleed guard", "still checks a hit. Bigger = checks louder hits."},
+    {"Quietest background a hit may start from.", "Lower lets tiny clicks in (-100 dB for clicks)."},
+};
+/* the settings sheets: three rows of four; the HITS sheet's knobs are DETECT's first row */
+static const int8_t sheet_vals[2][12] = {
+    {V_SENS, V_THRESH, V_RETRIG, V_MASK, V_SCAN, V_STRICT, V_SPEED, V_CURVE, V_BLEED, V_RANGE, V_FLOOR, V_NONE},
+    {V_NOTE, V_VEL, V_LEN, V_CHAN, V_CC, V_CCVAL, V_NONE, V_NONE, V_NONE, V_NONE, V_NONE, V_NONE},
+};
+
+#define UI (&m->ui)
+
+/* ---- text */
+static char *put_s(char *p, const char *s)
+{
+    while (*s)
+        *p++ = *s++;
+    return p;
+}
+
+static char *put_u(char *p, unsigned v)
+{
+    char t[10];
+    int n = 0;
+    do {
+        t[n++] = (char)('0' + v % 10);
+        v /= 10;
+    } while (v);
+    while (n)
+        *p++ = t[--n];
+    return p;
+}
+
+static char *put_f(char *p, float v, int dec)        /* v >= 0, dec 0..2 */
+{
+    unsigned sc = dec == 2 ? 100 : dec == 1 ? 10 : 1;
+    unsigned n = (unsigned)(v * (float)sc + .5f);
+    p = put_u(p, n / sc);
+    if (dec) {
+        *p++ = '.';
+        unsigned f = n % sc;
+        if (dec == 2 && f < 10)
+            *p++ = '0';
+        p = put_u(p, f);
+    }
+    return p;
+}
+
+static char *put_note(char *p, int n)                 /* Max / Yamaha naming: 60 = C3, 38 = D1 */
+{
+    static const char *const nm[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    p = put_s(p, nm[n % 12]);
+    int o = n / 12 - 2;
+    if (o < 0) {
+        *p++ = '-';
+        o = -o;
+    }
+    return put_u(p, (unsigned)o);
+}
+
+static void value_text(const struct t2m_mem *m, int k, int v, char *b)
+{
+    const t2m_params *q = &m->p[k];
+    char *p = b;
+    switch (v) {
+    case V_SENS: p = put_f(p, q->sens, 2); break;
+    case V_THRESH: p = put_f(p, q->thresh, 2); break;
+    case V_RETRIG: p = put_f(p, q->retrig, 2); break;
+    case V_MASK: p = put_u(p, (unsigned)(q->mask_ms + .5f)); p = put_s(p, "ms"); break;
+    case V_SCAN: p = put_f(p, q->scan_ms, 1); p = put_s(p, "ms"); break;
+    case V_STRICT: p = put_f(p, q->strict_db, 1); p = put_s(p, "dB"); break;
+    case V_SPEED: p = put_f(p, q->speed_ms, 1); p = put_s(p, "ms"); break;
+    case V_CURVE: p = put_f(p, q->curve, 2); break;
+    case V_NOTE:
+        if (!q->note_on)
+            p = put_s(p, "OFF");
+        else {
+            p = put_note(p, q->note);
+            *p++ = ' ';
+            p = put_u(p, q->note);
+        }
+        break;
+    case V_VEL: p = q->vel_mode ? put_u(p, q->vel_fixed) : put_s(p, "DYN"); break;
+    case V_LEN: if (q->len_mode) { p = put_u(p, q->len_ms); p = put_s(p, "ms"); } else p = put_s(p, "DYN"); break;
+    case V_CHAN: p = put_u(p, q->channel); break;
+    case V_CC: p = q->cc_on ? put_u(p, q->cc_num) : put_s(p, "OFF"); break;
+    case V_CCVAL: p = q->cc_mode ? put_u(p, q->cc_fixed) : put_s(p, "DYN"); break;
+    case V_BLEED: p = q->spec_strict < .005f ? put_s(p, "OFF") : put_f(p, q->spec_strict, 2); break;
+    case V_RANGE: p = q->spec_range < .005f ? put_s(p, "OFF") : put_f(p, q->spec_range, 2); break;
+    case V_FLOOR: *p++ = '-'; p = put_u(p, (unsigned)(-q->floor_db + .5f)); p = put_s(p, "dB"); break;
+    }
+    *p = 0;
+}
+
+/* ---- values: one knob step */
+static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ? hi : x; }
+static int clampi(int x, int lo, int hi) { return x < lo ? lo : x > hi ? hi : x; }
+
+static void step_params(t2m_params *q, int v, int s)
+{
+    switch (v) {
+    case V_SENS: q->sens = clampf(q->sens + (q->sens < 2.f ? .05f : .1f) * (float)s, .1f, 10.f); break;
+    case V_THRESH: q->thresh = clampf(q->thresh + .25f * (float)s, 0.f, 31.f); break;
+    case V_RETRIG: q->retrig = clampf(q->retrig + .25f * (float)s, 1.f, 16.f); break;
+    case V_MASK: q->mask_ms = clampf(q->mask_ms + (float)s, 1.f, 64.f); break;      /* the patch's range is 15 .. 64; lower passes fast notes */
+    case V_SCAN: q->scan_ms = clampf(q->scan_ms + .1f * (float)s, 0.f, 4.f); break;
+    case V_STRICT: q->strict_db = clampf(q->strict_db + .25f * (float)s, 0.f, 20.f); break;
+    case V_SPEED: q->speed_ms = clampf(q->speed_ms + .1f * (float)s, .2f, 10.f); break;
+    case V_CURVE: q->curve = clampf(q->curve + .01f * (float)s, .1f, 1.5f); break;
+    case V_NOTE: {                                    /* OFF, 0 .. 127 */
+        int n = q->note_on ? q->note + 1 : 0;
+        n = clampi(n + s, 0, 128);
+        q->note_on = n > 0;
+        if (n)
+            q->note = (uint8_t)(n - 1);
+        break;
+    }
+    case V_VEL: {                                     /* DYN, 1 .. 127 */
+        int n = q->vel_mode ? q->vel_fixed : 0;
+        n = clampi(n + s, 0, 127);
+        q->vel_mode = n > 0;
+        if (n)
+            q->vel_fixed = (uint8_t)n;
+        break;
+    }
+    case V_LEN: {                                     /* DYN, 5 .. 2000 ms */
+        int n = q->len_mode ? q->len_ms : 0, st = n < 100 ? 5 : n < 500 ? 10 : 50;
+        n = n + s * st;
+        if (!q->len_mode && s > 0)
+            n = 5;
+        q->len_mode = n >= 5;
+        if (n >= 5)
+            q->len_ms = (uint16_t)clampi(n, 5, 2000);
+        break;
+    }
+    case V_CHAN: q->channel = (uint8_t)clampi(q->channel + s, 1, 16); break;
+    case V_CC: {                                      /* OFF, 0 .. 127 */
+        int n = q->cc_on ? q->cc_num + 1 : 0;
+        n = clampi(n + s, 0, 128);
+        q->cc_on = n > 0;
+        if (n)
+            q->cc_num = (uint8_t)(n - 1);
+        break;
+    }
+    case V_CCVAL: {
+        int n = q->cc_mode ? q->cc_fixed : 0;
+        n = clampi(n + s, 0, 127);
+        q->cc_mode = n > 0;
+        if (n)
+            q->cc_fixed = (uint8_t)n;
+        break;
+    }
+    case V_BLEED: q->spec_strict = clampf(q->spec_strict + .01f * (float)s, 0.f, .6f); break;
+    case V_RANGE: q->spec_range = clampf(q->spec_range + .01f * (float)s, 0.f, 1.f); break;
+    case V_FLOOR: q->floor_db = clampf(q->floor_db + (float)s, -120.f, -40.f); break;
+    }
+}
+
+/* ---- geometry: w = page width, foot = the footer's line */
+static int rows_top(int sheet)
+{
+    return sheet == SH_DETECT ? TOP + BAR_H + MET_H + 6 : TOP + BAR_H + 4;
+}
+
+/* The settings come in squares of four (2 x 2 cells = the four encoders: top-left, top-right, bottom-left, bottom-right), two squares across and
+ * up to two down: group g sits at quadrant (g & 1, g >> 1). The fourth quadrant of DETECT holds the presets. */
+#define CELL_H 30
+static int cell_w(int w) { return (w - 8) / 4 - 2; }
+static void cell_xy(int w, int sheet, int g, int c, int *x, int *y)
+{
+    int half = (w - 8) / 2;
+    *x = 4 + (g & 1) * half + (c & 1) * (half / 2);
+    *y = rows_top(sheet) + (g >> 1) * (2 * CELL_H + 3) + (c >> 1) * CELL_H;
+}
+
+/* presets (DETECT, bottom right): detector settings for typical jobs; the note, channel and CC settings stay. Chosen from the usual drum-module advice
+ * (Roland / Alesis trigger guides: a kick needs a long mask against beater bounce, bleed needs a higher threshold, rolls a short mask and low retrigger
+ * cancel) and this detector's measured latency table (docs/t2m-notes.md). Values within the patch's ranges. */
+struct preset { const char *name; float sens, thresh, retrig, mask, scan, strict, speed, curve, bleed, range, floor; uint8_t vfix; };
+#define PRESETS 6
+static const struct preset presets[PRESETS] = {
+    {"DEFAULT",    2.0f, 2.0f,  8.f, 15.f, 2.f,  8.f, 3.0f, 0.6f, 0.15f, 0.15f,  -60.f, 0},
+    {"FAST",       2.0f, 2.0f,  4.f,  8.f, 0.f,  6.f, 0.5f, 0.6f, 0.00f, 0.00f,  -80.f, 1},   /* lowest latency: fixed velocity, no peak search, quick reaction (about 4 ms) */
+    {"KICK",       1.5f, 4.0f, 12.f, 40.f, 3.f, 10.f, 3.0f, 0.8f, 0.30f, 0.30f,  -60.f, 0},   /* beater bounce and the head's ring ignored */
+    {"BLEED",      1.5f, 6.0f, 12.f, 25.f, 2.f, 14.f, 2.0f, 0.8f, 0.40f, 0.50f,  -60.f, 0},   /* other drums leaking in: higher threshold, sharper, bleed guard wide */
+    {"ROLLS",      2.0f, 2.0f,  2.f,  3.f, 1.f,  4.f, 1.0f, 0.6f, 0.00f, 0.00f, -100.f, 0},   /* many quick retriggers: short dead time, little ring guard */
+    {"SOFT",       5.0f, 1.0f,  6.f, 10.f, 2.f,  5.f, 2.0f, 0.4f, 0.00f, 0.00f,  -90.f, 0},   /* ghost notes and soft pads */
+};
+
+/* what each preset is for (two lines of at most 50 characters, shown under the squares while it is the last thing chosen) */
+static const char *const preset_note[PRESETS][2] = {
+    {"DEFAULT: the patch's own settings.", "A fair start for most pads."},
+    {"FAST: lowest delay (about 4 ms), fixed velocity.", "For triggering sounds live; no peak search."},
+    {"KICK: long dead time ignores beater bounce.", "Higher threshold, wide ring guard."},
+    {"BLEED: other drums leaking in are ignored.", "Higher threshold, sharper, wide bleed guard."},
+    {"ROLLS: very short dead time for fast repeats.", "Low ring guard: may double-trigger on ringing."},
+    {"SOFT: ghost notes and light touch.", "High sensitivity, low threshold, soft curve."},
+};
+
+static void preset_xy(int w, int sheet, int i, int *x, int *y, int *bw)
+{
+    int cx, cy;
+    cell_xy(w, sheet, 3, 0, &cx, &cy);
+    *bw = (w - 8) / 4 - 2;
+    *x = cx + (i & 1) * (*bw + 4);
+    *y = cy + 11 + (i >> 1) * 15;
+}
+
+static void preset_apply(struct t2m_mem *m, int k, int i)
+{
+    const struct preset *q = &presets[i];
+    t2m_params p = m->p[k];
+    p.sens = q->sens; p.thresh = q->thresh; p.retrig = q->retrig; p.mask_ms = q->mask; p.strict_db = q->strict;
+    p.speed_ms = q->speed; p.curve = q->curve; p.spec_strict = q->bleed; p.spec_range = q->range; p.floor_db = q->floor;
+    p.scan_ms = q->scan;
+    p.vel_mode = q->vfix;
+    m->scan_saved[k] = q->vfix ? 2.0f : q->scan;
+    m->p[k] = p;
+    UI->preset = (uint8_t)(i + 1);
+}
+
+/* switch row buttons: 0 IN L, 1 IN R, 2 ON, 3 TRS, 4 USB, 5 INT (the Blackbox's own MIDI in), 6 ENG (the whole engine: off = no detector at all) */
+static const int16_t sw_x[7] = {4, 46, 100, 150, 192, 234, 276};   /* (6: ENG, the engine switch) */
+static const int16_t sw_w[7] = {38, 38, 40, 38, 38, 38, 35};
+
+static float db_of(float x)                          /* 20 log10(x) for the meter, rough */
+{
+    union {
+        float f;
+        uint32_t u;
+    } v = {x};
+    float l2 = (float)((int)(v.u >> 23) - 127);
+    v.u = (v.u & 0x7fffffu) | 0x3f800000u;
+    l2 += (-0.34484843f * v.f + 2.02466578f) * v.f - 0.67487759f;
+    return 6.0206f * l2;
+}
+
+static int meter_x(int len, float lin)               /* -48 .. 0 dB across len pixels */
+{
+    float db = lin > 1e-5f ? db_of(lin) : -100.f;
+    return (int)(clampf((db + 48.f) / 48.f, 0.f, 1.f) * (float)len);
+}
+
+static int age_of(const struct t2m_mem *m, uint32_t blk) { return (int)(m->blocks - blk); }
+
+static int vel_color(int v) { return v < 50 ? C_GREEN : v < 100 ? C_YELLOW : C_REC; }
+
+static int lit(const struct t2m_mem *m, int k) { return m->hits[k] && age_of(m, m->hit_blk[k]) < LIT_BLOCKS; }
+
+static void draw_meter(const struct t2m_mem *m, int k, int w, int d, int h)
+{
+    int mw = w - 8 - 64, lx = meter_x(mw, m->peak[k]);
+    lp_text(4, d + (h - 8) / 2, k ? "R" : "L", C_GREY, 1);
+    lp_frame(14, d, mw - 8, h, C_RAIL, 1);
+    lp_box(15, d + 1, lx * (mw - 10) / (mw ? mw : 1), h - 2, lit(m, k) ? C_GREEN : k ? C_YELLOW : C_CYAN);
+    float thr = 0.01f + m->p[k].thresh * (0.09f / 31.f);
+    lp_vline(15 + meter_x(mw - 10, thr), d - 1, h + 2, C_RED);
+}
+
+/* the pads: lit by a hit, in the colour of its velocity */
+static void draw_pads(const struct t2m_mem *m, int w, int d, int bh)
+{
+    int bw = (w - 12) / 2;
+    for (int k = 0; k < T2M_INPUTS; k++) {
+        int x = 4 + k * (bw + 4), on = m->on[k] && m->eng, l = on && lit(m, k), sel = (m->ui.in & 1) == k;
+        int fc = on ? (k ? C_YELLOW : C_CYAN) : C_RAIL, ink = l ? C_BLACK : on ? C_WHITE : !m->eng ? C_RED : C_GREY;
+        if (l)
+            lp_box(x, d, bw, bh, vel_color(m->last_vel[k]));
+        lp_frame(x, d, bw, bh, fc, sel ? 2 : 1);
+        char b[24], *p = b;
+        *p++ = k ? 'R' : 'L';
+        *p = 0;
+        lp_text(x + 5, d + 4, b, ink, 1);
+        p = b;
+        if (!m->eng)
+            p = put_s(p, "ENGINE OFF");
+        else if (!on)
+            p = put_s(p, "OFF");
+        else if (!m->hits[k])
+            p = put_s(p, "READY");
+        else if (m->p[k].note_on)
+            p = put_note(p, m->last_note[k]);
+        else
+            p = put_s(p, "HIT");
+        *p = 0;
+        lp_text_c(x, d + 8, bw, b, ink, 2);
+        p = b;
+        if (on && m->hits[k]) {
+            p = put_s(p, "VEL ");
+            p = put_u(p, m->last_vel[k]);
+            p = put_s(p, "  #");
+            p = put_u(p, m->hits[k]);
+        } else if (on) {
+            p = put_s(p, "WAITING FOR A HIT");
+        }
+        *p = 0;
+        lp_text_c(x, d + bh - 14, bw, b, ink, 1);
+    }
+}
+
+/* the value whose hint shows: the last one touched on this sheet, else the first of the row the knobs are on */
+static int hint_value(const struct t2m_mem *m, int sheet)
+{
+    int l = m->ui.last;
+    for (int i = 0; i < 12; i++)
+        if (l != 0xff && sheet_vals[sheet - 1][i] == l)
+            return l;
+    return sheet_vals[sheet - 1][(m->ui.row % 3) * 4];
+}
+
+static void draw_hint(const struct t2m_mem *m, int sheet, int d)
+{
+    int v = hint_value(m, sheet);
+    if (v < 0 || v >= VALUES)
+        return;
+    lp_text(6, d, val_name[v], C_CYAN, 1);
+    lp_text(6, d + 11, hint[v][0], C_LIGHT, 1);
+    lp_text(6, d + 21, hint[v][1], C_LIGHT, 1);
+}
+
+/* the last 4 s, one lane per input, newest at the right, bar height = velocity */
+static void draw_hist(const struct t2m_mem *m, int w, int d0, int d1)
+{
+    int lane_h = (d1 - d0 - 3) / 2, lw = w - 8 - 10;
+    for (int k = 0; k < T2M_INPUTS; k++) {
+        int top = d0 + k * (lane_h + 3), c = k ? C_YELLOW : C_CYAN;
+        lp_text(4, top + lane_h / 2 - 4, k ? "R" : "L", C_GREY, 1);
+        lp_frame(14, top, lw, lane_h, C_RAIL, 1);
+        for (int i = 0; i < T2M_HIST; i++) {
+            const struct t2m_hit *h = &m->hist[k][i];
+            int age = age_of(m, h->blk);
+            if (!h->vel || age < 0 || age >= T2M_HIST_BLOCKS)
+                continue;
+            int x = 15 + (lw - 5) - age * (lw - 6) / T2M_HIST_BLOCKS;
+            int bh = 1 + h->vel * (lane_h - 3) / 127;
+            lp_box(x, top + lane_h - 1 - bh, 3, bh, age < LIT_BLOCKS ? C_WHITE : c);
+        }
+    }
+    lp_text(14, d1 + 1, "-4s", C_GREY, 1);
+    lp_text(w - 8 - 24, d1 + 1, "now", C_GREY, 1);
+}
+
+/* ---- the CLK sheet */
+void t2m_page_draw(int w, int foot)
+{
+    struct t2m_mem *m = t2m_mem();
+    lp_box(1, 1, w - 2, TOP - 2, C_BG);
+    lp_box(1, TOP, w - 2, foot - TOP, C_BG);
+    if (!m) {
+        lp_text(6, 3, "TRIG", C_CYAN, 1);
+        lp_text(6, TOP + 10, "NO MEMORY FOR TRIGGER2MIDI THIS BOOT", C_REC, 1);
+        return;
+    }
+    int k = UI->in & 1, sheet = UI->sheet < SHEETS ? UI->sheet : 0;
+    char b[48], *p;
+
+    /* top bar: both inputs at a glance */
+    lp_text(6, 3, "TRIG", m->eng ? C_CYAN : C_RED, 1);
+    for (int i = 0; i < T2M_INPUTS; i++) {
+        p = b;
+        *p++ = i ? 'R' : 'L';
+        *p++ = ' ';
+        if (m->on[i]) {
+            p = put_u(p, m->hits[i]);
+            p = put_s(p, " v");
+            p = put_u(p, m->last_vel[i]);
+        } else {
+            p = put_s(p, "off");
+        }
+        *p = 0;
+        lp_text(48 + i * 120, 3, b, m->on[i] ? C_LIGHT : C_GREY, 1);
+    }
+
+    /* switch row (every sheet) */
+    int d = TOP + 2;
+    static const char *const sw[7] = {"IN L", "IN R", 0, "TRS", "USB", "INT", "ENG"};
+    for (int i = 0; i < 7; i++) {
+        int on = i < 2 ? k == i : i == 2 ? m->on[k] : i == 3 ? (m->port[k] & T2M_PORT_TRS) : i == 4 ? (m->port[k] & T2M_PORT_USB) : i == 5 ? (m->port[k] & T2M_PORT_INT) : m->eng;
+        const char *s = i == 2 ? (m->on[k] ? "ON" : "OFF") : i == 6 ? (m->eng ? "ENG" : "OFF") : sw[i];
+        int c = (i == 2 || i == 6) && !on ? C_RED : on ? C_CYAN : C_RAIL;
+        lp_frame(sw_x[i], d, sw_w[i], BAR_H - 4, c, 1);
+        lp_text_c(sw_x[i], d + 4, sw_w[i], s, on ? C_WHITE : C_GREY, 1);
+    }
+
+    if (sheet == SH_HITS) {
+        int pd = TOP + BAR_H + 2, ph = 50;
+        draw_pads(m, w, pd, ph);
+        int md = pd + ph + 5;
+        draw_meter(m, 0, w, md, 9);
+        draw_meter(m, 1, w, md + 12, 9);
+        p = put_s(b, "SENS ");
+        p = put_f(p, m->p[k].sens, 2);
+        *p = 0;
+        lp_text(w - 60, md + 1, b, C_LIGHT, 1);
+        p = put_s(b, "THR ");
+        p = put_f(p, m->p[k].thresh, 2);
+        *p = 0;
+        lp_text(w - 60, md + 13, b, C_LIGHT, 1);
+        lp_text(6, md + 24, "KNOBS", C_REC, 1);                       /* the four knobs are live on this sheet: red */
+        lp_text(6 + 6 * 6, md + 24, "ACTIVE", C_REC, 1);
+        lp_text(6, md + 34, "SENSITIVITY THRESHOLD", C_LIGHT, 1);        /* (knobs 1 and 2; the guards are on the DETECT sheet) */
+        draw_hist(m, w, md + 46, foot - 12);
+        return;
+    }
+
+    if (sheet == SH_DETECT)
+        draw_meter(m, k, w, TOP + BAR_H + 3, MET_H - 2);
+    int cw = cell_w(w), ngr = sheet == SH_DETECT ? 3 : 2;
+    for (int g = 0; g < ngr; g++) {
+        int sel = UI->row == g, gx, gy;
+        for (int c = 0; c < 4; c++) {
+            int v = sheet_vals[sheet - 1][g * 4 + c], x;
+            cell_xy(w, sheet, g, c, &x, &gy);
+            if (v == V_NONE)
+                continue;
+            lp_frame(x, gy, cw, CELL_H - 3, sel ? C_PINK : C_RAIL, 1);
+            lp_text_c(x, gy + 4, cw, val_name[v], sel ? C_LIGHT : C_GREY, 1);
+            value_text(m, k, v, b);
+            lp_text_c(x, gy + 16, cw, b, sel ? C_WHITE : C_LIGHT, 1);
+        }
+        cell_xy(w, sheet, g, 0, &gx, &gy);
+        if (sel)
+            lp_frame(gx - 2, gy - 2, 2 * cw + 7, 2 * CELL_H + 1, C_PINK, 1);   /* the square the four knobs are on */
+    }
+    if (sheet == SH_DETECT) {
+        int px, py, pw;
+        cell_xy(w, sheet, 3, 0, &px, &py);
+        lp_text(px, py, "PRESETS", C_GREY, 1);
+        for (int i = 0; i < PRESETS; i++) {
+            preset_xy(w, sheet, i, &px, &py, &pw);
+            lp_frame(px, py, pw, 13, UI->preset == i + 1 ? C_CYAN : C_RAIL, 1);
+            lp_text_c(px, py + 3, pw, presets[i].name, UI->preset == i + 1 ? C_WHITE : C_LIGHT, 1);
+        }
+        if (UI->preset) {
+            int d0 = rows_top(sheet) + 4 * CELL_H + 6;
+            lp_text(6, d0, presets[UI->preset - 1].name, C_CYAN, 1);
+            lp_text(6, d0 + 11, preset_note[UI->preset - 1][0], C_LIGHT, 1);
+            lp_text(6, d0 + 21, preset_note[UI->preset - 1][1], C_LIGHT, 1);
+        } else {
+            draw_hint(m, sheet, rows_top(sheet) + 4 * CELL_H + 6);
+        }
+    }
+    if (sheet == SH_OUT) {
+        int td = rows_top(sheet) + 2 * CELL_H + 6;
+        draw_hint(m, sheet, td);
+        td += 36;
+        lp_text(6, td, "TRS = MIDI jack, USB, INT = the Blackbox itself", C_GREY, 1);
+        lp_text(6, td + 11, "INT: its pads play the channel + note they", C_GREY, 1);
+        lp_text(6, td + 22, "are set to in the MIDI settings", C_GREY, 1);
+        p = put_s(b, "SENT INTO THE BLACKBOX ");
+        p = put_u(p, m->looped[k]);
+        if (m->looped_lost[k]) {
+            p = put_s(p, "  LOST ");
+            p = put_u(p, m->looped_lost[k]);
+        }
+        *p = 0;
+        lp_text(6, td + 36, b, m->port[k] & T2M_PORT_INT ? C_LIGHT : C_GREY, 1);
+    }
+}
+
+/* A touch at x / d (page coordinates) above the footer. */
+int t2m_page_touch(int x, int d, int w, int foot)
+{
+    (void)foot;
+    struct t2m_mem *m = t2m_mem();
+    if (!m)
+        return -1;
+    int k = UI->in & 1, sheet = UI->sheet < SHEETS ? UI->sheet : 0;
+    if (d >= TOP && d < TOP + BAR_H) {
+        for (int i = 0; i < 7; i++) {
+            if (x < sw_x[i] || x >= sw_x[i] + sw_w[i])
+                continue;
+            if (i < 2)
+                UI->in = (uint8_t)i;
+            else if (i == 2)
+                m->on[k] = !m->on[k];
+            else if (i == 6)
+                m->eng = !m->eng;
+            else
+                m->port[k] ^= (uint8_t)(i == 3 ? T2M_PORT_TRS : i == 4 ? T2M_PORT_USB : T2M_PORT_INT);
+        }
+        return -1;
+    }
+    if (sheet == SH_HITS) {                           /* a tap on a pad shows that input */
+        int pd = TOP + BAR_H + 2;
+        if (d >= pd && d < pd + 50)
+            UI->in = (uint8_t)(x >= w / 2 ? 1 : 0);
+        return -1;
+    }
+    if (sheet == SH_DETECT) {                          /* a preset */
+        for (int i = 0; i < PRESETS; i++) {
+            int px, py, pw;
+            preset_xy(w, sheet, i, &px, &py, &pw);
+            if (x >= px && x < px + pw && d >= py && d < py + 13) {
+                preset_apply(m, k, i);
+                return -1;
+            }
+        }
+    }
+    for (int g = 0; g < (sheet == SH_DETECT ? 3 : 2); g++)
+        for (int c = 0; c < 4; c++) {
+            int cx, cy;
+            cell_xy(w, sheet, g, c, &cx, &cy);
+            if (x < cx || x >= cx + cell_w(w) || d < cy || d >= cy + CELL_H - 3)
+                continue;
+            UI->row = (uint8_t)g;
+            int v = sheet_vals[sheet - 1][g * 4 + c];
+            if (v != V_NONE) {
+                UI->last = (uint8_t)v;
+                return v;
+            }
+        }
+    return -1;
+}
+
+/* A value back to the patch's default (a double tap on it). */
+void t2m_page_reset(int v)
+{
+    struct t2m_mem *m = t2m_mem();
+    if (!m || v == V_NONE)
+        return;
+    int k = UI->in & 1;
+    const t2m_params *d = t2m_defaults();
+    t2m_params q = m->p[k];
+    switch (v) {
+    case V_SENS: q.sens = d->sens; break;
+    case V_THRESH: q.thresh = d->thresh; break;
+    case V_RETRIG: q.retrig = d->retrig; break;
+    case V_MASK: q.mask_ms = d->mask_ms; break;
+    case V_SCAN: q.scan_ms = d->scan_ms; break;
+    case V_STRICT: q.strict_db = d->strict_db; break;
+    case V_SPEED: q.speed_ms = d->speed_ms; break;
+    case V_CURVE: q.curve = d->curve; break;
+    case V_NOTE: q.note_on = d->note_on; q.note = d->note; break;
+    case V_VEL: q.vel_mode = d->vel_mode; q.vel_fixed = d->vel_fixed; if (q.scan_ms == 0.f) q.scan_ms = m->scan_saved[k]; break;
+    case V_LEN: q.len_mode = d->len_mode; q.len_ms = d->len_ms; break;
+    case V_CHAN: q.channel = d->channel; break;
+    case V_CC: q.cc_on = d->cc_on; q.cc_num = d->cc_num; break;
+    case V_CCVAL: q.cc_mode = d->cc_mode; q.cc_fixed = d->cc_fixed; break;
+    case V_BLEED: q.spec_strict = d->spec_strict; break;
+    case V_RANGE: q.spec_range = d->spec_range; break;
+    case V_FLOOR: q.floor_db = d->floor_db; break;
+    }
+    m->p[k] = q;
+    UI->preset = 0;
+}
+
+void t2m_page_sheet(int sheet)
+{
+    struct t2m_mem *m = t2m_mem();
+    if (m && sheet >= 0 && sheet < SHEETS) {
+        UI->sheet = (uint8_t)sheet;
+    }
+}
+
+int t2m_page_sheet_now(void)
+{
+    struct t2m_mem *m = t2m_mem();
+    return m && UI->sheet < SHEETS ? UI->sheet : 0;
+}
+
+/* Knob 0..3 (the position in the row: the page maps the encoders top-left, top-right, bottom-left, bottom-right) turns the shown row's value 0..3. */
+void t2m_page_knob(int knob, int counts)
+{
+    struct t2m_mem *m = t2m_mem();
+    if (!m || knob < 0 || knob > 3)
+        return;
+    int a = UI->kacc[knob] + counts, steps = a / STEP_COUNTS;
+    UI->kacc[knob] = (int16_t)(a - steps * STEP_COUNTS);
+    if (!steps)
+        return;
+    int k = UI->in & 1, sheet = UI->sheet < SHEETS ? UI->sheet : 0;
+    if (sheet == SH_HITS && knob > 1)                 /* (the HITS sheet: SENS and THRESH only) */
+        return;
+    int v = sheet == SH_HITS ? sheet_vals[0][knob] : sheet_vals[sheet - 1][(UI->row % 3) * 4 + knob];
+    if (v == V_NONE)
+        return;
+    UI->last = (uint8_t)v;
+    {
+        t2m_params q = m->p[k];                       /* edit a copy: the audio task never sees half a change */
+        uint8_t was_fixed = q.vel_mode;
+        step_params(&q, v, steps);
+        if (v == V_VEL && !was_fixed && q.vel_mode) {         /* fixed velocity needs no peak search: SCAN 0 (kept to put back) */
+            if (q.scan_ms > 0.f)
+                m->scan_saved[k] = q.scan_ms;
+            q.scan_ms = 0.f;
+        } else if (v == V_VEL && was_fixed && !q.vel_mode && q.scan_ms == 0.f) {
+            q.scan_ms = m->scan_saved[k];                      /* back to DYN: SCAN as it was, unless it was changed meanwhile */
+        }
+        m->p[k] = q;
+        UI->preset = 0;
+    }
+}
+
+/* For the page's redraw test: what the page shows. */
+uint32_t t2m_page_sig(void)
+{
+    struct t2m_mem *m = t2m_mem();
+    if (!m)
+        return 0;
+    int k = m->ui.in & 1;
+    uint32_t h = 2166136261u;
+    const uint8_t *b = (const uint8_t *)&m->p[k];
+    for (unsigned i = 0; i < sizeof m->p[k]; i++)
+        h = (h ^ b[i]) * 16777619u;
+    for (int i = 0; i < T2M_INPUTS; i++) {
+        float db = m->peak[i] > 1e-5f ? db_of(m->peak[i]) : -100.f;
+        h = (h ^ (uint32_t)(int)(db * 0.5f)) * 16777619u;             /* 2 dB steps of the meters */
+        h = (h ^ (m->hits[i] + (uint32_t)lit(m, i) * 977u + m->looped[i] * 31u + m->looped_lost[i] * 7u)) * 16777619u;
+    }
+    h = (h ^ (uint32_t)(m->on[0] | m->on[1] << 1 | m->port[0] << 2 | m->port[1] << 4 | m->eng << 20 | m->ui.in << 6 | m->ui.row << 7 |
+                        m->ui.sheet << 9 | m->ui.last << 12)) * 16777619u;
+    if (m->ui.sheet == SH_HITS) {                                     /* the history scrolls while it holds a hit */
+        int fresh = 0;
+        for (int i = 0; i < T2M_INPUTS; i++)
+            fresh |= m->hits[i] && age_of(m, m->hit_blk[i]) < T2M_HIST_BLOCKS + 16;
+        if (fresh)
+            h = (h ^ (m->blocks >> 4)) * 16777619u;
+    }
+    return h;
+}

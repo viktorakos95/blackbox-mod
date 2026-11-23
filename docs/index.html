@@ -2,77 +2,135 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>blackbox-mod patcher</title>
+<title>blackbox-mod patcher (full)</title>
 <style>
-  body { font: 16px/1.5 system-ui, sans-serif; background: #14161a; color: #e8e6e1; margin: 0; padding: 24px 16px; }
-  main { max-width: 620px; margin: 0 auto; }
+  :root { --bg: #14161a; --panel: #1b1e24; --line: #343840; --text: #e8e6e1; --dim: #9a9ea8; --acc: #e2b043; --ok: #7fd18b; --err: #ef7b6f; --warn: #e2b043; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f4ef; --panel: #fff; --line: #d6d2c8; --text: #1d1f23; --dim: #5d616b; --acc: #8a5a00; --ok: #1f7a33; --err: #b3261e; --warn: #8a5a00; }
+  }
+  body { font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px 16px; }
+  main { max-width: 680px; margin: 0 auto; }
   h1 { font-size: 1.5rem; margin: 0 0 4px; }
-  a { color: #e2b043; }
-  .box { border: 1px solid #343840; border-radius: 8px; padding: 16px; margin: 20px 0; background: #1b1e24; }
-  input[type=file] { width: 100%; margin: 8px 0; color: inherit; }
+  h2 { font-size: 1.05rem; margin: 0 0 8px; }
+  a { color: var(--acc); }
+  .box { border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin: 16px 0; background: var(--panel); }
+  label.opt { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; cursor: pointer; }
+  label.opt input { margin-top: 5px; }
+  label.off { opacity: .5; cursor: not-allowed; }
+  .dim, small, .fine { color: var(--dim); font-size: .85rem; }
+  #state { margin-top: 8px; font-size: .9rem; }
+  .ok { color: var(--ok); } .err { color: var(--err); } .warn { color: var(--warn); }
   #status { margin-top: 12px; white-space: pre-wrap; }
-  .ok { color: #7fd18b; } .err { color: #ef7b6f; }
-  a.btn { display: inline-block; margin-top: 12px; padding: 10px 16px; background: #e2b043; color: #14161a;
-          border-radius: 6px; text-decoration: none; font-weight: 600; }
-  small, .fine { color: #9a9ea8; font-size: .85rem; }
+  a.btn { display: inline-block; margin-top: 12px; padding: 10px 16px; background: var(--acc); color: var(--bg); border-radius: 6px; text-decoration: none; font-weight: 600; }
+  input[type=file] { width: 100%; margin: 8px 0; color: inherit; }
   code { font-size: .8rem; word-break: break-all; }
 </style>
 <main>
   <h1>blackbox-mod patcher</h1>
-  <p>Unofficial mod for the original 1010music Blackbox. <a href="https://github.com/j3threejay/blackbox-mod">What it adds, source, known issues</a>.</p>
-  <p>Want to hear when a new build is out? <a href="https://justinjoe.com/blackbox-mod">Get new builds by email</a>.</p>
-  <ol>
-    <li>Download <b>blackbox 3.1.9</b> from <a href="https://1010music.com/downloads">1010music.com/downloads</a> and unzip it.</li>
-    <li>Choose the <code>BLACKBOX.bin</code> from that zip below. Keep that stock file as your backup.</li>
-    <li>Copy the patched file to the root of the microSD card as <code>BLACKBOX.bin</code> and install it like any firmware update.</li>
-  </ol>
+  <p>Unofficial mod for the original 1010music Blackbox. Pick the parts you want, give the page your own stock <b>3.1.9</b> <code>BLACKBOX.bin</code>, and it makes the patched file in your browser. Nothing is uploaded.</p>
+  <p class="warn"><b>Not tested on a real unit for most of this.</b> The combinations are tested in an emulator; several features have never run on hardware. Keep your stock file: it is your way back.</p>
+
   <div class="box">
-    <label for="f"><b>Your stock 3.1.9 BLACKBOX.bin</b></label>
+    <h2>1. Parts</h2>
+    <div id="parts"></div>
+    <h2 style="margin-top:14px">Add-ons</h2>
+    <div id="addons"></div>
+    <div id="state"></div>
+  </div>
+
+  <div class="box">
+    <h2>2. Your stock file</h2>
+    <p class="dim" style="margin:0">Download <b>blackbox 3.1.9</b> from <a href="https://1010music.com/downloads">1010music.com/downloads</a>, unzip it, and choose the <code>BLACKBOX.bin</code> inside.</p>
     <input id="f" type="file" accept=".bin">
-    <small>The file is patched in this page. Nothing is uploaded.</small>
     <div id="status"></div>
     <div id="dl"></div>
   </div>
-  <p class="fine">Not affiliated with, endorsed by, or supported by 1010music. "1010music" and "Blackbox" are trademarks of
-  1010music LLC. This page does not contain or distribute 1010music's firmware; it only modifies the copy you supply.
-  Use at your own risk; modified firmware may affect your warranty. The mod's code is MIT-licensed and includes MIT-licensed
-  work by Charles Vestal, CHOMPI Club, Émilie Gillet and Electrosmith
-  (<a href="https://github.com/j3threejay/blackbox-mod/blob/main/THIRD_PARTY.md">notices</a>).</p>
-</main>
-<script>
-const PATCH = "blackbox-mod-3.1.n.json";
-const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
-const unhex = s => Uint8Array.from(s.match(/../g) || [], h => parseInt(h, 16));
-const sha = async b => hex(await crypto.subtle.digest("SHA-256", b));
-const status = document.getElementById("status"), dl = document.getElementById("dl");
-const say = (t, c) => { status.textContent = t; status.className = c || ""; };
 
-document.getElementById("f").addEventListener("change", async e => {
-  dl.innerHTML = "";
-  const file = e.target.files[0];
+  <p class="fine">Then copy the patched file to the root of the microSD card as <code>BLACKBOX.bin</code> and install it like any firmware update (hold BACK + INFO while powering on). To go back, install the stock file the same way.</p>
+  <p class="fine">Not affiliated with, endorsed by, or supported by 1010music. "1010music" and "Blackbox" are trademarks of 1010music LLC. This page does not contain or distribute 1010music's firmware; it only modifies the copy you supply, and refuses any file that is not the stock 3.1.9. Use at your own risk; modified firmware may affect your warranty. The mod's code is MIT-licensed and includes work by Charles Vestal, CHOMPI Club, Émilie Gillet, Electrosmith and Miguel Moreno (<a href="https://github.com/viktorakos95/blackbox-mod/blob/main/THIRD_PARTY.md">notices</a>).</p>
+</main>
+<script src="apply.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let data, file, stock;
+const say = (t, c) => { $("status").textContent = t; $("status").className = c || ""; };
+const ORDER = ["looper", "samplr", "trig", "drone"];                  // the order of ids in docs/combos.json
+
+function box(parent, id, title, note, off) {
+  const l = document.createElement("label");
+  l.className = "opt" + (off ? " off" : "");
+  l.innerHTML = `<input type="checkbox" id="${id}"${off ? " disabled" : ""}><span><b>${title}</b>${note ? `<br><span class="dim">${note}</span>` : ""}</span>`;
+  parent.appendChild(l);
+  l.querySelector("input").addEventListener("change", refresh);
+}
+const NOTES = {
+  looper: "Four-track live looper.", samplr: "Slicing / tape sampler page.", trig: "Drum-trigger to MIDI.", drone: "The LIRA-8 style synth, and Fidelity LIRA on Sample pads.",
+  mcl: "Not available yet: it needs a build that could not be made and tested for this release.",
+  tools: "Mono Input, DRONE-8 / SAMPLR Out, Machine Filters, Clock Out 2, Clock Level on the Tools pages.",
+  rec: "DRONE-8 / Looper / SAMPLR as pad-recorder inputs.", clkmon: "MIDI clock monitor (diagnostics). Needs a part.", crash: "Keeps a record of the last restart.",
+};
+
+function ids() {
+  const parts = ORDER.filter(p => $(p).checked), addons = Object.keys(data.addons).filter(a => $(a).checked);
+  return { parts, addons };
+}
+function tested({ parts, addons }) {
+  const pid = parts.length ? "p-" + parts.join("-") : "core";
+  const full = pid + (addons.length ? "_a-" + addons.join("-") : "");
+  const sets = data.tested;
+  if (sets[full] || (!addons.length && sets[pid])) { const t = sets[full] || sets[pid]; return { cls: "ok", text: `Tested: ${t.tests} emulator tests (${t.scope}), ${t.date}.` }; }
+  if (sets[pid]) return { cls: "warn", text: "This combination of parts is tested; this mix of add-ons has not been run on its own (the add-ons are independent hooks)." };
+  return { cls: "err", text: "Not tested." };
+}
+function refresh() {
+  const { parts, addons } = ids();
+  $("clkmon").disabled = !parts.length;
+  if (!parts.length) $("clkmon").checked = false;
+  $("clkmon").closest("label").classList.toggle("off", !parts.length);
+  const sel = ids();
+  let sets;
+  try { sets = BBApply.resolve(data, sel.parts, sel.addons); } catch (e) { $("state").textContent = e.message; return; }
+  const pr = BBApply.problems(data, sets);
+  const t = tested(sel);
+  $("state").innerHTML = (pr.length ? `<span class="err">${pr.join("; ")}</span><br>` : "") +
+    `<span class="${t.cls}">${t.text}</span><br><span class="dim">${parts.length ? "Looper hooks and saving come with every part." : "No machines: only the 3.1.n features."} ${sets.length} patch sets.</span>`;
+  if (stock) run();
+}
+
+async function run() {
+  $("dl").innerHTML = "";
+  const sel = ids(), sets = BBApply.resolve(data, sel.parts, sel.addons);
+  if (BBApply.problems(data, sets).length) return say("This combination is not allowed.", "err");
+  const out = BBApply.apply(stock, data, sets);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([out], { type: "application/octet-stream" }));
+  a.download = "BLACKBOX.bin";
+  a.className = "btn";
+  a.textContent = "Download patched BLACKBOX.bin";
+  $("dl").appendChild(a);
+  say(`Stock ${data.stock_version} confirmed. Patched with: ${sel.parts.join(", ") || "no machines"}${sel.addons.length ? " + " + sel.addons.join(", ") : ""}.\n` +
+      `${out.length.toLocaleString()} bytes, SHA-256 ${(await BBApply.sha256(out)).slice(0, 16)}…  (change the boxes above and the file is made again)`, "ok");
+}
+
+$("f").addEventListener("change", async e => {
+  stock = null; $("dl").innerHTML = "";
+  file = e.target.files[0];
   if (!file) return;
   try {
-    const p = await (await fetch(PATCH)).json();
-    const stock = new Uint8Array(await file.arrayBuffer());
-    if (await sha(stock) !== p.stock_sha256)
-      return say(`That is not the stock ${p.stock_version} firmware (its SHA-256 differs), so nothing was patched.\n` +
-                 "Use the BLACKBOX.bin straight out of 1010music's 3.1.9 zip.", "err");
-    const add = unhex(p.append);
-    const out = new Uint8Array(stock.length + add.length);
-    out.set(stock);
-    for (const w of p.writes) out.set(unhex(w.bytes), w.offset);
-    out.set(add, stock.length);
-    if (await sha(out) !== p.output_sha256) return say("The patched image failed its check. Nothing to download.", "err");
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([out], { type: "application/octet-stream" }));
-    a.download = "BLACKBOX.bin";
-    a.className = "btn";
-    a.textContent = `Download patched BLACKBOX.bin (${p.version})`;
-    dl.appendChild(a);
-    say(`Stock ${p.stock_version} confirmed. Patched to ${p.version} and verified.`, "ok");
-  } catch (err) {
-    say("Something went wrong: " + err.message, "err");
-  }
+    const b = new Uint8Array(await file.arrayBuffer());
+    if (b.length !== data.stock_size || (await BBApply.sha256(b)) !== data.stock_sha256)
+      return say(`That is not the stock ${data.stock_version} firmware (size or SHA-256 differs), so nothing was patched.\nUse the BLACKBOX.bin straight out of 1010music's 3.1.9 zip.`, "err");
+    stock = b;
+    await run();
+  } catch (err) { say("Something went wrong: " + err.message, "err"); }
 });
+
+fetch("data.json").then(r => r.json()).then(d => {
+  data = d;
+  for (const p of ORDER) box($("parts"), p, d.parts[p].title, NOTES[p]);
+  box($("parts"), "mcl", d.parts.mcl.title, NOTES.mcl, true);
+  for (const a of Object.keys(d.addons)) box($("addons"), a, d.addons[a].title, NOTES[a]);
+  refresh();
+}).catch(e => { $("state").textContent = "Could not load the patch data: " + e.message; });
 </script>
 </html>

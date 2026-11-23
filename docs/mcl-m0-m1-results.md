@@ -1,0 +1,565 @@
+# MCL port: M0 (recon) and M1 (size) results
+
+Follows `docs/mcl-port-plan.md`. Stock firmware 3.1.9 (sha256 `281ae303...f1341d`, base `0x08040000`), static disassembly only; nothing ran on hardware.
+Tags: [Certain] read from code, [Likely] inferred, [Unknown] not found. Helper scripts: `tools/mcl/xref.py` (string / literal-pool references),
+`tools/mcl/bls.py` (call counts per target), `tools/mcl/mcl_size.sh` (M1). Set `FW=<path to BLACKBOX-3.1.9.bin>` for the first two.
+
+## M0: stock facts
+
+### SD card / FatFs
+- FatFs is in the firmware. Strings "Unable to FATFS_LinkDriver", "Unable to f_mount", source `BoomboxFramework/Src/SDMgr.cpp` (string at `0x080caee0`). [Certain]
+- Mount code `0x08045b30` (SDMgr): object `r5`: `[r5]` = FATFS*, `r5+4` = drive path string; `0x08087930` -> `0x080878f4` init, `0x080878e8` = `FATFS_LinkDriver(drv, path)`,
+  `0x080864e8` = `f_mount(fs, path, 0)`. Errors print through `0x08043de4`. [Certain]
+- Identified by signature (FatFs R0.15 style, 64-bit file pointers, so exFAT / LFN build; `FIL.flag` at `+0x30`, `err` at `+0x31`, `fptr` at `+0x10/+0x14`): [Likely]
+
+  | Address | Function | Callers |
+  |---|---|---|
+  | `0x08086534` | `f_open(FIL*, path, mode)` | 11 (`0x806f95e`, `0x8076a1e`, `0x8076a2a`, `0x8076a60`, `0x8076b28`, `0x808bfaa`, `0x8091dac`, `0x8091dbc`, `0x80970d2`, `0x8097168`, `0x80971f4`) |
+  | `0x08086866` | `f_read(fp, buf, btr, &br)` (checks `flag & 1`) | 30 |
+  | `0x08086a06` | `f_write(fp, buf, btw, &bw)` (checks `flag & 2`) | 20 |
+  | `0x08086d76` | `f_close` (calls `f_sync` `0x08086c28`) | 13 |
+  | `0x08086d96` | `f_lseek(fp, ofs64)` | 11 |
+  | `0x08084440` | `validate(obj)` (shared by read / write / lseek / close) | |
+  | `0x08085408` | `find_volume` | |
+  | `0x080840d8` / `0x080840f0` | `disk_status` / `disk_initialize` through the driver table (`blx` through a function-pointer table) | |
+
+  `f_mkdir`, `f_opendir`/`f_readdir`, `f_stat`, `f_unlink`, `f_rename`, `f_sync` (as an exported call) are among the other functions in `0x08086000..0x08088000`;
+  not individually identified yet (cheap: read their callers). [Unknown]
+- **No lock is visible in FatFs**: `validate` and the open / read / write paths contain no FreeRTOS take / give, so `FF_FS_REENTRANT` looks off. Nothing near the 11 `f_open`
+  call sites takes a lock either. So the stock code is safe only because of how its tasks are organised, which is not mapped. [Likely]
+  **Rule for the port until that is mapped: MCL must not call FatFs from its own task or ISR.** It must run its file calls from the same task / context that stock uses
+  (or a verified mutex), otherwise a simultaneous `f_read` from the sample streamer corrupts FatFs state or the card. This is the first thing to resolve before M7.
+- Card driver: SDMMC1 (vector 49, handler `0x080462d5`), HAL driver behind the driver table. DMA / cache handling of the data buffers not looked at. [Likely]
+
+### Timers, vectors, priorities
+- Vector table is in flash at `0x08040000`; `SCB->VTOR` is set to `0x08040000` at reset (`0x08040404`). So a vector entry can be patched in the image, no relocation. [Certain]
+- Unused IRQs point to per-IRQ `b .` stubs (`0x08040298..`). Entries with real handlers (STM32H743 numbering): 18 ADC, 28 TIM2, 31/32 I2C1, 49 SDMMC1, 52 UART4 (dead code),
+  56/57/60/68 DMA2, 71 USART6 (`0x080462e5`), 77 OTG_HS, 88 LTDC, 90 DMA2D, 101 OTG_FS, 124. [Likely on the peripheral names, Certain on the handler addresses]
+- **Free for us: TIM6 (IRQ 54) and TIM7 (IRQ 55).** Both vectors are stubs and the firmware has no literal reference to their base addresses (`0x40001000`, `0x40001400`);
+  TIM4, TIM13, TIM14 and LPTIM1 are also unreferenced. TIM2 has a handler; TIM1/3/5/8/12/15/16/17 are referenced (PWM / HAL init, no IRQ handler). [Likely]
+  Plan: clock timer = TIM6 (16-bit basic timer, enough with a 1 MHz time base and a reload per tick), spare soft-IRQ line = TIM7 or another stub-vector IRQ pended through `NVIC_STIR`.
+- FreeRTOS port (`0x0808810c`, priority probe at `0x08088110..`): `ucMaxSysCallPriority = 0x50` (the code ANDs the probed value with `0x50`), i.e. level 5 with 4 priority bits.
+  **Priorities 0-4 are never masked by FreeRTOS critical sections; 5+ are.** The priorities seen so far (DMA / SAI 5..9, OTG 7, SysTick / PendSV 15) are all masked.
+  Consequence: clock timer at 1-2 and MCL soft IRQs at 3-4 run on time even inside a critical section, and must never call FreeRTOS. [Certain on the constant]
+- USART6 has no `HAL_NVIC_SetPriority` call and stays at 0 (see `midi-in-notes.md`). Unchanged.
+
+### Not resolved in M0
+- Which task owns SD access (see rule above); whether the SD driver uses cache-maintained DMA buffers.
+- MPU / cache setup: no literal references to the MPU or cache-maintenance registers were found (probably built with `movw/movt` or inlined CMSIS); whether SDRAM is cacheable,
+  and execute-never, is unknown. Matters for the SD-loaded-module option only.
+- `f_mkdir` / directory API identification; the 64-bit position at the start of the sequencer object.
+
+## M1: size of MCL for Cortex-M7
+
+Method (`tools/mcl/mcl_size.sh`): `arm-none-eabi-g++ 13.2` for `-mcpu=cortex-m7 -mfloat-abi=hard -mfpu=fpv5-d16 -Os -fno-exceptions -fno-rtti`, all of `src/mcl` (203 `.cpp`
++ `helpers.c`, Tests and tools excluded, **TBD drivers excluded**) + `src/resources/rp2040` + Adafruit GFX 1.12.1, link with `--gc-sections` from `setup()`/`loop()`.
+**Not included**: the Blackbox platform layer (MIDI / clock / SD / gfx / input), libc and libgcc pieces (`memcpy`, `strncpy`, `powf`, `sinf`, `rand`, `malloc`, `__aeabi_ldivmod`...,
+about 5-15 KB), vector / startup code. So these are lower bounds.
+
+| Build | .text | .rodata | .data | .bss | code + rodata |
+|---|---|---|---|---|---|
+| `-Os`, gc-sections | 285,128 | 18,352 | 2,736 | 246,056 | **303 KB** |
+| `-Os -flto -fno-threadsafe-statics` | 253,448 | 17,916 | 2,452 | 246,092 | **271 KB** |
+| same, without A4 and MNM drivers | | | | | ~ -6 KB only |
+
+- Unlinked objects total 389 KB; gc-sections removes about a quarter. Biggest files: `StepSeqTrack` 15 KB, `SeqPage` 12 KB, `MD.cpp` 12 KB, Adafruit GFX 11 KB, `SeqExtStepPage` 10 KB.
+- A4/MNM/Generic drivers are small, so dropping them barely helps. The code is mostly sequencer and UI; there is no cheap feature to cut for 100 KB.
+- **RAM**: `.bss` 246 KB, of which `mcl_seq` 78 KB, `R` (resources) 32 KB, `ext_cache` 24 KB, `spsx_cache` 18 KB, `md_cache` 10 KB, `grid_task` 12 KB, `mcl_arrangement` 12 KB.
+  Fits easily in the ~3 MB SDRAM gap; not for the patch RAM gap. The SDRAM block needs `.data` (2.7 KB) copy-in, `.init_array` (156 B = 39 constructors) and `.bss` zeroing.
+
+### Verdict
+| | Free in the tested cave | Needed | Result |
+|---|---|---|---|
+| Cave `0x080F1E78..0x08140000` | ~209 KB (320,904 B total, ~111 KB used) | ~290-340 KB (271-303 KB MCL + platform layer + libc) | **does not fit, short by about 80-130 KB** |
+
+Decision for M2:
+1. Extend the tested flash window. With the other mod code (~111 KB) plus MCL (~340 KB worst case) the image needs to reach about `0x08162000`; flash bank 2 sectors are 128 KB,
+   so test the end at **`0x08180000`** (two more sectors, 1.38 x the current cave, `0x8E188` = 581,000 B total). The method is the same as the earlier step-40 size test;
+   keep `0x081E0000+` untouched. This is a hardware test of one image.
+2. If the updater refuses past `0x08140000`/`0x08160000`: SD-loaded module in SDRAM (needs the SD API and MPU facts above).
+3. Also build with `-flto`, link libc pieces from the stock image where the same function exists (the stock has `strncpy` etc. at `0x080c8b86` ...), and re-measure with the real platform layer at M2.
+
+Gating hardware test: "flash a padded image that ends at `0x08180000` and confirm normal boot" before any MCL code is built for it.
+
+## Padded test image (gate for M2): flash window to 0x08180000
+
+Build (after `sh build.sh`, stock firmware in `firmware/`):
+`python3 patch.py solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper clkmon cave mclpad` -> `out/<names>/BLACKBOX.bin`, **1,310,720 bytes**, ends at `0x08180000`.
+`mclpad` must come after `cave`. It is the normal mod (same features as the build without `mclpad`) plus: `0xFF` fill from the end of the cave (~`0x0810D...`) to `0x08140000`, then
+256 KB of a known word pattern at `0x08140000..0x08180000` (65,536 distinct words, `patches/mclpad.py`), and a build id written into `mclpad_on` (`src/cpu.c`).
+
+What it does on the unit: the first time the version label is composed after power-up (at boot, when the screens are built) the meter reads the whole pad back once
+(65,536 words, a few ms, in the GUI task, never in the audio task) and adds **`POK`** (every word matched) or `Fxxxx` (hex word index of the first wrong word) to the label
+(`3.1.n 3M POK Lok40`). That label is built once and not rewritten by the meter, so the result has to be there at build time (a first version that scanned a bit per second never showed
+on it). Result in backup SRAM `0x38800910` (id, -, first bad word), cleared at power-up; normal builds (no `mclpad`) have the flag at 0, never read the pad region and look as before.
+First hardware report: the 1.3 MB image was accepted and booted (the first copy to the card gave "firmware not found", a second copy of the same file worked: not yet known whether a bad copy or the size).
+
+How to read the outcome:
+- Updater refuses the file / unit does not boot the new image: the window ends before `0x08180000`; fall back to the SD-loaded module (plan, section 2). Keep a known-good `BLACKBOX.bin` on the card.
+- Boots, label reaches `POK`: bank 2 is programmable to `0x08180000`; the cave may be raised to there (`src/cave.ld` `LENGTH 0x8E188`) at M2.
+- Boots, label shows `Fxxxx`: the index says where the write stopped (e.g. `Fc000` = from `0x08170000` on); raise the cave only to the last good sector boundary.
+- Unit restarts a few times by itself right after flashing is known from earlier size tests (`looper-todo.md`); a restart loop afterwards is not.
+
+Emulator checks (`test_mclpad.py`): image size and layout, no repeated pattern words, stock bytes untouched, progress -> `POK`, a flipped word and an erased tail give the right `Fxxxx`,
+a new build id restarts, flag 0 never reads the pad. Not provable in the emulator: that the updater writes the image and flash returns the data.
+
+### Result on the unit
+**POK** (user report): the 1,310,720-byte image was written and the whole pad `0x08140000..0x08180000` read back correctly. Flash window is now proven to `0x08180000`
+(`src/cave.ld` `LENGTH 0x8E188`, 581,000 B total, ~470 KB free beside the ~110 KB in use). Not yet shown: code actually *executing* from the new sectors (the first build whose
+cave passes `0x08140000` will do it; same flash, so no surprise expected). M2 can now size MCL against ~470 KB, so the SD-loaded module is not needed for size.
+
+## M2: blob layout, runtime, reserved SDRAM (this commit)
+
+**Why a blob.** `build.sh` (not mine to edit) links one fixed list of C files into the main cave. MCL is C++, ~300 KB, and built by its own steps, so it is a separate
+**blob** linked on its own and appended by a patch module (`patches/mclblob.py`), like `mclpad`. The main cave (`src/cave.ld`, now `LENGTH 0x2E188`, ends at `0x08120000`; it is ~110 KB
+here, ~128 KB on the LIRA-8 branch) and the blob never share a link, so neither session's changes break the other's build.
+
+| Region | Address | Size | Content |
+|---|---|---|---|
+| Main cave | `0x080F1E78..0x08120000` | 188 KB | everything `build.sh` builds (mod, looper, T2M, clkmon; LIRA-8 adds ~26 KB code) |
+| MCL blob | `0x08120000..0x08180000` | 384 KB | entry table, code, rodata, `.init_array`, `.data` image (proven flash window: pad test `POK`) |
+| MCL RAM | `0xC3F80000..0xC4000000` | 512 KB | `.data`, `.bss`, heap at link-time addresses (`src/mcl_bb/mcl_blob.ld`) |
+
+**Reserved SDRAM.** The stock allocator hands out SDRAM top-down from `0xC4000000` (and permanent bump allocations upward from `0xC0000000`). The initial top is in the stock `.data` image
+(source `0x080f1d80` copied to `0x24000000` at reset; the word at `0x080f1e08` becomes `0x24000088`). `mclblob.py` changes it to `0xC3F80000`, so nothing the firmware allocates can reach
+the top 512 KB and the blob can use fixed addresses (no PIC, no relocation). Cost: the free SDRAM gap after boot shrinks by 512 KB (about 3 MB now). The sample pool (615 fixed entries) is not affected.
+**LIRA-8** allocates its pool from the same permanent allocator only if `free > sizeof(pool) + 1.5 MB`; that pool is well under 1 MB, so with ~2.5 MB free it still gets it. To re-check on the
+unit with both: the `3M` figure on the version label should read `2M` and the Lira status must still say `Lok`.
+
+**Runtime** (`src/mcl_bb/mcl_rt.cpp`, `tools/mcl/build_blob.sh`): `mcl_boot()` is called once per power-up from `cpu.c start()` (new 9 lines in `src/cpu.c`; the pointer `mcl_entry` is 0 in normal
+builds, so they do nothing). It refuses to touch anything unless the allocator patch is in the image and the live top is still above the region; then copies `.data`, zeroes `.bss`,
+sets up the heap (first fit, coalescing; `malloc`/`free`/`new`/`delete` for MCL's two `malloc` users), runs the static constructors, and runs a small self test (constructor, virtual call, data, bss, heap).
+Version label shows ` Mok` (or ` M2` region not reserved, ` M3xx` self test bits, ` M4` region too small, ` M-` no status). Status words in backup SRAM `0x38800920..0x3880092F`.
+
+**Full-MCL link trial** (`tools/mcl/mcl_link_report.sh`; real MCL core + this runtime + the real linker script, platform layer missing): **fits**, 305,188 B code+rodata in the 384 KB window
+(79 %), `.data` 2.7 KB + `.bss` 248 KB in the 512 KB region (leaves ~260 KB heap), 39 constructors (`.init_array` 160 B).
+**125 undefined symbols = the platform surface still to write** (M3 to M7): `FsFile::*` and `SdFat::*` (SD, M7); `Oled::*` (display, M6); `GUI_hardware`/`Buttons`/`Encoders`/`GUIHardware::init`/
+`LEDHardware::*` (input, M6); `MidiUart`/`MidiUart2`/`MidiUartUSB`/`Midi*`/`MidiUartClass::*`/`handleIncomingMidi` (MIDI, M3); `g_clock_ms/ticks/fast/minutes`, `delay`, `setup_irqs`,
+`platform_poll`, `mcl_platform_headless_boot` (clock and glue, M4/M5); `seq_tx1..4`, `MD`/`MNM`/`Analog4` driver objects; libc (`str*`, `mem*`, `isspace`, `rand`, `powf`, `sinf`, `__aeabi_ldivmod/uldivmod`).
+The full list is produced by the script (`undefined.txt`).
+
+**Not done / not provable here:** that the reserved region is really unused by the stock firmware. Static check: the only 32-bit word in the whole image that points into `0xC3F00000..0xC4000000`
+is the allocator's initial top itself (`0x080f1e08`); the other eight words in that numeric range are negative float constants (`0xc3f0....`) in data tables, not addresses, and everything
+else reaches SDRAM through the two allocators. Only the unit can confirm: the ` Mok` label plus a normal session (samples, looper, LIRA-8) is the test. Also not covered: interrupts and timing (M4);
+SDRAM data timing for ISR-hot variables (they will move to internal RAM or backup SRAM when the clock ISR exists).
+
+### M2 result on the unit
+**`Mok`** (user report): the image booted, the blob ran from flash at `0x08120000`, `.data`/`.bss`/heap/constructors worked in the reserved SDRAM region, and the self test passed.
+Still to see with normal use: samples / looper / LIRA-8 not disturbed by the 512 KB reservation (no problem reported).
+
+## M3: the MIDI jack (USART6)
+
+Code: `src/mcl_bb/bb_midi.cpp` (+ `bb_midi.h`), self test `src/mcl_bb/bb_m3test.cpp`, hooks in `patches/mclblob.py`, tests `test_mcl_midi.py` (46 checks, Unicorn).
+Three hooks, all no-ops until the blob has booted (a ready magic is set last and cleared first, so a power-up with garbage SDRAM never runs MCL code):
+
+| Hook | Site | What it does |
+|---|---|---|
+| RX tap | the one call to the stock ring push at `0x080446d4` (`bl 0x080444f4`), inside `0x080446c4` which the RxCplt callback calls for each byte | `mcl_rx_tap`: copies the byte of port 0 (the jack, block `0x24002e88`) into MCL's 4 KB ring, then calls the stock push unchanged. Different site from `clkmon`'s hook (`0x08044e48`), so both coexist. |
+| TX redirect | entry of the stock send function `0x08044dfc` (port, buf, len; `cmp r0,#1 ; bls` replaced by `b.w`) | `mcl_tx_hook`: until MCL claims the port, jumps to the stock code (`0x08044e05`). After the claim, copies the message into MCL's 8 KB TX ring and returns 1 (ring full: returns 0 and queues nothing, so the stock side retries). The stock firmware's own output (notes, clock, program change) then goes through the same single writer, whole messages, never interleaved. |
+| IRQ wrapper | vector 71 (`0x0804015c`, was `0x080462e5`) | `mcl_usart6_isr`: after the claim, one byte per TXE interrupt (real-time bytes first, they sit between the bytes of a message); everything with an RX / error flag goes on to the stock handler; a TXE-only interrupt is not passed on (the HAL would see TXE+TXEIE and switch TXEIE off). `CR1.TXEIE` is only set under PRIMASK so a task can't overwrite a CR1 change the HAL makes in the same interrupt. |
+
+Claim rule: MCL takes the port only while the HAL handle (`0x24009914`, `gState` at `+0x80`) is READY (`0x20`), checked atomically; `bb_midi_claim(1)` at once (boot), `bb_midi_claim(0)` at the next stock send.
+API for the later `MidiUart` shim: `bb_midi_rx_get`, `bb_midi_tx` (atomic, all or none), `bb_midi_tx_rt`, `bb_midi_tx_free`, `bb_midi_stat`.
+
+### M3 hardware test image (`M3TEST=1 tools/mcl/build_blob.sh`, then `patch.py ... cave mclblob`)
+**This image sends data on the MIDI jack at boot** (and blocks the GUI task up to ~1.3 s while it does): a system-exclusive frame with the non-commercial id `0x7d`, 103 bytes, and, if
+something answers, the Machinedrum's status and kit-dump requests (`F0 00 20 3C 02 00 70 02 F7`, `... 53 <kit> F7`), which are harmless. Connect only a Machinedrum or a loop cable.
+The result is on the version label after ` Mok`: `L+` / `L-` / `L?`, `D<kit>` / `D-` / `D?`, `K+` / `K-`.
+- **Loop**: cable from MIDI out to MIDI in, nothing else. Expect `L+` (the 103 bytes came back byte-exact: TX engine and RX tap are right). `D-`.
+- **Machinedrum**: MD powered before the Blackbox, Blackbox out -> MD in, MD out -> Blackbox in. Expect `D<n>` (the current kit number the MD reports, 0-based) and `K+` (two kit dump requests,
+  ~1.2 KB each, returned identical: receive integrity at full rate). `L-` unless the MD's out is set to thru.
+- `L?` / `D?`: the port could not be claimed at boot (stock was sending at that moment): power-cycle and try again. `K-`: the dumps differed or did not finish.
+- Nothing connected: `L- D-`.
+Emulator-proven: hooks chain correctly with the real stock receive code, ring wrap over 40 KB, real-time insertion, ring-full refusal, claim rules, interrupt pass-through, CR1 bits kept, the self test against a
+loop cable and a modelled Machinedrum (including a dump that differs or never ends), the blocking driver's timing. Not provable without hardware: real USART6 timing and FIFO behaviour, the HAL's CR1 writes,
+that the real Machinedrum answers as modelled.
+
+### M3 result on the unit (first report)
+- **Loop cable (out -> in): `L+`.** The 103-byte frame went out of USART6 through MCL's TX ring and interrupt wrapper and came back through the RX tap byte-exact, on hardware.
+  So the claim, the TX engine and the RX tap work on the real unit.
+- **Machinedrum: `L- D-`** (no answer to the status request). Not yet a software verdict: the user is unsure both TRS-to-DIN cables are the right type (the one on MIDI in is a 1010 Music one, known good).
+  The stock firmware has no TRS Type A/B setting (strings: only `midioutchan`, `midithrumodetype`, `MIDI In Thru`), so the cable on MIDI out must match what the Blackbox drives.
+  Checks without new code: (1) MD playing with MIDI clock out on: the CLK sheet (F8 counter) rises -> MD OUT cable and direction are fine; (2) put the known-good 1010 cable on the Blackbox OUT -> MD IN and repeat the test.
+
+### M3 second report and the note burst
+Machinedrum with the 1010 cable on the Blackbox IN: `L- D-`, but with a pattern running the CLK sheet showed F8 at the right BPM, so **MD out -> Blackbox in works** (RX tap + stock path, on hardware).
+Blackbox out -> MD in is unproven: `D-` cannot tell "the MD never got the request" from "it got it and did not answer". The test image therefore, when the status request gets no answer,
+plays 16 short notes (channels 1-4, notes 36 / 40 / 44 / 48, one every 100 ms; label gets ` N`). Hearing drum hits = the Blackbox's MIDI out reaches the Machinedrum (then the status
+request is ignored for another reason: MD settings / sysex receive); silence = the cable on OUT (or the OUT-side wiring / type). The blocking test now takes ~1.9 s at boot when nothing answers.
+
+## M4: the clock source (timer interrupt, clock out)
+
+Code: `src/mcl_bb/bb_clock.cpp` (+ `.h`), the filter in `bb_midi.cpp`, vector hook in `patches/mclblob.py`, tests `test_mcl_clock.py` (26 checks), shared rig `mcl_rig.py`.
+- **TIM6** (IRQ 54, vector entry `0x08040118`, previously a `b .` stub; no stock handler or reference to its base) interrupts on every update event; priority 1 (above audio DMA 5..9 and above FreeRTOS' masked levels, below USART6 at 0).
+  No FreeRTOS call in it, no stock queue: it writes real-time bytes straight into MCL's TX ring, so an F8 leaves at the next byte boundary even in the middle of a sysex.
+- **Timer clock is measured, not assumed**: `bb_clock_init()` (GUI task, ~2 ms) counts TIM6 at PSC=0 against the DWT cycle counter (core clock from the SysTick reload x 1000, CLKSOURCE respected), picks a prescaler for ~1 MHz and keeps the exact rate.
+- **Tempo arithmetic**: 192 PPQN, interval = 60 x rate / (192 x BPM) counts as 32.32 fixed point; the fraction is carried from tick to tick, so the sum of intervals follows the ideal within one count (1 us) for any run; tempo changes take effect at the next tick without a phase jump; 20.0-300.0 BPM.
+  An interrupt served late does not move the next one (the counter reloads by itself) and ARR is written first thing.
+- Every 8th tick = MIDI clock 0xF8; optional FA at start (aligned to a tick), FC at stop. `bb_clock_set_hook(tick)` is the call-out for MCL's sequencer (M5). Stock single-byte F8/FA/FB/FC are dropped once the filter is on, so the Machinedrum never sees two clocks.
+- Real-time FIFO is 16 deep (was 4); `bb_clock_stop` waits for a slot for the FC.
+- Emulator-proven: calibration at 100 / 199.5 / 200 MHz timer clocks, one minute at 120 BPM with the exact interval sum and 2,880 F8, FA first, tempo change and limits, stop, stray interrupt, stock-clock filter, F8 inside a 1 KB message.
+  Not provable here: the real TIM6 clock tree, interrupt latency, the Machinedrum following it.
+
+### M4 hardware test image (`M4TEST=1 tools/mcl/build_blob.sh`)
+At the first label (boot) it claims the MIDI jack, calibrates and starts **120.0 BPM MIDI clock**, no start byte, until power-off; label ` Mok C120` (` C-` = timer calibration failed).
+Measure with one cable (no second correct DIN cable needed): a TRS-to-TRS loop cable from Blackbox MIDI OUT to MIDI IN, **Receive = Off** in the Blackbox settings (so the stock sequencer does not follow its own clock), then the CLK sheet:
+`F8 n` rising, `BPM 120`, and `ARR min-max sdN` = the spread of our own clock as received (the Arduino MCL's ~1 ms timer steps would show ~ms here; the stock-queue clock showed sd ~ 1 ms).
+Or Blackbox OUT (1010 cable) -> Machinedrum IN with the Machinedrum on external sync: it shows 120.
+
+### M4 first hardware report and the diagnostic image
+Loop cable, Receive off: label ` Mok C120`, but the CLK sheet showed BPM 0 and ARR 0 (no F8 received). ` C120` only meant "the software started the clock", so the cause was open (timer interrupt not firing /
+bytes not leaving the UART / not reaching the monitor). The next image runs the clock for 250 ms at boot and prints on the label ` i<n> t<n> x<n>`: timer-interrupt entries, ticks counted, bytes the UART interrupt wrote
+(expected 96 / 96 / 12). `i0` = the interrupt never fires (vector / NVIC / TIM6 clock); `i96 t0` = fires but the ready flag is off; `t96 x0` = ticks but nothing leaves (TX path); `x12` and still no F8 on the sheet = reaches the UART, not the monitor.
+
+### M4 second report: `i96 t96 x12` (hardware)
+Exactly the expected counts: the TIM6 interrupt fired 96 times in 250 ms (the ideal count at 120.0 BPM, 192 PPQN), all 96 ticks were counted and 12 clock bytes were written to USART6. **The timer clock source and the real-time TX path work on the unit.**
+The CLK sheet still showed no F8 (BPM 0, ARR 0) with the loop cable and Receive = Off. Suspect: Receive = Off may stop the stock UART receive altogether (the M3 loop test `L+` was run with the default setting), so neither the monitor nor MCL's tap sees the loop-back.
+Next image replaces `i` by `r` (bytes the receive tap saw on the jack in the same 250 ms: 12 expected with a loop cable), and the loop test is to be repeated with Receive = MIDI In or All (harmless: the stock sequencer then just follows our 120 BPM).
+
+### M4 third report: `r0`
+With Receive = MIDI In and the loop cable: `r0` (the receive tap saw none of the 12 clock bytes), and the CLK sheet still empty. TX is proven (`x12`), so either the loop is not closed in this setup or single real-time bytes do not arrive while the
+frame test (M3, `L+`) did. The next M4 image runs the proven 103-byte loop frame first and shows `L+` / `L-` before the clock numbers (` Mok L+ t96 r12` expected), which separates "cable / setting" from "clock bytes only".
+
+### M4 result on the unit
+With the right loop cable: the CLK sheet reads **120 BPM** from our own timer-driven clock (user report). Earlier `i96 t96 x12` had already shown 96 ticks / 12 bytes in 250 ms. The tick-spread numbers (`ARR min-max sd`) are the accuracy figure still to be recorded
+(reference: KeyStep sd ~33-38 us, Machinedrum sd ~67 us, stock sequencer as it sees them ~1.0-1.3 ms).
+
+**Accuracy (user report, CLK sheet, loop cable, 120.0 BPM): `ARR 20833-20841` us.** The ideal interval is 20,833.3 us; the whole observed range is 8 us peak to peak (about +-4 us around the ideal).
+That includes the 1 us timer-count resolution, the interrupt latency of our timer and of the USART6 receive hook, and the monitor's own cycle-count stamping. For comparison (clock-findings.md): KeyStep sd 33-38 us (range about +-0.1 ms), Machinedrum sd 67 us (+-0.7 ms), the stock sequencer's view 1.0-1.3 ms sd.
+So the M4 clock source is roughly one to two orders of magnitude tighter than the external clocks the Blackbox will follow and than the Arduino MCL's ~1 ms timer, which meets the "send accurate clock to the Machinedrum" requirement for the free-running case. Following a master (M5) cannot be better than the master itself.
+
+## M5a: following a MIDI clock on the jack (phase-locked loop)
+
+Code: `src/mcl_bb/bb_clock.cpp` (+ `.h`), the stamp in `mcl_rx_tap` (`bb_midi.cpp`), tests `test_mcl_sync.py` (24 checks; a time-ordered simulation, master and timer modelled, the code real).
+The receive tap stamps every F8 with the cycle counter (first instruction, before anything else) and queues FA / FB / FC; **all loop state is touched only by the timer interrupt**, which drains these at the start of each tick (no shared writer).
+Loop: phase detector = input clock time relative to our last 24-PPQN tick (wrapped to +-half a period); filter = 1/4 of the error moves the next tick + 1/64 of the error changes the period (critically damped, natural frequency ~1 Hz at 120 BPM).
+Acquisition from two clocks (period, then the timer starts where the next input clock will fall); slip (> 1/8 period) corrected at once and the tempo restarted from the last interval; no clock for 4 periods = lost, tempo held for 2 s, then the clock stops and it listens again; FA / FB / FC are forwarded with the next clock (FA also restarts the 192-PPQN tick counter).
+Emulator results (120 BPM): perfect master: our F8 within 2.4 us of the master's, tempo exact; masters with gaussian jitter of sd 35 us / 70 us (input interval sd 48 / 96 us): our F8 interval sd 9 / 19 us; 1 ms software clock (+-500 us): 398 -> 81 us;
+tempo step 120 -> 150 followed within 6 s (phase back under 20 us); ramp 100 -> 140 BPM in 25 s tracked within 456 us (the lag of a second-order loop on a ramp, 2 BPM/s); one missing clock invisible; six missing clocks held and re-locked; 7 ms phase slip recovered; the master stopping: 2 s flywheel, then stop and listen; a stray double clock ignored.
+Not provable here: real masters' jitter, real interrupt latencies, the Machinedrum following our output.
+
+### M5a hardware test image (`M5TEST=1 tools/mcl/build_blob.sh`)
+Needs a MIDI clock master **already running when the Blackbox powers up**, on MIDI IN (the Machinedrum with a pattern playing and clock out on, through the known-good cable, or the KeyStep). Nothing needed on MIDI OUT.
+Boot waits up to 5 s for the lock, then measures 2 s; label ` Mok S3 1200 e9`: `S` the sync state (3 = locked, 1 = never saw a clock), the tempo in 1/10 BPM, `e` the largest phase error of the last second in microseconds,
+i.e. how far the master's clocks strayed from our smooth tempo (about the master's own jitter: expect a few tens of us for a KeyStep, 100-200 for the Machinedrum; our output is smoother than that).
+
+### Compact label for the hardware test images
+On the unit the version label is followed by stock text ("4GB") and the whole line ran off the screen, so the M3 / M4 / M5 test images now set `compact` in the blob's entry table (`src/cpu.c` `compose`): the label is the status text only
+(`Mok S3 1200 e9`, `Mok L+ t96 r12`, `Mok L+ D12 K+`). Normal blob images keep the full label (`3.1.n 2M Lok40 Mok`).
+
+### M5a result on the unit
+KeyStep as master on MIDI IN, started before power-up: the label read **`e47`** (worst phase error 47 us over the last second), i.e. the loop locked and the KeyStep's clocks strayed at most 47 us from our smooth tempo. That matches the KeyStep's measured jitter
+(`clock-findings.md`: sd ~33-38 us on arrival), so the detector sees the master's real jitter and the loop is not adding any of its own; the emulator showed our output interval sd at about a fifth of the input's.
+Still open for M5: internal tempo / transport (the Blackbox's own sequencer) and analog sync, which need a live display to be measured, hence after M6.
+
+## M6: the MCL page (screen and input)
+
+After the merge with the clock agent's branch (`seqfix_now()`, CLK sheet, analog sync notes in `docs/analog-sync-notes.md`).
+
+- **Where:** the fourth page of the SONG button: SONG -> SAMPLR -> TRIG -> **MCL** -> the stock song screen (`solo_song_pressed`). Hook in `src/looper_page.c`
+  (mode `M_MCL`, tab 7: draw, touch down/up, knobs, redraw signature, footer text, no tabs); the page itself is `mcl_page_*` in `src/cpu.c`.
+  The hook is the only change to `looper_page.c` (about 25 lines, all marked `M_MCL` / `mcl_page_`).
+- **Screen:** the blob owns a 128x32 one-bit frame buffer in Adafruit_GFX / SSD1306 layout (`bb_ui_fb()`), so MCL's own GUI code can draw into it unchanged in M8.
+  The page draws it 2x (256x64, white on black, horizontal runs) and redraws when `bb_ui_sig()` (a hash of the picture) changes.
+- **Input:** the four knobs are encoders 1-4 (`MCL_ENC_COUNTS` = 20 stock counts a detent, a guess like the TRIG page's 40: tune on the unit); five touch tiles
+  under the screen are the buttons B1 B2 B3 B4 SHIFT (down and up, per touch id). Hardware REC / BACK / STOP / PLAY still go to the stock firmware on this page.
+- **Until MCL runs (M8)** the screen is a live test bench for the MIDI clock: B1 follows the MIDI clock on the jack (PLL, state shown LISTEN / 1 CLK / LOCKED / LOST),
+  B2 starts our own clock at the tempo of encoder 1 (1 BPM a detent, B4 held = tenths), B3 stops. Lines: mode, BPM, TICK count, phase error last/worst (us) and clocks processed,
+  the four encoder counts and the button bits. This is the live display the M5b work (internal and analog follow) needed.
+- **Backup SRAM:** the page's state is 16 bytes at 0x38800930 (cleared in `start()` at every power-up; the cave has no .bss).
+- **Font:** Adafruit_GFX's classic 5x7 font (BSD), `src/mcl_bb/glcdfont.h`, license text in `src/mcl_bb/ADAFRUIT_GFX_LICENSE.txt`, listed in THIRD_PARTY.md.
+- **Entry table abi 3:** `fb()`, `sig()`, `input(kind, a, b)` appended; `cpu.c` refuses any other abi.
+- **Tests:** `test_mcl_ui.py` (screen text decoded back from the frame buffer, buttons, encoder accumulation, tile mapping per touch id, blit coverage = lit pixels, state cleared at power-up).
+  NOT checked: how it looks on the real screen, touch feel, knob counts per detent.
+
+## M5b: follow the Blackbox's own transport (internal tempo, TRS MIDI, analog jack)
+
+Built on the clock agent's finding (`docs/clock-api.md`, `docs/analog-sync-notes.md`): whatever drives the Blackbox, the stock sequencer's musical time (960 ticks a beat)
+is what the note player is given, and the analog jack is polled once per audio block. So one source covers all three.
+
+- **Stamps:** `seq_play` (src/seqfix.c) writes {version, sequence, cycle counter, sequencer time lo, hi} to backup SRAM 0x38800940 at every call of the stock player, under an odd/even
+  version word. Cleared at power-up in `cpu.c` start() (stale cycle counts would look fresh).
+- **Follower (`bb_clock_sync_seq`):** the TIM6 interrupt reads the stamp, keeps the last 64 stamps (one sequence: the first one seen, others ignored; stamps closer than 1.25 ms
+  are the same block), fits a straight line sequencer-time against cycle counter (integer least squares, x in 256-cycle units), and pushes the instants the line reaches
+  every 40th tick (24 PPQN) into the same input ring the MIDI-in PLL uses ("virtual F8"). So the PLL, the flywheel and the tick emission are the ones already tested.
+- **Transport:** stamps stop for 50 ms, or the last four stamps carry the same time: stopped -> FC, the PLL listens again. A window of valid stamps again: FA if the time is
+  under 400 ticks (a start from the top), otherwise FB (continue). A jump of more than 12 ticks from the line (locate) restarts the fit but keeps the clock running and sends nothing.
+- **Offset:** `bb_clock_seq_offset_us()` shifts our clocks later or earlier. The stamps are taken when the player runs, a little after the block's audio time (and the audio comes out
+  later still): the default is 0, to be set on the unit against the Machinedrum (needs the second correct cable, or a scope).
+- **UI:** the SHIFT tile (BBOX) starts it; the top line shows `MCL BB BBOX LOCKED`, row 3 right: `R` / `S` (sequencer running / stopped), restarts, stamps used.
+- **Tests:** `test_mcl_seq.py` (modelled sequencer with +-115 us stamp jitter): lock, FA/FB/FC, tempo change 120 -> 90, a locate, a second sequence ignored, stale stamp ignored,
+  offset, jack ignored. Result: our F8 within 100 us of the line (worst measured 66 us from the stamps' +-115 us jitter alone), interval sd 8.6 us.
+  `test_seqfix.py` checks the stamp.
+- **NOT checked (hardware only):** how big the stamps' real jitter is, what the stock sequencer does at stop / locate / loop (does `now` freeze, reset, or stop being called), whether the
+  fitted clock matches the audio the unit plays (the offset), the analog jack's own jitter on top.
+
+### M5b on the unit
+- BBOX works for the internal clock and for the KeyStep driving the Blackbox. With the Blackbox's own MIDI clock **receive set to off** (Settings), B1 (our PLL on the jack) still follows the KeyStep
+  while BBOX follows only the internal tempo: the two sources are independent, as designed (B1 listens to the jack itself; BBOX to what the stock sequencer does).
+- The physical PLAY button does nothing on the MCL page: on the SAMPLR / TRIG / MCL pages the hardware buttons are left to the stock firmware (they were not mapped for these pages).
+- First build: the tempo read-out wobbled by a few tenths of a BPM. Cause: the PLL's integral term re-estimated the tempo from single clocks and passed the stamps' jitter on.
+  Fix: the fitted slope (now over 128 stamps, 340 ms) sets the PLL's period directly (smoothed 1/8 per call), the loop only corrects the phase; a locate renumbers the clocks from the new position at
+  once (the old catch-up stalled the clock for up to 2 s). Emulator: tempo reads 119.9 .. 120.0 over 6 s at stamp jitter 115 us and 345 us (sd); largest gap after a locate 21 ms.
+
+## M7 step 1: who uses the SD card (static map, then a recon image)
+
+**Static findings** (`tools/mcl/callgraph.py`, `fnctx.py`, `lockscan.py`):
+- Three FreeRTOS tasks are created by `main()` (0x08044290..0x080442fc, attribute records at 0x080cfbb0): **defaultTask** (the UI loop, entry 0x08043dec, handle in 0x24002e78),
+  **audioTask** (0x08041470, handle 0x24002e74), **pcmStreamer** (0x080743b0 through the thunk 0x0804c30c, handle 0x24002e70). The current task is `pxCurrentTCB` at 0x2401f2a8.
+- **No lock around FatFs.** The only semaphores the firmware creates are 3-4 (audio / sample engine); the "failed to acquire mutex" strings are libstdc++'s `__cxa_guard` stubs. The card driver
+  (CubeMX-style, table at 0x080cfc1c: init, status, read 0x08045974, write 0x080459e8, ioctl 0x08045a5c) starts a DMA transfer and then waits **5 s on ONE shared message queue** for the completion
+  message, checking it is the read (1) or write (2) message: two tasks inside the driver at once would steal each other's message and fail with an error. So the stock firmware is correct only if it never
+  uses the card from two tasks at once, by how its tasks are arranged. Users of FatFs: the sample/wave readers and writers (0x080769f4, 0x08076af6), the MIDI-file reader (0x0806f948), the screenshot
+  saver (0x0808bf98), PresetMgr CopyFile (0x08091d88) and the preset loaders / savers (0x0809709c..); direct calls from the pcmStreamer task reach most of them, the rest go through virtual calls.
+- **Rule for MCL stays:** no FatFs call from an interrupt, none from the clock path; its file work must run in the task the stock firmware uses for it.
+
+**Recon image to settle it on the unit** (`patches/mclspy.py`, `src/mcl_bb/bb_sdspy.cpp`, `test_mcl_spy.py`): all 88 stock call sites of f_open / f_read / f_write / f_close / f_lseek / f_sync / f_mount and the
+driver's read / write / ioctl table slots go through counting wrappers (arguments and results unchanged). Per call: which task, whether another task is inside the same layer at that moment (an
+**overlap**), and the longest single call. The MCL page shows it (build `SDSPY=1 COMPACT=1 tools/mcl/build_blob.sh`, patch set `... cave mclblob mclspy`): view 0 = calls per task (D / A / P);
+view 1 (tile B4) = overlaps in FatFs (F) and in the driver (D) with the first pair (entering task, task already inside), worst call in ms, card reads / writes per task. Emulator-tested only.
+
+### M7 step 1 result (user, on the unit, SD recon image)
+- **Every FatFs call and every card transfer comes from one task: pcmStreamer (P).** defaultTask (UI) and audioTask made none (rows D and A all 0; P at the display cap of 999 in every column
+  after normal use). So the stock firmware serialises the card by funnelling all file work into the streamer task; the UI asks it by messages.
+- **No overlaps** in FatFs or in the card driver (OVL F 0, D 0), as expected from the above.
+- Worst single FatFs call **229 ms**, worst card transfer **7 ms**; card writes by P went past 660. So the streamer can be busy for a few hundred ms at a time.
+- Consequence for MCL: **its file calls must run in pcmStreamer too.** Plan: a one-slot mailbox. MCL (GUI task) posts a request and waits (stock delay, so the low-priority streamer runs);
+  a hook in the streamer's loop executes it with the stock FatFs functions. The loop (0x080743b0) takes from its command queue with a zero timeout (it never blocks), so a hook at its queue
+  call (`bl 0x08088756` at 0x080743e8) is entered very often whenever the task gets the CPU.
+- Stock FatFs entry points found by FatFs source order and call counts (find_volume callers): f_opendir 0x080870f6, f_closedir 0x0808718c, f_readdir 0x080871a0, f_findnext 0x080871f0,
+  f_findfirst 0x0808722e, f_stat 0x0808724a, f_getfree 0x08087290, f_truncate 0x080873c8, f_unlink 0x0808748e, f_mkdir 0x08087558, f_rename 0x080876c8 [Likely; to be confirmed against a RAM disk in the emulator].
+
+### M7 step 2: the SD layer (blob side, emulator-tested against the stock FatFs)
+- **The recon on the unit** (user, v3 image, photographed): data cache and instruction cache on, MPU on with 16 regions; all RAM is cacheable write-back (TEX0 C1 B1) **except** the three 64 KB regions
+  0x24050000 / 0x24060000 / 0x24070000 which are Device (C0 B1); the card driver's buffers on the unit were all between **0x24070D60 and 0x2407D5FC** (inside that non-cacheable window), reads and writes,
+  many not 32-byte aligned. Regions (n: base, log2 size, TEX C B): 0 20000000/17 011, 1 24000000/18 011, 2 24040000/16 011, 3-5 24050000..24070000/16 001, 6 30000000/19 011, 7 08000000/21 010 (flash),
+  8 C0000000/26 011 (SDRAM), 9 30000000/19, 10 60000000/13 001 shared (FMC), 11 1FF0F000/13, 12 10040000/16, 13-15 free.
+- **What that means:** the stock firmware keeps everything the card DMAs into in that non-cacheable window and does no cache maintenance in the driver. The stock FatFs build is `FF_FS_TINY`: its only sector
+  buffer is the volume window inside the FATFS object (offset 0x3c, in the window). **Every FatFs call of at most one sector goes through that window; only a read or write of 512 bytes or more can make FatFs
+  transfer whole sectors straight into the caller's buffer.** Verified in the emulator with the real FatFs: with requests of at most 511 bytes the card driver was only ever given the window (3500 transfers),
+  and a direct 2 KB `f_read` does hit the caller's buffer (negative control). **So MCL's SD layer never asks FatFs for 512 bytes or more in one call** (larger requests are split in `bb_sd_read/write`) and its buffers,
+  FIL (0x50 bytes) and DIR objects live in ordinary cached SDRAM. No MPU change, no cache maintenance, no non-cacheable memory of our own is needed.
+- **Layout facts learnt on the way:** FIL: objsize u64 at +0x10, flag +0x30, err +0x31, fptr u64 +0x38, size 0x50. FILINFO: fsize u64, fdate, ftime, fattrib at +12, altname at +13, fname at +26. FatFs entry points confirmed
+  against a FAT image: f_opendir 0x080870f6, f_closedir 0x0808718c, f_readdir 0x080871a0, f_stat 0x0808724a, f_truncate 0x080873c8, f_unlink 0x0808748e, f_mkdir 0x08087558, f_rename 0x080876c8 (f_findfirst/next 0x0808722e/0x080871f0).
+- **`bb_sd.cpp`:** one-slot mailbox, GUI side posts and sleeps on a FreeRTOS binary semaphore (created with the stock `xQueueGenericCreate`, 0x080883be; given with `xQueueGenericSend` 0x08088402, taken with
+  `xQueueGenericReceive` 0x08088756, 50 ms slices, 10 s limit), streamer side `mcl_sd_pump` (patch `patches/mclsd.py`, the call at 0x080743e8 in the pcmStreamer loop) runs one request per loop pass and then makes the
+  queue call it replaced. Ready flag set last at boot, cleared first. A request nobody waits for any more (timeout) is abandoned and its late result is dropped. Four files and two directories open at once.
+  API: open/close/read/write/seek/sync/truncate/size/tell, stat, mkdir, unlink, rename, opendir/readdir/closedir (long file names).
+- **`test_mcl_sd.py`** (stock FatFs on a mkfs.vfat FAT32 image, GUI and streamer contexts alternating): every operation, 300,000-byte write/read identical, seek, append, truncate, rename, a directory of 62 long-named entries,
+  handle exhaustion, busy mailbox, not-ready (a request found before boot is ignored), timeout and late completion, `fsck.vfat` clean afterwards, **mtools reads back what we wrote** (a card written by the blackbox
+  is readable by another FAT implementation) and the file that was on the card before is untouched. NOT checked: the real streamer's scheduling, real card timing, long-run behaviour (M9).
+- **Hardware test image:** `SDTEST=1 COMPACT=1 tools/mcl/build_blob.sh`, patch set `... cave mclblob mclsd`. MCL page: B1 lists the root (files / folders, the biggest file), B2 reads up to 256 KB of it twice with different
+  request sizes and compares checksums, B3 writes 128 KB of pattern to `/BBSD.TMP`, reads it back, compares and deletes it, B4 shows counters (requests, timeouts, worst wait, worst streamer-side call).
+
+### M7 on the unit (user, SD test image, real card)
+- B1 list: root = 10 files, 12 folders, biggest `music box.wav` 3461 KB (the name on the screen is cut at 21 characters).
+- B2: 256 KB of it read twice (4 KB requests, then 100-byte requests): checksums equal, **554 ms (462 KB/s)**.
+- B3: 128 KB written to `/BBSD.TMP` **474 ms (about 270 KB/s)**, read back **265 ms (about 480 KB/s)**, verify OK at byte 0 mismatches, deleted OK.
+- Counters after all that: 10,211 requests, **0 timeouts**, worst streamer-side call **6.4 ms**, worst wait **1872 ms** (the time before the streamer loop reached the hook, since the call itself was short; to be
+  explained with the new "streamer gap" counters). The page was slow to change while the tests ran: expected, the tests run in the UI task's touch handler and block it for 0.3 to 1 s.
+- Throughput note: 100-byte requests cost one mailbox round trip each; MCL's file access (small project / grid files) is far below what this image does.
+
+### The page felt slow and needed several presses (user, SD test image)
+Cause (found in the code, not measured): `looper_ui_poke` calls the page's redraw check (`mcl_page_sig` -> the blob's `bb_ui_sig`) about 19 times a second **from the audio task**; any change of
+the picture makes the UI task redraw the whole page (a few hundred box calls). The diagnostic pages show numbers that change all the time while the streamer works, so the UI task was redrawing
+continuously. Fix: `bb_ui_sig` renders at most every 150 ms (an input event refreshes at once), `bb_ui_refresh()` for the tests; the SD test result lines were rearranged so they no longer overwrite each other.
+Design note for M8: the redraw check runs in the audio task, so it must only compare a frame counter; MCL's own drawing must run in the UI task (the page's paint) or its own context, never in that check.
+Also noted: the stock tasks are defaultTask (UI) and pcmStreamer at the same CMSIS priority (Normal) and audioTask at Realtime, so the streamer's busy loop and the UI task share the CPU in time slices.
+
+### M7 result, second run (user, SD test v3)
+- 12,035 requests, 0 timeouts; B2 / B3 read and write checks passed again (write 128 KB in 460 ms, read back 260 ms, verify OK, deleted). B1 and B4 are instant; B2 and B3 take as long as the work they do (not a screen problem).
+- **Streamer loop gap: 5323 ms, twice over 100 ms.** The stock streamer task is sometimes busy inside its own work (loading a project or samples) for seconds: a request posted then waits that long (the earlier 1872 ms wait was this).
+  When the streamer is idle the worst wait was 20 ms. MCL's file operations are user-initiated, so this is acceptable; the wait limit is now 30 s.
+- **Bug found by the test while raising the limit:** the wait loop measured elapsed time as a 32-bit cycle-counter difference, which wraps after 10.7 s at 399 MHz, so a limit above that could never fire. Elapsed time is now accumulated in 64 bits.
+- Display fix: the last counters line ran off the screen (`CALL US` had no room for its number).
+- M7 is done on the unit: MCL's SD layer reads and writes the real card through the stock FatFs without disturbing playback. M9 will still soak it (long runs, power-pull on a scratch card).
+
+## M8: MCL's core runs (emulator-verified; hardware pending)
+
+The unmodified MCL core (jmamma/MCL checkout, `MCL_DIR` / `MCL_GFX`) is built by `tools/mcl/build_mcl.sh` into the blob (0 undefined symbols; text 356 KB, `.bss` 373 KB of the 512 KB SDRAM block, `.data` 4.5 KB).
+`test_mcl_core.py` (skips without `MCL_DIR`) runs it under Unicorn on the unit's image, the stock FatFs on a FAT32 RAM disk behind the SD layer:
+
+- **Boot**: `setup()` creates `/MCL/{Projects,Samples/WAV,Samples/SYX,Sounds}` and `config.mcls` on a blank card, then shows MCL's own start menu (`PROJECT | LOAD PROJECT / NEW PROJECT`), which *blocks inside `setup()`* until a project is loaded (so the task's state is "starting" for as long as the menu is up; the page shows MCL's screen from the moment the task exists).
+  The first suspicion "memset runaway in `MenuPageBase::display()`" was just this menu redrawing in a loop.
+- **Input**: encoder 2 moves the menu (menus use `encoders[1]` for the entry, `[0]` for the value), **B4 = YES** (enter), **B1 = NO** (exit), as in MCL's `MenuPageBase::handleEvent`. MCL's encoders count raw quadrature units: one step needs `rot_res * 9 + 1` of them (page-dependent), so the platform converts the page's whole steps into exactly that many (`bb_mcl_enc_units`, `mcl_platform_encoder_delta`): one knob step = one MCL step, no remainder.
+- **New project** (name dialog, B4) writes the project to the card; `fsck.vfat` clean and `mtools` reads the tree back; the main grid screen (tempo `120`, `1:1`, grid) shows.
+- **MCL bug found and worked around**: `TextInputPage::init()` copies `title` before `init_text()` set it (a NULL pointer; harmless where address 0 reads). `strncpy` in `bb_libc.cpp` treats NULL as "".
+- **Stack**: 12.4 KB of the task stack in the deepest flow tested (project creation). The task's stack is 16 KB in our SDRAM (see "M8 on the unit"); less than ~13 KB would not be enough for that flow.
+- **MIDI**: MCL claims the jack (`bb_midi_claim`; the stock firmware's own sends are redirected into the same ring), `bb_midi_filter_clock(1)`. Bytes out: MCL's stream and real-time ring reach the jack in order; **F8 / FA / FB / FC are dropped in both directions** (bb_clock sends the exact ones; the jack's are not MCL's clock). Counters: `bb_mcl_midi_stat`.
+- **Clock**: MCL follows the Blackbox's sequencer (`bb_clock_sync_seq()`, called once `setup()` returned, i.e. a project is loaded). bb_clock's tick hook calls `MidiClock.handleImmediateClock()` at every MIDI clock (24 PPQN, from the TIM6 interrupt, priority 1) and pends the sequencer soft interrupt; its new transport hook (`bb_clock_set_transport_hook`, FA / FB / FC in the order they leave) sets `MidiClock`'s state the way `handleImmediateMidiStart/Continue/Stop` do (minus their forwards to the jack) and queues the byte for MCL's receive ring (soft interrupt 2). MCL's own interpolation between clocks stays at the 5 kHz TIM7 timer (MCL's RP2040 design; `clock_interpolation` is up to 16 per clock in MCL, more than TIM6's 8 ticks), anchored at the exact clock; TIM6 is held off for the few cycles of TIM7's counter update (`BASEPRI`) so neither loses an increment. `seq()` must be called once per counter increment (its legacy-engine gating counts calls), so the soft interrupt is pended per increment, never from two increments at the same instant.
+  Test: FA / 96 clocks / FC / FB with the base timer ticking at 5 kHz: 95-96 clock counts, 15-16 sixteenths, interpolation ticks as MCL configured; FC freezes the counters, FB continues.
+- **Not tested (hardware only)**: everything about the real kernel and cache, whether the kernel has 16 KB for the stack, MSP depth in the soft-interrupt handlers (see below), the real panel feel (`MCL_ENC_COUNTS`), Machinedrum round trip (needs a second, correct TRS cable), analog-sync follow.
+
+### M8 on the unit: MCL's task was wiped by the stock heap (fixed)
+
+- **Symptom**: the MCL page stayed black. With the diagnostics on the page, MCL's task was stuck in its first `delay(2000)`, inside the first kernel wait. Kernel time-outs never woke it, even at a higher priority. One semaphore give from another task woke it once, and later gives did not. The kernel tick (`xTickCount`) and the HAL tick both ran normally.
+- **Cause, step by step (diagnostic images m8f..m8m)**:
+  - MCL's TCB (`0x2401a4e8`) read as zeros, while the running task's TCB passed the layout check (its owner word equals its address).
+  - The TCB was intact at creation, at the task's start and before its first wait. It was zeroed within about 1 ms of the task's first switch-out. The kernel's task count stayed at 5, so the task was not deleted.
+  - The zeroed run was `0x24019620..0x2401b070` (6.7 KB). It covered the top of MCL's stack (`0x240164e0..0x2401a4e0`, stack pointer 0x50 deep), the TCB and the memory above.
+  - The same thing happened when the sleep only yielded instead of blocking, and when the heap was written back from the D-cache. So it was neither the blocking call nor the cache.
+  - The stock kernel heap (heap_4) is only **0x9000 = 36 KB** (`ucHeap` at `0x24016178`). The stock task stacks alone are about 34 KB: defaultTask 8 KB, audioTask 10 KB, pcmStreamer 8 KB (thread table at `0x080cfbb0`), idle 4 KB, USBH_Thread 4 KB. Yet the kernel handed out 16 KB at the bottom of the heap, where the stock layout puts a live task stack (most likely the audio task, which runs every few ms). The exact writer was not identified.
+- **Fix**: nothing of MCL's lives in the stock heap any more.
+  - **Task memory**: the TCB (`bb_mcl_tcb`, 0x60 bytes) and the 16 KB stack (`bb_mcl_stack`) are in the blob's SDRAM `.bss`.
+  - **Task creation**: the task is built by the stock `xTaskCreate` body. A small stub sets up the registers its prologue would, without the two `pvPortMalloc` calls, and enters it at `0x08088b00`. That code fills the TCB, builds the first frame, adds the task to the ready list and returns pdPASS. Priority 3 (osPriorityNormal), as the UI and streamer tasks.
+  - **Waits**: MCL's sleep and the SD layer's wait for the streamer no longer use kernel semaphores (heap objects). They yield (PendSV) until the time is up, or until the request is done, counting with the cycle counter (`bb_yield`, `bb_sd_yield`; the emulator rigs stub those two).
+- **Result (user, m8n)**: the diagnostic lines show for a moment, then MCL's start menu; a new project was created; nothing unusual heard or seen while running.
+- Other kernel facts found on the way: `xTaskCreate` `0x08088ad8` (TCB 0x54 bytes: priority `+0x2c`, stack base `+0x30`, name `+0x34`), `pvPortMalloc` `0x08087cd4`, `vPortFree` `0x08087e18`, `vTaskSuspendAll` `0x08088d10`, `xTaskResumeAll` `0x08088e7c`, `vTaskSwitchContext` `0x08088ff4`, PendSV `0x08088054` (standard, unmodified), ready lists `0x2401f21c` (stride 0x14), `uxCurrentNumberOfTasks` `0x2401f1a8`, `pxCurrentTCB` `0x2401f2a8`. No `vTaskDelay` is linked in the stock image.
+- **Tempo read wrong (user, m8n)**: MCL showed about 0.9x the tempo (Blackbox 97 -> 86, Keystep 201 -> 182). `setup_irqs()` re-runs `bb_clock_init()`, which measures the timer clock in 150 us windows of the 16-bit TIM6 counter against the cycle counter. From MCL's task, which other tasks of the same priority now preempt for whole 1 ms slices, a window could wrap the counter. The timer clock then came out too low, the prescaler too small, and TIM7 (MCL's 5 kHz `read_clock()`) and TIM6 ran fast. Windows that run long are now thrown away. `test_mcl_clock.py` reproduces it: a 1 ms switch-out every 500 cycle-counter reads gave prescaler 107 instead of 200 before the fix, and gives 200 / 999,997 counts/s after it.
+- **MCL's core was compiled against MCL's desktop platform headers** (`tools/mcl/mcl_size.sh` put `src/platform/desktop*` first), so inside the core `USE_LOCK / SET_LOCK / CLEAR_LOCK` were no-ops, `TRIGGER_SW_IRQx` did nothing, `isInInterrupt()` was always false, and `DEFAULT_TURBO_SPEED` and the SysEx sizes were the desktop's. Only our platform files saw `src/mcl_bb/platform/common`. Now `build_mcl.sh` passes that directory first (`PLAT_INC`), and rebuilds the core whenever those headers change (stamp `out/mclobj/plat`).
+- **TurboMIDI**: `MidiUartClass::set_speed` (bb_mcl.cpp) waits until MCL's rings have been handed to bb_midi. `bb_midi_set_speed` then waits until both rings are empty and TC is set (at most 50 ms each), and reprograms USART6 BRR from the kernel clock read at boot (stock BRR x 31250). Default `DEFAULT_TURBO_SPEED 4` = 8x (250 kbit/s), as on the Arduino MegaCommand. Emulator: 8x / 10x / 1x BRR values, out-of-range refused, MCL's own `TurboLight::set_speed` switches the jack. Not checked: whether the Blackbox's MIDI IN circuit passes 8x (needs the Machinedrum).
+- **MIDI receive errors** (to measure TurboMIDI on the real MIDI IN): `mcl_usart6_isr` counts framing / noise / overrun flags (`bb_midi_stat` 6 / 7 / 8). The MCL page shows `<speed>X <bytes received>` under B2 and `<n> ERR` under B3 (entry table abi 4, `midi()`; cpu.c accepts 3 and 4).
+- **Stale cave**: `patch.py` links the existing `out/cave.bin`; only `build.sh` recompiles `src/*.c`. The hardware images up to m8p carried a 15 Oct cave, so cpu.c changes from M8 (tile roles NO / YES / FUNC) were missing on the unit. Run `sh build.sh` before `patch.py` whenever `src/*.c` changed (then rebuild every test image that globs `out/*+cave*`).
+- **Stuck at peering (user, m8q, Machinedrum on both cables)**: the base timer pended the MIDI soft interrupt only while `MidiUartParent::handle_midi_lock` was clear. But that interrupt also moves the bytes (bb_midi rings <-> MCL's rings). MCL holds the lock for its whole blocking sysex wait (peering, kit / pattern requests), so its request never left and no reply reached its ring. On MCL's own hardware the UART interrupts move the bytes without any lock, and only the processing is gated. Now the soft interrupt is always pended, always pumps and drains, and runs `handleIncomingMidi()` only when the lock is clear (MCL's task processes the input itself in its wait loops). `test_mcl_core.py` checks the pend with the lock held; it failed before the fix.
+- **Machinedrum sync (user, m8s)**: Blackbox PLAY started the MD but the tempo did not follow. When it connects an MD, `MDClass::setup()` writes the MD's sync settings from `mcl_cfg.clock_rec`. With the default (0 = port 1 = the MD as clock source) that is clock out on, clock in off, so the MD ran at its own tempo. The Blackbox is the master here, so after each pass of MCL's loop `md_follow_blackbox()` sets a connected MD to clock in / no clock out and resends 0x4D (MCL's setting and config.mcls are left alone). A linker `--wrap` cannot catch it: the call is inside MD.cpp. The `MD` object: `connected` +4, `global.clockIn` / `clockOut` +0xB9BD / +0xB9BE (this build).
+- **Only the first step of the Machinedrum sounded (user, m8v)**: MCL's sequencer writes its notes into side-channel rings (`seq_tx1..4`, `MCLSeq::seq()` -> `prepare_tx_buffers`) and points `MidiUart.txRb_sidechannel` at the one in use. On MCL's hardware the UART interrupt drains it between two messages of the main stream. Our drain only read the main and real-time rings, so only the first pass after a start (which writes directly) got out. The drain now uses the vendored `MidiUart::desktop_egress()` (real-time, side channel at message boundaries, main stream) and still drops F8..FC. Tested in `test_mcl_core.py` with `bb_mcl_midi_put_side`.
+- Following the Blackbox needs a sequence selected on the Blackbox: the stamps come from the note player (`seqfix.c`). Without one, the transport runs but MCL gets no clock (open: read the stock transport / position directly).
+
+## Flash window test 2: 0x08140000..0x081E0000 (before merging the looper branch)
+The looper branch keeps its ITCM image at 0x08170000..0x08180000, inside what the MCL blob (376 KB, to 0x0817bcd4) now needs. `MCLPAD_END=0x081E0000 python3 patch.py ... cave mclpad` builds a 1,703,936-byte image whose pad covers 0x08140000..0x081E0000 (the proven part again plus 384 KB; 0x081E0000 and up stay untouched). The label shows ` POK` or ` Fxxxxx` (5 hex digits: the index of the first wrong word, counted from 0x08140000). Emulator: POK on the image, F20000 with a word at 0x081C0000 cleared.
+- **POK** (user, 2026-11-12): the second pad test (0x08140000..0x081E0000) read back correctly, so the window is proven to 0x081E0000.
+- **Merged with the looper branch** (looper, SAMPLR, Trigger2MIDI detector in ITCM, DRONE-8 / LIRA, crash recorder). Flash: main cave to 0x08120000, MCL blob 0x08120000..0x081D0000 (376 KB used), ITCM image at 0x081D0000 (was 0x08170000). The full image is `solo slice duck chord cond filter cpu od comp seqfix fx2 munchi looper clkmon lira lirarec lirasave crash cave mclblob mclsd`. SONG round: Looper, SAMPLR, TRIG, DRONE-8 (tab 7), MCL (tab 8), stock song screen. All 41 test files pass on the merged tree.
+- **MCL source: the user's 5.02+ branch** (`viktorakos95/MCL`, branch `claude/md-machine-names-chromatic-b2oaz9`, VERSION_STR "5.02+"): `master` lacks its 44 commits (Euclidean sequencer, manual step fixes, X.14 machine names, chromatic tuning tables, USB turbo reset). Its Euclidean step page only built for AVR (`euc_enabled()` exists in the AVR step backend only). `tools/mcl/fork-patches/0001-euc-enabled-generic-backend.patch` adds it to the generic backend, and `build_mcl.sh` applies it when the checkout lacks it; it belongs upstream in the fork. The core rebuild stamp now includes MCL's commit and its working-tree diff.
+- **Wrong menu labels / options (user, m9c: TURBO showed GRID Y DEVICE, the manual step entries showed numbers)**: MCL's menus, options and machine names are compressed tables generated per platform from `resource/*.cpp` (the fork's `tools/platform/generate_resources.py`, run by PlatformIO). The committed `src/resources/rp2040` tables were stale: last regenerated on 12 July, before the roll menu changes of 31 July and the 5.02+ menus, which regenerated only the AVR tables. `tools/mcl/gen_resources.py` now runs that same generator with our toolchain and flags (the rp2040 layout) before every MCL build (`build_mcl.sh`; skipped when the resources are unchanged).
+- **m9f did not boot (user: "the LEDs just flash"; m9e boots, and a power cycle did not help)**: m9f made every boot run `start()` again. A watchdog or software reset keeps the RAM, so before that only a power-on started MCL. The hook itself checks out: the bytes at 0x0804428c are right, and 0x08046340 is the stock USB device init (init, register class, start). The likely cause is a restart loop. Something during or soon after MCL's start restarts the Blackbox, and the next boot starts MCL again. In m9e the reset after that left MCL off, which is the "frozen MCL screen after a restart" the user reported. m9f turned that into a loop.
+
+  **Fix (m9g):** `cpu_boot` reads the reset flags: `RCC_RSR`, or the crash record when the recorder has already taken them. After a power-on it starts MCL as before. After any other reset `start()` leaves MCL off (`UI->off`; every call into the blob is skipped). The MCL page then shows "MCL IS OFF: THE BLACKBOX RESTARTED", the record (reason, fault registers) and "TAP HERE TO START MCL". A tap boots MCL and starts its task. The loop can't happen any more, and the reason is on screen.
+
+  **Still open:** what restarts the Blackbox.
+- **m9g on the unit:** tapping "start" restarted the Blackbox once, and the second tap started MCL. Later the Blackbox restarted by itself. The record said "SOFTWARE / NO FAULT", RSR 0x01460000, faults 0, lag A 0 B 5, no SD fails, RAN 70 s, RAM min 377 KB.
+
+  The only software reset in the whole image (stock, cave, blob, ITCM) is `crash_reset`. So these restarts were faults whose record was lost. The reason: the backup SRAM has no MPU region, so it is write-back cacheable under the default map, and the data cache is on. The fault handler's record stayed in the cache and SYSRESETREQ dropped it.
+
+  **Fix (m9h):** `crash_reset` cleans the whole data cache by set / way before the reset. Expected next: a HARD / BUS / USAGE FAULT record with PC / LR.
+- **m9h on the unit (the first full record):** BUS FAULT, CFSR 0x00008200 (a precise data bus error, BFAR valid), address 0x2304E9C0 (no memory there), SP 0xC3FC7858. That SP is inside MCL's task stack (`bb_mcl_stack` 0xC3FC3978..0xC3FC7978), only 0x120 bytes below its top. So it is MCL's task, shallow in its call chain, reading through a bad pointer. RAN 19 s, RAM fine, no SD fails, GUI was painting.
+
+  PC / LR were 0 because `in_ram()` did not accept the SDRAM. Fixed in m9i (0xC0000000..0xC4000000). The ELFs of m9i are kept in `out/merged-m9i/` so its PC can be looked up.
+- **m9i on the unit:** BUS FAULT, PC 0x08178012 (`strcpy`), LR 0x08147083 (`GridLoadPage::md_popup_title`), address 0x2304E9C0, again in MCL's task. `copy_load_mode_label` indexes a 3-entry table with `mcl_cfg.load_mode - LOAD_MANUAL`, with no check. The table entry at mode 69 is 0x2304E9C0, so `mcl_cfg.load_mode` was 69.
+
+  Nothing in MCL's own code sets such a value: the encoder is 1..3 and the keys give 1..3. So it came in with the config: `config.mcls`, or a project's config copied by `apply_project_config`. The user's card is from the MegaCommand.
+
+  **Fix (m9j):** fork patch `0002-load-mode-bounds.patch`.
+  - The label falls back to MANUAL for a value out of range.
+  - `GridLoadPage::init`, `MCLSd::load_init` and `apply_project_config` repair a stray `load_mode` to MANUAL.
+  - `test_mcl_core.py` calls `md_popup_title` with 69. Without the patch the emulator faults like the unit did; with it, it passes.
+
+  **Still open:** whether other config fields from the card are also out of range. If this was memory corruption rather than a bad file, it will show up elsewhere.
+- **Fork fixes upstream (PR viktorakos95/MCL#1, base `claude/md-machine-names-chromatic-b2oaz9`):** both fork patches are in the fork now. The load-mode repair there leaves out `GridLoadPage::init` (every in-firmware writer keeps 1..3, so the card's two read paths and the label fallback cover it), which kept the AVR megacommand build at 245,738 bytes (the full patch was 245,906, over the 245,760 limit). With the PR merged, `build_mcl.sh` skips both local patches (`git apply --check` fails on an already-patched checkout) and `tools/mcl/fork-patches/` can go.
+- **The MCL page as a MegaCommand (user request):** MCL's screen at exactly 2x (256 x 128; the 2.4x scale made pixels 2 or 3 wide) in a black window under a MACHINEDRUM name plate (a red mark, bold name). NO (SAVE, red) and PAGE on the left, YES (LOAD, white) and SHIFT on the right, as on the MegaCommand (MCL's B1, B2 / B4, B3; the FUNC tile is gone: it is the TBD panel's REC / COPY, which a MegaCommand does not have). A button's whole half column is its touch area. Silver panel: the MCL CLUT theme (`tint_mcl`, indices 0x1c / 0x1e) in `looper_page.c`.
+  - **Shortcuts under the window (blob abi 5, input kind 6):** CHROMATIC (MCL's pitch sequencer, `SEQ_PTC_PAGE`, with a little piano), DELAY (`FX_PAGE_A`), REVERB (`FX_PAGE_B`), MIXER. DELAY and REVERB carry the icons MCL itself uses for the Machinedrum's two effects on its page select and FX pages (`icon_rhytmecho` = RHYTHM ECHO, `icon_gatebox` = GATE BOX, from the fork's `resource/icons_page.cpp`, copied into `src/cpu.c`). No MEGACOMMAND text: the window ends under the screen. The Blackbox's GUI task only queues the request; MCL's task opens the page between two passes of its loop (`shortcut_apply` in `bb_mcl.cpp`). A shortcut to the page that shows goes back to the grid; the one showing is lit (`midi(10)`).
+  - **The clock on the footer line (abi 5, input kinds 4 / 5):** CLOCK BLACKBOX (as before: MCL follows the Blackbox's sequencer) or CLOCK INTERNAL (MCL's own tempo, 30.0..300.0, 120.0 at power-on: PLAY / STOP, - / + a BPM). Internal runs `bb_clock_start` / `bb_clock_stop`, so MCL plays without the Blackbox's sequencer, and the jack gets the same clock and transport. The setting is not kept over a power cycle.
+  - **The restart record is no longer drawn over MCL's screen** (it is still recorded, `docs/diagnostics.md`). After a restart that was not a power-on MCL still stays off until its window is tapped ("MCL IS OFF / TAP HERE TO START"), so a crash at MCL's start cannot become a restart loop. The MIDI speed / byte / error counters under B2 / B3 are gone with the tiles.
+  - `test_mcl_page.py` checks the layout, touch areas and inputs under Unicorn from `out/cave.elf` alone (a fake abi-5 blob) and writes `out/mcl_page.png`. `test_mcl_ui.py` (needs the stock image) was updated for the new layout but not run here. Not checked: the real colours, touch feel, and the clock / page shortcuts on the unit.
+
+## m9m / m9n: the other session's MegaCommand page, merged; restart guard; backup SRAM overlap fixed
+- **Merged from `claude/relaxed-edison-r3oo8f`:** `6d96a4c` (the MegaCommand page) and `7ad045f` (the effect icons). Not taken: `8da1311` (MCL booted at every reset, which gave the m9l restart loop).
+- **Their m9k "SD CARD ERROR":** their image was built without `mclsd` (the stock SD task runs MCL's file requests), so MCL could never reach the card. The full set must end in `cave mclblob mclsd`.
+- **Backup SRAM overlap (found while merging):** three blocks shared 0x38800940.
+  - seqfix.c's stamps that MCL follows the Blackbox with (20 bytes).
+  - crash.c's SD block (0x940..0x96c, written by every SD read).
+  - The page state at 0x930, which had grown to 20 bytes.
+
+  So every SD read overwrote the stamps' version / sequence / cycle words; the slow or odd tempo following on the unit may be this. They now live in the free gap between comp.c's state (ends 0x654) and seqfix.c's clock (0x700): stamps at 0x38800660, page state at 0x38800680 (24 bytes reserved, static assert).
+- **Restart guard (m9n):** MCL starts after every restart, as at power-on. Only the third restart in a row that comes less than a minute after the boot before leaves it off; the window then shows the restart record and "TAP HERE TO START". The count (`UI->quick`) survives `start()`; the CPU meter's report clears it once crash.c's live block count passes a minute.
+- **Page (m9n, user):**
+  - The clock row on the footer is gone; it only says what the knobs are.
+  - The GRID shortcut is new.
+  - Pressed again: DELAY / REVERB switch the FX page's halves (FX A / FX B, MCL's own toggle), CHROMATIC opens the POLY voice selection (`seq_ptc_page.re_init`, `pushPage(POLY_PAGE)`, MCL's own B1 + B4), MIXER and GRID stay.
+  - The name plate: the Machinedrum's mark from its front panel (35 x 13, orange 0x1d / red 0x1f set by the MCL theme in looper_page.c), MACHINEDRUM at 1.5x in bold. The screen moved down 5 px.
+  - Tested: `test_mcl_page.py` (pixel checks of the mark and the name), `test_mcl_core.py` (each shortcut pressed twice on the real core), `test_mcl_ui.py` and `test_cpu.py` (the guard).
+- **m9o on the unit:** "MCL IS OFF" after flashing. The updater's reset is not a power-on, and the restart count had just moved to 0x38800690, so it read whatever was left there. Tapping then restarted the Blackbox (tap-start from the GUI task, as on m9k), and then the page showed MCL BB IDLE.
+
+  **m9p (user: "remove completely"):** no off state, no restart record on the MCL page, no tap-to-start. `cpu_boot` clears M->magic, so `start()` boots MCL at every boot, whatever the reset. The crash recorder itself stays (the Looper's SETUP debug view).
+
+  **Risk accepted:** if MCL crashes at every start, the unit loops (m9f / m9l). The way out is to flash an image without `mclblob`.
+- **m9p on the unit:** a restart loop again (only the LEDs flash).
+
+  **Likely cause:** a reset that is not a power-on keeps the SDRAM, and possibly a short power cut does too. So the blob's last run is still in its region, ready flags included (`bb_sd`, `bb_midi`, `bb_clock`). The stock tasks and interrupts call the blob's hooks (SD pump, MIDI taps, the timer) as soon as they run, before and while `start()` boots MCL again, so they ran on the old run's state. m9j never booted MCL after such a reset, which is why it did not loop.
+
+  **m9q:**
+  - `cpu_boot` (in main, before any task) zeroes the blob's whole SDRAM region (0xC3F80000..0xC4000000) and its status words (0x38800920). It does this only when the region is reserved, the allocator is below it and FMC is enabled.
+  - Restart loop guard, silent: a word at 0x38800690 with a marker counts boots in a row. The fourth boot that comes less than a minute after the one before skips MCL; the page shows MCL NOT RUNNING. The CPU meter's report clears the count after a minute of running (crash.c's live block count), so the next boot starts MCL again.
+  - Tests: `test_mcl_ui.py` (the wipe, the guard, a stale word without its marker) and `test_cpu.py` (the clear).
+- **m9r on the unit, the record:** USAGE FAULT, CFSR 0x01000000 (UNALIGNED), PC 0x08088098, LR 0x0808808B, SP 0x2001FF78 (MSP). That is PendSV's `ldmia r0!` from `pxCurrentTCB->pxTopOfStack`, right after `vTaskSwitchContext`: the task being switched in had a corrupt saved stack pointer.
+
+  **Root cause (since m9f):** the app object's constructor (0x0808BE4C, called from main at 0x0804427A) builds the screens, so the label constructors run in main: `remember()` -> `start()` -> MCL boots and makes its task (TCB and stack in the blob's .bss). `cpu_boot` was hooked at main's LAST call (0x0804428C), after them, and cleared M->magic. So the audio task's first `cpu_wait` ran `start()` again: `mcl_boot` zeroed .bss under the live task (TCB included, already in the kernel's lists), and the next switch to it faulted. Every boot did this, hence the restart loops of m9f, m9l, m9p and m9q (the guard's 4 restarts). It also fits m9g, where the first tap-to-start (a second boot over a running MCL) restarted the unit.
+
+  **m9s:**
+  - `cpu_boot` hooks main's FIRST call (0x0804418C, `bl 0x080778D4`, HAL init); 0x0804428C is stock again. So `start()` runs exactly once per boot, at the first label constructor, whatever the reset.
+  - The SDRAM wipe moved into `start()`, just before `e->boot()`.
+  - The restart loop guard and the crash lines on the MCL page are gone (user).
+  - `test_cpu.py` checks the hook site, that 0x0804428C is stock, that the app constructor calls the label constructors, and that only the first label constructor runs `start()`.
+- **Roll (beat repeat) timing on the Blackbox (user: 1/4 sounds like 1/16):** `BEAT_REPEAT_DIV192_PERIOD` is in AVR units (12 a 16th); on the ARM builds `div192th_counter` runs at `div192th_ticks_per_16th()` = 6 x clock_interpolation a 16th. Fork patch `0003-beat-repeat-period-scale.patch` scales it with `MidiClock.scale_legacy_div192_to_current()`, which is the identity on AVR, so the MegaCommand is unchanged. (m9t)
+- **PLAY / STOP did nothing on the MCL page (user):** the page passes the stock buttons on with a `break` out of the learned-button loop. But a button learned as a message pair (down / up as two ids in 0xf4..0xf9, like REC's 0xf4 / 0xf5) had its other message taken earlier ("the same button's other message: taken, not an action"). The stock transport, which acts on the pair, only saw the press: the button lit up and nothing played.
+
+  Now, on the MCL and TRIG pages, every learned button except BACK goes to the stock firmware before that check, press and release. `test_looper.py` checks it with PLAY as a 0xf6 / 0xf7 pair; it fails without the fix, keeping only the press. (m9u; looper_page.c, the button loop.)
+- **MCL's grid at the Blackbox's resolution (m9v, user):** the blob's entry table is abi 6 with `grid(struct bb_grid *)` (`src/mcl_bb/bb_grid.h`). `bb_mcl_grid` copies MCL's grid page out of `grid_page`: cursor (`getCol()`, `cur_row`), selection (`param3` / `param4`), the 16 x 4 slot labels MCL keeps, the playing row of each track, row names, tempo, bar:beat, clock state, device names. It returns 0 on any other page, and on the slot menu or the bank popup.
+
+  When it returns 1, the cave's page draws the grid itself in the 256 x 128 area instead of blitting MCL's 2x picture, in the Machinedrum's screen style on black: a frame, an inverted title bar (GRID X, row and name, bar:beat, play / stop), the tempo at 2x, all 16 tracks in one line in four groups with dotted dividers, the cursor's area inverted, the playing slots underlined, empty slots grey. The numbers are centred over their columns.
+
+  Tests: `test_mcl_page.py` (a fake abi-6 blob: every label in its column, inversion, underlines, numbers, dividers clear of the labels, all inside the area; preview `out/mcl_grid.png`) and `test_mcl_core.py` (`bb_mcl_grid` on the real core: 1 on the grid, 0 on the mixer, printable labels).
+- **Mixer at full resolution and the SAMPLE shortcut (m9w, user):** abi 6 adds `mixer(struct bb_mixer *)`. `bb_mcl_mixer` reports the parameter the knobs move (`mixer_page.display_mode`, an MD parameter: 0..23, 40 mute, 41 level), named with `model_param_name()` for the first held track's machine, plus every track's value, meter, held and muted state, and the roll and its rate. It returns 0 unless the mixer shows faders for a connected Machinedrum (not its menu, a perf preview or the fill editor).
+
+  The page draws 16 faders in the grid's columns: held tracks filled white with the number inverted, the others outlined with their meter, muted tracks grey with an M. The title bar reads MIXER <param> and ROLL <rate>, and under it TRK n plus the value.
+
+  Sixth shortcut, SAMPLE: MCL's RAM record page A, its source set to input A (`ram_a_param1` = 1). YES records onto track 15 at the length of knob D, NO slices it onto a RAM player. The strip moved under the PAGE / SHIFT names and has the page's full width.
+
+  The emulator has no Machinedrum, so there `bb_mcl_mixer` is checked to return 0; the MD path itself is untested.
+- **Sample manager sees the whole card (m9x, user):** fork patch `0004-blackbox-sample-manager-card-root.patch`, under the new `MCL_BLACKBOX` define (set in `build_mcl.sh` and `mcl_size.sh`, rebuild stamp `bb1`).
+  - `FileBrowserPage::card_root`: absolute paths are not put under `/MCL`, and `cd ..` goes up to `/`.
+  - `SampleBrowserPage::setup` starts at `/`, so the Blackbox's folders show as well as MCL's.
+  - Suffix matching is case-insensitive off AVR (`strcasecmp`, added to `bb_libc.cpp`).
+
+  MCL's file lists hold 30 characters (32-byte entries), and many Blackbox names are longer. `bb_sd` now also returns FatFs' `altname` (FILINFO + 13), and `FsFile::openNext` uses the 8.3 short name for a long name that would not fit; it opens like any name.
+
+  `test_mcl_core.py` opens the sample manager on the real core (`bb_mcl_page_req`, a test hook) and checks that the root lists `Samples` and `MCL`, and that a 39-character `.wav` is listed by its 8.3 `.WAV` name. Sending to the Machinedrum (SDS) is MCL's own and unchanged.
+- **Test hygiene:** `mcl_rig.build()` and `test_mcl_rt.py` take the first `out/*+cave+mclblob` image, so keep only the `looper clkmon cave mclblob` one. `test_mcl_rt.py` now expects the region above .bss to be zero (`start()` wipes it, m9s).
+- **SAMPLE button: a chosen file into the Machinedrum by cable (m9y, user).** The Blackbox's own preview browser only loads pads and can't be opened alone, so the button uses MCL's sample browser (the whole card, m9x) in a "cable mode":
+  - **Listening:** SAMPLE pressed again toggles it. While it is on, each WAV the selection settles on plays.
+  - **YES on a file:** the file loads and MCL's RAM page A sets up its record: track 15, input A (`ram_a_param1` = 1), and the length rounded up to bars of 4 steps at the current tempo (knob D, at most 32). The file plays from the 16th step the record starts on (`transition_step`), in MCL's clock callback on the same tick MCL sends the record trig. The RAM page then shows; NO slices there as usual.
+  - **Audio path:** played on Out 3 only (the last pair); cable it to the MD's input A. The looper's Out 1 stage takes Out 3 with `out_bus` while the player plays, and doesn't mix if Out 3 isn't available.
+  - **Player:** blob abi 7 `player()`. `bb_player.cpp` streams the file into an 8192-frame ring (16-bit stereo, 32 KB in the blob's .bss), not a buffer of the whole file: the crash records showed free SDRAM down to 377 KB. It reads 8 / 16 / 24 / 32-bit PCM and 32-bit float, mono or stereo. `mcl_player_mix` (cpu.c) plays at 48 kHz with linear interpolation and stops at the file's end; an empty ring is silence.
+  - Fork patch `0004-blackbox-sample-browser.patch` adds the cable-mode hooks to `SampleBrowserPage` (`bb_sample_browse`, `bb_sample_record`) and the case-insensitive `.wav` there.
+  - **Tests:** `test_mcl_page.py` (resampling 44.1 -> 48 kHz, the end, an empty ring) and `test_mcl_core.py` (a 24-bit stereo WAV from the card into the ring sample for sample, a folder refused, SAMPLE's cable mode and listening toggle).
+  - **Not tested:** the record itself, which needs a Machinedrum.
+- **m9z → n1, user reports and fixes:**
+  - **Sample browser dead while a sequence plays** (folders would not open; a WAV read as "not a WAV"). The stock streamer's inner work loop (0x08074402..0x0807444e) keeps going while any of its rings has work, which is all the time while sequences stream. The loop's top, where `mcl_sd_pump` serves MCL's mailbox, was not reached, so MCL's requests timed out. `mcl_sd_inner` now serves the mailbox once a pass, in place of the pass's last call (`bl 0x08092f5c` @0x0807443e; patches/mclsd.py). `test_mcl_sd.py` runs a request with only that hook serving.
+  - **MCL did not follow the Blackbox's PLAY without a selected sequence:** there are no seqfix stamps then. The stock clock object (the Out 1 stage's context, `bufs[0]`) has a running byte at +0x38 (its per-block advance at 0x080696d8 returns at once without it; its stop at 0x08069a94 clears it) and the tempo float at +0x18. `mcl_xport_block` (cpu.c, from `looper_stage`) publishes {block count, running, tempo x10} at 0x38800674. `xport_follow` (bb_mcl.cpp) runs MCL's own clock at that tempo while it runs and no stamps come (FA to MCL and the MD), follows the tempo, stops with it (FC), and hands back to the stamps when a sequence plays. **Unverified on the unit:** that +0x38 is set by PLAY with no sequence selected.
+  - **Grid:** the playing slot has a box instead of an underline. The row name is 2x bold in the tempo line, the devices in the title bar.
+  - **Menus at full resolution:** abi 8 `menu()`. `MenuPageBase::draw_menu` is wrapped at link time (`--wrap`); what it drew (title, items, values as `draw_item` shows them, the cursor, whether it is the grid's slot menu) is published with the frame by the `Oled::display` wrapper. The page draws a menu page as a list (title bar, rows, cursor inverted, a scroll bar), and the slot menu as a panel over the left of the sharp grid; `bb_mcl_grid` no longer gives up on the slot menu. Tests: `test_mcl_page.py` (fake abi 8) and `test_mcl_core.py` (SYSTEM page captured on the real core).
+- **n2 (user): back to MCL's own screen; folders; the SAMPLE view.**
+  - **UI reverted, code kept:** the sharp redraws of the grid, mixer and menus are switched off by `mcl_hires` (cpu.c, `const volatile`, 0 in the image), so MCL's own screen shows again. Their code stays; `test_mcl_page.py` sets it to 1 to keep testing it, and setting it to 1 in the source turns it back on.
+  - **Folders slow to open, never in big ones, worse while sequences play:** `FsFile::openNext` opened every entry it listed (`f_open` / `opendir`, then a close: two card requests per file, each a round trip through the busy streamer), and MCL's browser only needs the name and the folder flag. Entries are now listed lazily (`lazy_`): name, type and size from the directory read, opened on the card at their first read / seek / write / listing (`ensure()`).
+  - **SAMPLE view:** the SAMPLE shortcut opens a view in the MCL window: the chosen file's name, length, rate, channels, the record's length in steps, a status (READY / WAITING FOR THE NEXT BAR or WAITING: PRESS PLAY / RECORDING / RECORDED), and four touch buttons (input kind 7).
+    - **RECORD:** MCL's RAM record on track 15 from input A, the file played from its first step.
+    - **SLICE:** as NO on the RAM page.
+    - **LISTEN:** the file once on Out 3.
+    - **BROWSE:** MCL's sample browser in cable mode; YES chooses a file and comes back to the view, nothing is recorded until RECORD. SAMPLE while browsing toggles listening.
+    - With nothing chosen, the view goes straight to the browser. SAMPLE again, or another shortcut, closes it.
+    - The chosen file's full path is kept, and it is opened again when a preview has replaced it in the player.
+    - Blob abi 9 `sample()`.
+  - **Open:** PLAY / STOP on the MCL page (user: LEDs light, nothing starts). Nothing in the cave drops the transport any more; the next step depends on whether a sequence was selected.
+- **PLAY / STOP on the MCL page (user: LEDs light, nothing starts; on other pages they work):** the looper's `looper_key_pop` (solo.c, the stock key events' second ring, audio task) drops PLAY / STOP / REC (ids 0xf4..0xf8, keys 8..10) while the looper's page is visible, unless HW STOP PLAY = +STOCK. That was made so the looper can use the buttons on its own. The MCL page is a tab of that page, so the transport never got them. On the MCL and TRIG tabs (`looper_page_tab()` 8 / 6) they now pass. `test_looper.py` checks both tabs, and that the Looper's own tabs still drop them. (n2)
+- **n3 (user, on n2): the SAMPLE view and the card while sequences play.**
+  - **SLICE opened the browser, BROWSE did nothing:** the cave sent the button's position (RECORD, SLICE, LISTEN, BROWSE = 0..3) and the blob reads codes (0 RECORD, 1 BROWSE, 2 LISTEN, 3 SLICE). The cave now maps them (`sb_code`); `test_mcl_page.py` checks the codes, not the positions.
+  - **RECORD played on to the file's end:** the player now stops at the record's last step (`bb_mcl_clk_tick`, cable_step + record_len). A file shorter than the record no longer ends the recording early; stopping the transport mid-record ends it. The length is worked out at the Blackbox's own tempo while MCL is stopped (its measured tempo is stale then: the likely source of a record shorter than the file).
+  - **R1 became P1 late:** MCL's NO queues the player for the next record-length boundary after it is pressed, so up to a whole record later. The player (P1) is now queued as soon as the record runs, which lands it exactly on the record's end. SLICE then cuts into 2, 4, 8, 16, 32 slices, and whole again (`ram_a_param3`, no more slices than steps); the view shows SLICED INTO n.
+  - **Card while sequences play** (folders would not open, a WAV read as "not a WAV"; n2's inner-loop service was in the image, so the requests were served): the stock FatFs has no lock and asks the card's state (CMD13, sd_diskio status 0x08045ab4) in every call. A "not ready" moment gives FR_NOT_READY, and in f_open / f_opendir / f_stat a remount (find_volume 0x08085408), which bumps the volume id and invalidates every object opened before (FR_INVALID_OBJECT); a failed transfer leaves FR_DISK_ERR in the file object for good. The stock code opens, reads and closes in one go; MCL keeps files and folders open. `bb_sd.cpp` now tries a failed call again (up to 4, ~1 ms apart), reopening read-only files at their position and folders at their entry first; write files are only retried when nothing was done. A request that timed out no longer fails every later one at once (they wait for it). `test_mcl_sd.py` injects a failed transfer, not-ready moments and remounts in a read and in a listing. **Not confirmed on the unit** that this was the cause: if it still fails, MCL now says CARD ERROR instead of NOT A WAV.
+  - **The player** cut a file short for good after one read error (so a later LISTEN or RECORD played nothing). It now retries on the next pump, gives up on a play only after 8 failed reads in a row, and a rewind gives the file its whole length back.
+- **n4: a clock pulse on Out 2 (user, for the Analog Out that could not be found).** `clkout_block` / `clkout_mix` (src/cpu.c), called from `looper_stage` right after the SAMPLE player's mix. A positive step of at most 240 frames (half a period when shorter) is added to both channels of Out 2 (stock bus 1) at the exact frame a pulse falls on. Options on the looper page's MORE tab: CLOCK OUT 2 PPQ (off, 1, 2, 4, 8, 12, 24 a quarter; default off) and CLOCK OUT 2 LEVEL (5..100 %, default 100 %), stored in the looper's two unused option slots (RSIZE / RRET; `LOOPER_O_CLKPPQ` / `LOOPER_O_CLKLVL`), so they are saved like the others (the state magic is bumped: the looper's options go back to their defaults once). Position: the sequencer's stamps (seqfix_now, whole ticks of 960 a beat) pull a position that runs on at the tempo (+0x18 of the stock clock object), so the pulse is placed to a few frames, not a tick (a tick is 25 frames at 120 BPM); a locate or a jump takes the stamp; without a sequence the stock clock object's running flag (+0x38) starts the count at 0. The state is in two free pieces of backup SRAM (0x3880096c, 0x388009f0). `test_clkout.py` checks pulses per PPQ on their frames over 400 blocks, widths, levels, locate, tempo change, no-sequence and stopped. **Not measured:** where the stamp sits in the block against the stock notes, and what the jack does to a DC step (coupling, voltage).
+- **n5: SOURCE has a third choice, MONO IN** (looper page, SETUP): `looper_in` copies the left input onto the right before anything uses it (a mono cable, or a stereo one on the left only). The monitor follows any source but MIX. Tested by calling `looper_in` with the option set.
+- **n7: the MORE tab had no button** (the clock out's rows are there): tapping SETUP while on SETUP shows MORE (the tab then reads MORE), tapping it again goes back.
+- **n8 (2026-11-18): the whole docs/todo.md list.** Image `out/merged-n8` = `solo slice duck chord cond filter cpu od comp tools seqfix fx2 munchi looper clkmon lira lirarec lirasave crash cave mclblob mclsd` (new set: `tools`; MCL blob rebuilt from the checkout, 386 KB; cave 142,972 bytes).
+  - **B, double tap:** one 530 ms window everywhere; a finger that moves under 4 px on a knob changes nothing (Looper FX dials, DRONE knobs; DRONE's free chord pitch drag keeps its 1 px feel); Looper faders reset to unity; DRONE's cycling buttons go back to their first choice.
+  - **C, general settings:** clock out PPQ / level, mono input, DRONE-8 and SAMPLR output, machine filter slope are stock settings 0x1a0..0x1a5 (registered in comp.c, defaults added there, read with `tools_get`), shown on the Tools Main page and the clock page by `patches/tools.py`. The Looper SETUP page keeps only Looper options; the knob boxes LOOP GAIN (bottom-left) and MONITOR (bottom-right, was knob 2) sit at the bottom. FULL SCREEN is always on. The old looper option slots for the moved settings are unused.
+  - **A / DRONE-8:** each voice pair is a square (2 levels above 2 voices); QUANT is on CHORD (SHUFFLE moved to MIX); KEY, DLY MOD/SYNC names; MIDI learn (ENV tab, MIDI panel) through a hook on the render's incoming-message poll; mappings are not saved.
+  - **Looper:** input level line next to the selected fader. **SAMPLR:** AUTO on ARP, name box cut to fit, volume on the bottom-right encoder. **TRIG:** squares of four, presets (DEFAULT FAST KICK BLEED ROLLS SOFT), engine off at boot, CLK sheet removed. **MCL:** 80 counts an encoder step.
+  - **NOT verified on the unit:** how the stock Tools screen shows the longer pages and saves the new settings; the MIDI-poll hook (emulator only, stubbed poll); the double-tap feel and the 4 px dead zone; the knob speed in MCL; the preset values on real drums; the sample name overflow; SAMPLR's new encoder order. The older open items (browser while a sequence plays, MCL following PLAY, KeyStep clock, Out 2 clock alignment) are unchanged.
+- **n9: double-tap hit areas** (user: the tile to tap was too small / did not cover the whole square, so double taps often missed): DRONE-8's controls take a finger up to 4 px outside them (a second pass nearest-hit, exact hits first), and the Looper's FX dials cover the whole tile, the 1 px gaps and 3 px around. UNVERIFIED on the unit. Other pages (SAMPLR, TRIG) are encoder-driven and were not changed.
+- **n10 (2026-11-19): after n8 on the unit.** Tools page 0a / version label 0b fixed (see docs/todo.md), general settings file `bbgen.bin` (MIDI learn, Looper options, Trigger2MIDI), Looper POS / PTCH cents / FX ON EMPTY / bigger SETUP rows, SAMPLR AUTO SLICE + encoder order, DRONE-8 sticky detent, tidy panels, MIDI learn on pitch knobs + smooth redraw + USB. NOT verified on the unit: the Tools footer fix, USB host MIDI, bbgen.bin load, the feel of POS / PTCH / the detent.
+- **n11 (2026-11-19): third round.** MIDI learn on buttons (plates, cycling buttons, top-bar switches, stepped knobs; a controller crossing 64 presses), Looper STUT back and POS in TRIM's slot, Tools bottom row (the four tab buttons: our settings now only on the Rec and Clock tabs, one knob page each; the stock builder's 12-id limit documented and tested), BACK round with MCL, a stronger note detent (30 catch / 60 hold). Image `out/merged-n11` with the rebuilt real blob (386,060 bytes). NOT verified on the unit: the Tools bottom row, the button learn path with a real controller, the feel of the detent, USB host MIDI (from n10).
+- **n12 (2026-11-20): fourth round.** USB host MIDI path found and hooked at its callback (the n10 poll hook alone did not deliver; the interrupt hook it relied on was not in the image), with a J / U / C status in DRONE-8's MIDI panel; MIDI learn from notes; one detent for the free chord drag and the FREE encoder; SPREAD; SAMPLR encoder layout, no SHIFT word, two-tap PANIC. Image `out/merged-n12` with the rebuilt real blob (386,060 bytes). All 44 test files passed on the final tree (snapshot copy). NOT verified on the unit: USB host MIDI (the counters will tell which path sees packets), the detent feel, the SAMPLR layout.
+- **n13 (2026-11-20): SAVE TO PROJECT buttons** (DRONE-8 footer, SAMPLR footer, Looper SETUP): a flag the stock streamer task's idle pass picks up (the stock preset poll call at 0x080744d8 is wrapped), writing bbmod.bin and bbgen.bin with the project-save routine; SAVING / SAVED / FAILED feedback. Image `out/merged-n13` with the rebuilt real blob (386,060 bytes). All 44 test files passed on the final tree (snapshot copy). NOT verified on the unit: the idle pass while a project is open, which folder the files land in, SAMPLR has no state of its own to save yet.
+- **n14 (2026-11-20): feedback on n12 / n13.** SAVE reports why (F<m>/<g> codes), falls back to the card's root, writes the two files independently, times out after 6 s; DRONE-8 free detent replaced by a 10-cent stall (every value reachable, name only at exactly 0 cents); MIDI note velocity feeds the TAP velocity path; VELOCITY controls learnable; TUNE and SHUFFLE swapped. USB path untouched. Image `out/merged-n14` with the rebuilt real blob (386,060 bytes). All 44 test files passed on the final tree (snapshot copy). NOT verified on the unit: why the save fails (the F code will say), the feel of the stall.
+- **n15 (2026-11-20): feedback on n14.** ENV tab renamed CTRL; Looper input line in dBFS (-60..0); SAVE served from three points of the card task's loop with chunked writes, read-back verify and honest F codes; DRONE velocity redesigned (STEADY / TOUCH / SLIDE / MIDI, AMT, EFFECT SOUND / VOLUME / BOTH); chord-mode FREE encoder now catches at every note (2 absorbed clicks). Image `out/merged-n15` with the rebuilt real blob (386,060 bytes). NOT verified on the unit: SAVE under playback, the input line against the unit's meter, the encoder catch feel.
+- **n16 (2026-11-20): feedback on n15.** MIDI notes on plates back to LATCH = toggle on note-on / HOLD = follows the key (the n15 stuck-note change was a regression of that meaning; the genuine fixes stay); velocity is volume only (EFFECT removed); SAVE retries disk errors (4 whole-file tries ~1 ms apart) and shows F codes only after all fail; DRONE-8 encoder clicks no longer paint the whole page each time (the screen reaches the final value at the next poll); Looper input line -48..0 dBFS, fast attack / release, redrawn with the level; Looper MAIN side meters removed; SAMPLR status PLAYING. NOT verified on the unit: the retry on the real driver, the encoder smoothness, the meter feel, the PLAYING status.

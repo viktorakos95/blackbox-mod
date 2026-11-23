@@ -82,11 +82,30 @@ static const struct machine machines[] = {
 #define FIRST_MACHINE STOCK_INTERP                      /* his order (3.1.n): machines before the plain crunches */
 #define FIRST_CRUNCH  (STOCK_INTERP + MACHINES)
 
-const char *const interp_names[STOCK_INTERP + CRUNCHES + MACHINES] = {
+#define INTERPS (STOCK_INTERP + CRUNCHES + MACHINES + 1)
+const char *const interp_names[INTERPS] = {
     (const char *)0x080cd770u, (const char *)0x080cd778u,       /* Normal, HighQ */
     "SP1200", "SP-12", "S950", "MPC60", "SP Raw",
     "16k", "12k", "10k", "8k", "6k", "4k", "2k",
+    "DRONE-8",                                                  /* the pad plays the touch drone synth (lira_pad.c) */
 };
+const unsigned interp_lira = INTERPS - 1;
+void lira_register(void *table);
+
+
+/* The filter's slope, per pad (new parameter 0x1cf, xml "filterslope"; under Fidelity on the pad page): 12 dB, the resonant stage alone (the
+ * default, also for presets made before it: half the work, a keys sequence of many voices costs about what the stock filter did), or 24 dB,
+ * the two-stage filter. Every pad gets it at 12 dB with its defaults (slope_defaults, after Interp). */
+#define PARAM_SLOPE 0x1cf
+static const char *const slope_names[2] = {"12 dB", "24 dB"};
+typedef void (*store_add_fn)(void *store, int param, int value);
+#define fw_store_add ((store_add_fn)FN(0x08093ef6))
+
+void slope_defaults(void *store, int param, int value)
+{
+    fw_store_add(store, param, value);
+    fw_store_add(store, PARAM_SLOPE, 0);
+}
 
 /* Replaces the Interp list registration call: 2 -> 9 entries, and the label "Interp:" -> "Fidelity:" (his pick of
    names; the xml name "interpqual" stays, so presets are unaffected). */
@@ -95,7 +114,9 @@ void interp_register(void *table, int param, const char *label, const char *cons
     (void)label;
     (void)names;
     (void)count;
-    fw_register_list(table, param, "Fidelity:", interp_names, STOCK_INTERP + CRUNCHES + MACHINES, xml);
+    fw_register_list(table, param, "Fidelity:", interp_names, INTERPS, xml);
+    fw_register_list(table, PARAM_SLOPE, "Slope:", slope_names, 2, "filterslope");
+    lira_register(table);                                       /* LIRA's controls + its memory, once at boot */
 }
 
 struct fstate {                  /* at filter object +4..+0x48; the stock coefficient sets and states used to live here */
@@ -180,47 +201,80 @@ static void crunch(struct fstate *st, float **ch, int n, float rate)
 static inline __attribute__((always_inline)) float soft(float x, float inv_t, float t)
 {
     float u = x * inv_t;
-    u = u > 1.5f ? 1.5f : u < -1.5f ? -1.5f : u;
+    u = __builtin_fminf(__builtin_fmaxf(u, -1.5f), 1.5f);        /* (one instruction each on this FPU) */
     return t * u * (1.0f - 0.148148f * u * u);
 }
 
 /*
- * stmlib Svf::Process<FILTER_MODE_LOW_PASS / HIGH_PASS> for one channel with coefficients fixed for the block.
- * CLIP: soft-limit the band-pass integrator (the resonant loop); only used on the resonant stage while driven.
+ * stmlib Svf::Process<FILTER_MODE_LOW_PASS / HIGH_PASS>, twice, for one channel with coefficients fixed for the block: the whole filter in one pass
+ * (same arithmetic, same order as the three passes it was before build 94): the drive into the soft clipper, the
+ * Butterworth stage, the resonant stage (its band-pass integrator soft-limited while driven). One pass instead of three: no store and reload
+ * of every sample between the stages.
  */
-#define SVF_LOOP(OUT, NEXT_S1)                                                                                     \
+#define SVF24_LOOP(HP, DRIVEN)                                                                                     \
     for (int i = 0; i < n; i++) {                                                                                  \
-        float hp = (x[i] - rg * s1 - s2) * h;                                                                      \
-        float bp = g * hp + s1;                                                                                    \
-        s1 = NEXT_S1;                                                                                              \
-        float lp = g * bp + s2;                                                                                    \
-        s2 = g * bp + lp;                                                                                          \
-        x[i] = OUT;                                                                                                \
+        float in = DRIVEN ? soft(x[i] * pre, 1.0f, 1.0f) : x[i];                                                   \
+        float hp = (in - rga * a1 - a2) * ha, bp = g * hp + a1;                                                    \
+        a1 = g * hp + bp;                                                                                          \
+        float lp = g * bp + a2;                                                                                    \
+        a2 = g * bp + lp;                                                                                          \
+        hp = ((HP ? hp : lp) - rgb * b1 - b2) * hb;                                                                \
+        bp = g * hp + b1;                                                                                          \
+        b1 = DRIVEN ? soft(g * hp + bp, inv, limit) : g * hp + bp;                                                 \
+        lp = g * bp + b2;                                                                                          \
+        b2 = g * bp + lp;                                                                                          \
+        x[i] = HP ? hp : lp;                                                                                       \
     }
 
-static void svf(float *x, int n, float g, float r, float *s1p, float *s2p, int highpass, float limit)
-{
-    float h = 1.0f / (1.0f + r * g + g * g), rg = r + g, s1 = *s1p, s2 = *s2p;
-    if (limit > 0.0f) {
-        float inv = 1.0f / limit;
-        if (highpass)
-            SVF_LOOP(hp, soft(g * hp + bp, inv, limit))
-        else
-            SVF_LOOP(lp, soft(g * hp + bp, inv, limit))
-    } else if (highpass) {
-        SVF_LOOP(hp, g * hp + bp)
-    } else {
-        SVF_LOOP(lp, g * hp + bp)
+/* 12 dB: the resonant stage alone (same drive and soft limit). */
+#define SVF12_LOOP(HP, DRIVEN)                                                                                     \
+    for (int i = 0; i < n; i++) {                                                                                  \
+        float in = DRIVEN ? soft(x[i] * pre, 1.0f, 1.0f) : x[i];                                                   \
+        float hp = (in - rgb * b1 - b2) * hb, bp = g * hp + b1;                                                    \
+        b1 = DRIVEN ? soft(g * hp + bp, inv, limit) : g * hp + bp;                                                 \
+        float lp = g * bp + b2;                                                                                    \
+        b2 = g * bp + lp;                                                                                          \
+        x[i] = HP ? hp : lp;                                                                                       \
     }
-    *s1p = s1;
-    *s2p = s2;
+
+static void svf12(float *x, int n, float g, float r, float *s1b, float *s2b, int highpass, float limit, float pre)
+{
+    float hb = 1.0f / (1.0f + r * g + g * g), rgb = r + g, b1 = *s1b, b2 = *s2b;
+    float inv = limit > 0.0f ? 1.0f / limit : 0.0f;
+    if (limit > 0.0f) {
+        if (highpass)
+            SVF12_LOOP(1, 1)
+        else
+            SVF12_LOOP(0, 1)
+    } else if (highpass) {
+        SVF12_LOOP(1, 0)
+    } else {
+        SVF12_LOOP(0, 0)
+    }
+    *s1b = b1;
+    *s2b = b2;
 }
 
-static void drive_in(float *x, int n, float amount)
+static void svf24(float *x, int n, float g, float r, float *s1a, float *s2a, float *s1b, float *s2b, int highpass, float limit, float pre)
 {
-    float pre = 1.0f + 3.0f * amount;
-    for (int i = 0; i < n; i++)
-        x[i] = soft(x[i] * pre, 1.0f, 1.0f);
+    float ha = 1.0f / (1.0f + R_BUTTERWORTH * g + g * g), rga = R_BUTTERWORTH + g;
+    float hb = 1.0f / (1.0f + r * g + g * g), rgb = r + g;
+    float a1 = *s1a, a2 = *s2a, b1 = *s1b, b2 = *s2b;
+    float inv = limit > 0.0f ? 1.0f / limit : 0.0f;
+    if (limit > 0.0f) {                                                     /* (one loop per case: no test inside) */
+        if (highpass)
+            SVF24_LOOP(1, 1)
+        else
+            SVF24_LOOP(0, 1)
+    } else if (highpass) {
+        SVF24_LOOP(1, 0)
+    } else {
+        SVF24_LOOP(0, 0)
+    }
+    *s1a = a1;
+    *s2a = a2;
+    *s1b = b1;
+    *s2b = b2;
 }
 
 /*
@@ -245,9 +299,55 @@ static unsigned pad_setting(const uint8_t *pad, unsigned param)
     return (unsigned)fw_setting((const void *)(APP_PADS + row * 0xf0u + col * 0x30u), param);
 }
 
+/* The pad's Interp is asked for by every voice of it, several times a block (the filter, the read kernels, the overdrive): a keys sequence
+ * plays one pad on many voices, and each lookup walks the pad's whole settings list. The last answer is kept, for that pad, for the rest of
+ * the audio block (cpu.c's wake-up stamp tells blocks apart). Backup SRAM 0x38800fc8, just after the page state (looper_page.c). */
+struct imemo {
+    uint32_t pad, stamp, interp, slope;
+};
+#define IMEMO   ((volatile struct imemo *)0x38800fc8u)
+#define CPU_OK  (*(volatile uint32_t *)0x2405ffd0u == 0x43505532u)   /* cpu.c's state: its wake-up stamp is live */
+#define WOKE    (*(volatile uint32_t *)0x2405ffd4u)
+
+static volatile struct imemo *pad_memo(const uint8_t *pad)
+{
+    volatile struct imemo *m = IMEMO;
+    uint32_t stamp = WOKE;
+    if (m->pad != (uint32_t)pad || m->stamp != stamp) {
+        m->interp = pad_setting(pad, 0xf1);
+        m->slope = pad_setting(pad, PARAM_SLOPE);
+        m->pad = (uint32_t)pad;
+        m->stamp = stamp;
+    }
+    return m;
+}
+
 static unsigned pad_interp(const uint8_t *pad)
 {
-    return pad_setting(pad, 0xf1);
+    return CPU_OK ? pad_memo(pad)->interp : pad_setting(pad, 0xf1);
+}
+
+static unsigned pad_slope(const uint8_t *pad)
+{
+    return CPU_OK ? pad_memo(pad)->slope : pad_setting(pad, PARAM_SLOPE);
+}
+
+/* For lira_pad.c */
+unsigned pad_param(const uint8_t *pad, unsigned param)
+{
+    return pad_setting(pad, param);
+}
+
+/* For lira_pad.c: the app's settings store of an engine pad (0 if the id is out of range) */
+const uint8_t *pad_store(const uint8_t *pad)
+{
+    if (!pad)
+        return 0;
+    uint32_t id = *(const uint32_t *)(pad + 0x18);
+    unsigned row = (id >> 8) & 0xff, col = id & 0xff;
+    if (row >= 4 || col >= 5)
+        return 0;
+    return (const uint8_t *)(APP_PADS + row * 0xf0u + col * 0x30u);
 }
 
 /* For od.c: this pad is in a machine mode, so its Saturation knob is the machine's input drive (applied here). */
@@ -350,16 +450,16 @@ void filter_process(uint8_t *obj, void *buf, const uint8_t *pad)
         st->r += SMOOTH * (r - st->r);
         st->drive += SMOOTH * (drive - st->drive);
     }
-    int hp = knob > 0.0f;
+    int hp = knob > 0.0f, slope12 = pad_slope(pad) == 0;
     /* resonant stage ceiling: off below noon (clean, linear), from 4 down to 1 as drive rises */
     float limit = st->drive > 0.001f ? 4.0f - 3.0f * st->drive : 0.0f;
     for (int c = 0; c < 2; c++) {
         if (!ch[c])
             continue;
-        if (st->drive > 0.001f)
-            drive_in(ch[c], n, st->drive);
-        svf(ch[c], n, st->g, R_BUTTERWORTH, &st->s1[0][c], &st->s2[0][c], hp, 0.0f);
-        svf(ch[c], n, st->g, st->r, &st->s1[1][c], &st->s2[1][c], hp, limit);
+        if (slope12)
+            svf12(ch[c], n, st->g, st->r, &st->s1[1][c], &st->s2[1][c], hp, limit, 1.0f + 3.0f * st->drive);
+        else
+            svf24(ch[c], n, st->g, st->r, &st->s1[0][c], &st->s2[0][c], &st->s1[1][c], &st->s2[1][c], hp, limit, 1.0f + 3.0f * st->drive);
     }
 }
 
@@ -377,6 +477,12 @@ struct read_park {
     float rate;
 };
 #define PARK ((volatile struct read_park *)0x2405fff4u)     /* the last 12 bytes of patch RAM */
+
+/* For lira_pad.c: the signed rate of the voice this pad just read (1 if the last read was another pad's) */
+float park_rate(const uint8_t *pad)
+{
+    return PARK->pad == pad ? PARK->rate : 1.0f;
+}
 
 typedef void (*kernel_fn)(float rate, const float *src, int n_src, int pos, int *newpos, float *frac, float *dst,
                           int n);

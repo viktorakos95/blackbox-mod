@@ -1,0 +1,53 @@
+"""MCL blob (milestone M2). Apply AFTER `cave`:  python3 patch.py ... cave mclblob     (build the blob first: tools/mcl/build_blob.sh)
+
+Image layout: stock, main cave (src/cave.ld, ends below 0x08120000), 0xFF fill, the blob at 0x08120000 (code, read-only data, the .data
+image; src/mcl_bb/mcl_blob.ld). Two more bytes of the stock image change:
+  - the SDRAM allocator's initial top in the .data image (0x080f1e08, copied to 0x24000088 at reset): 0xc4000000 -> 0xc3f80000, which
+    reserves 0xc3f80000..0xc4000000 (512 KB) for the blob's .data/.bss/heap at link-time addresses. Everything the firmware allocates
+    top-down now stays below it; the free SDRAM gap at boot shrinks by 512 KB;
+  - `mcl_entry` in the main cave (src/cpu.c) is set to the blob's entry table, so cpu.c start() boots the blob once per power-up.
+  - M3, the MIDI jack (src/mcl_bb/bb_midi.cpp), three hooks, all no-ops until the blob has booted:
+      0x080446d4  the one call to the stock ring push (0x080444f4) inside the receive path -> mcl_rx_tap (copies the byte, then calls stock);
+      0x08044dfc  entry of the stock send function (port, buf, len) -> mcl_tx_hook (stock code unless MCL has claimed the port);
+      0x08040118  vector for IRQ 54 (TIM6, unused by the stock firmware) -> mcl_tim6_isr (M4, the clock);
+      0x0804015c  vector 71 (USART6): 0x080462e5 -> mcl_usart6_isr (sends MCL's TX bytes, passes everything else to the stock handler).
+  - M8, MCL's port 2: 0x080449c4, the read-index advance of the stock software MIDI-in queue (USB host devices, Trigger2MIDI INT) -> mcl_softq_take
+    (copies the message for MCL, then does the stock increment).
+Not combined with `mclpad` (the pad test covers the same flash range).
+"""
+import os
+
+import struct
+
+from thumb import ROOT, b_w, bl, symbols
+
+STOCK_END, BLOB_ORG, RAM_ORG = 0x080F1E78, 0x08120000, 0xC3F80000
+
+cave = open(os.path.join(ROOT, "out", "cave.bin"), "rb").read()
+blob = open(os.path.join(ROOT, "out", "mcl.bin"), "rb").read()
+csym = symbols(os.path.join(ROOT, "out", "cave.elf"))
+bsym = symbols(os.path.join(ROOT, "out", "mcl.elf"))
+end = STOCK_END + len(cave)
+assert end <= BLOB_ORG, f"main cave ends at {end:#x}, past the blob start {BLOB_ORG:#x}"
+assert bsym["mcl_entry_table"] == BLOB_ORG
+ITCM_LOAD = 0x081D0000                                                  # patches/cave.py: the ITCM image, when out/itcm.bin exists
+assert BLOB_ORG + len(blob) <= ITCM_LOAD, "blob runs into the ITCM image (proven flash window: 0x081E0000)"
+itcm = os.path.exists(os.path.join(ROOT, "out", "itcm.bin"))           # cave.py has then already filled 0xFF up to ITCM_LOAD: the blob goes over that fill
+
+PATCHES = [
+    (0x080F1E08, (0xC4000000).to_bytes(4, "little"), RAM_ORG.to_bytes(4, "little")),
+    (csym["mcl_entry"], bytes(4), BLOB_ORG.to_bytes(4, "little")),
+    (0x080446D4, bl(0x080446D4, 0x080444F4), bl(0x080446D4, bsym["mcl_rx_tap"])),
+    (0x08044DFC, bytes.fromhex("012801d9"), b_w(0x08044DFC, bsym["mcl_tx_hook"])),            # cmp r0,#1 ; bls (port check, redone in the hook)
+    (0x0804015C, struct.pack("<I", 0x080462E5), struct.pack("<I", bsym["mcl_usart6_isr"] | 1)),
+    (0x08040118, struct.pack("<I", 0x08040315), struct.pack("<I", bsym["mcl_tim6_isr"] | 1)),      # vector 70 = IRQ 54 (TIM6): was a `b .` stub
+    (BLOB_ORG, b"\xff" * len(blob), blob) if itcm else (end, b"", b"\xff" * (BLOB_ORG - end) + blob),
+]
+if "mcl_softq_take" in bsym:                                           # the stock software MIDI-in queue (USB host, Trigger2MIDI INT): copied for MCL's port 2
+    PATCHES.append((0x080449C4, bl(0x080449C4, 0x08040BAC), bl(0x080449C4, bsym["mcl_softq_take"])))
+# M8, MCL itself: the base timer (IRQ 55, TIM7) and three soft interrupts (IRQ 30, 44, 45), vectors that point at `b .` stubs in the stock firmware (checked below)
+for irq, name in ((55, "bb_tim7_isr"), (30, "bb_swirq1_isr"), (44, "bb_swirq2_isr"), (45, "bb_swirq3_isr")):
+    if name in bsym:
+        at = 0x08040000 + 4 * (16 + irq)
+        stub = struct.unpack("<I", open(os.path.join(ROOT, "firmware", "BLACKBOX-3.1.9.bin"), "rb").read()[at - 0x08040000:at - 0x08040000 + 4])[0]
+        PATCHES.append((at, struct.pack("<I", stub), struct.pack("<I", bsym[name] | 1)))

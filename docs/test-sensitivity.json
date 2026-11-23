@@ -1,0 +1,41 @@
+{
+ "note": "Image tests that PASS on an image with no hooks (tools/combo.py control): they test the code in the cave, not that a combination's hooks reach it.",
+ "hook_blind": [
+  "test_clkout.py",
+  "test_duck.py",
+  "test_fx2.py",
+  "test_guard.py",
+  "test_lira_gov.py",
+  "test_lira_hooks.py",
+  "test_lira_pad.py",
+  "test_lira_page.py",
+  "test_lira_roundtrip.py",
+  "test_lira_save.py",
+  "test_looper_v4.py",
+  "test_munchi.py",
+  "test_od.py",
+  "test_samplr.py",
+  "test_seqfix.py",
+  "test_solo.py",
+  "test_t2m_bb.py"
+ ],
+ "hook_sensitive": [
+  "test_chord.py",
+  "test_clkmon.py",
+  "test_comp.py",
+  "test_cond.py",
+  "test_cpu.py",
+  "test_crash.py",
+  "test_filter.py",
+  "test_lira_rec.py",
+  "test_lira_screen.py",
+  "test_lira_ui.py",
+  "test_looper.py",
+  "test_machine.py",
+  "test_slice.py",
+  "test_t2m_page.py",
+  "test_tools.py"
+ ],
+ "tested_at": "2026-11-23",
+ "source_rev": "196718f"
+}

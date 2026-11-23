@@ -81,14 +81,28 @@ def check(label, cond, detail=""):
 
 # --- registration
 seen = {}
-e.stub(0x0808C0D8, lambda: seen.update(param=e.arg(1), label=e.arg(2), names=e.arg(3), count=e.r32(e.uc.reg_read(UC_ARM_REG_SP)), xml=e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 4)))
+lists = []
+
+
+def on_list():
+    d = dict(param=e.arg(1), label=e.arg(2), names=e.arg(3), count=e.r32(e.uc.reg_read(UC_ARM_REG_SP)), xml=e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 4))
+    lists.append(d)
+    if not seen:
+        seen.update(d)
+
+
+e.stub(0x0808C0D8, on_list)
 e.w32(STACK, 0)
 e.w32(STACK + 4, 1000)
 e.w32(STACK + 8, 0x080CC3F4)
 nums = []
 e.stub(0x0808C12C, lambda: nums.append((e.arg(1), e.arg(2), e.cstr(e.arg(3)), e.r32(e.uc.reg_read(UC_ARM_REG_SP)), e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 4), e.cstr(e.r32(e.uc.reg_read(UC_ARM_REG_SP) + 8)))))
 e.call("comp_register", 0x24001000, 0xB4, 4, 0x080CC3E8)
-check("Comp Thresh registered too: param 0x1d0, dB type, -24..+12 dB, xml 'compthresh'", nums == [(0x1D0, 7, "Comp Thresh:", -24000, 12000, "compthresh")], nums)
+check("Comp Thresh registered too: param 0x1d0, dB type, -24..+12 dB, xml 'compthresh'", nums[:1] == [(0x1D0, 7, "Comp Thresh:", -24000, 12000, "compthresh")], nums)
+check("Tools settings: Clock Level is a percent (50..1000), 0x1a1", (0x1A1, 8, "Clock Level:", 50, 1000, "clkout2lvl") in nums, nums)
+tl = {d["param"]: (e.cstr(d["label"]), d["count"], d["xml"] and e.cstr(d["xml"])) for d in lists[1:]}
+check("Tools settings: Clock Out 2 (7), Mono Input, DRONE-8 Out, SAMPLR Out, Machine Filters, ids 0x1a0 and 0x1a2..0x1a5", tl == {0x1A0: ("Clock Out 2:", 7, "clkout2ppq"), 0x1A2: ("Mono Input:", 2, "monoinput"), 0x1A3: ("DRONE-8 Out:", 3, "droneout"), 0x1A4: ("SAMPLR Out:", 3, "samplrout"), 0x1A5: ("Machine Filters:", 2, "machfilter")}, tl)
+xmls = [d for d in tl.values()]
 names = [e.cstr(e.r32(seen["names"] + 4 * i)) for i in range(seen["count"])]
 check("Compressor registered as a list: Off, Stock, Glue, Punch, Opto, Squash, Limit (same param, label, xml name)", names == ["Off", "Stock", "Glue", "Punch", "Opto", "Squash", "Limit"] and (seen["param"], seen["label"], seen["xml"]) == (0xB4, 0x080CC3E8, 0x080CC3F4), (names, seen))
 
@@ -221,7 +235,7 @@ check(f"Limit, Comp Thresh at -24 dB on a hot signal: still never over the ceili
 added = []
 e.stub(0x08093EF6, lambda: added.append((e.arg(1), e.arg(2))))
 e.call("comp_defaults", 0x24072000, 0xB4, 1)
-check("settings defaults: Compressor 1 (Stock) as before, then Comp Thresh 0", added == [(0xB4, 1), (0x1D0, 0)], added)
+check("settings defaults: Compressor 1 (Stock) as before, then Comp Thresh 0, then the Tools settings (clock off, level 100 %, mono off, outs 1, filters 12 dB)", added == [(0xB4, 1), (0x1D0, 0), (0x1A0, 0), (0x1A1, 1000), (0x1A2, 0), (0x1A3, 0), (0x1A4, 0), (0x1A5, 0)], added)
 page = [e.r16(0x080EED18 + 2 * k) for k in range(12)]
 check("Tools Main page: Headphone, Compressor, Comp Thresh, Out 1-3, Brightness, Metronome, Metro Out, Metro Gain, SD Mode", page == [0xBA, 0xB4, 0x1D0, 0xBB, 0xBC, 0xBD, 0x7F, 0xCD, 0xF6, 0xF7, 0x19B, 0], [hex(v) for v in page])
 check("pad Overdrive label reads 'Saturation:' (xml name unchanged)", e.cstr(e.r32(0x0808D878)) == "Saturation:" and e.cstr(0x080CC620) == "overdrive", e.cstr(e.r32(0x0808D878)))

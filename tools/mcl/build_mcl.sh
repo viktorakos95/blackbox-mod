@@ -1,0 +1,37 @@
+#!/bin/sh
+# M8: build the blob WITH MCL itself: MCL's core (compiled by tools/mcl/mcl_size.sh into out/mclobj), the Blackbox platform layer (src/mcl_bb/platform, plus the desktop
+# platform files of the MCL checkout, vendored in src/mcl_bb/platform/common: oled, GUI hardware, LEDs, global objects, MidiUart) and the runtime. Result: out/mcl.elf / out/mcl.bin as build_blob.sh makes them.
+# usage: MCL_DIR=<MCL checkout> MCL_GFX=<Adafruit-GFX checkout> [MCL_REBUILD=1] tools/mcl/build_mcl.sh     (flags of build_blob.sh: SDTEST=1 COMPACT=1 ... still work)
+set -e
+cd "$(dirname "$0")/../.."
+: "${MCL_DIR:?set MCL_DIR to the MCL checkout}" "${MCL_GFX:?set MCL_GFX to the Adafruit-GFX checkout}"
+M=$(realpath "$MCL_DIR"); G=$(realpath "$MCL_GFX"); O=out/mclobj; P=out/mclplat
+# fixes the MCL checkout needs to build for a non-AVR platform (tools/mcl/fork-patches, e.g. the 5.02+ branch's Euclidean step page): applied once,
+# skipped when already in the checkout. They belong upstream in the fork; this keeps the Blackbox build working until they are there.
+for f in tools/mcl/fork-patches/*.patch; do
+  [ -f "$f" ] || continue
+  if git -C "$M" apply --check "$(realpath "$f")" 2>/dev/null; then git -C "$M" apply "$(realpath "$f")"; fi
+done
+PLAT="$(realpath src/mcl_bb/platform/common)"
+# MCL's resource tables (menus, options, machine names) regenerated with our toolchain and flags, so they match the checkout's code
+# (its committed rp2040 tables can be stale: the 5.02+ branch regenerated only the AVR ones, and the menus showed wrong labels)
+MCLRES_INC=$(cd "$M"; for d in src src/mcl include $(find src/mcl -type d | grep -vE "/tools(/|$)"); do echo -n "-I$M/$d "; done)
+MCLRES_FLAGS="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -fdata-sections -w -DARDUINO=10800 -DPLATFORM_DESKTOP=1 -std=gnu++17 -fpermissive -I$PLAT -I$G $MCLRES_INC" \
+  python3 tools/mcl/gen_resources.py "$M" out/mclres > out/mclres.log 2>&1 || { tail -20 out/mclres.log; exit 1; }
+# MCL's version as its own firmware builds have it (the checkout's platformio.ini, env:common: -DVERSION=5002 -DVERSION_STR=\"5.02\")
+MCL_VERSION=$(sed -n 's/.*-DVERSION=\([0-9][0-9]*\).*/\1/p' "$M/platformio.ini" | head -1); MCL_VERSION=${MCL_VERSION:-5000}
+MCL_VERSION_STR=$(sed -n 's/.*-DVERSION_STR=\\"\([^\\]*\)\\".*/\1/p' "$M/platformio.ini" | head -1); MCL_VERSION_STR=${MCL_VERSION_STR:-T5.00}
+export MCL_VERSION MCL_VERSION_STR
+# the core is compiled against the Blackbox platform headers (locks, soft-interrupt triggers, buffer sizes, MidiUart), not MCL's desktop ones; it is rebuilt
+# whenever those headers change (or a core was built without them)
+STAMP="bb1 $PLAT $M $(git -C "$M" rev-parse HEAD 2>/dev/null) $(git -C "$M" diff 2>/dev/null | sha1sum | cut -c1-8) $MCL_VERSION $MCL_VERSION_STR $(cat "$PLAT"/*.h | sha1sum | cut -c1-16)"   # (MCL's commit too: another branch or a pull rebuilds the core)
+if [ ! -f $O/defs.h ] || [ -n "$MCL_REBUILD" ] || [ "$(cat $O/plat 2>/dev/null)" != "$STAMP" ]; then
+  rm -f $O/*.o; PLAT_INC="-I$PLAT" tools/mcl/mcl_size.sh "$M" "$G" "$O" >/dev/null; echo "$STAMP" > $O/plat
+fi
+rm -rf $P; mkdir -p $P
+INC=$(cd "$M"; for d in src src/mcl include src/resources/rp2040 $(find src/mcl -type d | grep -vE "/tools(/|$)"); do echo -n "-I$M/$d "; done)
+CPU="-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16"
+COMMON="$CPU -Os -ffunction-sections -fdata-sections -w -DARDUINO=10800 -DPLATFORM_DESKTOP=1 -DMCL_BLACKBOX=1 -DVERSION=$MCL_VERSION -include $O/defs.h -Isrc/mcl_bb/platform/common -Isrc/mcl_bb/platform -Isrc/mcl_bb -I$G $INC -fno-exceptions -fno-rtti -fno-threadsafe-statics -fpermissive -std=gnu++17"
+for f in oled GUI_hardware LED_hardware global hardware MidiUart; do arm-none-eabi-g++ $COMMON -c src/mcl_bb/platform/common/$f.cpp -o $P/$f.o; done
+for f in bb_libc bb_platform bb_sdfat bb_mcl bb_player; do arm-none-eabi-g++ $COMMON -fno-builtin -fno-tree-loop-distribute-patterns -c src/mcl_bb/platform/$f.cpp -o $P/$f.o; done        # (a string function must not be turned into a call to itself)
+EXTRA_OBJS="$(ls $O/*.o | grep -v "/dso.o" | tr '\n' ' ') $(ls $P/*.o | tr '\n' ' ')" EXTRA_LD="-Wl,--wrap=_ZN4Oled7displayEv -Wl,--wrap=_ZN12MenuPageBase9draw_menuEhhhh -Wl,--wrap=_Z26platform_panel_handleEventP11gui_event_s -Wl,--wrap=_ZN7MDClass13setTrackParamEhhhP13MidiUartClassb -Wl,--wrap=_ZN7MDClass20setTrackParam_inlineEhhhP13MidiUartClassb -Wl,--defsym=mclstr_title_project=mclstr_title_files" sh tools/mcl/build_blob.sh

@@ -1,0 +1,726 @@
+#include "bb_sd.h"
+
+#define HOOK extern "C" __attribute__((section(".hook"), used))
+#define DWT_CYCCNT (*(volatile uint32_t *)0xe0001004u)
+#define SYST_RVR   (*(volatile uint32_t *)0xe000e014u)
+
+/* the stock FatFs (docs/mcl-m0-m1-results.md, M0 and M7) and FreeRTOS kernel entry points; all Thumb */
+#define F_MOUNT     0x080864E8u
+#define F_OPEN      0x08086534u
+#define F_READ      0x08086866u
+#define F_WRITE     0x08086A06u
+#define F_SYNC      0x08086C28u
+#define F_CLOSE     0x08086D76u
+#define F_LSEEK     0x08086D96u
+#define F_OPENDIR   0x080870F6u
+#define F_CLOSEDIR  0x0808718Cu
+#define F_READDIR   0x080871A0u
+#define F_STAT      0x0808724Au
+#define F_TRUNCATE  0x080873C8u
+#define F_UNLINK    0x0808748Eu
+#define F_MKDIR     0x08087558u
+#define F_RENAME    0x080876C8u
+#define Q_RECEIVE   0x08088756u          /* xQueueGenericReceive(queue, item, ticks, peek): also what the streamer's loop calls */
+
+typedef uint32_t (*fn4)(uint32_t, uint32_t, uint32_t, uint32_t);
+static inline uint32_t stock(uint32_t addr, uint32_t a = 0, uint32_t b = 0, uint32_t c = 0, uint32_t d = 0) { return ((fn4)(addr | 1u))(a, b, c, d); }
+
+#define READY_MAGIC 0x53444d31u          /* "SDM1" */
+static volatile uint32_t ready;
+
+/* FatFs objects (sizes measured against the stock build: FIL 0x50, DIR 0x50 touched, FILINFO 8 + 2 + 2 + 1 + 13 + 256) */
+struct Fil { uint8_t b[96] __attribute__((aligned(8))); };
+struct Dir { uint8_t b[160] __attribute__((aligned(8))); };
+static Fil fils[SD_FILES];
+static Dir dirs[SD_DIRS];
+static uint8_t fil_used[SD_FILES], dir_used[SD_DIRS];
+static uint8_t info[320] __attribute__((aligned(8)));          /* FILINFO */
+#define FIL_OBJSIZE(f) (*(volatile uint64_t *)((f).b + 0x10))
+#define FIL_FPTR(f)    (*(volatile uint64_t *)((f).b + 0x38))
+#define INFO_SIZE      (*(uint64_t *)info)
+#define INFO_ATTR      (info[12])
+#define INFO_NAME      ((const char *)(info + 26))
+#define INFO_ALT       ((const char *)(info + 13))
+
+enum { OP_OPEN = 1, OP_CLOSE, OP_READ, OP_WRITE, OP_SEEK, OP_SYNC, OP_TRUNCATE, OP_OPENDIR, OP_READDIR, OP_CLOSEDIR, OP_STAT, OP_MKDIR, OP_UNLINK, OP_RENAME, OP_READDIRN };
+enum { ST_IDLE = 0, ST_POSTED = 1, ST_RUNNING = 3, ST_DONE = 2 };
+
+static struct {
+    volatile uint32_t state;
+    volatile uint32_t abandoned;                                 /* the requester gave up waiting: nobody collects the result */
+    uint32_t op, h, mode, n;
+    void *buf;
+    uint64_t pos;
+    uint32_t ret, count;
+    uint64_t size_out;
+    uint8_t attr_out;
+    char path[320], path2[320];
+    char name_out[SD_NAME_MAX];
+    char alt_out[13];
+} req;
+static uint32_t st_requests, st_timeouts, st_wait_ms, st_call_us;
+static uint32_t last_pump, worst_gap_cyc, gaps_100ms;           /* the streamer loop's own rhythm: time between two passes through the hook */
+
+static inline uint32_t irq_off(void)
+{
+    uint32_t p;
+    __asm volatile("mrs %0, primask\n cpsid i" : "=r"(p)::"memory");
+    return p;
+}
+static inline void irq_restore(uint32_t p) { __asm volatile("msr primask, %0" ::"r"(p) : "memory"); }
+static inline void barrier(void) { __asm volatile("dmb" ::: "memory"); }
+
+HOOK void bb_sd_down(void) { ready = 0; }
+HOOK int bb_sd_ready(void) { return ready == READY_MAGIC; }
+
+HOOK void bb_sd_init(void)
+{
+    req.state = ST_IDLE;
+    req.abandoned = 0;
+    for (int i = 0; i < SD_FILES; i++)
+        fil_used[i] = 0;
+    for (int i = 0; i < SD_DIRS; i++)
+        dir_used[i] = 0;
+    last_pump = 0;
+    barrier();
+    ready = READY_MAGIC;                                         /* last: the streamer's hook looks at this */
+}
+
+/* ---- the streamer task's side ---- */
+static void copy_name(char *dst, const char *src)
+{
+    uint32_t i = 0;
+    for (; i < SD_NAME_MAX - 1 && src[i]; i++)
+        dst[i] = src[i];
+    dst[i] = 0;
+}
+
+static uint32_t exec_once(void)
+{
+    switch (req.op) {
+    case OP_OPEN: {
+        int h = (int)req.h;
+        uint32_t r = stock(F_OPEN, (uint32_t)&fils[h], (uint32_t)req.path, req.mode);
+        return r;
+    }
+    case OP_CLOSE: return stock(F_CLOSE, (uint32_t)&fils[req.h]);
+    case OP_READ: {                                              /* up to SD_READ_MAX bytes a request, 511 at a time (the rule in the header): one round trip, not eight */
+        uint32_t total = 0, r = 0;
+        uint8_t *b = (uint8_t *)req.buf;
+        while (total < req.n) {
+            uint32_t c = req.n - total > 511u ? 511u : req.n - total, got = 0;
+            r = stock(F_READ, (uint32_t)&fils[req.h], (uint32_t)(b + total), c, (uint32_t)&got);
+            total += got;
+            if (r || got < c)
+                break;
+        }
+        req.count = total;
+        return r;
+    }
+    case OP_WRITE: {
+        uint32_t wr = 0;
+        uint32_t r = stock(F_WRITE, (uint32_t)&fils[req.h], (uint32_t)req.buf, req.n, (uint32_t)&wr);
+        req.count = wr;
+        return r;
+    }
+    case OP_SEEK: return stock(F_LSEEK, (uint32_t)&fils[req.h], 0, (uint32_t)req.pos, (uint32_t)(req.pos >> 32));
+    case OP_SYNC: return stock(F_SYNC, (uint32_t)&fils[req.h]);
+    case OP_TRUNCATE: return stock(F_TRUNCATE, (uint32_t)&fils[req.h]);
+    case OP_OPENDIR: return stock(F_OPENDIR, (uint32_t)&dirs[req.h], (uint32_t)req.path);
+    case OP_READDIR: {
+        for (unsigned i = 0; i < sizeof info; i++)
+            info[i] = 0;
+        uint32_t r = stock(F_READDIR, (uint32_t)&dirs[req.h], (uint32_t)info);
+        if (r == 0) {
+            req.size_out = INFO_SIZE;
+            req.attr_out = INFO_ATTR;
+            copy_name(req.name_out, INFO_NAME);
+            for (unsigned i = 0; i < 13; i++)
+                req.alt_out[i] = i < 12 ? INFO_ALT[i] : 0;
+        }
+        return r;
+    }
+    case OP_CLOSEDIR: return stock(F_CLOSEDIR, (uint32_t)&dirs[req.h]);
+    case OP_STAT: {
+        for (unsigned i = 0; i < sizeof info; i++)
+            info[i] = 0;
+        uint32_t r = stock(F_STAT, (uint32_t)req.path, (uint32_t)info);
+        if (r == 0) {
+            req.size_out = INFO_SIZE;
+            req.attr_out = INFO_ATTR;
+            copy_name(req.name_out, INFO_NAME);
+        }
+        return r;
+    }
+    case OP_MKDIR: return stock(F_MKDIR, (uint32_t)req.path);
+    case OP_UNLINK: return stock(F_UNLINK, (uint32_t)req.path);
+    case OP_RENAME: return stock(F_RENAME, (uint32_t)req.path, (uint32_t)req.path2);
+    }
+    return SD_BAD_HANDLE;
+}
+
+/* ---- surviving the card's bad moments (user, n2: while a sequence played, folders would not open and a WAV read as "not a WAV"; stopped, both worked).
+ * The stock FatFs has no lock and asks the card for its state (CMD13, sd_diskio's status) in every call: a moment of "not in transfer state" gives
+ * FR_NOT_READY, and in f_open / f_opendir / f_stat it remounts the volume, which bumps the volume's id and makes every object opened before it
+ * invalid (FR_INVALID_OBJECT); a failed transfer gives FR_DISK_ERR, which FatFs keeps in the file object for good. The stock code opens, reads and
+ * closes in one go and does not notice; MCL keeps files and folders open across many requests. So a failed call is tried again (up to 4 times,
+ * a short pause between), after opening the object again where it is ours to reopen: a read-only file at the same position, a folder skipped to
+ * the same entry. Files open for writing are only tried again when nothing was done (not ready). ---- */
+static char fpath[SD_FILES][320], dpath[SD_DIRS][320];
+static uint8_t fmode[SD_FILES];
+static uint32_t dcount[SD_DIRS];
+static uint32_t st_retries, st_revived, st_gaveup, st_last_err;
+
+static int transient(uint32_t r) { return r == 1u || r == 2u || r == 3u || r == 9u; }   /* FR_DISK_ERR, FR_INT_ERR, FR_NOT_READY, FR_INVALID_OBJECT */
+
+static void settle(void)                                         /* ~1-2 ms for the card (bounded: the emulator's cycle counter may stand still) */
+{
+    uint32_t t0 = DWT_CYCCNT, lim = SYST_RVR + 1u;
+    for (uint32_t i = 0; i < 100000u && DWT_CYCCNT - t0 < lim; i++)
+        __asm volatile("nop");
+}
+
+static int reopen_file(uint32_t h, uint64_t pos)
+{
+    if (fmode[h] & SD_WRITE)
+        return 0;
+    for (unsigned i = 0; i < sizeof fils[h].b; i++)
+        fils[h].b[i] = 0;
+    if (stock(F_OPEN, (uint32_t)&fils[h], (uint32_t)fpath[h], SD_READ))
+        return 0;
+    return stock(F_LSEEK, (uint32_t)&fils[h], 0, (uint32_t)pos, (uint32_t)(pos >> 32)) == 0;
+}
+
+static int reopen_dir(uint32_t d)
+{
+    for (unsigned i = 0; i < sizeof dirs[d].b; i++)
+        dirs[d].b[i] = 0;
+    if (stock(F_OPENDIR, (uint32_t)&dirs[d], (uint32_t)dpath[d]))
+        return 0;
+    for (uint32_t k = 0; k < dcount[d]; k++) {                   /* back to where the listing was */
+        info[26] = 0;
+        if (stock(F_READDIR, (uint32_t)&dirs[d], (uint32_t)info) || !info[26])
+            return 0;
+    }
+    return 1;
+}
+
+/* FatFs keeps one sector of the volume in its window (FATFS +0x3c, the sector's number at +0x38, dirty flag at +3; the volume at FatFs[0] = *0x24016150). While a
+ * sequence plays, lookups of folders and files that are there failed with 'no file' (user, n17-n19: 'E1 S11.4', folders would not open, all fine 10-20 s after STOP),
+ * as if the window held something else than the sector it is marked with. Before each of MCL's requests (and each retry) a clean window is marked empty, so the
+ * request reads its sectors from the card. Costs one sector read a request. */
+__attribute__((unused)) static void fresh_window(void)
+{
+    volatile uint8_t *fs = *(volatile uint8_t *volatile *)0x24016150u;
+    if (fs && fs[3] == 0)
+        *(volatile uint32_t *)(fs + 0x38) = 0xffffffffu;
+}
+
+/* A card that is gone (pulled out while MCL is on) or stuck makes every stock transfer wait several seconds before it fails; four tries of one request then held the
+ * streamer task for 20 s or more and the stock watchdog (loop A, 20 s) restarted the unit (user, n28: pulled the card with MCL on). So: no more tries once a try has taken
+ * 200 ms in all, and after such a slow failure every request fails at once for 3 s (MCL's loops that keep asking get the answer without another wait). */
+static uint8_t trouble;
+static uint32_t trouble_t0;
+#define TROUBLE_CYC (3u * (SYST_RVR + 1u) * 1000u)
+#define SLOW_CYC    ((SYST_RVR + 1u) * 200u)
+
+static uint32_t execute(void)
+{
+    if (trouble) {
+        if (DWT_CYCCNT - trouble_t0 < TROUBLE_CYC) {
+            st_last_err = req.op << 8 | 102u;
+            return SD_NOT_READY;
+        }
+        trouble = 0;
+    }
+    uint32_t t_begin = DWT_CYCCNT;
+    uint32_t op = req.op, h = req.h;
+    int file_op = op == OP_READ || op == OP_WRITE || op == OP_SEEK || op == OP_SYNC || op == OP_TRUNCATE || op == OP_CLOSE;
+    uint64_t pos = file_op ? FIL_FPTR(fils[h]) : 0;
+    uint32_t r = 0;
+    for (int attempt = 0;; attempt++) {
+        r = exec_once();                                         /* (fresh_window() before it: out in n29, see below) */
+        int lookup = op == OP_STAT || op == OP_OPENDIR || (op == OP_OPEN && req.mode == SD_READ);
+        if (r == 0 || !(transient(r) || (lookup && (r == 4u || r == 5u))))     /* (a lookup that finds nothing while the streamer is busy: tried again, the folder / file is there: user, n16 'E1 S11.4') */
+            break;
+        if (op == OP_CLOSE && !(fmode[h] & SD_WRITE))
+            return 0;                                            /* a read-only file: nothing to write back, it is closed either way */
+        if (op == OP_CLOSEDIR)
+            return 0;
+        if ((op == OP_MKDIR || op == OP_UNLINK || op == OP_RENAME) && r != 3u)
+            break;                                               /* it may have been half done: not again */
+        if (attempt >= 3 || DWT_CYCCNT - t_begin > SLOW_CYC) {
+            st_gaveup++;
+            if (DWT_CYCCNT - t_begin > SLOW_CYC) {               /* (slow as well as failed: the card is gone or stuck) */
+                trouble = 1;
+                trouble_t0 = DWT_CYCCNT;
+            }
+            break;
+        }
+        st_retries++;
+        settle();
+        if (file_op && r != 3u) {                                /* the object itself is dead (error kept in it, or the volume remounted) */
+            if (!reopen_file(h, pos))
+                continue;                                        /* (the next try fails the same way and counts) */
+            st_revived++;
+        } else if (op == OP_READDIR && r != 3u) {
+            if (!reopen_dir(h))
+                continue;
+            st_revived++;
+        } else if (file_op && op != OP_SEEK) {
+            stock(F_LSEEK, (uint32_t)&fils[h], 0, (uint32_t)pos, (uint32_t)(pos >> 32));   /* (not ready: nothing moved, but be sure) */
+        }
+    }
+    if (r) {
+        st_last_err = op << 8 | r;
+        return r;
+    }
+    switch (op) {                                                /* what a reopen needs later */
+    case OP_OPEN:
+        for (unsigned i = 0; i < sizeof fpath[h]; i++)
+            if (!(fpath[h][i] = req.path[i]))
+                break;
+        fpath[h][sizeof fpath[h] - 1] = 0;
+        fmode[h] = (uint8_t)req.mode;
+        break;
+    case OP_OPENDIR:
+        for (unsigned i = 0; i < sizeof dpath[h]; i++)
+            if (!(dpath[h][i] = req.path[i]))
+                break;
+        dpath[h][sizeof dpath[h] - 1] = 0;
+        dcount[h] = 0;
+        break;
+    case OP_READDIR:
+        if (req.name_out[0])
+            dcount[h]++;
+        break;
+    }
+    return 0;
+}
+
+/* A folder is listed RD_BATCH entries a request (one entry a request made a folder of 100 files 100 round trips through the busy streamer: the browser
+ * took seconds to show while a sequence played; user, n21) */
+#define RD_BATCH 8
+static BbDirEnt rd_buf[RD_BATCH];
+static int rd_d = -1;
+static uint32_t rd_n, rd_i, rd_end, rd_err;
+
+static uint32_t execute_batch(void)
+{
+    uint32_t k = 0, r = 0;
+    while (k < RD_BATCH) {
+        req.op = OP_READDIR;
+        r = execute();
+        if (r || !req.name_out[0])
+            break;
+        if (req.name_out[0] == '.' || (req.attr_out & 0x06u))      /* (hidden / system entries and dot files: the Mac's "._Name" resource forks listed next to every file and folder; skipped) */
+            continue;
+        BbDirEnt *e = &rd_buf[k];
+        e->size = req.size_out;
+        e->attr = req.attr_out;
+        copy_name(e->name, req.name_out);
+        for (unsigned i = 0; i < 13; i++)
+            e->alt[i] = req.alt_out[i];
+        k++;
+    }
+    req.op = OP_READDIRN;
+    req.count = k;
+    req.size_out = r;                                            /* (the error that ended the batch, if any) */
+    req.attr_out = (uint8_t)(r != 0 || k < RD_BATCH);            /* the folder ends after these (or an error follows them) */
+    return k ? 0 : r;
+}
+
+HOOK void bb_sd_service(void)
+{
+    if (ready != READY_MAGIC || req.state != ST_POSTED)
+        return;
+    req.state = ST_RUNNING;
+    uint32_t t0 = DWT_CYCCNT;
+    req.ret = req.op == OP_READDIRN ? execute_batch() : execute();
+    uint32_t us = (uint32_t)((uint64_t)(DWT_CYCCNT - t0) * 1000000u / ((SYST_RVR + 1u) * 1000u));
+    if (us > st_call_us)
+        st_call_us = us;
+    barrier();
+    if (req.abandoned) {                                         /* nobody waits any more */
+        req.abandoned = 0;
+        req.state = ST_IDLE;
+        return;
+    }
+    req.state = ST_DONE;
+}
+
+/* After each stock f_read (patches/mclsd.py: its 30 call sites): a request is served here too, in pcmStreamer only (handle 0x24002e70, the task every card access
+ * comes from) and only with 3 KB of its stack left (the TCB's stack base at +0x30; FatFs with long names takes about 1 KB). */
+HOOK uint32_t mcl_sd_fread(uint32_t fp, uint32_t buf, uint32_t n, uint32_t br)
+{
+    uint32_t r = stock(F_READ, fp, buf, n, br);
+    uint32_t me = *(volatile uint32_t *)0x2401f2a8u, st = *(volatile uint32_t *)0x24002e70u;
+    if (st && me == st) {
+        uint32_t sp;
+        __asm volatile("mov %0, sp" : "=r"(sp));
+        uint32_t base = ((volatile uint32_t *)me)[12];
+        if (sp > base && sp - base > 3072u)
+            bb_sd_service();
+    }
+    return r;
+}
+
+HOOK uint32_t mcl_sd_pump(uint32_t queue, uint32_t item, uint32_t ticks, uint32_t peek)
+{
+    if (ready == READY_MAGIC) {
+        uint32_t now = DWT_CYCCNT, gap = now - last_pump;
+        if (last_pump && gap > worst_gap_cyc)
+            worst_gap_cyc = gap;
+        if (last_pump && gap > (SYST_RVR + 1u) * 100u)           /* 100 ms of ticks */
+            gaps_100ms++;
+        last_pump = now;
+    }
+    bb_sd_service();
+    return stock(Q_RECEIVE, queue, item, ticks, peek);
+}
+
+/* Replaces the call at the end of each pass of the streamer's inner work loop (bl 0x08092f5c @0x0807443e, the message ring of 0x2401f508).
+ * That loop keeps running while any of its work rings has entries, which is all the time while sequences stream their samples: the loop's top,
+ * where mcl_sd_pump is, was not reached for long stretches, and MCL's file requests waited until they timed out (user: the sample browser's
+ * folders would not open and a WAV read as "not a WAV" while a sequence played). A pass ends between two stock FatFs operations. */
+HOOK void mcl_sd_inner(void *obj)
+{
+    bb_sd_service();
+    ((void (*)(void *))0x08092f5du)(obj);
+}
+
+/* ---- the GUI side ---- */
+/* Gives the processor to the other ready tasks of the same priority (pends PendSV, the kernel's yield). The wait used to sleep on a semaphore; a yield needs no
+ * kernel object from the stock heap, which has nothing to spare (docs/mcl-m0-m1-results.md, M8). */
+extern "C" __attribute__((noinline)) void bb_sd_yield(void)
+{
+    *(volatile uint32_t *)0xE000ED04u = 0x10000000u;              /* ICSR.PENDSVSET */
+    __asm volatile("dsb sy\n isb sy" ::: "memory");
+}
+
+/* Posts the request filled in `req` and waits for the streamer. */
+static uint32_t submit_raw(void)
+{
+    if (ready != READY_MAGIC)
+        return SD_NOT_READY;
+    uint32_t last = DWT_CYCCNT;
+    uint64_t cyc = 0;                                            /* elapsed cycles, accumulated: the counter is 32 bits and wraps after 10.7 s */
+    const uint32_t cps = (SYST_RVR + 1u) * 1000u;
+    while (req.state != ST_IDLE && req.abandoned) {              /* a request we stopped waiting for: let it finish first (it used to fail every later one at once) */
+        if (req.state == ST_DONE) {
+            req.abandoned = 0;
+            req.state = ST_IDLE;
+            break;
+        }
+        uint32_t now = DWT_CYCCNT;
+        cyc += now - last;
+        last = now;
+        if (cyc * 1000u / cps >= SD_TIMEOUT_MS)
+            return SD_BUSY;
+        bb_sd_yield();
+    }
+    if (req.state != ST_IDLE)
+        return SD_BUSY;
+    st_requests++;
+    cyc = 0;
+    last = DWT_CYCCNT;
+    barrier();
+    req.state = ST_POSTED;
+    while (req.state != ST_DONE) {
+        uint32_t now = DWT_CYCCNT;
+        cyc += now - last;
+        last = now;
+        if (cyc * 1000u / cps >= SD_TIMEOUT_MS)
+            break;
+        bb_sd_yield();                                           /* lets the streamer (same priority) run until it has done the request */
+    }
+    uint32_t now = DWT_CYCCNT;
+    cyc += now - last;
+    uint32_t ms = (uint32_t)(cyc * 1000u / cps);
+    if (ms > st_wait_ms)
+        st_wait_ms = ms;
+    if (req.state != ST_DONE) {
+        st_timeouts++;
+        req.abandoned = 1;                                       /* if it ever completes, the streamer frees the mailbox */
+        return SD_TIMEOUT;
+    }
+    uint32_t r = req.ret;
+    req.state = ST_IDLE;
+    return r;
+}
+
+/* (the last request that failed, whatever the reason, for the SAMPLE button's messages: op << 8 | result, and how many) */
+static uint32_t st_sub_last, st_sub_count;
+static uint16_t st_ring[4];                                     /* the last four failed requests, newest first (op << 8 | result) */
+static uint32_t submit(void)
+{
+    uint32_t op = req.op, r = submit_raw();
+    if (r) {
+        st_sub_last = op << 8 | r;
+        st_sub_count++;
+        for (int k = 3; k > 0; k--)
+            st_ring[k] = st_ring[k - 1];
+        st_ring[0] = (uint16_t)(op << 8 | (r > 255u ? 255u : r));
+    }
+    return r;
+}
+
+static void set_path(char *dst, const char *src)
+{
+    uint32_t i = 0;
+    if (src[0] == '/') {                                         /* the stock volume is logical drive 0 */
+        dst[i++] = '0';
+        dst[i++] = ':';
+    }
+    for (uint32_t j = 0; src[j] && i < 319; j++)
+        dst[i++] = src[j];
+    dst[i] = 0;
+}
+
+HOOK int bb_sd_open(const char *path, uint32_t mode)
+{
+    int h = -1;
+    for (int i = 0; i < SD_FILES; i++)
+        if (!fil_used[i]) {
+            h = i;
+            break;
+        }
+    if (h < 0)
+        return -(int)SD_BUSY;
+    for (unsigned i = 0; i < sizeof fils[h].b; i++)
+        fils[h].b[i] = 0;
+    req.op = OP_OPEN;
+    req.h = (uint32_t)h;
+    req.mode = mode;
+    set_path(req.path, path);
+    uint32_t r = submit();
+    if (r)
+        return -(int)r;
+    fil_used[h] = 1;
+    return h;
+}
+
+static int fok(int h) { return h >= 0 && h < SD_FILES && fil_used[h]; }
+
+HOOK uint32_t bb_sd_close(int h)
+{
+    if (!fok(h))
+        return SD_BAD_HANDLE;
+    req.op = OP_CLOSE;
+    req.h = (uint32_t)h;
+    uint32_t r = submit();
+    if (r != SD_TIMEOUT && r != SD_BUSY)
+        fil_used[h] = 0;                                         /* (even when FatFs reported an error: the object is not usable) */
+    return r;
+}
+
+HOOK int32_t bb_sd_read(int h, void *buf, uint32_t n)
+{
+    if (!fok(h))
+        return -(int32_t)SD_BAD_HANDLE;
+    uint32_t total = 0;
+    uint8_t *p = (uint8_t *)buf;
+    while (total < n) {
+        uint32_t c = n - total > 4096u ? 4096u : n - total;      /* (the streamer reads it 511 bytes a FatFs call: see the header) */
+        req.op = OP_READ;
+        req.h = (uint32_t)h;
+        req.buf = p + total;
+        req.n = c;
+        req.count = 0;
+        uint32_t r = submit();
+        if (r)
+            return -(int32_t)r;
+        total += req.count;
+        if (req.count < c)
+            break;                                               /* end of file */
+    }
+    return (int32_t)total;
+}
+
+HOOK int32_t bb_sd_write(int h, const void *buf, uint32_t n)
+{
+    if (!fok(h))
+        return -(int32_t)SD_BAD_HANDLE;
+    uint32_t total = 0;
+    const uint8_t *p = (const uint8_t *)buf;
+    while (total < n) {
+        uint32_t c = n - total > 511u ? 511u : n - total;
+        req.op = OP_WRITE;
+        req.h = (uint32_t)h;
+        req.buf = (void *)(p + total);
+        req.n = c;
+        req.count = 0;
+        uint32_t r = submit();
+        if (r)
+            return -(int32_t)r;
+        total += req.count;
+        if (req.count < c)
+            return -(int32_t)SD_DENIED;                          /* a short write without an error: the volume is full */
+    }
+    return (int32_t)total;
+}
+
+HOOK uint32_t bb_sd_seek(int h, uint64_t pos)
+{
+    if (!fok(h))
+        return SD_BAD_HANDLE;
+    req.op = OP_SEEK;
+    req.h = (uint32_t)h;
+    req.pos = pos;
+    return submit();
+}
+
+HOOK uint32_t bb_sd_sync(int h)
+{
+    if (!fok(h))
+        return SD_BAD_HANDLE;
+    req.op = OP_SYNC;
+    req.h = (uint32_t)h;
+    return submit();
+}
+
+HOOK uint32_t bb_sd_truncate(int h)
+{
+    if (!fok(h))
+        return SD_BAD_HANDLE;
+    req.op = OP_TRUNCATE;
+    req.h = (uint32_t)h;
+    return submit();
+}
+
+/* size and position are plain fields of the FIL object (no FatFs call; nothing else touches it while MCL does not have a request posted) */
+HOOK uint64_t bb_sd_size(int h) { return fok(h) ? FIL_OBJSIZE(fils[h]) : 0; }
+HOOK uint64_t bb_sd_tell(int h) { return fok(h) ? FIL_FPTR(fils[h]) : 0; }
+
+static uint32_t finish_ent(uint32_t r, BbDirEnt *out)
+{
+    if (r == 0 && out) {
+        out->size = req.size_out;
+        out->attr = req.attr_out;
+        copy_name(out->name, req.name_out);
+        for (unsigned i = 0; i < 13; i++)
+            out->alt[i] = req.op == OP_READDIR ? req.alt_out[i] : 0;
+    }
+    return r;
+}
+
+HOOK uint32_t bb_sd_stat(const char *path, BbDirEnt *out)
+{
+    req.op = OP_STAT;
+    set_path(req.path, path);
+    return finish_ent(submit(), out);
+}
+
+HOOK uint32_t bb_sd_mkdir(const char *path)
+{
+    req.op = OP_MKDIR;
+    set_path(req.path, path);
+    return submit();
+}
+
+HOOK uint32_t bb_sd_unlink(const char *path)
+{
+    req.op = OP_UNLINK;
+    set_path(req.path, path);
+    return submit();
+}
+
+HOOK uint32_t bb_sd_rename(const char *from, const char *to)
+{
+    req.op = OP_RENAME;
+    set_path(req.path, from);
+    set_path(req.path2, to);
+    return submit();
+}
+
+HOOK int bb_sd_opendir(const char *path)
+{
+    int d = -1;
+    for (int i = 0; i < SD_DIRS; i++)
+        if (!dir_used[i]) {
+            d = i;
+            break;
+        }
+    if (d < 0)
+        return -(int)SD_BUSY;
+    for (unsigned i = 0; i < sizeof dirs[d].b; i++)
+        dirs[d].b[i] = 0;
+    if (rd_d == d)
+        rd_d = -1;
+    req.op = OP_OPENDIR;
+    req.h = (uint32_t)d;
+    set_path(req.path, path);
+    uint32_t r = submit();
+    if (r)
+        return -(int)r;
+    dir_used[d] = 1;
+    return d;
+}
+
+HOOK uint32_t bb_sd_readdir(int d, BbDirEnt *out)
+{
+    if (d < 0 || d >= SD_DIRS || !dir_used[d])
+        return SD_BAD_HANDLE;
+    if (rd_d != d) {
+        rd_d = d;
+        rd_n = rd_i = rd_end = rd_err = 0;
+    }
+    if (rd_i >= rd_n) {
+        if (rd_end) {
+            if (out)
+                out->name[0] = out->alt[0] = 0;
+            return rd_err;
+        }
+        req.op = OP_READDIRN;
+        req.h = (uint32_t)d;
+        uint32_t r = submit();
+        if (r)
+            return r;
+        rd_n = req.count;
+        rd_i = 0;
+        rd_end = req.attr_out;
+        rd_err = (uint32_t)req.size_out;
+        if (!rd_n) {
+            if (out)
+                out->name[0] = out->alt[0] = 0;
+            return rd_err;
+        }
+    }
+    if (out)
+        *out = rd_buf[rd_i];
+    rd_i++;
+    return SD_OK;
+}
+
+HOOK uint32_t bb_sd_closedir(int d)
+{
+    if (d < 0 || d >= SD_DIRS || !dir_used[d])
+        return SD_BAD_HANDLE;
+    if (rd_d == d)
+        rd_d = -1;
+    req.op = OP_CLOSEDIR;
+    req.h = (uint32_t)d;
+    uint32_t r = submit();
+    if (r != SD_TIMEOUT && r != SD_BUSY)
+        dir_used[d] = 0;
+    return r;
+}
+
+HOOK uint32_t bb_sd_stat_get(int which)
+{
+    switch (which) {
+    case 0: return st_requests;
+    case 1: return st_timeouts;
+    case 2: return st_wait_ms;
+    case 3: return st_call_us;
+    case 4: return (uint32_t)((uint64_t)worst_gap_cyc * 1000u / ((SYST_RVR + 1u) * 1000u));
+    case 5: return gaps_100ms;
+    case 6: return st_retries;
+    case 7: return st_revived;
+    case 8: return st_gaveup;
+    case 9: return st_last_err;
+    case 10: return st_sub_last;
+    case 12: case 13: case 14: case 15: return st_ring[which - 12];
+    default: return st_sub_count;
+    }
+}

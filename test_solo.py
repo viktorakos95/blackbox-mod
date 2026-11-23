@@ -22,6 +22,8 @@ uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
 uc.mem_map(0x08000000, 0x200000)
 uc.mem_write(BASE, IMG)
 uc.mem_map(0x24000000, 0x80000)
+uc.mem_map(0x38800000, 0x1000)       # backup SRAM: the looper's state (MIX asks whether Looper mode is available)
+uc.mem_map(0x58024000, 0x1000)       # RCC / PWR
 uc.mem_write(RET, b"\x00\xbf\x00\xbf")
 uc.mem_write(STATE, b"\xa5" * 64)  # uninitialised RAM: ensure() must cope
 
