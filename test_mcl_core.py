@@ -578,6 +578,26 @@ c.call("bb_mcl_page_req", 0)
 for _ in range(20):
     c.step(20_000_000)
     c.tick(5)
+# ---- the Machinedrum's BANK / GROUP key (its key sysex F0 7F 0D 1E F7 from the jack) with the view open: MCL's page selection, the view asked to close
+def md_key(k):
+    for byte in (0xF0, 0x7F, 0x0D, k, 0xF7):
+        c.side(rg.rx, byte)
+    c.irq("bb_swirq2_isr")
+    for _ in range(8):
+        c.step(20_000_000)
+        c.tick(5)
+
+
+sample_in_p(4)
+md_key(0x1E)
+pg_bg, st_bg = rec(11), sview()[0]
+md_key(0x1E + 0x40)
+check("BANK / GROUP on the Machinedrum with the view open: MCL's page selection (1) and the view asked to close (state 5)", pg_bg == 1 and st_bg == 5, (pg_bg, st_bg))
+sample_in_p(5)
+c.call("bb_mcl_page_req", 0)
+for _ in range(20):
+    c.step(20_000_000)
+    c.tick(5)
 # ---- LISTEN through the Machinedrum: track 15 must be an R1 (asked first: it erases the track), then its input and CUE up and the file plays
 def smp_listen():
     c.uc.mem_write(SBUF, bytes(48))

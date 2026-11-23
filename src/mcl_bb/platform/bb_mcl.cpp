@@ -62,7 +62,7 @@ static uint8_t smp_len_enc;                                      /* the record's
 static uint8_t slice_want;
 static volatile uint8_t smp_opening;
 static uint8_t smp_trk;                                          /* the record's track: 0 = 15 (RAM page A, RAM 1), 1 = 16 (RAM page B, RAM 2) */
-static uint8_t smp_mon = 3;                                      /* LISTEN's monitor (the R machine's CUE1): 0 off, 1..3 low / mid / high */
+static uint8_t smp_mon = 2;                                      /* LISTEN's monitor (the R machine's CUE1): 0 off, 1..3 low / mid / high */
 static uint8_t smp_out;                                          /* the player's output / the record's input, as the RAM machines choose it: 0 input A (default), 1 input B, 2 A + B (the file as it is; the machine's input balance in the middle takes both) */
 #define ST (14 + smp_trk)                                        /* the record's track */
 #define NT 1
@@ -846,7 +846,7 @@ static int smp_md_listen(int browsing)
     }
     smp_listen_ask = 0;
     own_param = 1;
-    static const uint8_t cue[4] = {0, 64, 100, 127};
+    static const uint8_t cue[4] = {0, 72, 90, 108};
     for (int k = 0; k < NT; k++) {                               /* (as the RAM machines take their input: stereo R1 left / R2 right, mono A left, B right; input level as RECORD records at) */
         uint8_t t = ST + k, bal = smp_out == 1 ? 127 : smp_out == 0 ? 0 : 64;
         MD.setTrackParam(t, RAM_R_MLEV, 0);
@@ -1016,7 +1016,7 @@ static void smp_apply(void)
         }
         break;
     case 12:                                                     /* MONITOR: LISTEN's cue level on the R machine, off / low / mid / high */
-        smp_mon = (uint8_t)((smp_mon + 1u) & 3u);
+        smp_mon = (uint8_t)((smp_mon + 1u) & 3u);              /* (OFF -> LOW -> MID -> HIGH -> OFF) */
         break;
     case 4:                                                      /* the view opened: straight into the browser while nothing is chosen */
         smp_view = 1;
