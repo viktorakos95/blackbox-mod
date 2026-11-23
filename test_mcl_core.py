@@ -592,7 +592,13 @@ sample_in_p(4)
 md_key(0x1E)
 pg_bg, st_bg = rec(11), sview()[0]
 md_key(0x1E + 0x40)
-check("BANK / GROUP on the Machinedrum with the view open: MCL's page selection (1) and the view asked to close (state 5)", pg_bg == 1 and st_bg == 5, (pg_bg, st_bg))
+pg_rel = rec(11)
+check("BANK / GROUP on the Machinedrum with the view open: MCL's page selection (1), the view asked to close (state 5), still open after the key is let go",
+      pg_bg == 1 and st_bg == 5 and pg_rel == 1, (pg_bg, st_bg, pg_rel))
+sample_in_p(5)
+md_key(0x1E)
+md_key(0x1E + 0x40)
+check("... BANK / GROUP again: MCL's own way (the selection taken, page selection closed)", rec(11) != 1, rec(11))
 sample_in_p(5)
 c.call("bb_mcl_page_req", 0)
 for _ in range(20):
@@ -605,6 +611,7 @@ def smp_listen():
     return c.uc.mem_read(SBUF + 8, 1)[0]
 
 
+print("     (debug) MCL page before LISTEN:", rec(11), "listen:", smp_listen(), "ask:", c.uc.mem_read(c.b["_ZL14smp_listen_ask"], 1)[0] if "_ZL14smp_listen_ask" in c.b else -1)
 MDO = c.b["MD"]
 c.e.uc.mem_write(MDO + 4, b"\x01")                                  # (a Machinedrum connected)
 m0 = rec(7)

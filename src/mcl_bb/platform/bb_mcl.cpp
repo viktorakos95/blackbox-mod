@@ -1040,9 +1040,10 @@ static void smp_apply(void)
         bb_cable_listen = 0;
         if (!cable_armed)
             bb_player_stop();
-        if (now == SAMPLE_BROWSER && bb_cable_mode) {
+        if (bb_cable_mode) {                                     /* (closed from the browser by BANK / GROUP: MCL is on its page selection already, the browser's cable mode ends too) */
             bb_cable_mode = 0;
-            mcl.setPage(smp_back);
+            if (now == SAMPLE_BROWSER)
+                mcl.setPage(smp_back);
         }
         break;
     case 6:                                                      /* listening while browsing on / off (on: the Machinedrum set up as for LISTEN, asked first if track 15 / 16 is something else) */
@@ -1059,8 +1060,17 @@ static void smp_apply(void)
 extern "C" bool __real__Z26platform_panel_handleEventP11gui_event_s(gui_event_t *ev);
 extern "C" bool __wrap__Z26platform_panel_handleEventP11gui_event_s(gui_event_t *ev)
 {
-    if (smp_view && EVENT_CMD(ev) && ev->source == MDX_KEY_BANKGROUP && ev->mask == EVENT_BUTTON_PRESSED)
-        smp_close_req = 1;                                       /* (BANK / GROUP, as holding MCL's PAGE: the page selection; the view closes and MCL gets the key) */
+    static uint8_t bg_keep;                                      /* BANK / GROUP from the view: MCL's page selection stays open after the key is let go (pick with the trigs, BANK / GROUP again opens it) */
+    if (EVENT_CMD(ev) && ev->source == MDX_KEY_BANKGROUP) {
+        if (ev->mask == EVENT_BUTTON_PRESSED && smp_view) {
+            smp_close_req = 1;                                   /* (the view closes and MCL gets the key: its page selection) */
+            bg_keep = 1;
+        } else if (ev->mask == EVENT_BUTTON_RELEASED && bg_keep) {
+            bg_keep = 0;
+            if (mcl.currentPage() == PAGE_SELECT_PAGE)
+                return true;
+        }
+    }
     if (smp_view && EVENT_CMD(ev) && ev->source == MDX_KEY_NO && mcl.currentPage() != SAMPLE_BROWSER) {
         if (ev->mask == EVENT_BUTTON_PRESSED) {
             if (cable_armed || smp_recording)
@@ -1114,6 +1124,8 @@ HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
     s->nd2 = nd_cnt[1];
     s->_r2 = (uint8_t)(smp_trk | (smp_mon & 3u) << 1 | (smp_opening ? 8u : 0u) | (smp_out & 3u) << 4);    /* track (16 if set), monitor level, the browser opening */
     s->slices = smp_recorded && RP.encoders[2]->cur > 0 ? (uint8_t)(1u << RP.encoders[2]->cur) : 0;
+    if (smp_view && mcl.currentPage() == PAGE_SELECT_PAGE)
+        smp_close_req = 1;                                       /* (MCL's page selection, however it was reached: the view gives way) */
     if (smp_close_req)
         s->state = BB_SMP_CLOSE;
     else if (!smp_loaded)
