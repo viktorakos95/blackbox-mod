@@ -1342,6 +1342,16 @@ e.call("looper_page_tab")
 check("SONG again: the DRONE-8 page (tab 7)", screens == [] and e.uc.reg_read(A.UC_ARM_REG_R0) == 7, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
 e.call("solo_song_pressed", APP, 0, 0, 0)
 e.call("looper_page_tab")
+check("SONG again: without the MCL blob there is no MCL page: the stock song screen (0x2d)", screens == [0x2D], screens)
+e.call("looper_page_goto", VIEW, 0)                                         # (the stub changed no screen: back on the Looper to go round again)
+screens.clear()
+for _ in range(3):
+    e.call("solo_song_pressed", APP, 0, 0, 0)                              # SMPLR, TRIG, DRONE-8
+e.uc.mem_write(0x0807FFF8, bytes.fromhex("00207047"))                          # movs r0,#0 ; bx lr: what every function of the fake blob does
+e.uc.mem_write(0x08120000, b"MCLB" + (5).to_bytes(4, "little") + (0x0807FFF9).to_bytes(4, "little") * 14)   # a blob's entry table (magic, abi 5, 14 pointers): the MCL page exists while it is there
+e.w32(e.sym["mcl_entry"], 0x08120000)
+e.call("solo_song_pressed", APP, 0, 0, 0)
+e.call("looper_page_tab")
 check("SONG again: the MCL page (tab 8)", screens == [] and e.uc.reg_read(A.UC_ARM_REG_R0) == 8, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
 e.call("solo_song_pressed", APP, 0, 0, 0)
 check("SONG once more: the stock song screen (0x2d)", screens == [0x2D], screens)
@@ -1351,6 +1361,8 @@ e.call("solo_song_pressed", APP, 0, 0, 0)
 e.call("solo_set_mode", VIEW, 1)
 e.call("looper_page_tab")
 check("SONG from the pads: back to the page opened last (MCL, the last of SONG's round)", screens == [0x2F] and e.uc.reg_read(A.UC_ARM_REG_R0) == 8, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
+e.w32(e.sym["mcl_entry"], 0)                                              # (no blob again)
+
 e.uc.mem_write(APP + 0x8CA4, b"\x2d")
 screens.clear()
 e.call("solo_song_pressed", APP, 0, 0, 0)

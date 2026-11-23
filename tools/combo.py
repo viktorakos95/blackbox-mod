@@ -47,17 +47,39 @@ REGISTRY = os.path.join(ROOT, "docs", "combos.json")
 def expand(names):
     out = []
     for n in names:
-        if n in PS.PRESETS:
-            out += PS.PRESETS[n]["sets"]
-        elif n in PS.SETS:
+        if n in PS.SETS:                       # (a set wins: a preset must never share a set's name)
             out.append(n)
+        elif n in PS.PRESETS:
+            out += PS.PRESETS[n]["sets"]
         else:
             raise SystemExit(f"unknown set or preset: {n} (sets: {' '.join(PS.CANON)}; presets: {' '.join(PS.PRESETS)})")
     return out
 
 
+def parse_parts(names):
+    """`parts=samplr,trig addons=tools,save` -> (parts, addons) or None when the names are plain sets / presets."""
+    parts = addons = None
+    for n in names:
+        if n.startswith("parts="):
+            parts = [x for x in n[6:].split(",") if x]
+        elif n.startswith("addons="):
+            addons = [x for x in n[7:].split(",") if x]
+    if parts is None and addons is None:
+        return None
+    for x in parts or []:
+        if x not in PS.FEATURES:
+            raise SystemExit(f"unknown part {x} (parts: {' '.join(PS.FEATURES)})")
+    for x in addons or []:
+        if x not in PS.ADDONS:
+            raise SystemExit(f"unknown add-on {x} (add-ons: {' '.join(PS.ADDONS)})")
+    return parts or [], addons or []
+
+
 def resolve(names):
-    """Names (sets / presets) -> the sets with everything they require, plus cave, in the canonical order."""
+    """Names (sets / presets / parts= addons=) -> the sets with everything they require, plus cave, in the canonical order."""
+    pa = parse_parts(names)
+    if pa:
+        return from_parts(*pa)
     todo, seen = list(expand(names)) + ["cave"], set()
     while todo:
         s = todo.pop()
@@ -71,10 +93,32 @@ def resolve(names):
 def problems(sets):
     """Unmet requirements of an explicit list (what the web page greys out)."""
     have = set(sets)
-    return [f"{s} needs {r}" for s in sets for r in PS.SETS[s]["requires"] if r not in have]
+    out = [f"{s} needs {r}" for s in sets for r in PS.SETS[s]["requires"] if r not in have]
+    if "looper" in have:                                    # the host: the pages it shows must make sense
+        if {"hide_looper", "hide_samplr", "hide_trig", "hide_drone"} <= have and "mclblob" not in have:
+            out.append("`looper` with every page hidden: there is nothing to show")
+        if "hide_drone" not in have and "lira" not in have:
+            out.append("the DRONE-8 page is not hidden but `lira` (its engine) is not in the list")
+    return out
+
+
+def from_parts(parts, addons=()):
+    """The sets of a free combination: parts = some of looper samplr trig drone mcl, addons = some of tools save rec clkmon crash. Returns the sets in order."""
+    parts, sets = set(parts), list(PS.CORE)
+    for p in parts:
+        sets += PS.FEATURES[p]["sets"]
+    if parts & {"looper", "samplr", "trig", "drone", "mcl"}:
+        sets.append("looper")
+        sets += [PS.FEATURES[p]["hide"] for p in ("looper", "samplr", "trig", "drone") if p not in parts]
+    for a in addons:
+        sets += PS.ADDONS[a]["sets"]
+    return resolve(sets)
 
 
 def combo_id(sets, names=None):
+    pa = parse_parts(names or [])
+    if pa:
+        return "p-" + "-".join(pa[0]) + ("_a-" + "-".join(pa[1]) if pa[1] else "")
     if names and len(names) == 1 and names[0] in PS.PRESETS and resolve(names) == resolve(PS.PRESETS[names[0]]["sets"]):
         return names[0]
     return "+".join(sets)
@@ -176,8 +220,18 @@ def test_info(f):
     return dict(kind="image" if imgs else "host", images=[list(i) for i in imgs])
 
 
-def applicable(info, sets):
+def visible_pages(sets):
+    """The pages (looper samplr trig drone) a list of sets leaves in the image."""
     have = set(sets)
+    if "looper" not in have:
+        return set()
+    return {p for p in ("looper", "samplr", "trig", "drone") if "hide_" + p not in have and (p != "drone" or "lira" in have)}
+
+
+def applicable(info, sets, f=None):
+    have = set(sets)
+    if f in PS.TEST_PAGES and not set(PS.TEST_PAGES[f]) <= visible_pages(sets):
+        return False
     return info["kind"] == "image" and all(set(i) <= have for i in info["images"])
 
 
@@ -237,6 +291,8 @@ def wiring_check(image, sets):
     (The web patcher's output goes through the same function: `combo.py verify <image> <sets>`.) Returns a list of faults."""
     import importlib
     sys.path.insert(0, os.path.join(ROOT, "patches"))
+    old_argv = sys.argv
+    sys.argv = ["patch.py"] + list(sets)            # cave.py and mclsd.py read the set list (bb_host / bb_hide, the lirasave form)
     base, faults = 0x08040000, []
     stock = open(os.path.join(ROOT, "firmware", "BLACKBOX-3.1.9.bin"), "rb").read()
     have = set(sets)
@@ -245,7 +301,10 @@ def wiring_check(image, sets):
             if s in have:
                 faults.append(f"{s}: MCL sets are not checked here (the blob's own bytes are not in the stock image)")
             continue
-        for addr, old, new in importlib.import_module(s).PATCHES:
+        mod = importlib.import_module(s)
+        if s == "cave":
+            mod = importlib.reload(mod)
+        for addr, old, new in mod.PATCHES:
             o = addr - base
             if s in have:
                 if image[o:o + len(new)] != new:
@@ -253,6 +312,7 @@ def wiring_check(image, sets):
             elif old:
                 if o < len(stock) and image[o:o + len(old)] != stock[o:o + len(old)]:
                     faults.append(f"{s} is not in the combination but {addr:#x} is not stock")
+    sys.argv = old_argv
     return faults
 
 
@@ -300,6 +360,9 @@ def cmd_test(a):
     blob_snapshot()
     entry = dict(id=cid, sets=sets, title=PS.PRESETS.get(cid, {}).get("title", ""), experimental=bool(PS.PRESETS.get(cid, {}).get("experimental")),
                  tested_at=datetime.date.today().isoformat(), source_rev=git_rev(), cave_bytes=cave_n, cave_limit=PS.CAVE_LIMIT, cave_sha256=cave_sha)
+    pa = parse_parts(a.names)
+    if pa:
+        entry.update(parts=pa[0], addons=pa[1], title="parts: " + (", ".join(pa[0]) or "-") + ("; add-ons: " + ", ".join(pa[1]) if pa[1] else ""))
     if needs_mcl(sets):
         ok, why = blob_ok()
         if not ok:
@@ -312,8 +375,11 @@ def cmd_test(a):
     dst = os.path.join(OUT, "combos", cid)
     os.makedirs(dst, exist_ok=True)
     shutil.copy2(image, os.path.join(dst, "BLACKBOX.bin"))
-    entry.update(image_bytes=size, image_sha256=sha)
-    files = [f for f in test_files() if applicable(test_info(f), sets) and (not a.only or f in a.only)]
+    entry.update(image_bytes=size, image_sha256=sha, scope="fast" if a.fast else "full")
+    files = [f for f in test_files() if applicable(test_info(f), sets, f) and (not a.only or f in a.only)]
+    if a.fast:                                                          # the tests that look at hooks, only: the others run on `all` and do not depend on which hooks are in
+        sens = json.load(open(os.path.join(ROOT, "docs", "test-sensitivity.json")))["hook_sensitive"]
+        files = [f for f in files if f in sens or f in PS.TEST_PAGES]
     skipped = [f for f in test_files() if test_info(f)["kind"] == "image" and f not in files]
     print(f"{cid}: {len(sets)} sets, image {size} bytes, cave {cave_n}/{PS.CAVE_LIMIT} ({100 * cave_n / PS.CAVE_LIMIT:.0f}%); {len(files)} tests apply, {len(skipped)} n/a")
     wf = [] if needs_mcl(sets) else wiring_check(open(os.path.join(dst, "BLACKBOX.bin"), "rb").read(), sets)
@@ -433,27 +499,53 @@ def cmd_table(a):
           "## Presets", "", "| preset | sets | what |", "|---|---|---|"]
     for p, d in PS.PRESETS.items():
         L.append(f"| `{p}` | {len(resolve([p]))} | {d['title']}{' (experimental)' if d.get('experimental') else ''} |")
-    L += ["", "The 3.1.n features (`" + "`, `".join(PS.CORE) + "`) are one bundle in every preset: the tests only cover them together.", ""]
+    L += ["", "The 3.1.n features (`" + "`, `".join(PS.CORE) + "`) are one bundle in every combination: the tests only cover them together.", ""]
+    L += ["## Parts and add-ons (free combinations)", "",
+          "Pick any parts; the page leaves out whatever is not picked. All the pages are tabs of the Looper page, so any part brings the `looper` hooks (the host) and the others get a `hide_*` set "
+          "(`bb_hide` in the cave: the SONG round, BACK, MIX and the pad recorder's Rec Input list skip a page that is hidden). Every part works alone or with any other.", "",
+          "| part | sets | left out with |", "|---|---|---|"]
+    for k, d in PS.FEATURES.items():
+        L.append(f"| {d['title']} | `looper`" + "".join(f", `{x}`" for x in d["sets"]) + f" | {('`' + d['hide'] + '`') if d['hide'] else 'not adding its sets (no blob, no page)'} |")
+    L += ["", "| add-on | sets |", "|---|---|"]
+    for k, d in PS.ADDONS.items():
+        L.append(f"| {d['title']} (`{k}`) | " + ", ".join(f"`{x}`" for x in d["sets"]) + " |")
+    L += ["", "Rules the page enforces (`problems()` in `tools/combo.py`): a set needs what `requires` says; the DRONE-8 page needs `lira`; `looper` with every page hidden shows nothing. "
+          "`python3 tools/combo.py resolve parts=samplr,trig addons=tools` prints the sets of a combination.", "",
+          "Not decided by the parts yet: the Tools settings page lists all its machine settings whenever `tools` is in (a DRONE-8 Out setting with no DRONE-8 does nothing).", ""]
     if os.path.exists(REGISTRY):
         reg = json.load(open(REGISTRY))
+        C = reg["combos"]
         L += ["## Tested (docs/combos.json)", "",
-              "`tests` counts the emulator tests that apply to the combination plus the wiring check (every hook of the chosen sets present, every other set's sites stock). "
-              "A test applies when every image it names is made of the combination's sets; it then runs on the combination's own image.", "",
-              "| combination | status | tests | cave | tested | source |", "|---|---|---|---|---|---|"]
-        for cid, e in sorted(reg["combos"].items()):
+              "`tests` counts the emulator tests that apply plus the wiring check (every hook of the chosen sets present, every other set's sites stock). A test applies when every image it names is made "
+              "of the combination's sets and the pages it walks are in the image; it then runs on the combination's own image. Scope `full` = every applicable test; `fast` = the hook-sensitive tests "
+              "and the page tests only (the other tests do not depend on which hooks are in: they pass on an image with none, and run in full on the presets and the single parts).", "",
+              "### Presets", "", "| preset | status | tests | tested | source |", "|---|---|---|---|---|"]
+        for cid in PS.PRESETS:
+            e = C.get(cid)
+            if e:
+                t = e.get("tests", {})
+                why = f" - {e['reason']}" if e["status"] == "untested" else ""
+                L.append(f"| `{cid}` | **{e['status']}**{why} | {sum(v == 'pass' for v in t.values())}/{len(t)} | {e['tested_at']} | `{e['source_rev']}` |")
+        free = {k: e for k, e in C.items() if "parts" in e}
+        ok = sorted(k for k, e in free.items() if e["status"] == "pass")
+        un = sorted(k for k, e in free.items() if e["status"] == "untested")
+        bad = sorted(k for k, e in free.items() if e["status"] not in ("pass", "untested"))
+        L += ["", f"### Free combinations: {len(ok)} pass, {len(un)} untested (MCL: no blob here), {len(bad)} other", "",
+              "| parts | add-ons | status | scope | tests |", "|---|---|---|---|---|"]
+        for k in sorted(free, key=lambda k: (free[k]["status"] != "pass", "mcl" in free[k]["parts"], len(free[k]["parts"]), k)):
+            e = free[k]
             t = e.get("tests", {})
-            why = f" - {e['reason']}" if e["status"] == "untested" else ""
-            L.append(f"| `{cid}` | **{e['status']}**{' (experimental)' if e.get('experimental') else ''}{why} | {sum(v == 'pass' for v in t.values())}/{len(t)} | "
-                     f"{e['cave_bytes']:,} | {e['tested_at']} | `{e['source_rev']}` |")
+            ad = "none" if not e["addons"] else ("all five" if len(e["addons"]) == 5 else ", ".join(e["addons"]))
+            L.append(f"| {', '.join(e['parts']) or '-'} | {ad} | **{e['status']}** | {e.get('scope', '-')} | {sum(v == 'pass' for v in t.values())}/{len(t)} |")
         if os.path.exists(os.path.join(ROOT, "docs", "test-sensitivity.json")):
             sn = json.load(open(os.path.join(ROOT, "docs", "test-sensitivity.json")))
             L += ["", f"**What a pass proves.** {len(sn['hook_blind'])} of the {len(sn['hook_blind']) + len(sn['hook_sensitive'])} image tests still pass on an image with NO hooks "
                   "(stock + the code block): they drive the cave's functions directly. They show the code works, not that a combination's hooks reach it "
                   "(that is what the wiring check and the hook-sensitive tests are for). The list is `docs/test-sensitivity.json` (`python3 tools/combo.py control`). "
-                  "Nothing here has been run on the unit."]
+                  "The page logic of every combination of hidden pages (SONG round, BACK, MIX, Rec Input list) is `test_pages.py`, in the host tier. Nothing here has been run on the unit."]
         if reg.get("host"):
             h = reg["host"]
-            L.append(f"\nHost tests (no image; they test the C source): **{h['status']}**, {sum(v == 'pass' for v in h['tests'].values())}/{len(h['tests'])}, {h['tested_at']}, `{h['source_rev']}`.")
+            L.append(f"\nHost tests (no image; they test the C source and `test_pages.py`): **{h['status']}**, {sum(v == 'pass' for v in h['tests'].values())}/{len(h['tests'])}, {h['tested_at']}, `{h['source_rev']}`.")
     open(os.path.join(ROOT, "docs", "patch-sets.md"), "w").write("\n".join(L) + "\n")
     print("wrote docs/patch-sets.md")
 
@@ -471,6 +563,7 @@ def main():
             p.add_argument("-j", "--jobs", type=int, default=os.cpu_count())
             p.add_argument("--only", nargs="+")
             p.add_argument("--record", action="store_true")
+            p.add_argument("--fast", action="store_true", help="only the hook-sensitive tests and the page tests (docs/test-sensitivity.json)")
     p = sp.add_parser("host")
     p.add_argument("-j", "--jobs", type=int, default=os.cpu_count())
     p.add_argument("--record", action="store_true")

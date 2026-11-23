@@ -16,7 +16,7 @@ Fields:
 # The order patch.py was always given (and the order the web patcher applies). Measured: the order of the non-MCL sets does not change a byte of the
 # image (tools/combo.py verify-order: 20 sets, 7 permutations, identical SHA-256). Only `cave` -> `mclblob` -> `mclsd` is a hard order: mclblob overwrites
 # bytes the cave set writes (the 0xFF fill, `mcl_entry`), mclsd's pointers are cave variables.
-CANON = ("solo slice duck chord cond filter cpu od comp tools seqfix fx2 munchi looper clkmon lira lirarec lirasave crash cave "
+CANON = ("solo slice duck chord cond filter cpu od comp tools seqfix fx2 munchi looper hide_looper hide_samplr hide_trig hide_drone clkmon lira lirarec lirasave crash cave "
          "mclblob mclsd").split()
 
 SETS = {
@@ -41,6 +41,13 @@ SETS = {
                      requires=["solo"], evidence="doc+code",
                      note="The SONG button cycles Looper -> SAMPLR -> TRIG -> DRONE-8 -> (MCL) -> stock song screen (solo.c solo_song_pressed). All those pages are tabs of "
                           "the Looper page (looper_page.c), so SAMPLR, Trigger2MIDI and the DRONE-8 page cannot be left out while `looper` is in, nor offered without it."),
+    # The pages the `looper` hooks host. Without any of these sets every page is there; each one takes its page out of the SONG round, BACK, MIX and the pad
+    # recorder's Rec Input list. Markers: patches/cave.py sets the bytes (bb_hide) from the set list.
+    "hide_looper": dict(feature="pages", title="Leave out the Looper page (MAIN / FX / SETUP / MORE)", requires=["looper"], evidence="code"),
+    "hide_samplr": dict(feature="pages", title="Leave out the SAMPLR page", requires=["looper"], evidence="code"),
+    "hide_trig":   dict(feature="pages", title="Leave out the Trigger2MIDI page", requires=["looper"], evidence="code"),
+    "hide_drone":  dict(feature="pages", title="Leave out the DRONE-8 page", requires=["looper"], evidence="code",
+                        note="Without `hide_drone` the DRONE-8 page is in the round, and it needs the engine: `lira` (see PAGE_NEEDS)."),
     "clkmon":   dict(feature="diag", title="MIDI clock monitor (diagnostics)", requires=["looper"], evidence="doc"),
     "lira":     dict(feature="drone", title="DRONE-8 engine: Fidelity LIRA on Sample pads, MIDI learn", requires=["filter"], evidence="doc",
                      note="The DRONE-8 page itself is part of `looper`; without `looper` the engine is only the pad mode."),
@@ -68,8 +75,8 @@ CORE = [s for s in CANON if s in SETS and SETS[s]["feature"] == "core"]
 # All the machine pages (Looper, SAMPLR, TRIG, DRONE-8) come together with `looper` (see its note); the presets below differ by what is wired around them.
 PRESETS = {
     "core":        dict(title="3.1.n features only (no machines)", sets=CORE),
-    "looper":      dict(title="Looper family: Looper, SAMPLR, Trigger2MIDI + Tools settings (no DRONE-8 engine)", sets=CORE + ["tools", "looper"]),
-    "drone":       dict(title="DRONE-8 with Looper family", sets=CORE + ["tools", "looper", "lira", "lirarec", "lirasave"]),
+    "looper-family": dict(title="Looper, SAMPLR, Trigger2MIDI + Tools settings (no DRONE-8)", sets=CORE + ["tools", "looper", "hide_drone"]),
+    "drone-family": dict(title="DRONE-8 with Looper, SAMPLR, Trigger2MIDI", sets=CORE + ["tools", "looper", "lira", "lirarec", "lirasave"]),
     "all":         dict(title="Everything except MCL", sets=CORE + ["tools", "looper", "clkmon", "lira", "lirarec", "lirasave", "crash"]),
     "all+mcl":     dict(title="Everything with MCL", sets=CORE + ["tools", "looper", "clkmon", "lira", "lirarec", "lirasave", "crash", "mclblob", "mclsd"],
                         experimental=True),
@@ -77,3 +84,33 @@ PRESETS = {
 
 CAVE_LIMIT = 0x2E188         # bytes, src/cave.ld CAVE
 MCL_BLOB_RANGE = (300_000, 450_000)   # the real MCL program is ~386,000 bytes; the SD test build is ~19,000
+
+# A page that is NOT hidden needs these sets too (the page is useless or unsafe without its engine). Checked by tools/combo.py problems().
+PAGE_NEEDS = {"drone": ["lira"]}          # no `hide_drone` -> `lira`
+# The parts a user picks, and what each one is made of. `looper` (the host) comes with any page; a part that is not picked gets its hide_ set (MCL has none: no blob, no page).
+FEATURES = {
+    "looper": dict(title="Looper", sets=[], hide="hide_looper"),
+    "samplr": dict(title="SAMPLR", sets=[], hide="hide_samplr"),
+    "trig":   dict(title="Trigger2MIDI", sets=[], hide="hide_trig"),
+    "drone":  dict(title="DRONE-8", sets=["lira"], hide="hide_drone"),
+    "mcl":    dict(title="MCL", sets=["mclblob", "mclsd"], hide=None),
+}
+# Add-ons: independent switches on top of the parts.
+ADDONS = {
+    "tools": dict(title="Tools settings", sets=["tools"]),
+    "save":  dict(title="Save DRONE-8 / Looper / SAMPLR settings with the project", sets=["lira", "lirasave"]),
+    "rec":   dict(title="Record DRONE-8 / Looper / SAMPLR onto a pad", sets=["lira", "lirarec"]),
+    "clkmon": dict(title="MIDI clock monitor", sets=["looper", "clkmon"]),
+    "crash": dict(title="Restart record", sets=["crash"]),
+}
+
+# Tests that walk several pages need those pages in the image (they fail on a combination that leaves one out, by design: SONG then ends earlier). They are "n/a"
+# there; the page logic of every combination is covered by test_pages.py (all 16 sets of hidden pages, with and without MCL). MCL is not needed: they fake its blob.
+TEST_PAGES = {
+    "test_looper.py": ["looper", "samplr", "trig", "drone"],
+    "test_t2m_page.py": ["looper", "samplr", "trig", "drone"],
+    "test_lira_screen.py": ["looper", "samplr", "trig", "drone"],
+    "test_lira_rec.py": ["looper", "samplr", "drone"],
+}
+
+assert not set(PRESETS) & set(SETS), "a preset must not share a set's name (tools/combo.py would expand the wrong one)"

@@ -99,11 +99,15 @@ check("SONG from SAMPLR again TRIG, then DRONE-8, then MCL, then the stock song 
 e.call("solo_song_pressed", APP, 0, 0, 0)
 e.call("looper_page_tab")
 check("... then the DRONE-8 page (tab 7), no screen change", screens == [] and e.uc.reg_read(A.UC_ARM_REG_R0) == 7, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
+e.uc.mem_write(0x0807FFF8, bytes.fromhex("00207047"))                          # movs r0,#0 ; bx lr: what every function of the fake blob does
+e.uc.mem_write(0x08120000, b"MCLB" + (5).to_bytes(4, "little") + (0x0807FFF9).to_bytes(4, "little") * 14)   # a blob's entry table (magic, abi 5, 14 pointers): the MCL page exists while it is there
+e.w32(e.sym["mcl_entry"], 0x08120000)
 e.call("solo_song_pressed", APP, 0, 0, 0)
 e.call("looper_page_tab")
 check("... then the MCL page (tab 8), no screen change", screens == [] and e.uc.reg_read(A.UC_ARM_REG_R0) == 8, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
 e.call("solo_song_pressed", APP, 0, 0, 0)
 check("... the stock song screen", screens == [0x2D], screens)
+e.w32(e.sym["mcl_entry"], 0)                                              # (no blob again)
 
 e.call("looper_page_goto", VIEW, 6)
 check("the TRIG page is up (mode 5)", e.r8(PAGE + 76) == 5)

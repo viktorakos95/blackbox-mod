@@ -2123,10 +2123,63 @@ void looper_page_enter(uint8_t *view)
     P->force = 0;
 }
 
-/* The next time the page is shown it opens on this tab (0 MAIN ... 5 SMPLR). */
+/* Which pages the image has. The Looper page hosts them all (SAMPLR, TRIG, DRONE-8 and MCL are tabs of it); patches/hide_*.py set one byte of bb_hide
+ * to 1 to take a page out of the SONG round, BACK, MIX and the recording choices. Every byte 0 = every page there (what all the earlier images are).
+ * bb_host is set by patches/looper.py: without the hooks of `looper` there is no page at all. Pages, by tab: 0 Looper (MAIN, FX, SETUP, MORE), 5 SAMPLR,
+ * 6 TRIG, 7 DRONE-8, 8 MCL (present when the blob is). The round goes in that order and ends on the stock song screen (-1). */
+const volatile uint8_t bb_host = 0;
+const volatile uint8_t bb_hide[4] = {0, 0, 0, 0};
+
+int looper_page_on(int tab)
+{
+    if (!bb_host)
+        return 0;
+    return tab <= 4 ? !bb_hide[0] : tab == 5 ? !bb_hide[1] : tab == 6 ? !bb_hide[2] : tab == 7 ? !bb_hide[3] : tab == 8 ? mcl_page_present() : 0;
+}
+
+/* The page after `tab` in the round that the image has; -1 = the stock song screen. tab -1 (the stock song screen) gives the first page. */
+int looper_page_next(int tab)
+{
+    static const uint8_t order[5] = {0, 5, 6, 7, 8};
+    int from = tab < 0 ? -1 : tab <= 4 ? 0 : tab;
+    for (int i = 0; i < 5; i++)
+        if (order[i] > from && looper_page_on(order[i]))
+            return order[i];
+    return -1;
+}
+
+/* The page before `tab`; -1 = the stock song screen (before the first page). tab -1 gives the last page (BACK on the stock song screen). */
+int looper_page_prev(int tab)
+{
+    static const uint8_t order[5] = {0, 5, 6, 7, 8};
+    int from = tab < 0 ? 99 : tab <= 4 ? 0 : tab;
+    for (int i = 4; i >= 0; i--)
+        if (order[i] < from && looper_page_on(order[i]))
+            return order[i];
+    return -1;
+}
+
+/* The next time the page is shown it opens on this tab (0 MAIN ... 5 SMPLR); a page the image does not have: the first one it has. */
 void looper_page_want(int tab)
 {
+    if (!looper_page_on(tab)) {
+        tab = looper_page_next(-1);
+        if (tab < 0)
+            return;
+    }
     P->_r6[0] = (uint8_t)(tab + 1);
+}
+
+/* BACK from page `from`: the page before it in the round the image has; returns 1 when that was the stock song screen (the caller leaves at once). */
+static int back_page(void *app, int from)
+{
+    int p = looper_page_prev(from);
+    if (p < 0) {
+        solo_song_screen((uint8_t *)app);
+        return 1;
+    }
+    tab_select(p);
+    return 0;
 }
 
 int looper_page_last(void)
@@ -2627,11 +2680,11 @@ static void app_msg(void *app, const uint16_t *msg)
             P->scr_h[0] = sc;
         }
     }
-    if (msg && ((const uint8_t *)app)[0x8ca4] == 0x2d && P->bset[B_BACK] && msg[0] == P->bid[B_BACK] &&
+    if (msg && ((const uint8_t *)app)[0x8ca4] == 0x2d && looper_page_prev(-1) >= 0 && P->bset[B_BACK] && msg[0] == P->bid[B_BACK] &&
         *(const uint32_t *)((const uint8_t *)msg + 0xc) == P->bidx[B_BACK]) {
         if (looper_ticks() - P->btn_t > 20) {                     /* BACK on the stock song screen: the previous page of SONG's round, MCL (DRONE-8 without the blob) */
             P->btn_t = looper_ticks();                            /* (its release, arriving on the page, is the same press) */
-            solo_open_page((uint8_t *)app, mcl_page_present() ? 8 : 7);       /* (the round backwards: MCL when it is there, else DRONE-8) */
+            solo_open_page((uint8_t *)app, looper_page_prev(-1));             /* (the round backwards: its last page: MCL when it is there, else DRONE-8 ...) */
         }
         return;
     }
@@ -2691,7 +2744,8 @@ static void app_msg(void *app, const uint16_t *msg)
                 P->btn_t = looper_ticks();
                 if (P->mode == M_MCL) {
                     if (slot == B_BACK) {                          /* BACK: the previous page of SONG's round (DRONE-8) */
-                        tab_select(7);
+                        if (back_page(app, 8))
+                            return;
                         P->info_on = 0;
                         P->entered = 0;
                         P->sig = 0;
@@ -2708,7 +2762,8 @@ static void app_msg(void *app, const uint16_t *msg)
                         return;
                     }
                     if (slot == B_BACK) {                          /* BACK: the previous page of SONG's round (TRIG) */
-                        tab_select(6);
+                        if (back_page(app, 7))
+                            return;
                         P->info_on = 0;
                         P->entered = 0;
                         P->sig = 0;
@@ -2724,8 +2779,8 @@ static void app_msg(void *app, const uint16_t *msg)
                     if (slot == B_BACK) {                          /* BACK: its first sheet, then the previous page of SONG's round (SAMPLR) */
                         if (t2m_page_sheet_now() != 0)
                             t2m_page_sheet(0);
-                        else
-                            tab_select(5);
+                        else if (back_page(app, 6))
+                            return;
                         P->info_on = 0;
                         P->entered = 0;
                         P->sig = 0;
@@ -2741,8 +2796,8 @@ static void app_msg(void *app, const uint16_t *msg)
                     else if (slot == B_BACK) {                     /* BACK: the PLAY sheet, then the previous page of SONG's round (Looper MAIN) */
                         if (SM_SHEET != 0)
                             SM_SHEET = 0;
-                        else
-                            tab_select(0);
+                        else if (back_page(app, 5))
+                            return;
                         P->info_on = 0;
                         P->entered = 0;
                     } else if (slot == B_STOP)

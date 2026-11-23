@@ -2355,20 +2355,51 @@ void lira_leds(void)
    The recorder node only knows 0..3, so a new choice is stored as 3 (Resam) with the choice remembered here, and where the recorder's
    Resam path copies the master bus over its input bus (0x08062784) the chosen source's last block is written over it instead. The
    recorder runs ahead of the Out 1 stage in a block, so it gets the block before: a constant 256-frame delay. ---- */
-static const char *const rec_names[7] = {"L+R", "Left", "Right", "Resam", "DRONE", "LOOPER", "SAMPLR"};
+extern const volatile uint8_t bb_host;                     /* src/looper_page.c: the image has the pages (patches/looper.py) and which ones (patches/hide_*.py) */
+extern const volatile uint8_t bb_hide[4];
+
+/* The sources the image offers after Resam: bit 0 DRONE, bit 1 LOOPER, bit 2 SAMPLR, each only when the page of that machine is in the image (a source nobody can
+   play is not offered). The cave has no writable data, so the lists are constant, one per mask. L+R .. Resam are the stock four. */
+static unsigned rec_mask(void)
+{
+    if (!bb_host)
+        return 0;
+    return (bb_hide[3] ? 0u : 1u) | (bb_hide[0] ? 0u : 2u) | (bb_hide[1] ? 0u : 4u);
+}
+
+static const char *const rec_tab[8][7] = {
+    {"L+R", "Left", "Right", "Resam"},
+    {"L+R", "Left", "Right", "Resam", "DRONE"},
+    {"L+R", "Left", "Right", "Resam", "LOOPER"},
+    {"L+R", "Left", "Right", "Resam", "DRONE", "LOOPER"},
+    {"L+R", "Left", "Right", "Resam", "SAMPLR"},
+    {"L+R", "Left", "Right", "Resam", "DRONE", "SAMPLR"},
+    {"L+R", "Left", "Right", "Resam", "LOOPER", "SAMPLR"},
+    {"L+R", "Left", "Right", "Resam", "DRONE", "LOOPER", "SAMPLR"},
+};
 
 void rec_input_register(void *table, int param, const char *label, const char *const *names, int count, const char *xml)
 {
     (void)names;
     (void)count;
-    fw_register_list(table, param, label, rec_names, 7, xml);
+    unsigned m = rec_mask();
+    fw_register_list(table, param, label, rec_tab[m], 4 + (int)(m & 1) + (int)(m >> 1 & 1) + (int)(m >> 2 & 1), xml);
+}
+
+int lira_rec_source(int v)                               /* the choice after Resam -> 1 DRONE, 2 LOOPER, 3 SAMPLR (0: none) */
+{
+    unsigned m = rec_mask();
+    for (int k = 0; k < 3; k++)
+        if ((m >> k & 1) && --v == 3)
+            return k + 1;
+    return 0;
 }
 
 int lira_rec_store(int v)                                  /* the stock node's value for a choice; remembers the new ones */
 {
     struct pool *p = pool();
     if (p)
-        p->pg.rec_src = (uint8_t)(v >= 4 ? v - 3 : 0);
+        p->pg.rec_src = (uint8_t)(v >= 4 ? lira_rec_source(v) : 0);
     return v >= 4 ? 3 : v;
 }
 
