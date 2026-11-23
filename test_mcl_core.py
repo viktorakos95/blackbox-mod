@@ -511,16 +511,6 @@ def sample_in_t(a_):
         c.tick(5)
 
 
-# ---- the sample track's arp (MCL's ArpSeqData.enabled: OFF / ON / LATCH / LOCK) is switched off while the view is open (user: LOCK with the TRIG rate stepped a note on every trig)
-if True:
-    c.call("bb_mcl_arp_set", 3)                                        # the track's arp: LOCK
-    sample_in_t(5)
-    sample_in_t(4)
-    for _ in range(10):
-        c.step(20_000_000)
-        c.tick(5)
-    check("the sample track's arp is switched off again while the view is open (it was LOCK)", c.call("bb_mcl_arp_get") == 0, c.call("bb_mcl_arp_get"))
-    sample_in_t(5)
 for _ in range(600):                                                   # (the clock just past a 4-step boundary: the next one is three steps away, so MCL's loop is not waiting for it)
     if rec(5) % 4 == 1:
         break
@@ -552,6 +542,16 @@ for _ in range(20):
 pth = bytes(c.uc.mem_read(c.b["_ZL8smp_path"], 64)).split(b"\0")[0].decode("latin-1")
 check("a file chosen while MCL's current folder is elsewhere (/MCL): opened by the browser's own folder, chosen", pth.endswith("/ramp24.wav") and c.uc.mem_read(c.b["_ZL10smp_loaded"], 1)[0] == 1, pth)
 c.uc.mem_write(c.b["_ZN12_GLOBAL__N_13cwdE"], b"/\0")
+# ---- the sample track's arp (MCL's ArpSeqData.enabled: OFF / ON / LATCH / LOCK) is switched off while the view is open (user: LOCK with the TRIG rate stepped a note on every trig)
+if True:
+    c.call("bb_mcl_arp_set", 3)                                        # the track's arp: LOCK
+    sample_in_t(5)
+    sample_in_t(4)
+    for _ in range(10):
+        c.step(20_000_000)
+        c.tick(5)
+    check("the sample track's arp is switched off again while the view is open (it was LOCK)", c.call("bb_mcl_arp_get") == 0, c.call("bb_mcl_arp_get"))
+    sample_in_t(5)
 # ---- LISTEN through the Machinedrum: track 15 must be an R1 (asked first: it erases the track), then its input and CUE up and the file plays
 def smp_listen():
     c.uc.mem_write(SBUF, bytes(48))
