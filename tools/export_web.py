@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Export the patch sets for the web patcher: docs/full/data.json.
+"""Export the patch sets for the web patcher: docs/data.json.
 
 Only the bytes this project adds or changes are exported (hooks, the compiled code, the ITCM image); no stock bytes. The page checks the user's file by SHA-256
-(the stock image's) and applies the chosen sets with docs/full/apply.js; tools/verify_web.js checks that its output is byte-identical to patch.py's.
+(the stock image's) and applies the chosen sets with docs/apply.js; tools/verify_web.js checks that its output is byte-identical to patch.py's.
 
   python3 tools/export_web.py          (needs `sh build.sh` first; MCL sets are not exported: the blob is not built here)
 """
@@ -60,7 +60,7 @@ out = {
     "sets": sets, "cave": data_cave, "tested": tested,
     "cave_bytes": len(code), "cave_limit": PS.CAVE_LIMIT,
 }
-os.makedirs(os.path.join(ROOT, "docs", "full"), exist_ok=True)
-path = os.path.join(ROOT, "docs", "full", "data.json")
+os.makedirs(os.path.join(ROOT, "docs"), exist_ok=True)
+path = os.path.join(ROOT, "docs", "data.json")
 json.dump(out, open(path, "w"), separators=(",", ":"))
 print(f"wrote {path}: {os.path.getsize(path):,} bytes, {len(sets)} sets, {sum(len(v) for v in sets.values())} hooks, cave {len(code):,}, itcm {len(tail) - fill:,}, {len(tested)} tested combinations")

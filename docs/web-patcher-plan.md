@@ -1,6 +1,6 @@
 # Web patcher for the full mod: what is settled, what is not
 
-Status: **the page is built** (`docs/full/index.html`, data from `python3 tools/export_web.py`, check with `python3 tools/verify_web.py`: 248 combinations, page logic == `patch.py`, byte for byte). It is **not published**: serve `docs/full/` (GitHub Pages from `docs/` on the default branch gives `.../full/`). MCL is greyed out until a real blob can be built and tested. The blockers are worked (dependencies, size, testing) and every part can be left out of an image; see `docs/patch-sets.md`
+Status: **the page is built** (`docs/index.html`, data from `python3 tools/export_web.py`, check with `python3 tools/verify_web.py`: 248 combinations, page logic == `patch.py`, byte for byte). It is **not published**: serve `docs/` (GitHub Pages from `docs/` on the default branch). MCL is greyed out until a real blob can be built and tested. The blockers are worked (dependencies, size, testing) and every part can be left out of an image; see `docs/patch-sets.md`
 (generated) and `tools/combo.py`. This file records the design the results point to and the decisions still open.
 
 ## What the page offers (decided: any combination)

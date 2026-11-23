@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The web patcher does what patch.py does: for every combination of parts (MCL aside) and add-ons, patch.py builds the image and docs/full/apply.js (run by node)
-builds it from docs/full/data.json; the set lists and the SHA-256 must match. `python3 tools/verify_web.py [--quick]` (about 2 s a combination)."""
+"""The web patcher does what patch.py does: for every combination of parts (MCL aside) and add-ons, patch.py builds the image and docs/apply.js (run by node)
+builds it from docs/data.json; the set lists and the SHA-256 must match. `python3 tools/verify_web.py [--quick]` (about 2 s a combination)."""
 import itertools
 import json
 import os
