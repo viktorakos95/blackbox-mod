@@ -567,8 +567,8 @@ sample_in_p(9)
 check("... NO takes it back", rec(6) >> 2 & 1 == 0 and rec(0) == 255, (rec(6), rec(0)))
 sample_in_p(16)
 sample_in_p(13)
-for _ in range(10):
-    c.step(20_000_000)
+for _ in range(260):                                                   # (the sample manager's page 2 asks the Machinedrum for its slots and waits up to 1 s for the answer: the rig's clock has to run for that)
+    c.step(3_000_000)
     c.tick(5)
 check("SEND MD: MCL's sample manager opens on its second page (the browser page, not in cable mode), the view is asked to close", c.call("bb_mcl_shortcut_now") == 5 and c.uc.mem_read(c.b["bb_cable_mode"], 1)[0] == 0, (c.call("bb_mcl_shortcut_now"), c.uc.mem_read(c.b["bb_cable_mode"], 1)[0]))
 pa = c.uc.mem_read(c.b["sample_browser"] + 0, 1)[0] if "sample_browser" in c.b else 0
