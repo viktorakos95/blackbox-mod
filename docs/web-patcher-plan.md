@@ -1,6 +1,6 @@
 # Web patcher for the full mod: what is settled, what is not
 
-Status: **the page is not built.** The blockers are worked (dependencies, size, testing) and every part can be left out of an image; see `docs/patch-sets.md`
+Status: **the page is built** (`docs/full/index.html`, data from `python3 tools/export_web.py`, check with `python3 tools/verify_web.py`: 248 combinations, page logic == `patch.py`, byte for byte). It is **not published**: serve `docs/full/` (GitHub Pages from `docs/` on the default branch gives `.../full/`). MCL is greyed out until a real blob can be built and tested. The blockers are worked (dependencies, size, testing) and every part can be left out of an image; see `docs/patch-sets.md`
 (generated) and `tools/combo.py`. This file records the design the results point to and the decisions still open.
 
 ## What the page offers (decided: any combination)
@@ -16,9 +16,9 @@ Status: **the page is not built.** The blockers are worked (dependencies, size, 
 - MCL combinations are marked **untested**: the real blob could not be built where this was written. Offer them only after `tools/mcl/build_mcl.sh` and
   `python3 tools/combo.py test parts=mcl,...` pass on a machine with the MCL checkout.
 
-## Data and logic (to build)
+## Data and logic (built)
 
-- Export (`tools/export_web.py`, not written): per set, only new bytes (offset + hex; no stock bytes), the stock SHA-256 and size, the canonical order, `requires`,
+- Export (`tools/export_web.py`): per set, only new bytes (offset + hex; no stock bytes), the stock SHA-256 and size, the canonical order, `requires`,
   the parts / add-ons table, and the cave's flag bytes as part of `cave` (`bb_host`, `bb_hide`: they depend on the chosen sets). The cave block is large (cave 153,644
   bytes, ITCM image 63,368, a 0xFF run of about 0xDE000 between): store the fill as `{fill, length}`. `mclsd` has two forms (with / without `lirasave`).
 - Page: check the file's size and SHA-256 against 3.1.9, apply the chosen sets in canonical order, show the result's size and SHA-256, offer the download. Never
