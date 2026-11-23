@@ -521,6 +521,10 @@ if True:
         c.tick(5)
     check("the sample track's arp is switched off again while the view is open (it was LOCK)", c.call("bb_mcl_arp_get") == 0, c.call("bb_mcl_arp_get"))
     sample_in_t(5)
+for _ in range(600):                                                   # (the clock just past a 4-step boundary: the next one is three steps away, so MCL's loop is not waiting for it)
+    if rec(5) % 4 == 1:
+        break
+    t = ticks(t, 8)
 sample_in_t(8)                                                         # the length: from the file -> 4 steps
 sample_in_t(0)
 rl4, armed4 = rec(3), rec(6) >> 2 & 1
