@@ -519,7 +519,9 @@ sample_in_t(8)                                                         # the len
 sample_in_t(0)
 rl4, armed4 = rec(3), rec(6) >> 2 & 1
 check("the record's length set to 4 steps (not the file's): RECORD arms with it", armed4 == 1 and rl4 == 4, (armed4, rl4))
+print("   dbg before cancel", [rec(k) for k in range(7)], "cmd", c.uc.mem_read(c.b["_ZL7smp_cmd"], 1)[0], "arp", c.call("bb_mcl_arp_get"), "state", c.call("bb_mcl_clk_stat", 0))
 sample_in_t(0)
+print("   dbg after cancel ", [rec(k) for k in range(7)], "cmd", c.uc.mem_read(c.b["_ZL7smp_cmd"], 1)[0], "arp", c.call("bb_mcl_arp_get"), "state", c.call("bb_mcl_clk_stat", 0))
 check("RECORD again while it waits: taken back (not armed, MCL's pending record machine gone)", rec(6) >> 2 & 1 == 0 and rec(0) == 255, (rec(6), rec(0)))
 for _ in range(5):
     sample_in_t(8)                                                     # 4 -> 8 -> 12 -> 16 -> 24 -> 32 steps: the first step is far away (MCL's loop waits for a pending transition near its time)
