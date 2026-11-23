@@ -73,5 +73,4 @@ MIT for the original work here ([LICENSE](LICENSE)); third-party parts keep thei
 ([THIRD_PARTY.md](THIRD_PARTY.md)). "1010music" and "Blackbox" are trademarks of 1010music LLC, used only to say what
 this mod is for.
 
-If you are from 1010music and have a concern about anything here, open an issue or email justin.joe.dev@gmail.com and
-it will be dealt with promptly.
+If you are from 1010music and have a concern about anything here, open an issue on this repository and it will be dealt with promptly.

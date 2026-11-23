@@ -29,7 +29,7 @@ Status: **the page is built** (`docs/index.html`, data from `python3 tools/expor
 
 ## Decisions that are the maintainer's
 
-1. **Hosting.** The existing `docs/index.html` is served from GitHub Pages (README links `j3threejay.github.io/blackbox-mod`); the new page would replace or sit beside it.
+1. **Hosting.** `docs/index.html` is the page; serve `docs/` with GitHub Pages from the default branch.
 2. **MCL licence before publishing the MCL part.** `THIRD_PARTY.md` lists only MCL's vendored *platform files* (BSD 3-clause, Mammarella / Li / Odendahl).
    The MCL *core* is compiled into the ~386 KB blob that the patch would carry, under the same authors' licence; clause 2 asks binary redistributions to
    reproduce the notice. The row should say the core is included, and the page should show the notice. Not checked: any further libraries bundled by the MCL
