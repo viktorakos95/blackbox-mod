@@ -562,11 +562,10 @@ if True:
 # ---- OUT = stereo: R1 + R2 on tracks 15 + 16 (as MCL's RAM page does for stereo), taken back together; MANAGER opens MCL's sample manager in the file's folder
 sample_in_p(18)
 sample_in_p(0)
-check("OUT stereo: RECORD arms two tracks (R1 on 15, R2 on 16: both pending)", rec(9) == 2 and rec(10) == 14 and rec(0) == 254 and rec(8) == 254 and rec(6) >> 2 & 1 == 1, (rec(9), rec(10), rec(0), rec(8), rec(6)))
+check("OUT A + B: RECORD arms ONE machine on track 15 (the input balance in the middle takes both inputs)", rec(9) == 1 and rec(10) == 14 and rec(0) == 254 and rec(8) != 254 and rec(6) >> 2 & 1 == 1, (rec(9), rec(10), rec(0), rec(8), rec(6)))
 sample_in_p(9)
-check("... NO takes both back", rec(6) >> 2 & 1 == 0 and rec(0) == 255 and rec(8) == 255, (rec(6), rec(0), rec(8)))
+check("... NO takes it back", rec(6) >> 2 & 1 == 0 and rec(0) == 255, (rec(6), rec(0)))
 sample_in_p(16)
-check("OUT input A again: one track", rec(9) == 1 and rec(10) == 14, (rec(9), rec(10)))
 sample_in_p(13)
 for _ in range(10):
     c.step(20_000_000)

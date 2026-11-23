@@ -63,9 +63,9 @@ static uint8_t slice_want;
 static volatile uint8_t smp_opening;
 static uint8_t smp_trk;                                          /* the record's track: 0 = 15 (RAM page A, RAM 1), 1 = 16 (RAM page B, RAM 2) */
 static uint8_t smp_mon = 3;                                      /* LISTEN's monitor (the R machine's CUE1): 0 off, 1..3 low / mid / high */
-static uint8_t smp_out;                                          /* the player's output / the record's input, as the RAM machines choose it: 0 input A (default), 1 input B (one machine, on track 15 or 16), 2 stereo (inputs A and B: R1 + R2 on tracks 15 + 16) */
-#define ST (smp_out == 2 ? 14 : 14 + smp_trk)                    /* the record's (first) track */
-#define NT (smp_out == 2 ? 2 : 1)                                /* ... and how many */
+static uint8_t smp_out;                                          /* the player's output / the record's input, as the RAM machines choose it: 0 input A (default), 1 input B, 2 A + B (the file as it is; the machine's input balance in the middle takes both) */
+#define ST (14 + smp_trk)                                        /* the record's track */
+#define NT 1
 #define RP (ST == 15 ? ram_page_b : ram_page_a)
 #define RAM_RX (ST == 15 ? RAM_R2_MODEL : RAM_R1_MODEL)
 static uint8_t smp_view, smp_close_req, smp_listen_ask;          /* ... / LISTEN asks before it makes track 15 an R1 */
@@ -848,9 +848,9 @@ static int smp_md_listen(int browsing)
     own_param = 1;
     static const uint8_t cue[4] = {0, 64, 100, 127};
     for (int k = 0; k < NT; k++) {                               /* (as the RAM machines take their input: stereo R1 left / R2 right, mono A left, B right; input level as RECORD records at) */
-        uint8_t t = ST + k, bal = smp_out == 1 ? 127 : smp_out == 0 ? 0 : k ? 127 : 0;
+        uint8_t t = ST + k, bal = smp_out == 1 ? 127 : smp_out == 0 ? 0 : 64;
         MD.setTrackParam(t, RAM_R_MLEV, 0);
-        MD.setTrackParam(t, RAM_R_ILEV, smp_out == 2 ? 48 : 64);
+        MD.setTrackParam(t, RAM_R_ILEV, 64);
         MD.setTrackParam(t, RAM_R_IBAL, bal);
         MD.setTrackParam(t, RAM_R_CUE1, cue[smp_mon & 3]);
         MD.setTrackParam(t, RAM_R_CUE2, cue[smp_mon & 3]);
@@ -875,18 +875,12 @@ static void smp_arp_off(void)
 /* the RAM page's own setups: stereo = R1 on track 15 and R2 on track 16 (inputs A and B), mono = one machine on the chosen track with input A or input B */
 static void smp_rec_setup(void)
 {
-    if (NT == 2)
-        ram_page_a.setup_ram_rec_stereo(14, 48, 1);
-    else
-        RP.setup_ram_rec_mono(ST, 64, smp_out == 1 ? 2 : 1);
+    RP.setup_ram_rec_mono(ST, 64, smp_out == 0 ? 1 : smp_out == 1 ? 2 : 3);   /* (input A: balance left; B: right; 3: an input source with the balance in the middle: both) */
 }
 
 static void smp_play_setup(void)
 {
-    if (NT == 2)
-        ram_page_a.setup_ram_play_stereo(14);
-    else
-        RP.setup_ram_play_mono(ST);
+    RP.setup_ram_play_mono(ST);
 }
 
 static void smp_slice_next(void)
@@ -896,12 +890,7 @@ static void smp_slice_next(void)
         c = 0;
     RP.encoders[2]->cur = (int)c;
     RAMPage::slice_modes[ST == 15 ? 1 : 0] = 0;
-    if (NT == 2) {
-        ram_page_a.slice(14, 15);
-        ram_page_a.slice(15, 14);
-    } else {
-        RP.slice(ST, 255);
-    }
+    RP.slice(ST, 255);
 }
 
 static void smp_apply(void)
@@ -920,7 +909,7 @@ static void smp_apply(void)
         if (!smp_ensure())
             break;
         RP.encoders[3]->cur = (int)(smp_steps() / 4u);
-        RP.encoders[0]->cur = smp_out == 1 ? 2 : 1;                 /* SOURCE_INPA / SOURCE_INPB */
+        RP.encoders[0]->cur = 1;                                    /* (the page's source: inputs) */
         RP.encoders[2]->cur = 0;                                    /* (not sliced) */
         smp_rec_setup();
         smp_arp_off();

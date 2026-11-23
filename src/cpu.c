@@ -1030,7 +1030,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
     char t[48], *p;
     lp_frame(x0, top, MCL_W, MCL_H, MC_WHITE, 1);
     lp_box(x0 + 1, top + 1, MCL_W - 2, 12, MC_WHITE);
-    lp_text(x0 + 5, top + 3, (s->_r2 >> 4 & 3) == 2 ? "SAMPLE  > MD TRACKS 15 + 16" : s->_r2 & 1 ? "SAMPLE  > MD TRACK 16 (RAM 2)" : "SAMPLE  > MD TRACK 15 (RAM 1)", MC_BLACK, 1);
+    lp_text(x0 + 5, top + 3, s->_r2 & 1 ? "SAMPLE  > MD TRACK 16 (RAM 2)" : "SAMPLE  > MD TRACK 15 (RAM 1)", MC_BLACK, 1);
     if (s->nerr) {                                            /* the card's last failures (op.result), for the user to report: 8.5 = a folder not found ... */
         p = t;
         *p++ = 'E';
@@ -1099,7 +1099,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
                 for (const char *c = s->len_set ? " SET" : " AUTO"; *c; c++)
                     *p++ = *c;
             } else {
-                const char *c = i == 1 ? (UI->mono == 0 ? "INPUT A" : UI->mono == 1 ? "INPUT B" : "STEREO") : i == 2 ? lvn[UI->lvl % 6u] : i == 3 ? ((s->_r2 >> 4 & 3) == 2 ? "15+16" : s->_r2 & 1 ? "16" : "15") : mon[(s->_r2 >> 1) & 3];
+                const char *c = i == 1 ? (UI->mono == 0 ? "INPUT A" : UI->mono == 1 ? "INPUT B" : "A + B") : i == 2 ? lvn[UI->lvl % 6u] : i == 3 ? (s->_r2 & 1 ? "16" : "15") : mon[(s->_r2 >> 1) & 3];
                 while (*c)
                     *p++ = *c++;
             }
