@@ -62,10 +62,12 @@ static uint8_t smp_len_enc;                                      /* the record's
 static uint8_t slice_want;
 static volatile uint8_t smp_opening;
 static uint8_t smp_trk;                                          /* the record's track: 0 = 15 (RAM page A, RAM 1), 1 = 16 (RAM page B, RAM 2) */
-static uint8_t smp_mon = 1;                                      /* LISTEN's monitor (the R machine's CUE1): 0 off, 1..3 low / mid / high */
-#define ST (14 + smp_trk)
-#define RP (smp_trk ? ram_page_b : ram_page_a)
-#define RAM_RX (smp_trk ? RAM_R2_MODEL : RAM_R1_MODEL)
+static uint8_t smp_mon = 3;                                      /* LISTEN's monitor (the R machine's CUE1): 0 off, 1..3 low / mid / high */
+static uint8_t smp_out;                                          /* the player's output / the record's input, as the RAM machines choose it: 0 input A (default), 1 input B (one machine, on track 15 or 16), 2 stereo (inputs A and B: R1 + R2 on tracks 15 + 16) */
+#define ST (smp_out == 2 ? 14 : 14 + smp_trk)                    /* the record's (first) track */
+#define NT (smp_out == 2 ? 2 : 1)                                /* ... and how many */
+#define RP (ST == 15 ? ram_page_b : ram_page_a)
+#define RAM_RX (ST == 15 ? RAM_R2_MODEL : RAM_R1_MODEL)
 static uint8_t smp_view, smp_close_req, smp_listen_ask;          /* ... / LISTEN asks before it makes track 15 an R1 */
 static uint32_t smp_listen_t, smp_err_base;                    /* ... / the card layer's failure count when the view opened */                          /* the page shows the SAMPLE view / the Machinedrum's NO asked it to close */                                       /* SLICE pressed before the player was in place: slice once it is */
 static PageIndex smp_back = GRID_PAGE;                           /* the page the browser goes back to */
@@ -714,7 +716,7 @@ static uint32_t smp_steps(void)
 static volatile uint8_t smp_cmd = 0xff;
 HOOK void bb_mcl_sample_input(uint32_t a)
 {
-    if (a < 16)
+    if (a < 32)
         smp_cmd = (uint8_t)a;
 }
 
@@ -737,11 +739,13 @@ static void smp_cancel(void)
     if (g == SLOT_PENDING || g == SLOT_RAM_RECORD) {
         USE_LOCK();
         SET_LOCK();
-        mcl_actions.next_transitions[ST] = (uint16_t)-1;
-        mcl_actions.transition_offsets[ST] = 0;
-        mcl_actions.transition_level[ST] = 0;
-        mcl_actions.send_machine[ST] = 0;
-        grid_page.active_slots[ST] = SLOT_DISABLED;
+        for (int k = 0; k < NT; k++) {
+            mcl_actions.next_transitions[ST + k] = (uint16_t)-1;
+            mcl_actions.transition_offsets[ST + k] = 0;
+            mcl_actions.transition_level[ST + k] = 0;
+            mcl_actions.send_machine[ST + k] = 0;
+            grid_page.active_slots[ST + k] = SLOT_DISABLED;
+        }
         RAMPage::rec_states[0] = RAMPage::rec_states[1] = 0;
         mcl_actions.calc_next_transition();
         CLEAR_LOCK();
@@ -769,7 +773,7 @@ extern "C" void bb_sample_back(void)
 static uint8_t own_param, p0_w, p0_b;                            /* parameter 0 of the sample track: written from outside / blocked, since the view opened (shown in the view) */
 static int param_guard(uint8_t track, uint8_t param)
 {
-    if (own_param || param != 0 || track != ST)
+    if (own_param || param != 0 || track < ST || track >= ST + NT)
         return 0;
     if (!smp_loaded) {
         if (p0_w < 255)
@@ -808,43 +812,52 @@ static int smp_md_listen(int browsing)
 {
     if (!MD.connected)
         return 1;
-    uint8_t fresh = 0;
     uint8_t sl = grid_page.active_slots[ST];
-    if (MD.kit.get_model(ST) != RAM_RX || sl == SLOT_RAM_PLAY || sl == SLOT_PENDING) {   /* (MCL's kit can still say R while its grid has put the P machine there) */
+    int replace = 0;
+    for (int k = 0; k < NT; k++)
+        if (MD.kit.get_model(ST + k) != (ST + k == 15 ? RAM_R2_MODEL : RAM_R1_MODEL))
+            replace = 1;
+    if (replace || sl == SLOT_RAM_PLAY || sl == SLOT_PENDING) {   /* (MCL's kit can still say R while its grid has put the P machine there) */
         if (!smp_listen_ask || millis() - smp_listen_t > 4000u) {
             smp_listen_ask = 1;
             smp_listen_t = millis();
             if (browsing)
-                oled_display.textbox(smp_trk ? "REPLACE TRACK 16?" : "REPLACE TRACK 15?", " SAMPLE AGAIN");
+                oled_display.textbox(NT == 2 ? "REPLACE TRACKS?" : ST == 15 ? "REPLACE TRACK 16?" : "REPLACE TRACK 15?", " SAMPLE AGAIN");
             return 0;
         }
-        MD.assignMachine(ST, RAM_RX);
-        MD.kit.models[ST] = RAM_RX;
-        {                                                        /* (MCL's grid must not still think a P machine plays there: the next LISTEN would ask again, for ever) */
-            USE_LOCK();
+        for (int k = 0; k < NT; k++) {
+            uint8_t m = ST + k == 15 ? RAM_R2_MODEL : RAM_R1_MODEL;
+            MD.assignMachine(ST + k, m);
+            MD.kit.models[ST + k] = m;
+            USE_LOCK();                                          /* (MCL's grid must not still think a P machine plays there: the next LISTEN would ask again, for ever) */
             SET_LOCK();
-            mcl_actions.next_transitions[ST] = (uint16_t)-1;
-            mcl_actions.transition_offsets[ST] = 0;
-            mcl_actions.transition_level[ST] = 0;
-            mcl_actions.send_machine[ST] = 0;
-            grid_page.active_slots[ST] = SLOT_DISABLED;
-            RAMPage::rec_states[0] = RAMPage::rec_states[1] = 0;
-            mcl_actions.calc_next_transition();
+            mcl_actions.next_transitions[ST + k] = (uint16_t)-1;
+            mcl_actions.transition_offsets[ST + k] = 0;
+            mcl_actions.transition_level[ST + k] = 0;
+            mcl_actions.send_machine[ST + k] = 0;
+            grid_page.active_slots[ST + k] = SLOT_DISABLED;
             CLEAR_LOCK();
         }
+        RAMPage::rec_states[0] = RAMPage::rec_states[1] = 0;
+        USE_LOCK();
+        SET_LOCK();
+        mcl_actions.calc_next_transition();
+        CLEAR_LOCK();
     }
-    fresh = 1;                                                   /* (every LISTEN starts the R machine over: parameters again, then one trig) */
     smp_listen_ask = 0;
     own_param = 1;
-    MD.setTrackParam(ST, RAM_R_MLEV, 0);
-    MD.setTrackParam(ST, RAM_R_ILEV, 64);                     /* (the level RECORD records at: setup_ram_rec_mono(.., 64, ..) — what is heard is what P1 will play) */
-    MD.setTrackParam(ST, RAM_R_IBAL, 64);
-    static const uint8_t cue[4] = {0, 40, 80, 110};
-    MD.setTrackParam(ST, RAM_R_CUE1, cue[smp_mon & 3]);
-    MD.setTrackParam(ST, RAM_R_CUE2, 0);
+    static const uint8_t cue[4] = {0, 64, 100, 127};
+    for (int k = 0; k < NT; k++) {                               /* (as the RAM machines take their input: stereo R1 left / R2 right, mono A left, B right; input level as RECORD records at) */
+        uint8_t t = ST + k, bal = smp_out == 1 ? 127 : smp_out == 0 ? 0 : k ? 127 : 0;
+        MD.setTrackParam(t, RAM_R_MLEV, 0);
+        MD.setTrackParam(t, RAM_R_ILEV, smp_out == 2 ? 48 : 64);
+        MD.setTrackParam(t, RAM_R_IBAL, bal);
+        MD.setTrackParam(t, RAM_R_CUE1, cue[smp_mon & 3]);
+        MD.setTrackParam(t, RAM_R_CUE2, cue[smp_mon & 3]);
+    }
     own_param = 0;
-    if (fresh)
-        MD.triggerTrack(ST, 127);
+    for (int k = 0; k < NT; k++)
+        MD.triggerTrack(ST + k, 127);                            /* (every LISTEN starts the R machine over: an R machine passes its input only after a trig) */
     return 1;
 }
 
@@ -852,9 +865,28 @@ static int smp_md_listen(int browsing)
  * enabled in step mode, the notes are played again and again, a different pitch each cycle"): off and empty whenever this file puts a RAM machine on the track */
 static void smp_arp_off(void)
 {
-    ArpSeqTrack &arp = SeqTrackUtil::arp_track(DeviceIdx::Primary, ST);
+    for (int k = 0; k < NT; k++) {
+    ArpSeqTrack &arp = SeqTrackUtil::arp_track(DeviceIdx::Primary, ST + k);
     arp.enabled = ARP_OFF;                                       /* (the switch: OFF / ON / LATCH / LOCK; `mode` is the pattern: the user saw LOCK with the TRIG rate: every trig stepped a note) */
     arp.clear_notes();
+    }
+}
+
+/* the RAM page's own setups: stereo = R1 on track 15 and R2 on track 16 (inputs A and B), mono = one machine on the chosen track with input A or input B */
+static void smp_rec_setup(void)
+{
+    if (NT == 2)
+        ram_page_a.setup_ram_rec_stereo(14, 48, 1);
+    else
+        RP.setup_ram_rec_mono(ST, 64, smp_out == 1 ? 2 : 1);
+}
+
+static void smp_play_setup(void)
+{
+    if (NT == 2)
+        ram_page_a.setup_ram_play_stereo(14);
+    else
+        RP.setup_ram_play_mono(ST);
 }
 
 static void smp_slice_next(void)
@@ -863,8 +895,13 @@ static void smp_slice_next(void)
     if (c > 5u || (1u << c) > rec_len)                           /* (no more slices than steps) */
         c = 0;
     RP.encoders[2]->cur = (int)c;
-    RAMPage::slice_modes[smp_trk] = 0;
-    RP.slice(ST, 255);
+    RAMPage::slice_modes[ST == 15 ? 1 : 0] = 0;
+    if (NT == 2) {
+        ram_page_a.slice(14, 15);
+        ram_page_a.slice(15, 14);
+    } else {
+        RP.slice(ST, 255);
+    }
 }
 
 static void smp_apply(void)
@@ -883,9 +920,9 @@ static void smp_apply(void)
         if (!smp_ensure())
             break;
         RP.encoders[3]->cur = (int)(smp_steps() / 4u);
-        RP.encoders[0]->cur = 1;                                    /* SOURCE_INPA */
+        RP.encoders[0]->cur = smp_out == 1 ? 2 : 1;                 /* SOURCE_INPA / SOURCE_INPB */
         RP.encoders[2]->cur = 0;                                    /* (not sliced) */
-        RP.setup_ram_rec_mono(ST, 64, 1);
+        smp_rec_setup();
         smp_arp_off();
         cable_step = RP.transition_step;
         rec_len = RP.record_len;
@@ -921,7 +958,7 @@ static void smp_apply(void)
             smp_slice_next();
         } else {
             if (grid_page.active_slots[ST] != SLOT_PENDING)
-                RP.setup_ram_play_mono(ST);
+                smp_play_setup();
             smp_arp_off();                                       /* (still the recorder: the player from the next bar) */
             slice_want = 1;
         }
@@ -942,6 +979,38 @@ static void smp_apply(void)
         smp_cancel();
         break;
     case 10:                                                     /* (spare) */
+        break;
+    case 13: {                                                   /* MANAGER: MCL's own sample manager (send the file to the Machinedrum, ...), in the chosen file's folder; the view closes */
+        char dir[192];
+        uint32_t n = 0, last = 0;
+        for (; smp_path[n] && n < sizeof dir - 1; n++) {
+            dir[n] = smp_path[n];
+            if (smp_path[n] == '/')
+                last = n;
+        }
+        dir[last ? last : 1] = 0;
+        if (!last) {
+            dir[0] = '/';
+            dir[1] = 0;
+        }
+        uint32_t m = 0;
+        for (; dir[m] && m < sizeof sample_browser.lwd - 1; m++)
+            sample_browser.lwd[m] = dir[m];
+        sample_browser.lwd[m] = 0;
+        bb_cable_mode = 0;
+        bb_cable_listen = 0;
+        smp_back = GRID_PAGE;
+        smp_opening = 1;
+        mcl.setPage(SAMPLE_BROWSER);
+        smp_opening = 0;
+        smp_close_req = 1;
+        break;
+    }
+    case 16: case 17: case 18:                                   /* OUT: stereo (inputs A + B) / input A / input B: not while it waits or records */
+        if (!cable_armed && !smp_recording && smp_out != (uint8_t)(a - 16)) {
+            smp_out = (uint8_t)(a - 16);
+            smp_recorded = 0;
+        }
         break;
     case 11:                                                     /* TRACK: the record goes to MD track 15 (RAM 1) or 16 (RAM 2); not while it waits or records */
         if (!cable_armed && !smp_recording) {
@@ -993,6 +1062,8 @@ static void smp_apply(void)
 extern "C" bool __real__Z26platform_panel_handleEventP11gui_event_s(gui_event_t *ev);
 extern "C" bool __wrap__Z26platform_panel_handleEventP11gui_event_s(gui_event_t *ev)
 {
+    if (smp_view && EVENT_CMD(ev) && ev->source == MDX_KEY_BANKGROUP && ev->mask == EVENT_BUTTON_PRESSED)
+        smp_close_req = 1;                                       /* (BANK / GROUP, as holding MCL's PAGE: the page selection; the view closes and MCL gets the key) */
     if (smp_view && EVENT_CMD(ev) && ev->source == MDX_KEY_NO && mcl.currentPage() != SAMPLE_BROWSER) {
         if (ev->mask == EVENT_BUTTON_PRESSED) {
             if (cable_armed || smp_recording)
@@ -1018,6 +1089,9 @@ HOOK uint32_t bb_mcl_rec_stat(int which)                            /* (tests) *
     case 4: return bb_player()->state;
     case 5: return MidiClock.div16th_counter;
     case 7: return MD.kit.get_model(ST);
+    case 8: return grid_page.active_slots[15];
+    case 9: return NT;
+    case 10: return ST;
     default: return (uint32_t)smp_recording | (uint32_t)smp_recorded << 1 | (uint32_t)cable_armed << 2;
     }
 }
@@ -1037,12 +1111,10 @@ HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
     s->secs100 = rate ? (uint16_t)((uint64_t)fr * 100u / rate) : 0;
     s->steps = smp_loaded ? (uint8_t)smp_steps() : 0;
     s->len_set = smp_len_enc ? 1 : 0;
-    s->p0 = MD.kit.params[ST][0];
-    s->p0w = p0_w;
-    s->p0b = p0_b;
+    s->p0 = s->p0w = s->p0b = 0;
     s->nd1 = nd_cnt[0];
     s->nd2 = nd_cnt[1];
-    s->_r2 = (uint8_t)(smp_trk | (smp_mon & 3u) << 1 | (smp_opening ? 8u : 0u));    /* track (16 if set), monitor level, the browser opening */
+    s->_r2 = (uint8_t)(smp_trk | (smp_mon & 3u) << 1 | (smp_opening ? 8u : 0u) | (smp_out & 3u) << 4);    /* track (16 if set), monitor level, the browser opening */
     s->slices = smp_recorded && RP.encoders[2]->cur > 0 ? (uint8_t)(1u << RP.encoders[2]->cur) : 0;
     if (smp_close_req)
         s->state = BB_SMP_CLOSE;
@@ -1166,7 +1238,7 @@ static void cable_loop(void)
         uint16_t now = MidiClock.div16th_counter, past = (uint16_t)(now - cable_step);
         if ((int16_t)(now - arm_last) < 0 || (past >= 6 && past < 0x8000u)) {
             RP.encoders[3]->cur = (int)(smp_steps() / 4u);
-            RP.setup_ram_rec_mono(ST, 64, 1);
+            smp_rec_setup();
             smp_arp_off();
             cable_step = RP.transition_step;
             rec_len = RP.record_len;
@@ -1185,7 +1257,7 @@ static void cable_loop(void)
                                                                       take effect a whole record length after it was pressed) */
         if (grid_page.active_slots[ST] == SLOT_RAM_RECORD) {
             smp_link_play = 0;
-            RP.setup_ram_play_mono(ST);
+            smp_play_setup();
             smp_arp_off();
         } else if (!smp_recording) {
             smp_link_play = 0;                                     /* (the recorder never took its place: nothing to follow it) */

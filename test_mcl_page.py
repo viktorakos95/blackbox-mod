@@ -342,7 +342,7 @@ for k, name in enumerate(("CHROMATIC", "DELAY", "REVERB", "MIXER", "GRID")):
     down, up = touch(tile(name), STRIP)
     check(f"{name}: shortcut {k} (kind 6), nothing on release", down == [(6, k, 0)] and up == [], (down, up))
 down, up = touch(tile("SAMPLE"), STRIP)
-check("SAMPLE: the SAMPLE view (input 7 / 4, not a page shortcut)", down == [(7, 4, 0)] and up == [], (down, up))
+check("SAMPLE: the SAMPLE view (input 7 / 4, not a page shortcut)", down == [(7, 4, 0), (7, 16, 0)] and up == [], (down, up))
 down, _ = touch(tile("SAMPLE"), STRIP)
 check("... pressed again: closed (7 / 5)", down == [(7, 5, 0)], down)
 piano = [r for r in page_part(draw()) if r[0] == "lp_box" and r[5] == 0x0E and STRIP_Y + 8 <= r[2] < STRIP_Y + 22 and r[4] == 7]
@@ -439,6 +439,7 @@ MIXER_PREVIEW = _mx
 
 # --- the SAMPLE button's file player (abi 7): the ring onto a bus at 48 kHz, linear interpolation, added to what is there
 LB, RB = 0x24077000, 0x24077800
+u.mem_write(UI + 16, b"\x02")                                     # (OUT 3: stereo, as the player checks below read it)
 
 
 def player(state, wr, rd, end, frac, step, gain=1.0):
@@ -473,6 +474,19 @@ check("... an empty ring (the card behind for a moment): silence, still playing"
 player(0, 64, 0, 64, 0, 65536)
 e.call("mcl_player_active")
 check("... mcl_player_active: 0 while stopped", u.reg_read(UC_ARM_REG_R0) == 0)
+u.mem_write(PRING + 4 * 300, b"".join(struct.pack("<hh", 3000, 0) for _ in range(64)))      # a file with the sound on the left only
+for mono, nm in ((0, "input A"), (1, "input B")):
+    u.mem_write(UI + 16, bytes([mono]))
+    u.mem_write(LB, struct.pack("<16f", *([0.0] * 16)))
+    u.mem_write(RB, struct.pack("<16f", *([0.0] * 16)))
+    player(1, 364, 300, 100000, 0, 65536)
+    e.call("mcl_player_mix", LB, RB, 16)
+    lo, ro = fl(LB, 16), fl(RB, 16)
+    check(f"OUT 3 {nm}: the sum of both channels on {'the left' if mono == 0 else 'the right'} only (a mono cable into one input)",
+          (abs(lo[8] - 1500 / 32768) < 1e-4 and abs(ro[8]) < 1e-6) if mono == 0 else (abs(ro[8] - 1500 / 32768) < 1e-4 and abs(lo[8]) < 1e-6), (lo[8], ro[8]))
+player(0, 64, 0, 64, 0, 65536)
+u.mem_write(UI + 19, b"\x00")                                     # (no BUFFERING left over from the checks above)
+u.mem_write(UI + 16, b"\x00")
 
 # --- the transport for MCL (cpu.c mcl_xport_block): the stock clock object's running byte (+0x38) and tempo (+0x18), with a block count
 CTX, BUFS = 0x24075000, 0x24075800
@@ -526,10 +540,10 @@ c = page_part(draw())
 lt = [r for r in c if r[0] in ("lp_text", "lp_text_c")]
 words = [r[3] if r[0] == "lp_text" else r[-1] for r in lt]
 check("SAMPLE opens the view (input 7 / 4): the file's name, its length and format, READY: PRESS RECORD, the four buttons",
-      (7, 4, 0) in opened and "KICK808.WAV" in words and any("0.42 S" in w_ and "STEREO" in w_ for w_ in words) and all(w_ in words for w_ in ("LENGTH", "16 AUTO", "OUT 3", "STEREO", "LEVEL", "100%", "TRACK", "15", "MONITOR", "OFF")) and "READY: PRESS RECORD" in words and all(b in words for b in ("RECORD", "SLICE", "LISTEN", "BROWSE")), (opened, words[:8]))
+      (7, 4, 0) in opened and "KICK808.WAV" in words and any("0.42 S" in w_ and "STEREO" in w_ for w_ in words) and all(w_ in words for w_ in ("LENGTH", "16 AUTO", "OUT 3", "INPUT A", "LEVEL", "100%", "TRACK", "15", "MONITOR", "OFF", "MANAGER")) and "READY: PRESS RECORD" in words and all(b in words for b in ("RECORD", "SLICE", "LISTEN", "BROWSE")), (opened, words[:8]))
 check("... no 2x MCL picture under it", not [r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128])
-for k, (name, code) in enumerate((("RECORD", 0), ("SLICE", 3), ("LISTEN", 2), ("BROWSE", 1))):     # (the blob's codes: bb_mcl.cpp smp_apply)
-    bx = x0 + 4 + k * 63 + 30
+for k, (name, code) in enumerate((("RECORD", 0), ("SLICE", 3), ("LISTEN", 2), ("BROWSE", 1), ("MANAGER", 13))):     # (the blob's codes: bb_mcl.cpp smp_apply)
+    bx = x0 + 4 + k * 50 + 24
     down, _ = touch(bx, TOP + 128 - 30 + 10)
     check(f"... {name}: input 7 / {code} (the blob's code for it)", down == [(7, code, 0)], down)
 SMP.update(state=2, clock=0)
@@ -562,7 +576,8 @@ m0 = u.mem_read(UI + 16, 1)[0]
 dn, _ = touch(x0 + 78, TOP + 82)
 m1 = u.mem_read(UI + 16, 1)[0]
 touch(x0 + 78, TOP + 82)
-check("the OUT button toggles the player's output (nothing sent to MCL), and back", m0 == 0 and m1 == 1 and u.mem_read(UI + 16, 1)[0] == 0 and dn == [], (m0, m1, dn))
+touch(x0 + 78, TOP + 82)
+check("the OUT button steps stereo / input A / input B (7 / 16 + the choice) and round", m0 == 0 and m1 == 1 and u.mem_read(UI + 16, 1)[0] == 0 and dn == [(7, 17, 0)], (m0, m1, dn))
 l0 = u.mem_read(UI + 18, 1)[0]
 touch(x0 + 128, TOP + 82)
 l1 = u.mem_read(UI + 18, 1)[0]

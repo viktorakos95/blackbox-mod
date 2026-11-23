@@ -749,8 +749,11 @@ void mcl_player_mix(float *l, float *r, int n)
         const int16_t *a = p->ring + 2u * (rd & (BB_PLAYER_RING - 1u)), *b = p->ring + 2u * ((rd + 1u) & (BB_PLAYER_RING - 1u));
         float f = (float)frac * (1.f / 65536.f);
         float vl = ((float)a[0] + (float)(b[0] - a[0]) * f) * g, vr = ((float)a[1] + (float)(b[1] - a[1]) * f) * g;
-        if (UI->mono)
-            vl = vr = (vl + vr) * .5f;
+        if (UI->mono != 2) {                                  /* OUT 3: 0 = input A (a mono cable on the left: the sum there), 1 = input B (on the right); 2 = stereo as it is */
+            float sm = (vl + vr) * .5f;
+            vl = UI->mono == 0 ? sm : 0.f;
+            vr = UI->mono == 1 ? sm : 0.f;
+        }
         static const float lv[6] = {1.f, 1.5f, 2.f, .25f, .5f, .75f};
         float g2 = lv[UI->lvl % 6u];
         float fi = rd < 240u ? (float)rd * (1.f / 240.f) : 1.f;                   /* a 5 ms fade at the start and at the end: no click, no burst into the Machinedrum's input */
@@ -1010,16 +1013,16 @@ const volatile uint32_t mcl_hires = 0;                       /* (1: on; the test
 #define MCL_HIRES mcl_hires
 
 /* The SAMPLE view (abi 9): the chosen file, where its recording stands, and four touch buttons along the bottom (input kind 7). */
-enum { SB_RECORD, SB_SLICE, SB_LISTEN, SB_BROWSE, SB_N };
-static const char *const sb_name[SB_N] = {"RECORD", "SLICE", "LISTEN", "BROWSE"};
+enum { SB_RECORD, SB_SLICE, SB_LISTEN, SB_BROWSE, SB_MGR, SB_N };
+static const char *const sb_name[SB_N] = {"RECORD", "SLICE", "LISTEN", "BROWSE", "MANAGER"};
 #define SB_Y   (MCL_TOP + MCL_H - 30)
 #define SB_H   26
-static int sb_x(int x0, int i) { return x0 + 4 + i * 63; }
+static int sb_x(int x0, int i) { return x0 + 4 + i * 50; }
 #define SL_Y  (MCL_TOP + 72)              /* the row of settings: LENGTH, OUT 3, LEVEL, TRACK, MONITOR (two lines: what, its value) */
 #define SL_H  22
 #define SL_N  5
 static int sl_x(int x0, int i) { return x0 + 4 + i * 50; }
-static const uint8_t sb_code[SB_N] = {0, 3, 2, 1};   /* the blob's codes (input kind 7): 0 RECORD, 1 BROWSE, 2 LISTEN, 3 SLICE */
+static const uint8_t sb_code[SB_N] = {0, 3, 2, 1, 13};   /* the blob's codes (input kind 7): 0 RECORD, 1 BROWSE, 2 LISTEN, 3 SLICE */
 
 static void mcl_sample_view(int x0, const struct bb_sample *s)
 {
@@ -1027,27 +1030,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
     char t[48], *p;
     lp_frame(x0, top, MCL_W, MCL_H, MC_WHITE, 1);
     lp_box(x0 + 1, top + 1, MCL_W - 2, 12, MC_WHITE);
-    lp_text(x0 + 5, top + 3, s->_r2 & 1 ? "SAMPLE  > MD TRACK 16 (RAM 2)" : "SAMPLE  > MD TRACK 15 (RAM 1)", MC_BLACK, 1);
-    {                                                         /* parameter 0 of the track (R: main level, P: pitch) and the writes to it from outside: P0 64 W2 B1 */
-        p = t;
-        for (const char *c = "P0 "; *c; c++)
-            *p++ = *c;
-        p = put_uint(p, s->p0);
-        *p++ = ' ';
-        *p++ = 'W';
-        p = put_uint(p, s->p0w);
-        *p++ = ' ';
-        *p++ = 'B';
-        p = put_uint(p, s->p0b);
-        for (const char *c = " N"; *c; c++)
-            *p++ = *c;
-        p = put_uint(p, s->nd1);
-        *p++ = '/';
-        p = put_uint(p, s->nd2);
-        *p = 0;
-        if (s->state != 0)
-            lp_text(x0 + MCL_W - 6 - 6 * (int)(p - t), top + 52, t, MC_GREY, 1);
-    }
+    lp_text(x0 + 5, top + 3, (s->_r2 >> 4 & 3) == 2 ? "SAMPLE  > MD TRACKS 15 + 16" : s->_r2 & 1 ? "SAMPLE  > MD TRACK 16 (RAM 2)" : "SAMPLE  > MD TRACK 15 (RAM 1)", MC_BLACK, 1);
     if (s->nerr) {                                            /* the card's last failures (op.result), for the user to report: 8.5 = a folder not found ... */
         p = t;
         *p++ = 'E';
@@ -1116,7 +1099,7 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
                 for (const char *c = s->len_set ? " SET" : " AUTO"; *c; c++)
                     *p++ = *c;
             } else {
-                const char *c = i == 1 ? (UI->mono ? "MONO" : "STEREO") : i == 2 ? lvn[UI->lvl % 6u] : i == 3 ? (s->_r2 & 1 ? "16" : "15") : mon[(s->_r2 >> 1) & 3];
+                const char *c = i == 1 ? (UI->mono == 0 ? "INPUT A" : UI->mono == 1 ? "INPUT B" : "STEREO") : i == 2 ? lvn[UI->lvl % 6u] : i == 3 ? ((s->_r2 >> 4 & 3) == 2 ? "15+16" : s->_r2 & 1 ? "16" : "15") : mon[(s->_r2 >> 1) & 3];
                 while (*c)
                     *p++ = *c++;
             }
@@ -1133,9 +1116,11 @@ static void mcl_sample_view(int x0, const struct bb_sample *s)
         int live = s->state != 0 || i == SB_BROWSE;
         if (i == SB_SLICE)
             live = s->state == BB_SMP_DONE;
-        lp_box(bx, SB_Y, 60, SB_H, on ? (i == SB_RECORD ? MC_RED : MC_HOLD) : MC_BLACK);
-        lp_frame(bx, SB_Y, 60, SB_H, live ? MC_WHITE : MC_EDGE, 1);
-        lp_text_c(bx, SB_Y + 9, 60, sb_name[i], on ? MC_BLACK : live ? MC_WHITE : MC_EDGE, 1);
+        if (i == SB_MGR)
+            live = s->state != 0;
+        lp_box(bx, SB_Y, 48, SB_H, on ? (i == SB_RECORD ? MC_RED : MC_HOLD) : MC_BLACK);
+        lp_frame(bx, SB_Y, 48, SB_H, live ? MC_WHITE : MC_EDGE, 1);
+        lp_text_c(bx, SB_Y + 9, 48, sb_name[i], on ? MC_BLACK : live ? MC_WHITE : MC_EDGE, 1);
     }
 }
 
@@ -1228,6 +1213,7 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
                     if (!UI->smp) {
                         UI->smp = 1;
                         e->input(7, 4, 0);
+                        e->input(7, 16 + UI->mono, 0);
                     } else {
                         UI->smp = 0;
                         e->input(7, 5, 0);
@@ -1250,8 +1236,10 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
         UI->sbp = (uint8_t)(5 + i);
         if (i == 0)
             e->input(7, 8, 0);                                /* the record's length */
-        else if (i == 1)
-            UI->mono = !UI->mono;
+        else if (i == 1) {
+            UI->mono = (uint8_t)((UI->mono + 1u) % 3u);
+            e->input(7, 16 + UI->mono, 0);                    /* (the blob takes the record's input from it too: stereo = R1 + R2, A or B = one machine) */
+        }
         else if (i == 2)
             UI->lvl = (uint8_t)((UI->lvl + 1u) % 6u);
         else
@@ -1262,7 +1250,7 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
         struct bb_sample sm;
         if (e->sample(&sm) && !sm.browsing)
             for (int k = 0; k < SB_N; k++)
-                if (x >= sb_x(mcl_x0(w), k) && x < sb_x(mcl_x0(w), k) + 60) {
+                if (x >= sb_x(mcl_x0(w), k) && x < sb_x(mcl_x0(w), k) + 48 && (k != SB_MGR || sm.state != BB_SMP_NONE)) {
                     UI->sbp = (uint8_t)(k + 1);
                     e->input(7, sb_code[k], 0);
                 }
@@ -1274,6 +1262,10 @@ void mcl_page_down(int id, int x, int d, int w, int foot_y)
         i = d < MCL_SPLIT ? 3 : 2;                            /* YES / SHIFT */
     if (i < 0)
         return;
+    if (i == 1 && UI->smp && e->abi >= 9) {                       /* PAGE (held: MCL's page selection): the SAMPLE view gives way to it, the key goes on to MCL */
+        UI->smp = 0;
+        e->input(7, 5, 0);
+    }
     if (i == 0 && UI->smp && e->abi >= 9) {                       /* NO in the SAMPLE view: the record waiting / running is taken back; in the browser: back to the view (nothing chosen: closed); else the view closes */
         struct bb_sample sm;
         if (e->sample(&sm) && (sm.state == BB_SMP_WAITING || sm.state == BB_SMP_RECORDING)) {

@@ -559,6 +559,24 @@ if True:
         c.tick(5)
     check("the sample track's arp is switched off again while the view is open (it was LOCK)", c.call("bb_mcl_arp_get") == 0, c.call("bb_mcl_arp_get"))
     sample_in_t(5)
+# ---- OUT = stereo: R1 + R2 on tracks 15 + 16 (as MCL's RAM page does for stereo), taken back together; MANAGER opens MCL's sample manager in the file's folder
+sample_in_p(18)
+sample_in_p(0)
+check("OUT stereo: RECORD arms two tracks (R1 on 15, R2 on 16: both pending)", rec(9) == 2 and rec(10) == 14 and rec(0) == 254 and rec(8) == 254 and rec(6) >> 2 & 1 == 1, (rec(9), rec(10), rec(0), rec(8), rec(6)))
+sample_in_p(9)
+check("... NO takes both back", rec(6) >> 2 & 1 == 0 and rec(0) == 255 and rec(8) == 255, (rec(6), rec(0), rec(8)))
+sample_in_p(16)
+check("OUT input A again: one track", rec(9) == 1 and rec(10) == 14, (rec(9), rec(10)))
+sample_in_p(13)
+for _ in range(10):
+    c.step(20_000_000)
+    c.tick(5)
+check("MANAGER: MCL's sample manager opens (the browser page, not in cable mode), the view is asked to close", c.call("bb_mcl_shortcut_now") == 5 and c.uc.mem_read(c.b["bb_cable_mode"], 1)[0] == 0, (c.call("bb_mcl_shortcut_now"), c.uc.mem_read(c.b["bb_cable_mode"], 1)[0]))
+sample_in_p(5)
+c.call("bb_mcl_page_req", 0)
+for _ in range(20):
+    c.step(20_000_000)
+    c.tick(5)
 # ---- LISTEN through the Machinedrum: track 15 must be an R1 (asked first: it erases the track), then its input and CUE up and the file plays
 def smp_listen():
     c.uc.mem_write(SBUF, bytes(48))
