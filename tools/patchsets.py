@@ -71,7 +71,7 @@ PRESETS = {
     "looper":      dict(title="Looper family: Looper, SAMPLR, Trigger2MIDI + Tools settings (no DRONE-8 engine)", sets=CORE + ["tools", "looper"]),
     "drone":       dict(title="DRONE-8 with Looper family", sets=CORE + ["tools", "looper", "lira", "lirarec", "lirasave"]),
     "all":         dict(title="Everything except MCL", sets=CORE + ["tools", "looper", "clkmon", "lira", "lirarec", "lirasave", "crash"]),
-    "all+mcl":     dict(title="Everything with MCL (experimental)", sets=CORE + ["tools", "looper", "clkmon", "lira", "lirarec", "lirasave", "crash", "mclblob", "mclsd"],
+    "all+mcl":     dict(title="Everything with MCL", sets=CORE + ["tools", "looper", "clkmon", "lira", "lirarec", "lirasave", "crash", "mclblob", "mclsd"],
                         experimental=True),
 }
 

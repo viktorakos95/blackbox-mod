@@ -436,11 +436,21 @@ def cmd_table(a):
     L += ["", "The 3.1.n features (`" + "`, `".join(PS.CORE) + "`) are one bundle in every preset: the tests only cover them together.", ""]
     if os.path.exists(REGISTRY):
         reg = json.load(open(REGISTRY))
-        L += ["## Tested (docs/combos.json)", "", "| combination | status | tests | cave | tested | source |", "|---|---|---|---|---|---|"]
+        L += ["## Tested (docs/combos.json)", "",
+              "`tests` counts the emulator tests that apply to the combination plus the wiring check (every hook of the chosen sets present, every other set's sites stock). "
+              "A test applies when every image it names is made of the combination's sets; it then runs on the combination's own image.", "",
+              "| combination | status | tests | cave | tested | source |", "|---|---|---|---|---|---|"]
         for cid, e in sorted(reg["combos"].items()):
             t = e.get("tests", {})
-            L.append(f"| `{cid}` | **{e['status']}**{' (experimental)' if e.get('experimental') else ''} | {sum(v == 'pass' for v in t.values())}/{len(t)} | "
-                     f"{e['cave_bytes']:,} | {e['tested_at']} | `{e['source_rev']}` |" + (f" {e.get('reason', '')}" if e["status"] == "untested" else ""))
+            why = f" - {e['reason']}" if e["status"] == "untested" else ""
+            L.append(f"| `{cid}` | **{e['status']}**{' (experimental)' if e.get('experimental') else ''}{why} | {sum(v == 'pass' for v in t.values())}/{len(t)} | "
+                     f"{e['cave_bytes']:,} | {e['tested_at']} | `{e['source_rev']}` |")
+        if os.path.exists(os.path.join(ROOT, "docs", "test-sensitivity.json")):
+            sn = json.load(open(os.path.join(ROOT, "docs", "test-sensitivity.json")))
+            L += ["", f"**What a pass proves.** {len(sn['hook_blind'])} of the {len(sn['hook_blind']) + len(sn['hook_sensitive'])} image tests still pass on an image with NO hooks "
+                  "(stock + the code block): they drive the cave's functions directly. They show the code works, not that a combination's hooks reach it "
+                  "(that is what the wiring check and the hook-sensitive tests are for). The list is `docs/test-sensitivity.json` (`python3 tools/combo.py control`). "
+                  "Nothing here has been run on the unit."]
         if reg.get("host"):
             h = reg["host"]
             L.append(f"\nHost tests (no image; they test the C source): **{h['status']}**, {sum(v == 'pass' for v in h['tests'].values())}/{len(h['tests'])}, {h['tested_at']}, `{h['source_rev']}`.")
