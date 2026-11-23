@@ -103,12 +103,12 @@ def problems(sets):
 
 
 def from_parts(parts, addons=()):
-    """The sets of a free combination: parts = some of looper samplr trig drone mcl, addons = some of tools save rec clkmon crash. Returns the sets in order."""
+    """The sets of a free combination: parts = some of looper samplr trig drone mcl, addons = some of tools rec clkmon crash. Returns the sets in order."""
     parts, sets = set(parts), list(PS.CORE)
     for p in parts:
         sets += PS.FEATURES[p]["sets"]
     if parts & {"looper", "samplr", "trig", "drone", "mcl"}:
-        sets.append("looper")
+        sets += ["looper", "lirasave"]                      # saving comes with every part
         sets += [PS.FEATURES[p]["hide"] for p in ("looper", "samplr", "trig", "drone") if p not in parts]
     for a in addons:
         sets += PS.ADDONS[a]["sets"]

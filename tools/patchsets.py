@@ -51,11 +51,11 @@ SETS = {
     "clkmon":   dict(feature="diag", title="MIDI clock monitor (diagnostics)", requires=["looper"], evidence="doc"),
     "lira":     dict(feature="drone", title="DRONE-8 engine: Fidelity LIRA on Sample pads, MIDI learn", requires=["filter"], evidence="doc",
                      note="The DRONE-8 page itself is part of `looper`; without `looper` the engine is only the pad mode."),
-    "lirarec":  dict(feature="drone", title="Record DRONE-8 / Looper onto a pad (Rec Input)", requires=["lira"], evidence="doc",
-                     note="The LOOPER choice records the looper's output, so it is useful with `looper` (not enforced: the tests run it with and without)."),
-    "lirasave": dict(feature="drone", title="Save DRONE-8 / Looper / SAMPLR settings with the project (bbmod.bin, bbgen.bin) and the SAVE buttons",
-                     requires=["lira"], evidence="doc",
-                     note="Shares two hook points in the card task (0x080743E8, 0x0807443E) with `mclsd`: with both in the image the cave's hook runs first and calls MCL's."),
+    "lirarec":  dict(feature="drone", title="Record DRONE-8 / Looper / SAMPLR onto a pad (Rec Input)", requires=[], evidence="test",
+                     note="Does not need `lira`: test_lira_rec passes on an image without it (checked). The list only offers the machines whose page is in the image."),
+    "lirasave": dict(feature="save", title="Save DRONE-8 / Looper / SAMPLR / Trigger2MIDI settings with the project (bbmod.bin, bbgen.bin) and the SAVE buttons",
+                     requires=[], evidence="test",
+                     note="Comes with every part (tools/combo.py from_parts). Does not need `lira`: the state is allocated by a `filter` hook, and test_lira_save / test_lira_roundtrip pass on an image with `lirasave` and no `lira` (checked). Shares two hook points in the card task (0x080743E8, 0x0807443E) with `mclsd`: with both in the image the cave's hook runs first and calls MCL's."),
     "crash":    dict(feature="diag", title="Restart record (fault vectors, watchdog stamps)", requires=[], evidence="doc"),
     "cave":     dict(feature="base", title="The compiled code (all of it) + the 3.1.<letter> version string", requires=[], evidence="doc"),
     # ---- MCL -----------------------------------------------------------------------------------------------------------------------------------------
@@ -75,7 +75,7 @@ CORE = [s for s in CANON if s in SETS and SETS[s]["feature"] == "core"]
 # All the machine pages (Looper, SAMPLR, TRIG, DRONE-8) come together with `looper` (see its note); the presets below differ by what is wired around them.
 PRESETS = {
     "core":        dict(title="3.1.n features only (no machines)", sets=CORE),
-    "looper-family": dict(title="Looper, SAMPLR, Trigger2MIDI + Tools settings (no DRONE-8)", sets=CORE + ["tools", "looper", "hide_drone"]),
+    "looper-family": dict(title="Looper, SAMPLR, Trigger2MIDI + Tools settings (no DRONE-8)", sets=CORE + ["tools", "looper", "hide_drone", "lirasave"]),
     "drone-family": dict(title="DRONE-8 with Looper, SAMPLR, Trigger2MIDI", sets=CORE + ["tools", "looper", "lira", "lirarec", "lirasave"]),
     "all":         dict(title="Everything except MCL", sets=CORE + ["tools", "looper", "clkmon", "lira", "lirarec", "lirasave", "crash"]),
     "all+mcl":     dict(title="Everything with MCL", sets=CORE + ["tools", "looper", "clkmon", "lira", "lirarec", "lirasave", "crash", "mclblob", "mclsd"],
@@ -98,8 +98,7 @@ FEATURES = {
 # Add-ons: independent switches on top of the parts.
 ADDONS = {
     "tools": dict(title="Tools settings", sets=["tools"]),
-    "save":  dict(title="Save DRONE-8 / Looper / SAMPLR settings with the project", sets=["lira", "lirasave"]),
-    "rec":   dict(title="Record DRONE-8 / Looper / SAMPLR onto a pad", sets=["lira", "lirarec"]),
+    "rec":   dict(title="Record DRONE-8 / Looper / SAMPLR onto a pad", sets=["lirarec"]),
     "clkmon": dict(title="MIDI clock monitor", sets=["looper", "clkmon"]),
     "crash": dict(title="Restart record", sets=["crash"]),
 }
