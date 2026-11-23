@@ -619,6 +619,8 @@ sample_in_t(2)
 ask, pl1 = smp_listen(), rec(4)
 sample_in_t(2)
 m1, pl2 = rec(7), rec(4)
+rd = lambda n, k=1: int.from_bytes(bytes(c.uc.mem_read(c.b[n], k)), "little")
+print("     (debug) after LISTEN x2: cmd %d ask %d listen_t %d armed %d rec %d page %d clk %d" % (rd("_ZL7smp_cmd"), rd("_ZL14smp_listen_ask"), rd("_ZL12smp_listen_t", 4), rd("_ZL11cable_armed"), rd("_ZL13smp_recording"), rec(11), stat(0)))
 check("LISTEN with something else on track 15: it asks first (nothing played), LISTEN again: track 15 is an R1 (160) and the file plays",
       m0 != 160 and ask == 2 and pl1 == 0 and m1 == 160 and pl2 == 1, (m0, ask, pl1, m1, pl2))
 c.call("bb_player_stop")
