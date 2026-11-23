@@ -511,28 +511,33 @@ def sample_in_t(a_):
         c.tick(5)
 
 
-for _ in range(600):                                                   # (the clock just past a 4-step boundary: the next one is three steps away, so MCL's loop is not waiting for it)
-    if rec(5) % 4 == 1:
-        break
-    t = ticks(t, 8)
-sample_in_t(8)                                                         # the length: from the file -> 4 steps
-sample_in_t(0)
+def sample_in_p(a_):
+    """a SAMPLE-view command with the clock paused (FC), then going on (FB): MCL's loop waits for a pending transition near its time while the clock runs in this rig,
+    so a command could sit unprocessed; stopped, it is taken at once. The record waiting for its step stays armed (no tick passes)."""
+    c.call("bb_mcl_clk_transport", 0xFC)
+    c.call("bb_mcl_sample_input", a_)
+    for _ in range(6):
+        c.step(20_000_000)
+        c.tick(5)
+    c.call("bb_mcl_clk_transport", 0xFB)
+
+
+sample_in_p(8)                                                         # the length: from the file -> 4 steps
+sample_in_p(0)
 rl4, armed4 = rec(3), rec(6) >> 2 & 1
 check("the record's length set to 4 steps (not the file's): RECORD arms with it", armed4 == 1 and rl4 == 4, (armed4, rl4))
-print("   dbg before cancel", [rec(k) for k in range(7)], "cmd", c.uc.mem_read(c.b["_ZL7smp_cmd"], 1)[0], "arp", c.call("bb_mcl_arp_get"), "state", c.call("bb_mcl_clk_stat", 0))
-sample_in_t(0)
-print("   dbg after cancel ", [rec(k) for k in range(7)], "cmd", c.uc.mem_read(c.b["_ZL7smp_cmd"], 1)[0], "arp", c.call("bb_mcl_arp_get"), "state", c.call("bb_mcl_clk_stat", 0))
+sample_in_p(0)
 check("RECORD again while it waits: taken back (not armed, MCL's pending record machine gone)", rec(6) >> 2 & 1 == 0 and rec(0) == 255, (rec(6), rec(0)))
 for _ in range(5):
-    sample_in_t(8)                                                     # 4 -> 8 -> 12 -> 16 -> 24 -> 32 steps: the first step is far away (MCL's loop waits for a pending transition near its time)
-sample_in_t(0)
+    sample_in_p(8)                                                     # 4 -> 8 -> 12 -> 16 -> 24 -> 32 steps
+sample_in_p(0)
 armed_again = rec(6) >> 2 & 1
-sample_in_t(9)
+sample_in_p(9)
 check("NO (code 9) while it waits: taken back too", armed_again == 1 and rec(3) == 32 and rec(6) >> 2 & 1 == 0 and rec(0) == 255, (armed_again, rec(3), rec(6), rec(0)))
-sample_in_t(8)                                                         # 32 -> from the file
-sample_in_t(0)
-check("... the length is the file's again after the cycle (2 s at the running 120 BPM: 17 steps, in bars of 4: 20)", rec(3) == 20, rec(3))
-sample_in_t(9)
+sample_in_p(8)                                                         # 32 -> from the file
+sample_in_p(0)
+check("... the length is the file's again after the cycle (2 s at the Blackbox's 60 BPM: 12 steps)", rec(3) == 12, rec(3))
+sample_in_p(9)
 # ---- MCL's current folder moved by another part of MCL (its grid / project files while a sequence plays): a file chosen in the browser still opens
 c.uc.mem_write(c.b["_ZL8smp_path"], bytes(16))
 c.uc.mem_write(c.b["_ZN12_GLOBAL__N_13cwdE"], b"/MCL\0")
