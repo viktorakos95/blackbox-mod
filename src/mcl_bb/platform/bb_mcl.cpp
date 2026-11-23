@@ -1089,6 +1089,7 @@ HOOK uint32_t bb_mcl_rec_stat(int which)                            /* (tests) *
     case 8: return grid_page.active_slots[15];
     case 9: return NT;
     case 10: return ST;
+    case 11: return mcl.currentPage();
     default: return (uint32_t)smp_recording | (uint32_t)smp_recorded << 1 | (uint32_t)cable_armed << 2;
     }
 }
