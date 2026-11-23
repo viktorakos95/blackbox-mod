@@ -540,9 +540,9 @@ c = page_part(draw())
 lt = [r for r in c if r[0] in ("lp_text", "lp_text_c")]
 words = [r[3] if r[0] == "lp_text" else r[-1] for r in lt]
 check("SAMPLE opens the view (input 7 / 4): the file's name, its length and format, READY: PRESS RECORD, the four buttons",
-      (7, 4, 0) in opened and "KICK808.WAV" in words and any("0.42 S" in w_ and "STEREO" in w_ for w_ in words) and all(w_ in words for w_ in ("LENGTH", "16 AUTO", "OUT 3", "INPUT A", "LEVEL", "100%", "TRACK", "15", "MONITOR", "OFF", "MANAGER")) and "READY: PRESS RECORD" in words and all(b in words for b in ("RECORD", "SLICE", "LISTEN", "BROWSE")), (opened, words[:8]))
+      (7, 4, 0) in opened and "KICK808.WAV" in words and any("0.42 S" in w_ and "STEREO" in w_ for w_ in words) and all(w_ in words for w_ in ("LENGTH", "16 AUTO", "OUT 3", "INPUT A", "LEVEL", "100%", "TRACK", "15", "MONITOR", "OFF", "SEND MD")) and "READY: PRESS RECORD" in words and all(b in words for b in ("RECORD", "SLICE", "LISTEN", "BROWSE")), (opened, words[:8]))
 check("... no 2x MCL picture under it", not [r for r in c if r[0] == "lp_box" and r[4] == 2 and TOP + 14 <= r[2] < TOP + 128])
-for k, (name, code) in enumerate((("RECORD", 0), ("SLICE", 3), ("LISTEN", 2), ("BROWSE", 1), ("MANAGER", 13))):     # (the blob's codes: bb_mcl.cpp smp_apply)
+for k, (name, code) in enumerate((("RECORD", 0), ("SLICE", 3), ("LISTEN", 2), ("BROWSE", 1), ("SEND MD", 13))):     # (the blob's codes: bb_mcl.cpp smp_apply)
     bx = x0 + 4 + k * 50 + 24
     down, _ = touch(bx, TOP + 128 - 30 + 10)
     check(f"... {name}: input 7 / {code} (the blob's code for it)", down == [(7, code, 0)], down)

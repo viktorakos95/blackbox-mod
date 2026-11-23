@@ -570,7 +570,8 @@ sample_in_p(13)
 for _ in range(10):
     c.step(20_000_000)
     c.tick(5)
-check("MANAGER: MCL's sample manager opens (the browser page, not in cable mode), the view is asked to close", c.call("bb_mcl_shortcut_now") == 5 and c.uc.mem_read(c.b["bb_cable_mode"], 1)[0] == 0, (c.call("bb_mcl_shortcut_now"), c.uc.mem_read(c.b["bb_cable_mode"], 1)[0]))
+check("SEND MD: MCL's sample manager opens on its second page (the browser page, not in cable mode), the view is asked to close", c.call("bb_mcl_shortcut_now") == 5 and c.uc.mem_read(c.b["bb_cable_mode"], 1)[0] == 0, (c.call("bb_mcl_shortcut_now"), c.uc.mem_read(c.b["bb_cable_mode"], 1)[0]))
+pa = c.uc.mem_read(c.b["sample_browser"] + 0, 1)[0] if "sample_browser" in c.b else 0
 sample_in_p(5)
 c.call("bb_mcl_page_req", 0)
 for _ in range(20):

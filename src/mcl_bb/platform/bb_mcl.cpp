@@ -969,7 +969,7 @@ static void smp_apply(void)
         break;
     case 10:                                                     /* (spare) */
         break;
-    case 13: {                                                   /* MANAGER: MCL's own sample manager (send the file to the Machinedrum, ...), in the chosen file's folder; the view closes */
+    case 13: {                                                   /* SEND MD: MCL's sample manager's second page (the Machinedrum's sample slots) with the chosen file ready: pick the slot, YES sends it; the view closes */
         char dir[192];
         uint32_t n = 0, last = 0;
         for (; smp_path[n] && n < sizeof dir - 1; n++) {
@@ -992,6 +992,14 @@ static void smp_apply(void)
         smp_opening = 1;
         mcl.setPage(SAMPLE_BROWSER);
         smp_opening = 0;
+        if (smp_loaded) {                                        /* the file is the sample manager's chosen one and its page 2 (the Machinedrum's sample slots) shows: pick the slot, YES sends it */
+            SD.chdir(sample_browser.lwd);
+            FileBrowserPage::file.close();
+            FileBrowserPage::file.open(smp_name, O_READ);
+            sample_browser.pending_action = PA_SELECT;
+            sample_browser.show_ram_slots = false;
+            sample_browser.init(true);
+        }
         smp_close_req = 1;
         break;
     }

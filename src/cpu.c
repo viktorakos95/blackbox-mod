@@ -1014,7 +1014,7 @@ const volatile uint32_t mcl_hires = 0;                       /* (1: on; the test
 
 /* The SAMPLE view (abi 9): the chosen file, where its recording stands, and four touch buttons along the bottom (input kind 7). */
 enum { SB_RECORD, SB_SLICE, SB_LISTEN, SB_BROWSE, SB_MGR, SB_N };
-static const char *const sb_name[SB_N] = {"RECORD", "SLICE", "LISTEN", "BROWSE", "MANAGER"};
+static const char *const sb_name[SB_N] = {"RECORD", "SLICE", "LISTEN", "BROWSE", "SEND MD"};
 #define SB_Y   (MCL_TOP + MCL_H - 30)
 #define SB_H   26
 static int sb_x(int x0, int i) { return x0 + 4 + i * 50; }
