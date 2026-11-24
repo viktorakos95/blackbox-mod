@@ -3,7 +3,7 @@
   "all": {
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [
     "test_clkout.py",
@@ -24,10 +24,10 @@
     "test_solo.py",
     "test_t2m_bb.py"
    ],
-   "host_tests": "not recorded: run `combo.py host --record`",
+   "host_tests": "pass",
    "id": "all",
    "image_bytes": 1701240,
-   "image_sha256": "2e0afa47a6df2a1f5a68c4045ec59848a6557aa5c022d8bf1eead4ad99510e88",
+   "image_sha256": "4a702548faa3287e71a06371252ec7bff826b3bd03ad06028651ea583f707eb2",
    "n_a": [],
    "scope": "full",
    "sets": [
@@ -53,7 +53,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -136,7 +136,7 @@
   "core": {
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [
     "test_duck.py",
@@ -146,10 +146,10 @@
     "test_seqfix.py",
     "test_solo.py"
    ],
-   "host_tests": "not recorded: run `combo.py host --record`",
+   "host_tests": "pass",
    "id": "core",
    "image_bytes": 1701240,
-   "image_sha256": "70239d17546b693bb672a6e90070474776267087e53e6f905800585a29a2b9ce",
+   "image_sha256": "4a19f03502967500c0fb95ff691bd107f3d5bc2a64147311ba0b23740d0e4d4c",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -188,7 +188,7 @@
     "munchi",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -214,7 +214,7 @@
   "drone-family": {
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [
     "test_clkout.py",
@@ -235,10 +235,10 @@
     "test_solo.py",
     "test_t2m_bb.py"
    ],
-   "host_tests": "not recorded: run `combo.py host --record`",
+   "host_tests": "pass",
    "id": "drone-family",
    "image_bytes": 1701240,
-   "image_sha256": "70a66080ce9516733d3ebbddae5752521e89fccbcc7eabd99fc0c17fd0ac9a01",
+   "image_sha256": "622e599ca5e8c203e3731be7186a8c0c8fae46c5147e596d49fc02b5a7129c6f",
    "n_a": [
     "test_clkmon.py",
     "test_crash.py"
@@ -265,7 +265,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -308,7 +308,7 @@
   "looper-family": {
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [
     "test_clkout.py",
@@ -323,10 +323,10 @@
     "test_solo.py",
     "test_t2m_bb.py"
    ],
-   "host_tests": "not recorded: run `combo.py host --record`",
+   "host_tests": "pass",
    "id": "looper-family",
    "image_bytes": 1701240,
-   "image_sha256": "215f34a1616a5e7abc17177ddf51e1489de13ce5f6e12b2b70afa74bb90ab260",
+   "image_sha256": "5621c6cb5c24f2613e856464de8929d4236ea0c6d1fe807e0623641dcba888c6",
    "n_a": [
     "test_clkmon.py",
     "test_crash.py",
@@ -363,7 +363,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -396,13 +396,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-drone",
    "image_bytes": 1701240,
-   "image_sha256": "0103932929c72abb2b207650dc39395ab8448366e4907fb9a3c2e2633d3cf05a",
+   "image_sha256": "c3183bfe927adff0033c1fa44390498b39f8a177f4b3478f872a99c0b414258e",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -423,6 +423,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -455,7 +456,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -466,7 +467,6 @@
     "test_filter.py": "pass",
     "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "wiring": "pass"
@@ -482,13 +482,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "b86feaffaf0faebdfc128636bfc0bc2758307aa8814fafe6e8e3cd1a3d1da2b6",
+   "image_sha256": "732805b09983915c53ab00c7e45ddaa0a92416787688401836f22799e04050e9",
    "n_a": [
     "test_clkout.py",
     "test_duck.py",
@@ -507,6 +507,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -542,7 +543,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -555,7 +556,6 @@
     "test_filter.py": "pass",
     "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
@@ -567,13 +567,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper",
    "image_bytes": 1701240,
-   "image_sha256": "69a5105a9d234251a1338417bcfdc54361bf065fadf3308b618aab3d20d689c8",
+   "image_sha256": "b5943f17f7a38eaeec42faddbd5bc3bcd5c313bb4405252f51e3c69f089a830b",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -595,6 +595,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -626,7 +627,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -636,7 +637,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "wiring": "pass"
@@ -647,13 +647,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-drone",
    "image_bytes": 1701240,
-   "image_sha256": "886a56a225a16620ad926357d41363d366e8d4cd0427d605c09c0cc97ce93d08",
+   "image_sha256": "a17f100823e4616ec68e568495c58918a9b1ec64a577215ac5cf8cb5bb1db33f",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -674,6 +674,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -706,7 +707,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -717,7 +718,6 @@
     "test_filter.py": "pass",
     "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "wiring": "pass"
@@ -733,13 +733,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "fea1253399658a8a356fb308de4aba889baf06ba44c2c3876cce2cfa9faf8aa6",
+   "image_sha256": "fd034d35bc38aa1ff5b136f63dcdca3da69f909cf6fc200387fb8fe141b4c128",
    "n_a": [
     "test_clkout.py",
     "test_duck.py",
@@ -758,6 +758,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -793,7 +794,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -806,7 +807,6 @@
     "test_filter.py": "pass",
     "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
@@ -818,13 +818,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-samplr",
    "image_bytes": 1701240,
-   "image_sha256": "52e9545b86995c02197477e906429e619b7d2f846b54eba2d4ee6ec29d1cf55f",
+   "image_sha256": "ae493c6610591f0ac3d1b361c447d36e79677118c008d319a994a3a98ddf229f",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -846,6 +846,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -877,7 +878,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -887,7 +888,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "wiring": "pass"
@@ -898,13 +898,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-samplr-drone",
    "image_bytes": 1701240,
-   "image_sha256": "7193cce871b512547a30362898ba0b48f2ad6c69b3dfa9dbe5ccb00b0002fa3d",
+   "image_sha256": "3e5202a71cc9685ab1f4a36e6984ba3be31ad7f62125c8adc662e699f120501d",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -957,7 +957,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -984,13 +984,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-samplr-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "d8930cef09fdcf450aeba56291777e8efe7da18346548cdd629a36a3f02ad4ee",
+   "image_sha256": "bf145fdc8a932f372b1c7ca4386c3fd4b9694c13ed97bf1f05604e9c31939245",
    "n_a": [
     "test_clkout.py",
     "test_duck.py",
@@ -1044,7 +1044,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -1069,13 +1069,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-samplr-trig",
    "image_bytes": 1701240,
-   "image_sha256": "67ad929df20ec334741ad8bd8bba1a59ea18623b15faa4b709e3f8efcf1a9cb8",
+   "image_sha256": "5c2cc70a0d855cc70b9cbc697274cdf1d1f6e414646a691dbbedbb58fbdb7e90",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -1129,7 +1129,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -1149,13 +1149,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-samplr-trig-drone",
    "image_bytes": 1701240,
-   "image_sha256": "89afdfae7d649366f7d94116d0cd07a22dd380f4c58724813ab720586af72ab5",
+   "image_sha256": "aae2ed6775d6c3bad8ac8c58063eb977aa90d7bc6660c0570abacdb7525050f2",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -1205,7 +1205,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -1235,13 +1235,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-samplr-trig-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "2e0afa47a6df2a1f5a68c4045ec59848a6557aa5c022d8bf1eead4ad99510e88",
+   "image_sha256": "4a702548faa3287e71a06371252ec7bff826b3bd03ad06028651ea583f707eb2",
    "n_a": [
     "test_clkout.py",
     "test_duck.py",
@@ -1292,7 +1292,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -1325,13 +1325,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-samplr-trig_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "e628fdd57ee64d9b0cc763d8bc67efc98c5f4b01e6393424d6daf35241943f3e",
+   "image_sha256": "e2b29d3d0502e33555ad9843c5cba36d03e689749bc7f8e2341c38828bc0852d",
    "n_a": [
     "test_clkout.py",
     "test_crash.py",
@@ -1387,7 +1387,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -1414,13 +1414,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-samplr_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "623c9ba141671224db6ab19a35036ede073f048b04917abfe5c7bd4d89d7e45b",
+   "image_sha256": "ee24caed02fbf62b63c2f20375e8e43d1a8b3a3e587c460739e21e25a4bec204",
    "n_a": [
     "test_clkout.py",
     "test_crash.py",
@@ -1441,6 +1441,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -1475,7 +1476,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -1486,7 +1487,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
@@ -1498,13 +1498,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-trig",
    "image_bytes": 1701240,
-   "image_sha256": "3ad47058349e61559dac9ad739d111dcedc0561dd372ca04cedee7bd9bbf8875",
+   "image_sha256": "19a0aafbcba498f11b41c2acab7441466455a577c6f795e23611b296f31098c5",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -1526,6 +1526,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -1557,7 +1558,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -1567,7 +1568,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "wiring": "pass"
@@ -1578,13 +1578,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-trig-drone",
    "image_bytes": 1701240,
-   "image_sha256": "c143c4c06cc9434e3044c90640bce072caa411f410a1c4855867102b80935071",
+   "image_sha256": "ebe8b5fa66d18cbd7e232c9cb7670a38e1739dd94d6f680de3095d3796b3f427",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -1638,7 +1638,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -1664,13 +1664,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-trig-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "2e4adcea31eeeabfc9677fa28689acee287560f2838cfc255d1e59ab7d1e43cc",
+   "image_sha256": "35074c57020c7a27611466eb20f097f4fd17cee92b0be3f17c290fdf67a7f138",
    "n_a": [
     "test_clkout.py",
     "test_duck.py",
@@ -1725,7 +1725,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -1754,13 +1754,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper-trig_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "084c9c0e6e42db8f22c8eaf3063031251b3f7064f47dfb765f6ea9ec98e58fc3",
+   "image_sha256": "d8bc3de7c024812021c3698c2f0169b414e4ead0e7b1b03ebe399e31c990cd8e",
    "n_a": [
     "test_clkout.py",
     "test_crash.py",
@@ -1781,6 +1781,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -1815,7 +1816,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -1826,7 +1827,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
@@ -1843,13 +1843,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-looper_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "eed3e75fae3448f95aa535db3f039ea73d65bc3245ed4a765f35f923a51ba710",
+   "image_sha256": "9988f113555af32818c3e6e7e4a97dc972a7c91b01e2d18ad58ee9483c8253fe",
    "n_a": [
     "test_clkout.py",
     "test_crash.py",
@@ -1870,6 +1870,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -1904,7 +1905,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -1915,7 +1916,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
@@ -3399,13 +3399,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-samplr",
    "image_bytes": 1701240,
-   "image_sha256": "10412bcf0614145024390f5c04869265996603fba0f5e22cc9da656b6b272dbb",
+   "image_sha256": "528eaafae0fd7fd79c1493b809658f011cc34dda7698d7e1e56c4dd887967215",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -3427,6 +3427,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -3458,7 +3459,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -3468,7 +3469,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "wiring": "pass"
@@ -3479,13 +3479,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-samplr-drone",
    "image_bytes": 1701240,
-   "image_sha256": "8a0bdabce05e64f5985add1df410742e291318e54663eb77abb952506b2936aa",
+   "image_sha256": "0d45f1b43e08ad2f7ed2e8bdacf81be29dd672b80de16c606a9d389b20d01780",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -3506,6 +3506,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -3538,7 +3539,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -3549,7 +3550,6 @@
     "test_filter.py": "pass",
     "test_lira_ui.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "wiring": "pass"
@@ -3565,13 +3565,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-samplr-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "8d6165992dc8bc0113d586127519a503a08b3a80a72d5e29d82c8daf4e997505",
+   "image_sha256": "0739c1a5101396f21152552627e5596d5d7baeac13c7d976959b0b40ff787e18",
    "n_a": [
     "test_clkout.py",
     "test_duck.py",
@@ -3626,7 +3626,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -3650,13 +3650,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-samplr-trig",
    "image_bytes": 1701240,
-   "image_sha256": "adf0cdcfc52f774920fea63cafefd7dc8c0112f300bc20f682187a0fa621870b",
+   "image_sha256": "a101b39288045f88323a3dd40b2cad8698f5c2a8b49d9951d67bf371b507f7e1",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -3678,6 +3678,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -3709,7 +3710,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -3719,7 +3720,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "wiring": "pass"
@@ -3730,13 +3730,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-samplr-trig-drone",
    "image_bytes": 1701240,
-   "image_sha256": "715283fb9140d4aef363021c96e134b4e384675b1fb8dc81cc7ffa6d05f41a62",
+   "image_sha256": "932546e5a236f4139a8bf1f109f3a69c9389ca6e6a9076b818a4a477320cb568",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -3790,7 +3790,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -3816,13 +3816,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-samplr-trig-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "829092ad6a21c353c31c91cfea4638aa97a4107126dd301c385cd77339844c2b",
+   "image_sha256": "30c7d20a0f414c2b7ce32f130104fb5ca4f660476c994b22b0166bbaf9330fe4",
    "n_a": [
     "test_clkout.py",
     "test_duck.py",
@@ -3877,7 +3877,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -3906,13 +3906,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-samplr-trig_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "7af200bef57fd57f5a3fbc7b3464158a72bad957dc1f7d3357548bccff6a7e6a",
+   "image_sha256": "d67c9054d226c8db963f6c9b488afe71602e582ecaaa5e960ae9b3a01a61cb6a",
    "n_a": [
     "test_clkout.py",
     "test_crash.py",
@@ -3933,6 +3933,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -3967,7 +3968,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -3978,7 +3979,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
@@ -3995,13 +3995,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-samplr_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "35149909c2f54194cc072c346573aa964c416b0afb6b5727be8ad90fd7265fee",
+   "image_sha256": "f0ed140c7bc61f13b1c234edcd1039525c521130a9947028abc8ae8f08f67d35",
    "n_a": [
     "test_clkout.py",
     "test_crash.py",
@@ -4022,6 +4022,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -4056,7 +4057,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -4067,7 +4068,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",
@@ -4079,13 +4079,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-trig",
    "image_bytes": 1701240,
-   "image_sha256": "a8ca17d70083f0c1c7403530b71173554a63157c77b827e1e59e417dabd0d2d1",
+   "image_sha256": "1a1e5c19f44f65c9db8d208d33eacca383eba98a1d6abdcf7ac91d9b37684b72",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -4107,6 +4107,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -4138,7 +4139,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -4148,7 +4149,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "wiring": "pass"
@@ -4159,13 +4159,13 @@
    "addons": [],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-trig-drone",
    "image_bytes": 1701240,
-   "image_sha256": "75888890e28d7202e0af7c7b39bcfb13febbbc3c907d6790988b5c3fa07caa88",
+   "image_sha256": "0893e7fc935a5aab628394c1a761ff53668d893424b30b02302db98a3a08660b",
    "n_a": [
     "test_clkmon.py",
     "test_clkout.py",
@@ -4219,7 +4219,7 @@
     "lirasave",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -4245,13 +4245,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-trig-drone_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "cd59f3f0cfde0eb1dbd0d4cfdcf46a3d6fbffd21c093e721879e137e4f1fe403",
+   "image_sha256": "03ecfd6bfbf87bd27a2579949cf4846cfbb1c33aa08f6ff02bacb29804a316ca",
    "n_a": [
     "test_clkout.py",
     "test_duck.py",
@@ -4306,7 +4306,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "d039c86",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -4335,13 +4335,13 @@
    ],
    "cave_bytes": 157260,
    "cave_limit": 188808,
-   "cave_sha256": "a813bc871c39d8902a790a935d9c15fec64c6fe857aaf6516880ebea0de4e54e",
+   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
    "experimental": false,
    "hook_blind_tests": [],
    "host_tests": "pass",
    "id": "p-trig_a-tools-rec-clkmon-crash",
    "image_bytes": 1701240,
-   "image_sha256": "3f251b8634cc513a57f19450829a80b309c4509f3fe0f3854086e400e117702f",
+   "image_sha256": "7f55b4053bed6f76b83c845d36a88f7b7ca60c86150dd9029bc89032ace0f2a9",
    "n_a": [
     "test_clkout.py",
     "test_crash.py",
@@ -4362,6 +4362,7 @@
     "test_munchi.py",
     "test_od.py",
     "test_samplr.py",
+    "test_savexml.py",
     "test_seqfix.py",
     "test_solo.py",
     "test_t2m_bb.py",
@@ -4396,7 +4397,7 @@
     "crash",
     "cave"
    ],
-   "source_rev": "ae75c28",
+   "source_rev": "1c1e356",
    "status": "pass",
    "tested_at": "2026-11-24",
    "tests": {
@@ -4407,7 +4408,6 @@
     "test_cpu.py": "pass",
     "test_filter.py": "pass",
     "test_machine.py": "pass",
-    "test_savexml.py": "pass",
     "test_seqmode.py": "pass",
     "test_slice.py": "pass",
     "test_tools.py": "pass",

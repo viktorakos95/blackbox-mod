@@ -95,34 +95,34 @@ Not decided by the parts yet: the Tools settings page lists all its machine sett
 
 | preset | status | tests | tested | source |
 |---|---|---|---|---|
-| `core` | **pass** | 16/16 | 2026-11-24 | `ae75c28` |
-| `looper-family` | **pass** | 22/22 | 2026-11-24 | `ae75c28` |
-| `drone-family` | **pass** | 33/33 | 2026-11-24 | `ae75c28` |
-| `all` | **pass** | 35/35 | 2026-11-24 | `ae75c28` |
+| `core` | **pass** | 16/16 | 2026-11-24 | `1c1e356` |
+| `looper-family` | **pass** | 22/22 | 2026-11-24 | `1c1e356` |
+| `drone-family` | **pass** | 33/33 | 2026-11-24 | `1c1e356` |
+| `all` | **pass** | 35/35 | 2026-11-24 | `1c1e356` |
 | `all+mcl` | **untested** - no real MCL blob here: no out/mcl.bin / out/mcl.elf (build the blob: MCL_DIR=... MCL_GFX=... tools/mcl/build_mcl.sh) | 0/0 | 2026-11-24 | `ae75c28` |
 
 ### Free combinations: 30 pass, 32 untested (MCL: no blob here), 0 other
 
 | parts | add-ons | status | scope | tests |
 |---|---|---|---|---|
-| drone | none | **pass** | fast | 11/11 |
-| drone | tools, rec, clkmon, crash | **pass** | fast | 14/14 |
-| looper | none | **pass** | fast | 10/10 |
-| looper | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
-| samplr | none | **pass** | fast | 10/10 |
-| samplr | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
-| trig | none | **pass** | fast | 10/10 |
-| trig | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
-| looper, drone | none | **pass** | fast | 11/11 |
-| looper, drone | tools, rec, clkmon, crash | **pass** | fast | 14/14 |
-| looper, samplr | none | **pass** | fast | 10/10 |
-| looper, samplr | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
-| looper, trig | none | **pass** | fast | 10/10 |
-| looper, trig | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
-| samplr, drone | none | **pass** | fast | 11/11 |
+| drone | none | **pass** | fast | 10/10 |
+| drone | tools, rec, clkmon, crash | **pass** | fast | 13/13 |
+| looper | none | **pass** | fast | 9/9 |
+| looper | tools, rec, clkmon, crash | **pass** | fast | 11/11 |
+| samplr | none | **pass** | fast | 9/9 |
+| samplr | tools, rec, clkmon, crash | **pass** | fast | 11/11 |
+| trig | none | **pass** | fast | 9/9 |
+| trig | tools, rec, clkmon, crash | **pass** | fast | 11/11 |
+| looper, drone | none | **pass** | fast | 10/10 |
+| looper, drone | tools, rec, clkmon, crash | **pass** | fast | 13/13 |
+| looper, samplr | none | **pass** | fast | 9/9 |
+| looper, samplr | tools, rec, clkmon, crash | **pass** | fast | 11/11 |
+| looper, trig | none | **pass** | fast | 9/9 |
+| looper, trig | tools, rec, clkmon, crash | **pass** | fast | 11/11 |
+| samplr, drone | none | **pass** | fast | 10/10 |
 | samplr, drone | tools, rec, clkmon, crash | **pass** | fast | 13/13 |
-| samplr, trig | none | **pass** | fast | 10/10 |
-| samplr, trig | tools, rec, clkmon, crash | **pass** | fast | 12/12 |
+| samplr, trig | none | **pass** | fast | 9/9 |
+| samplr, trig | tools, rec, clkmon, crash | **pass** | fast | 11/11 |
 | trig, drone | none | **pass** | fast | 10/10 |
 | trig, drone | tools, rec, clkmon, crash | **pass** | fast | 13/13 |
 | looper, samplr, drone | none | **pass** | fast | 11/11 |
