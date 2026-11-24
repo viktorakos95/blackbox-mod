@@ -59,8 +59,8 @@ e.w32(0x2400008C, 0xC0000000)
 e.uc.mem_write(0x38800BF0, b"\xa5" * 8)          # whatever the last boot left
 e.call("interp_register", 0x24060000, 0xF1, 0, 0, 2, 0)
 fid = [r for r in regs if r[1] == 0xF1]
-check("Fidelity list: 15 entries, the last one LIRA",
-      len(fid) == 1 and fid[0][3] == 15 and e.cstr(e.r32(fid[0][2] + 4 * INTERP_LIRA) & 0xFFFFFFFF) == "DRONE-8",
+check("Fidelity list: 14 entries, DRONE-8 on a Sample pad is no longer offered (the entry stays in the table, index 14)",
+      len(fid) == 1 and fid[0][3] == 14 and INTERP_LIRA == 14 and e.cstr(e.r32(fid[0][2] + 4 * INTERP_LIRA) & 0xFFFFFFFF) == "DRONE-8",
       str(fid))
 check("the filter's Slope (0x1cf) is registered with Fidelity", any(r[1] == 0x1CF for r in regs))
 ids = sorted(r[1] for r in regs if r[1] not in (0xF1, 0x1CF))

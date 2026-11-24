@@ -114,7 +114,7 @@ void interp_register(void *table, int param, const char *label, const char *cons
     (void)label;
     (void)names;
     (void)count;
-    fw_register_list(table, param, "Fidelity:", interp_names, INTERPS, xml);
+    fw_register_list(table, param, "Fidelity:", interp_names, INTERPS - 1, xml);   /* (the last entry, DRONE-8 on a Sample pad, is not offered: the DRONE-8 page is the synth) */
     fw_register_list(table, PARAM_SLOPE, "Slope:", slope_names, 2, "filterslope");
     lira_register(table);                                       /* LIRA's controls + its memory, once at boot */
 }

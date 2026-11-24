@@ -100,8 +100,8 @@ FEATURES = {
 ADDONS = {
     "tools": dict(title="Tools settings", sets=["tools"]),
     "rec":   dict(title="Record DRONE-8 / Looper / SAMPLR onto a pad", sets=["lirarec"]),
-    "clkmon": dict(title="MIDI clock monitor", sets=["looper", "clkmon"]),
-    "crash": dict(title="Restart record", sets=["crash"]),
+    "clkmon": dict(title="MIDI clock monitor", sets=["looper", "clkmon"], group="diagnostics"),
+    "crash": dict(title="Restart record", sets=["crash"], group="diagnostics"),
 }
 
 # Tests that walk several pages need those pages in the image (they fail on a combination that leaves one out, by design: SONG then ends earlier). They are "n/a"

@@ -747,7 +747,7 @@ void mode_register(void *table, int param, const char *label, const char *const 
 {
     (void)names;
     (void)count;
-    fw_register_list(table, param, label, mode_names, 6, xml);
+    fw_register_list(table, param, label, mode_names, 5, xml);   /* (the sixth, DRONE-8 as a pad mode, is not offered: the DRONE-8 page is the synth) */
 }
 
 /* Replaces the setter call that copies a chosen pad-mode value (0x8c) into the pad's mode (0x8b). */
