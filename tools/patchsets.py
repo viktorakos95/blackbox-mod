@@ -114,3 +114,6 @@ TEST_PAGES = {
 }
 
 assert not set(PRESETS) & set(SETS), "a preset must not share a set's name (tools/combo.py would expand the wrong one)"
+
+# Slow tests whose result cannot depend on which parts are picked (they test hooks every combination has). They run in the full runs (presets, single parts), not in --fast.
+SLOW_CORE_ONLY = ["test_savexml.py"]

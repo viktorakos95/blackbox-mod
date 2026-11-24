@@ -379,7 +379,7 @@ def cmd_test(a):
     files = [f for f in test_files() if applicable(test_info(f), sets, f) and (not a.only or f in a.only)]
     if a.fast:                                                          # the tests that look at hooks, only: the others run on `all` and do not depend on which hooks are in
         sens = json.load(open(os.path.join(ROOT, "docs", "test-sensitivity.json")))["hook_sensitive"]
-        files = [f for f in files if f in sens or f in PS.TEST_PAGES]
+        files = [f for f in files if (f in sens or f in PS.TEST_PAGES) and f not in PS.SLOW_CORE_ONLY]
     skipped = [f for f in test_files() if test_info(f)["kind"] == "image" and f not in files]
     print(f"{cid}: {len(sets)} sets, image {size} bytes, cave {cave_n}/{PS.CAVE_LIMIT} ({100 * cave_n / PS.CAVE_LIMIT:.0f}%); {len(files)} tests apply, {len(skipped)} n/a")
     wf = [] if needs_mcl(sets) else wiring_check(open(os.path.join(dst, "BLACKBOX.bin"), "rb").read(), sets)
