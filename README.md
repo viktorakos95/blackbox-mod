@@ -13,8 +13,7 @@ An unofficial feature mod for the **original 1010music Blackbox** (not the Black
 - **Looper**: four-track live looper.
 - **SAMPLR**: slicing / tape sampler page.
 - **Trigger2MIDI**: drum triggers from the audio input to MIDI.
-- **DRONE-8**: an eight-voice drone synth (after the LIRA-8), also as "LIRA" on Sample pads.
-- **MCL**: a MegaCommand-style Machinedrum sequencer. Not in the patcher yet (not tested for this release).
+- **DRONE-8**: an eight-voice drone synth (after the LIRA-8).
 - Add-ons: extra Tools settings, recording the machines onto a pad, a MIDI clock monitor, a restart record.
 - Settings of the machines are saved with the project (`bbmod.bin`, `bbgen.bin` on the card).
 

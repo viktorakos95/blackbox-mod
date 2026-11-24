@@ -54,8 +54,8 @@ out = {
     "canon": [s for s in PS.CANON if s in sets or s == "cave"],
     "requires": {s: PS.SETS[s]["requires"] for s in PS.CANON if s in sets or s == "cave"},
     "core": PS.CORE,
-    "parts": {k: {"title": d["title"], "sets": d["sets"], "hide": d["hide"], "available": k != "mcl"} for k, d in PS.FEATURES.items()},
-    "addons": {k: {"title": d["title"], "sets": d["sets"]} for k, d in PS.ADDONS.items()},
+    "parts": {k: {"title": d["title"], "sets": d["sets"], "hide": d["hide"], "available": True} for k, d in PS.FEATURES.items() if k != "mcl"},   # (MCL is not offered)
+    "addons": {k: {"title": d["title"], "sets": d["sets"], "group": d.get("group", "addons")} for k, d in PS.ADDONS.items()},
     "always": ["looper", "lirasave"],
     "sets": sets, "cave": data_cave, "tested": tested,
     "cave_bytes": len(code), "cave_limit": PS.CAVE_LIMIT,
