@@ -16,7 +16,7 @@ Fields:
 # The order patch.py was always given (and the order the web patcher applies). Measured: the order of the non-MCL sets does not change a byte of the
 # image (tools/combo.py verify-order: 20 sets, 7 permutations, identical SHA-256). Only `cave` -> `mclblob` -> `mclsd` is a hard order: mclblob overwrites
 # bytes the cave set writes (the 0xFF fill, `mcl_entry`), mclsd's pointers are cave variables.
-CANON = ("solo slice duck chord cond filter cpu od comp tools seqfix fx2 munchi looper hide_looper hide_samplr hide_trig hide_drone clkmon lira lirarec lirasave crash cave "
+CANON = ("solo slice duck chord cond filter cpu od comp tools seqfix savexml fx2 munchi looper hide_looper hide_samplr hide_trig hide_drone clkmon lira lirarec lirasave crash cave "
          "mclblob mclsd").split()
 
 SETS = {
@@ -31,6 +31,7 @@ SETS = {
     "od":       dict(feature="core", title="Saturation", requires=[], evidence="doc"),
     "comp":     dict(feature="core", title="Master compressor models + registers the Tools settings", requires=[], evidence="doc"),
     "seqfix":   dict(feature="core", title="Sequencer: note just ahead of the playhead plays", requires=[], evidence="doc"),
+    "savexml":  dict(feature="core", title="Save / Save As / Pack written by streaming (stock ran out of memory on big projects and restarted)", requires=[], evidence="test"),
     "fx2":      dict(feature="core", title="Reverb Type (Plate / Room)", requires=[], evidence="doc"),
     "munchi":   dict(feature="core", title="Delay Type (Delay / Munchi)", requires=[], evidence="doc"),
     # ---- the machines ---------------------------------------------------------------------------------------------------------------------------------
