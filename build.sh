@@ -9,7 +9,7 @@ arm-none-eabi-g++ -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -O2 -f
 LD=src/cave.ld; EXTRA=; OCJ="-j .cave"
 if [ -n "$BANK2" ]; then LD=src/cave_b2.ld; EXTRA="-DBANK2 src/bank2.S"; OCJ="-j .cave -j .bank2"; fi
 arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16 -Os -ffunction-sections -ffreestanding -nostdlib $EXTRA \
-  -fno-builtin -Wall -Wextra -Werror -T $LD -Wl,-e,0 -o out/cave.elf src/solo.c src/slice.c src/duck.c src/duck_thunk.S src/chord.c src/cond.c src/cond_thunk.S src/filter.c src/filter_thunk.S src/cpu.c src/od.c src/comp.c src/seqfix.c src/fx2.c src/fx2_thunk.S src/looper.c src/looper_page.c src/samplr.c src/t2m.c src/t2m_bb.c src/t2m_page.c src/clkmon.c src/looper_thunk.S src/lira.c src/lira_chord.c src/lira_pad.c src/lira_thunk.S src/crash.c src/crash_thunk.S src/itcm_thunk.S out/munchi.o
+  -fno-builtin -Wall -Wextra -Werror -T $LD -Wl,-e,0 -o out/cave.elf src/solo.c src/slice.c src/duck.c src/duck_thunk.S src/chord.c src/cond.c src/cond_thunk.S src/filter.c src/filter_thunk.S src/cpu.c src/od.c src/comp.c src/seqfix.c src/seqmode.c src/seqmode_thunk.S src/savexml.c src/fx2.c src/fx2_thunk.S src/looper.c src/looper_page.c src/samplr.c src/t2m.c src/t2m_bb.c src/t2m_page.c src/clkmon.c src/looper_thunk.S src/lira.c src/lira_chord.c src/lira_pad.c src/lira_thunk.S src/crash.c src/crash_thunk.S src/itcm_thunk.S out/munchi.o
 arm-none-eabi-objcopy -O binary $OCJ out/cave.elf out/cave.bin
 rm -f out/itcm.bin
 if arm-none-eabi-objdump -h out/cave.elf | grep -q ' \.itcm '; then arm-none-eabi-objcopy -O binary -j .itcm out/cave.elf out/itcm.bin; fi

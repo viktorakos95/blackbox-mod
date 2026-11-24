@@ -376,6 +376,18 @@ static void adc_drive(float **ch, int n, float d)
     }
 }
 
+/* One channel through the filter with the given coefficients and the object's states for that channel. */
+#define XF_MAX 256
+static void filter_run(struct fstate *st, float g, float r, float drive, int c, float *x, int n, int hp, int slope12)
+{
+    /* resonant stage ceiling: off below noon (clean, linear), from 4 down to 1 as drive rises */
+    float limit = drive > 0.001f ? 4.0f - 3.0f * drive : 0.0f, pre = 1.0f + 3.0f * drive;
+    if (slope12)
+        svf12(x, n, g, r, &st->s1[1][c], &st->s2[1][c], hp, limit, pre);
+    else
+        svf24(x, n, g, r, &st->s1[0][c], &st->s2[0][c], &st->s1[1][c], &st->s2[1][c], hp, limit, pre);
+}
+
 /* Replaces the per-voice filter call. pad = the pad object the voice belongs to (thunks in filter_thunk.S). */
 void filter_process(uint8_t *obj, void *buf, const uint8_t *pad)
 {
@@ -392,11 +404,10 @@ void filter_process(uint8_t *obj, void *buf, const uint8_t *pad)
     int crunching = interp >= STOCK_INTERP && interp < STOCK_INTERP + CRUNCHES + MACHINES;
     uint8_t *params = *(uint8_t **)(obj + OBJ_PARAMS);
     float knob = params ? fw_param(params + 8) : 0.0f;
-    if (knob == 0.0f) {
-        st->on = 0;
-        if (!crunching)
-            return;
-    }
+    /* st->on: what ran last block: 0 off (Filter knob at 0), 1 low-pass (left of it), 2 high-pass (right of it) */
+    int mode = knob == 0.0f ? 0 : knob > 0.0f ? 2 : 1, was = st->on <= 2 ? (int)st->on : 0;
+    if (!mode && !was && !crunching)
+        return;
 
     float *ch[2] = {0, 0};
     int n = fw_buf_frames(buf);
@@ -421,46 +432,73 @@ void filter_process(uint8_t *obj, void *buf, const uint8_t *pad)
     } else if (crunching) {
         crunch(st, ch, n, crunch_rate[interp - FIRST_CRUNCH]);
     }
-    if (knob == 0.0f)
+    if (!mode && !was)
         return;
 
-    float hz = fw_cutoff_hz(knob < 0.0f ? knob + 1.0f : knob);
-    float res = fw_param(params + 0x44);
-    float q = fw_res_q(res);
-    float drive = (res - 0.5f) * 2.0f;                      /* 0 up to the default Res, 1 at full */
-    drive = drive < 0.0f ? 0.0f : drive > 1.0f ? 1.0f : drive * drive;
-    if (hz < 10.0f)
-        hz = 10.0f;
-    if (hz > 0.45f * FS)
-        hz = 0.45f * FS;
-    if (!(q > 0.1f))
-        q = 0.1f;                                            /* the stock curve's own minimum (Res at 0) */
-    if (q > 40.0f)
-        q = 40.0f;
-    float g = tan_approx(PI_F * hz / FS), r = 1.0f / q;
-    if (!st->on) {
-        st->g = g;
-        st->r = r;
-        st->drive = drive;
-        for (int k = 0; k < 2; k++)
-            st->s1[k][0] = st->s1[k][1] = st->s2[k][0] = st->s2[k][1] = 0.0f;
-        st->on = 1;
-    } else {
+    float g = 0.0f, r = 0.0f, drive = 0.0f;
+    if (mode) {
+        float hz = fw_cutoff_hz(knob < 0.0f ? knob + 1.0f : knob);
+        float res = fw_param(params + 0x44);
+        float q = fw_res_q(res);
+        drive = (res - 0.5f) * 2.0f;                          /* 0 up to the default Res, 1 at full */
+        drive = drive < 0.0f ? 0.0f : drive > 1.0f ? 1.0f : drive * drive;
+        if (hz < 10.0f)
+            hz = 10.0f;
+        if (hz > 0.45f * FS)
+            hz = 0.45f * FS;
+        if (!(q > 0.1f))
+            q = 0.1f;                                         /* the stock curve's own minimum (Res at 0) */
+        if (q > 40.0f)
+            q = 40.0f;
+        g = tan_approx(PI_F * hz / FS);
+        r = 1.0f / q;
+    }
+    int slope12 = pad_slope(pad) == 0;
+    if (mode == was) {                                        /* the usual block: the same side as last time */
         st->g += SMOOTH * (g - st->g);
         st->r += SMOOTH * (r - st->r);
         st->drive += SMOOTH * (drive - st->drive);
+        for (int c = 0; c < 2; c++)
+            if (ch[c])
+                filter_run(st, st->g, st->r, st->drive, c, ch[c], n, mode == 2, slope12);
+        return;
     }
-    int hp = knob > 0.0f, slope12 = pad_slope(pad) == 0;
-    /* resonant stage ceiling: off below noon (clean, linear), from 4 down to 1 as drive rises */
-    float limit = st->drive > 0.001f ? 4.0f - 3.0f * st->drive : 0.0f;
+
+    /* A switch (the knob reaching 0 or passing it, by hand or from an LFO). A filter used to start from zero states (a low-pass then begins at 0 while the input is
+     * mid-wave) and a jump from one side to the other swapped one output for the other: a step of 25 to 250 times the signal's own. Now one block crossfades from what ran
+     * (its own states and coefficients carry on) to what runs now, started clean, and a low-pass starts from the input's own level. */
+    float og = st->g, orr = st->r, od = st->drive;
     for (int c = 0; c < 2; c++) {
         if (!ch[c])
             continue;
-        if (slope12)
-            svf12(ch[c], n, st->g, st->r, &st->s1[1][c], &st->s2[1][c], hp, limit, 1.0f + 3.0f * st->drive);
-        else
-            svf24(ch[c], n, st->g, st->r, &st->s1[0][c], &st->s2[0][c], &st->s1[1][c], &st->s2[1][c], hp, limit, 1.0f + 3.0f * st->drive);
+        float nu[XF_MAX];
+        int fade = n <= XF_MAX;                               /* (a longer block than ever seen: switch without the fade, as before but from the input level) */
+        if (fade)
+            for (int i = 0; i < n; i++)
+                nu[i] = ch[c][i];                             /* the dry block: what runs now, unless the knob is at 0 */
+        if (was && fade)
+            filter_run(st, og, orr, od, c, ch[c], n, was == 2, slope12);   /* the old filter on its own states (if it was off, ch is the dry block already) */
+        if (mode) {
+            float *in = fade ? nu : ch[c];
+            float x0 = in[0];
+            if (drive > 0.001f)
+                x0 = soft(x0 * (1.0f + 3.0f * drive), 1.0f, 1.0f);   /* (the drive stage sits in front of the filter) */
+            st->s1[0][c] = st->s1[1][c] = 0.0f;
+            st->s2[0][c] = st->s2[1][c] = mode == 1 ? x0 : 0.0f;    /* a low-pass's state at rest on the input level */
+            filter_run(st, g, r, drive, c, in, n, mode == 2, slope12);
+        }
+        if (!fade)
+            continue;
+        float step = 1.0f / (float)n, t = 0.0f;
+        for (int i = 0; i < n; i++) {                          /* S-curve: no corner at either end */
+            t += step;
+            ch[c][i] += t * t * (3.0f - 2.0f * t) * (nu[i] - ch[c][i]);
+        }
     }
+    st->g = mode ? g : og;
+    st->r = mode ? r : orr;
+    st->drive = mode ? drive : od;
+    st->on = (uint32_t)mode;
 }
 
 /*

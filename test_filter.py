@@ -155,12 +155,15 @@ setup(-0.4, res=0.3)
 g, r, hz, q = coeffs(-0.4, 0.3)
 check(f"stock curves give a usable cutoff and Q (knob -0.4 -> {hz:.0f} Hz, res 0.3 -> Q {q:.2f})", 20 < hz < 20000 and 0.1 <= q <= 40)
 sig = [math.sin(i * 0.37) * 0.3 + math.sin(i * 0.05) * 0.4 for i in range(3 * N)]
-states, ms, err = [[0.0, 0.0], [0.0, 0.0]], [g, r, 0.0], 0.0
+states, ms, err = [[0.0, sig[0]], [0.0, sig[0]]], [g, r, 0.0], 0.0            # (a low-pass switched on starts at rest on the input's own level)
 for b in range(3):
     l, _ = run(sig[b * N:(b + 1) * N])
     if b:
         ms = [m + 0.33333 * (t - m) for m, t in zip(ms, (g, r, 0.0))]
-    ref = model_block(sig[b * N:(b + 1) * N], ms[0], ms[1], ms[2], states, False)
+    blk = sig[b * N:(b + 1) * N]
+    ref = model_block(blk, ms[0], ms[1], ms[2], states, False)
+    if b == 0:                                                                  # the switch block: one S-curve crossfade from the dry block (it was off)
+        ref = [d + (t * t * (3.0 - 2.0 * t)) * (f - d) for i, (d, f) in enumerate(zip(blk, ref)) for t in [(i + 1) / N]]
     err = max(err, max(abs(p - q) for p, q in zip(l, ref)))
 check("low-pass output equals the model (two stmlib SVF stages, coefficient smoothing) over three blocks", err < 1e-4, err)
 reset()
@@ -171,7 +174,10 @@ states, ms, err = [[0.0, 0.0], [0.0, 0.0]], [g, r, d], 0.0
 loud = [v * 2.0 for v in sig]
 for b in range(3):
     l, _ = run(loud[b * N:(b + 1) * N])
-    ref = model_block(loud[b * N:(b + 1) * N], ms[0], ms[1], ms[2], states, True)
+    blk = loud[b * N:(b + 1) * N]
+    ref = model_block(blk, ms[0], ms[1], ms[2], states, True)
+    if b == 0:                                                                  # the switch block: crossfade from the dry block
+        ref = [d + (t * t * (3.0 - 2.0 * t)) * (f - d) for i, (d, f) in enumerate(zip(blk, ref)) for t in [(i + 1) / N]]
     err = max(err, max(abs(p - q) for p, q in zip(l, ref)))
 check(f"high-pass with drive (Res 0.9 -> drive {d:.2f}) equals the model", err < 1e-4, err)
 
@@ -508,5 +514,26 @@ run(sine(200, 64), sine(200, 64))
 check("... and again in the next block (a change on the screen is seen a block later at most)", lookups.count(0xF1) == 2, lookups)
 e.w32(0x2405FFD0, 0)
 
-print(f"\n{fails} failure(s)")
+
+
+# --- no step when the filter switches on, off, or from one side to the other (the Filter knob crossing 0, by hand or from an LFO)
+def worst_switch_step(seq, res=0.0, hz=110):
+    reset()
+    out, pos = [], 0
+    for knob in seq:
+        setup(knob, res)
+        l, _ = run(sine(hz, N, pos), sine(hz, N, pos))
+        pos += N
+        out += l
+    steps = [abs(out[i] - out[i - 1]) for i in range(1, len(out))]
+    own = 0.5 * 2 * math.pi * hz / 48000
+    sw = [i for i in range(1, len(seq)) if (seq[i] == 0) != (seq[i - 1] == 0) or seq[i] * seq[i - 1] < 0]
+    return max(max(steps[N * i - 1:N * i + 3]) for i in sw) / own
+
+
+for name, seq, res in (("off -> low-pass", [0, 0, -0.5, -0.5], 0.0), ("low-pass -> high-pass", [-0.5, -0.5, 0.5, 0.5], 0.0), ("high-pass -> low-pass", [0.5, 0.5, -0.5, -0.5], 0.0),
+                       ("low-pass -> off", [-0.5, -0.5, 0, 0], 0.0), ("off -> high-pass", [0, 0, 0.5, 0.5], 0.0), ("low-pass -> high-pass, driven", [-0.5, -0.5, 0.5, 0.5], 0.9)):
+    w = worst_switch_step(seq, res)
+    check(f"no pop: {name} (worst step {w:.1f}x the sine's own; it was 25 to 250x)", w < 2.0, w)
+print(f"{fails} failure(s)")
 sys.exit(1 if fails else 0)

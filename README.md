@@ -23,6 +23,11 @@ note conditions (1:2 … 8:8), Fidelity (sample-rate crunch and machine modes) w
 compressor models, reverb Type (Plate / Room), delay Type (Delay / Munchi), and a sequencer fix for notes placed just
 ahead of the playhead.
 
+Fixes in the stock firmware that come with it: the filter no longer pops when its knob passes through the middle or an LFO
+sweeps it across; switching a sequence from Keys to Pads and back brings the notes back; and saving a big project no longer
+runs the unit out of memory and restarts it ("Saving: 95%"). The last two are ported from later builds of the mod this one
+was forked from (see `THIRD_PARTY.md`).
+
 Known issues: solo can stick after un-soloing (unmute in Mute mode); a note placed very close ahead of the playhead is
 sometimes still silent; chords need the pad out of Mono Poly Mode.
 
@@ -35,6 +40,11 @@ sometimes still silent; chords need the pad out of Mono Poly Mode.
 3. Keep the stock `BLACKBOX.bin` somewhere safe. That file is your way back.
 4. Copy the patched `BLACKBOX.bin` to the root of the Blackbox's microSD card and install it the way you install any
    1010music firmware update (hold BACK + INFO while powering on).
+
+**The patched file is bigger than stock** (about 1.7 MB, stock is 0.7 MB). The unit this was developed on accepted images that
+size, but the stock installer on another unit is reported to refuse an image that runs past the first flash bank ("unable to
+verify"). If yours shows "unable to verify" or "firmware not found", copy the file to the card again; if it still fails, install
+the stock file to go back.
 
 **To go back to stock:** put the stock `BLACKBOX.bin` on the card and install it the same way.
 

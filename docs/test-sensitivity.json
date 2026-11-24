@@ -32,10 +32,12 @@
   "test_lira_ui.py",
   "test_looper.py",
   "test_machine.py",
+  "test_savexml.py",
+  "test_seqmode.py",
   "test_slice.py",
   "test_t2m_page.py",
   "test_tools.py"
  ],
- "tested_at": "2026-11-23",
- "source_rev": "196718f"
+ "tested_at": "2026-11-24",
+ "source_rev": "ae75c28"
 }
