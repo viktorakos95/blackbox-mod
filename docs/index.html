@@ -135,6 +135,7 @@ fetch("data.json").then(r => r.json()).then(d => {
   data = d;
   for (const p of ORDER) box($("parts"), p);
   for (const a of Object.keys(d.addons)) box($(d.addons[a].group), a);
+  for (const a of Object.keys(d.addons)) if (d.addons[a].group === "addons") $(a).checked = true;     // the add-ons start ticked; diagnostics do not
   refresh();
 }).catch(e => { $("state").textContent = "Could not load the patch data: " + e.message; });
 </script>
