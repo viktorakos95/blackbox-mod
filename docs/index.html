@@ -24,16 +24,18 @@
   .ok { color: var(--ok); } .err { color: var(--err); } .warn { color: var(--warn); }
   #status { margin-top: 10px; white-space: pre-wrap; }
   a.btn { display: inline-block; margin-top: 10px; padding: 10px 16px; background: var(--acc); color: var(--bg); border-radius: 6px; text-decoration: none; font-weight: 600; }
+  .desc { margin: 0 0 8px 28px; font-size: .9rem; color: var(--dim); }
+  .shot { display: block; width: 100%; max-width: 320px; height: auto; margin: 2px 0 10px 28px; border: 1px solid var(--line); border-radius: 4px; image-rendering: pixelated; }
   input[type=file] { width: 100%; margin: 8px 0 0; color: inherit; }
   code { font-size: .85rem; }
 </style>
 <main>
   <h1>blackbox-mod patcher</h1>
   <p>Unofficial mod for the original 1010music Blackbox, firmware 3.1.9. Pick what you want, choose your own stock <code>BLACKBOX.bin</code>, and the patched file is made in your browser. Nothing is uploaded.</p>
-  <p class="warn">Mostly tested in an emulator, not on a real unit. The patched file is about 1.7 MB (stock is 0.7 MB) and some installers may refuse it ("unable to verify" or "firmware not found"): copy it to the card again, and if it still fails, install your stock file.</p>
+  <p class="warn">Experimental, little tested on real units. The patched file is about 1.7 MB (stock is 0.7 MB) and some installers may refuse it ("unable to verify" or "firmware not found"): copy it to the card again, and if it still fails, install your stock file.</p>
 
   <div class="box">
-    <h2>Parts</h2><div id="parts"></div>
+    <h2>Parts</h2><p class="dim" style="margin:0 0 6px">Press SONG on the Blackbox to step through the pages you pick.</p><div id="parts"></div>
     <h2>Add-ons</h2><div id="addons"></div>
     <h2>Diagnostics</h2><div id="diagnostics"></div>
     <div id="state"></div>
@@ -55,11 +57,19 @@
 const $ = id => document.getElementById(id);
 let data, stock;
 const say = (t, c) => { $("status").textContent = t; $("status").className = c || ""; };
-const ORDER = ["looper", "samplr", "trig", "drone"];                  // the order of ids in docs/combos.json
+const ORDER = ["looper", "samplr", "drone", "trig"];                  // the order shown
+const ID_ORDER = ["looper", "samplr", "trig", "drone"];               // the order of ids in docs/combos.json
 const LABEL = {
-  looper: ["Looper", "Four-track looper"], samplr: ["SAMPLR", "Slicer / tape sampler"], trig: ["Trigger2MIDI", "Drum triggers to MIDI"], drone: ["DRONE-8", "Drone synth"],
-  tools: ["Tools settings", "Extra settings on the Tools pages"], rec: ["Record onto a pad", "Pad recorder inputs"],
-  clkmon: ["MIDI clock monitor", "Needs a part"], crash: ["Restart record", "Keeps a note of the last restart"],
+  looper: ["Looper", ""], samplr: ["SAMPLR", ""], trig: ["Trigger2MIDI", ""], drone: ["DRONE-8", ""],
+  tools: ["Tools settings", "Adds settings for the machines to the Tools pages"], rec: ["Record onto a pad", "Adds the machines you picked as inputs for the pad recorder"],
+  clkmon: ["MIDI clock monitor", "Counts incoming MIDI clock, to find sync problems. Needs a machine"], crash: ["Restart record", "Notes what happened at the last restart, to help find bugs"],
+};
+
+const DESC = {
+  looper: "Record up to four stereo tracks live, from the inputs or from the Blackbox's own mix, and layer them. Each track has its own level, pan, reverb send, mute and undo, and the FX pages add effects such as pitch, stutter, filter, crush and delay. Press MIX to step round to it.",
+  samplr: "Play a pad's sample like an instrument. Chop it into slices and play them with your fingers (Slicer), scrub it like a tape (Tape), or step through it as an arpeggiator (Arp). It can follow the Blackbox tempo, AUTO SLICE finds the hits for you, and a gesture recorder loops and layers what you play.",
+  drone: "An eight-voice drone synth in the spirit of the SOMA Lyra-8. The voices come in four pairs that you tune, bend and modulate each other with by touch, with two delays, LFOs, a chord mode and a gesture recorder that loops your moves. Learn MIDI controllers onto any knob or button.",
+  trig: "Turns drum hits on the Blackbox's two audio inputs into MIDI notes, sent out the MIDI jack, over USB, or internally into the Blackbox's own MIDI in (to play its pads). Sensitivity, threshold and dead time tune the detection, and presets (Kick, Bleed, Rolls and more) give you a starting point.",
 };
 
 function box(parent, id) {
@@ -68,25 +78,25 @@ function box(parent, id) {
   l.className = "opt";
   l.innerHTML = `<input type="checkbox" id="${id}"><span><b>${title}</b> <span class="dim">${note}</span></span>`;
   parent.appendChild(l);
+  if (ORDER.includes(id)) {
+    const d = document.createElement("p");
+    d.className = "desc"; d.textContent = DESC[id];
+    parent.appendChild(d);
+    const im = document.createElement("img");
+    im.className = "shot"; im.src = "img/" + id + ".png"; im.loading = "lazy"; im.alt = title + " page";
+    parent.appendChild(im);
+  }
   l.querySelector("input").addEventListener("change", refresh);
 }
-const ids = () => ({ parts: ORDER.filter(p => $(p).checked), addons: Object.keys(data.addons).filter(a => $(a).checked) });
+const ids = () => ({ parts: ID_ORDER.filter(p => $(p).checked), addons: Object.keys(data.addons).filter(a => $(a).checked) });
 
-function tested({ parts, addons }) {
-  const pid = parts.length ? "p-" + parts.join("-") : "core";
-  const full = pid + (addons.length ? "_a-" + addons.join("-") : "");
-  const t = data.tested[full] || (!addons.length && data.tested[pid]);
-  if (t) return { cls: "ok", text: `Tested: ${t.tests} emulator tests, ${t.date}.` };
-  if (data.tested[pid]) return { cls: "warn", text: "These parts are tested; this mix of add-ons has not been run on its own." };
-  return { cls: "err", text: "Not tested." };
-}
 function refresh() {
   const sel = ids();
   $("clkmon").disabled = !sel.parts.length;
   if (!sel.parts.length) $("clkmon").checked = false;
   $("clkmon").closest("label").classList.toggle("off", !sel.parts.length);
-  const sets = BBApply.resolve(data, sel.parts, sel.addons), pr = BBApply.problems(data, sets), t = tested(ids());
-  $("state").innerHTML = (pr.length ? `<span class="err">${pr.join("; ")}</span><br>` : "") + `<span class="${t.cls}">${t.text}</span>`;
+  const sets = BBApply.resolve(data, sel.parts, sel.addons), pr = BBApply.problems(data, sets);
+  $("state").innerHTML = pr.length ? `<span class="err">${pr.join("; ")}</span>` : "";
   if (stock) run();
 }
 

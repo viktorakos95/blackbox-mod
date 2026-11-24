@@ -57,7 +57,7 @@ out = {
     "parts": {k: {"title": d["title"], "sets": d["sets"], "hide": d["hide"], "available": True} for k, d in PS.FEATURES.items() if k != "mcl"},   # (MCL is not offered)
     "addons": {k: {"title": d["title"], "sets": d["sets"], "group": d.get("group", "addons")} for k, d in PS.ADDONS.items()},
     "always": ["looper", "lirasave"],
-    "sets": sets, "cave": data_cave, "tested": tested,
+    "sets": sets, "cave": data_cave,
     "cave_bytes": len(code), "cave_limit": PS.CAVE_LIMIT,
 }
 os.makedirs(os.path.join(ROOT, "docs"), exist_ok=True)
