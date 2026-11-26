@@ -1105,6 +1105,14 @@ HOOK uint32_t bb_mcl_rec_stat(int which)                            /* (tests) *
 }
 
 HOOK void bb_mcl_rec_slot(uint32_t v) { grid_page.active_slots[ST] = (uint8_t)v; }   /* (tests: what GridTask does once the Machinedrum has the machine) */
+HOOK uint32_t bb_mcl_md_clock(uint32_t set, uint32_t ci, uint32_t co)   /* (tests: the Machinedrum's clock in / out as MCL holds them; set: write them first) */
+{
+    if (set) {
+        MD.global.clockIn = ci != 0;
+        MD.global.clockOut = co != 0;
+    }
+    return (MD.global.clockIn ? 1u : 0u) | (MD.global.clockOut ? 2u : 0u);
+}
 
 HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
 {
