@@ -297,9 +297,9 @@ def wiring_check(image, sets):
     stock = open(os.path.join(ROOT, "firmware", "BLACKBOX-3.1.9.bin"), "rb").read()
     have = set(sets)
     for s in PS.CANON:
-        if PS.SETS[s].get("mcl"):
+        if PS.SETS[s].get("mcl") and not blob_ok()[0]:
             if s in have:
-                faults.append(f"{s}: MCL sets are not checked here (the blob's own bytes are not in the stock image)")
+                faults.append(f"{s}: not checked (no real MCL blob here)")
             continue
         mod = importlib.import_module(s)
         if s == "cave":
@@ -382,7 +382,7 @@ def cmd_test(a):
         files = [f for f in files if (f in sens or f in PS.TEST_PAGES) and f not in PS.SLOW_CORE_ONLY]
     skipped = [f for f in test_files() if test_info(f)["kind"] == "image" and f not in files]
     print(f"{cid}: {len(sets)} sets, image {size} bytes, cave {cave_n}/{PS.CAVE_LIMIT} ({100 * cave_n / PS.CAVE_LIMIT:.0f}%); {len(files)} tests apply, {len(skipped)} n/a")
-    wf = [] if needs_mcl(sets) else wiring_check(open(os.path.join(dst, "BLACKBOX.bin"), "rb").read(), sets)
+    wf = wiring_check(open(os.path.join(dst, "BLACKBOX.bin"), "rb").read(), sets)
     print("  " + ("pass" if not wf else "FAIL") + " wiring (every hook of the chosen sets present, every other set's sites stock)" + ("  " + "; ".join(wf[:3]) if wf else ""))
     res = run_all(files, cid, os.path.join(dst, "BLACKBOX.bin"), sets, os.path.join(dst, "logs"), a.jobs)
     if hashlib.sha256(open(os.path.join(dst, "BLACKBOX.bin"), "rb").read()).hexdigest() != sha:

@@ -13,7 +13,7 @@ All of it is MIT-licensed except LIRA-8, which is under its author's BSD-style l
 | LIRA-8 ([MikeMorenoDSP/LIRA-8](https://github.com/MikeMorenoDSP/LIRA-8), emulation of the SOMA Lab Lyra-8) | © Miguel Moreno | "Standard Improved BSD" (3 clauses) | signal flow ported to C in `src/lira.c`; license in `src/lira/LICENSE` |
 | State-variable filter, after stmlib `dsp/filter.h` (`Svf`) | © 2014 Émilie Gillet | MIT | reimplemented in `src/filter.c` |
 | Classic 5x7 font of Adafruit_GFX (`glcdfont`) | © 2012 Adafruit Industries | BSD | `src/mcl_bb/glcdfont.h`, license in `src/mcl_bb/ADAFRUIT_GFX_LICENSE.txt` |
-| MCL desktop platform files (oled, GUI / LED hardware, MidiUart, global objects, SdFat.h, Arduino.h, ...), vendored and adapted for the Blackbox port | © Justin Mammarella, Yatao Li, Manuel Odendahl (MCL, fork by viktorakos95) | BSD 3-clause | `src/mcl_bb/platform/common/`, license in `src/mcl_bb/platform/common/LICENSE-MCL` |
+| MCL (MegaCommand): the core, compiled into the MCL blob that the patcher can add (built from the fork viktorakos95/MCL, branch `claude/md-machine-names-chromatic-b2oaz9`, with the patches in `tools/mcl/fork-patches`), and its desktop platform files (oled, GUI / LED hardware, MidiUart, global objects, SdFat.h, Arduino.h, ...), vendored and adapted for the Blackbox port | © Justin Mammarella, Yatao Li, Manuel Odendahl (fork by viktorakos95) | BSD 3-clause | `src/mcl_bb/platform/common/` (license in `LICENSE-MCL` there); the patcher page shows the notice when MCL is picked |
 
 ## Not included
 

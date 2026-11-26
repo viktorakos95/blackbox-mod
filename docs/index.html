@@ -35,7 +35,40 @@
   <p class="warn">Experimental, little tested on real units. The patched file is about 1.7 MB (stock is 0.7 MB) and some installers may refuse it ("unable to verify" or "firmware not found"): copy it to the card again, and if it still fails, install your stock file.</p>
 
   <div class="box">
-    <h2>Parts</h2><p class="dim" style="margin:0 0 6px">SONG steps through the pages you pick in this order: Looper, SAMPLR, Trigger2MIDI, DRONE-8, then the normal song screen. BACK steps back. Settings are saved with your project (SAVE on the Looper's SETUP page, SAMPLR and DRONE-8).</p><div id="parts"></div>
+    <h2>Parts</h2><p class="dim" style="margin:0 0 6px">SONG steps through the pages you pick in this order: Looper, SAMPLR, Trigger2MIDI, DRONE-8, MCL, then the normal song screen. BACK steps back. Settings are saved with your project (SAVE on the Looper's SETUP page, SAMPLR and DRONE-8).</p><div id="parts"></div>
+    <details id="mclnotice" hidden><summary class="dim">MCL licence notice</summary><p class="fine" style="white-space:pre-line">MCL is © Justin Mammarella, Yatao Li and Manuel Odendahl (fork: viktorakos95/MCL), used under this licence:\n\nCopyright 2020, Justin Mammarella &lt;jmamma@gmail.com>
+                Yatao Li &lt;yatao.li@live.com>
+                Manuel Odendahl &lt;wesen@ruinwesen.com>
+
+The following license applies to code, documentation or material
+in this repository, created by the above authors.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+1. Redistributions of source code must retain the above copyright notice,
+this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+contributors may be used to endorse or promote products derived from this
+software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</p></details>
     <h2>Add-ons</h2><div id="addons"></div>
     <h2>Diagnostics</h2><div id="diagnostics"></div>
     <div id="state"></div>
@@ -57,10 +90,10 @@
 const $ = id => document.getElementById(id);
 let data, stock;
 const say = (t, c) => { $("status").textContent = t; $("status").className = c || ""; };
-const ORDER = ["looper", "samplr", "drone", "trig"];                  // the order shown
-const ID_ORDER = ["looper", "samplr", "trig", "drone"];               // the order of ids in docs/combos.json
+const ORDER = ["looper", "samplr", "drone", "trig", "mcl"];           // the order shown
+const ID_ORDER = ["looper", "samplr", "trig", "drone", "mcl"];               // the order of ids in docs/combos.json
 const LABEL = {
-  looper: ["Looper", ""], samplr: ["SAMPLR", ""], trig: ["Trigger2MIDI", ""], drone: ["DRONE-8", ""],
+  looper: ["Looper", ""], samplr: ["SAMPLR", ""], trig: ["Trigger2MIDI", ""], drone: ["DRONE-8", ""], mcl: ["MCL (experimental)", ""],
   tools: ["Tools settings", "Adds the machines' settings to the Rec and Clock tabs of Tools"], rec: ["Record onto a pad", "Adds the machines you picked to the pad recorder's Rec Input list"],
   clkmon: ["MIDI clock monitor", "Counts incoming MIDI clock, to find sync problems. Needs a machine"], crash: ["Restart record", "Notes what happened at the last restart, to help find bugs (shown on the Looper's SETUP page)"],
 };
@@ -74,6 +107,8 @@ const DESC = {
   drone_open: "Open with SONG, after Trigger2MIDI.",
   trig: "Turns drum hits on the Blackbox's two audio inputs into MIDI notes, sent out the MIDI jack, over USB, or internally into the Blackbox's own MIDI in (to play its pads). Sensitivity, threshold and dead time tune the detection, and presets (Kick, Bleed, Rolls and more) give you a starting point. It starts switched off: turn ENG on.",
   trig_open: "Open with SONG, after SAMPLR.",
+  mcl: "MegaCommand (MCL) running on the Blackbox: a sequencer and controller for the Elektron Machinedrum, talking over the MIDI jack, with grid, mixer, delay, reverb and chromatic pages and a SAMPLE page to browse samples on the card. Some SAMPLE features (SEND MD, LISTEN) failed their tests and may not work.",
+  mcl_open: "Open with SONG, after DRONE-8.",
 };
 
 function box(parent, id) {
@@ -92,13 +127,14 @@ function box(parent, id) {
   }
   l.querySelector("input").addEventListener("change", refresh);
 }
-const ids = () => ({ parts: ID_ORDER.filter(p => $(p).checked), addons: Object.keys(data.addons).filter(a => $(a).checked) });
+const ids = () => ({ parts: ID_ORDER.filter(p => $(p) && $(p).checked), addons: Object.keys(data.addons).filter(a => $(a).checked) });
 
 function refresh() {
   const sel = ids();
   $("clkmon").disabled = !sel.parts.length;
   if (!sel.parts.length) $("clkmon").checked = false;
   $("clkmon").closest("label").classList.toggle("off", !sel.parts.length);
+  $("mclnotice").hidden = !($("mcl") && $("mcl").checked);
   const sets = BBApply.resolve(data, sel.parts, sel.addons), pr = BBApply.problems(data, sets);
   $("state").innerHTML = pr.length ? `<span class="err">${pr.join("; ")}</span>` : "";
   if (stock) run();
@@ -133,7 +169,7 @@ $("f").addEventListener("change", async e => {
 
 fetch("data.json").then(r => r.json()).then(d => {
   data = d;
-  for (const p of ORDER) box($("parts"), p);
+  for (const p of ORDER) if (d.parts[p]) box($("parts"), p);
   for (const a of Object.keys(d.addons)) box($(d.addons[a].group), a);
   for (const a of Object.keys(d.addons)) if (d.addons[a].group === "addons") $(a).checked = true;     // the add-ons start ticked; diagnostics do not
   refresh();
