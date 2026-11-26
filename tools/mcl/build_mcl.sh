@@ -6,8 +6,8 @@ set -e
 cd "$(dirname "$0")/../.."
 : "${MCL_DIR:?set MCL_DIR to the MCL checkout}" "${MCL_GFX:?set MCL_GFX to the Adafruit-GFX checkout}"
 M=$(realpath "$MCL_DIR"); G=$(realpath "$MCL_GFX"); O=out/mclobj; P=out/mclplat
-# fixes the MCL checkout needs to build for a non-AVR platform (tools/mcl/fork-patches, e.g. the 5.02+ branch's Euclidean step page): applied once,
-# skipped when already in the checkout. They belong upstream in the fork; this keeps the Blackbox build working until they are there.
+# fixes a checkout needs to build for the Blackbox can go in tools/mcl/fork-patches (applied once, skipped when already in the checkout).
+# Empty since MCL 5.10+: the fixes it held are in the fork's branch (viktorakos95/MCL claude/md-machine-names-chromatic-b2oaz9).
 for f in tools/mcl/fork-patches/*.patch; do
   [ -f "$f" ] || continue
   if git -C "$M" apply --check "$(realpath "$f")" 2>/dev/null; then git -C "$M" apply "$(realpath "$f")"; fi
