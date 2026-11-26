@@ -307,7 +307,15 @@ def wiring_check(image, sets):
         for addr, old, new in mod.PATCHES:
             o = addr - base
             if s in have:
-                if image[o:o + len(new)] != new:
+                exp = bytearray(new)
+                if s == "cave":                                   # the MCL sets write into the cave's own bytes (its entry pointer, the card-task pointers): expect their bytes there
+                    for m in ("mclblob", "mclsd"):
+                        if m in have and not (PS.SETS[m].get("mcl") and not blob_ok()[0]):
+                            for a2, _o2, n2 in importlib.import_module(m).PATCHES:
+                                lo, hi = max(addr, a2), min(addr + len(new), a2 + len(n2))
+                                if lo < hi:
+                                    exp[lo - addr:hi - addr] = n2[lo - a2:hi - a2]
+                if image[o:o + len(exp)] != bytes(exp):
                     faults.append(f"{s}: hook at {addr:#x} missing")
             elif old:
                 if o < len(stock) and image[o:o + len(old)] != stock[o:o + len(old)]:
