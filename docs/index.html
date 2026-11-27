@@ -27,29 +27,34 @@
   h1 small { font-size: .9rem; font-weight: 400; color: var(--dim); }
   .ver { display: inline-block; background: color-mix(in srgb, var(--acc) 22%, transparent); color: var(--acc); padding: 0 8px; border-radius: 999px; font-size: .85rem; font-weight: 700; vertical-align: 1px; }
   h1 small.ver { font-size: 1rem; vertical-align: 3px; margin-left: 6px; }
-  .mbtn { margin: 0 0 10px 28px; padding: 4px 12px; border: 1px solid var(--acc); border-radius: 999px; background: transparent; color: var(--acc); font-weight: 600; font-size: .85rem; cursor: pointer; }
-  dialog#manual { width: min(96vw, 780px); max-height: 94vh; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); }
+  :root { --mf: #2f8cff; }
+  @media (prefers-color-scheme: light) { :root { --mf: #1a66d1; } }
+  .mbtn { margin: 0 0 10px 28px; padding: 4px 12px; border: 1px solid var(--mf); border-radius: 999px; background: transparent; color: var(--mf); font-weight: 600; font-size: .85rem; cursor: pointer; }
+  dialog#manual { width: min(96vw, 1120px); max-height: 94vh; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); overflow: auto; }
   dialog#manual::backdrop { background: rgba(0,0,0,.6); }
-  #mhead { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 3; }
+  #mhead { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 5; }
   #mhead h2 { margin: 0; flex: 1; font-size: 1.1rem; }
   #mclose { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 1rem; }
-  #mbody { padding: 12px 16px 18px; }
-  #mtabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
-  #mtabs button { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: .85rem; }
-  #mtabs button[aria-pressed=true] { border-color: var(--acc); color: var(--acc); font-weight: 700; }
-  .mfig { position: sticky; top: 56px; z-index: 2; width: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: #000; line-height: 0; }
+  #mbody { padding: 12px 16px 18px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px 22px; }
+  #mleft { position: sticky; top: 50px; z-index: 3; background: var(--panel); padding-bottom: 8px; align-self: start; }
+  @media (min-width: 860px) { #mbody { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); } #mleft { top: 58px; } }
+  #mtabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+  #mtabs button { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: .9rem; }
+  #mtabs button[aria-pressed=true] { border-color: var(--mf); color: #fff; background: var(--mf); font-weight: 700; }
+  .mfig { position: relative; width: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: #000; line-height: 0; }
   .mfig img { width: 100%; height: auto; display: block; image-rendering: pixelated; }
   .mfig svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .mpin { position: absolute; transform: translate(-30%, -30%); min-width: 20px; height: 20px; border-radius: 999px; background: var(--acc); color: #111; font: 700 12px/20px system-ui, sans-serif; text-align: center; pointer-events: none; padding: 0 3px; box-sizing: border-box; }
-  .mpin.dim { opacity: .35; }
-  ol#mlist { margin: 10px 0 0; padding: 0; list-style: none; counter-reset: m; }
-  ol#mlist li { display: flex; gap: 10px; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: .9rem; border: 1px solid transparent; }
-  ol#mlist li b.n { flex: none; min-width: 22px; height: 22px; border-radius: 999px; background: var(--acc); color: #111; text-align: center; line-height: 22px; font-size: .8rem; }
-  ol#mlist li.on { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 12%, transparent); }
+  .mpin { position: absolute; transform: translate(-30%, -30%); min-width: 20px; height: 20px; border-radius: 999px; background: var(--mf); color: #fff; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); font: 700 12px/16px system-ui, sans-serif; text-align: center; pointer-events: none; padding: 0 3px; box-sizing: border-box; }
+  .mpin.dim { opacity: .4; }
+  ol#mlist { margin: 6px 0 0; padding: 0; list-style: none; }
+  ol#mlist li { display: flex; gap: 10px; padding: 8px 9px; border-radius: 6px; cursor: pointer; font-size: .95rem; line-height: 1.45; border: 1px solid transparent; }
+  ol#mlist li b.n { flex: none; min-width: 24px; height: 24px; border-radius: 999px; background: var(--mf); color: #fff; text-align: center; line-height: 24px; font-size: .8rem; }
+  ol#mlist li.on { border-color: var(--mf); background: color-mix(in srgb, var(--mf) 14%, transparent); }
   ol#mlist li span.t { font-weight: 700; }
-  details { margin: 6px 0; }
-  summary { cursor: pointer; }
-  ul.log { margin: 6px 0 0; padding-left: 18px; font-size: .85rem; color: var(--dim); }
+  .info { font-size: 1rem; line-height: 1.6; }
+  .info h3 { font-size: 1rem; margin: 16px 0 4px; color: var(--acc); }
+  .info ul { margin: 4px 0; padding-left: 20px; }
+  .info li { margin: 5px 0; }
   .desc { margin: 0 0 8px 28px; font-size: .9rem; color: var(--dim); }
   .shot { display: block; width: 100%; max-width: 320px; height: auto; margin: 2px 0 10px 28px; border: 1px solid var(--line); border-radius: 4px; image-rendering: pixelated; }
   input[type=file] { width: 100%; margin: 8px 0 0; color: inherit; }
@@ -62,8 +67,39 @@
 
   <details id="whatsnew" hidden><summary class="dim">What's new</summary><ul class="log" id="log"></ul></details>
 
+  <div class="box info">
+    <h2>Good to know</h2>
+    <h3>Finding the pages</h3>
+    <ul>
+      <li>Press <b>SONG</b> to step through the pages you picked, in this order: Looper, SAMPLR, Trigger2MIDI, DRONE-8, MCL, then the normal song screen. <b>BACK</b> steps back. A page you didn't pick is skipped.</li>
+      <li>The Looper also opens with <b>MIX</b>, after Mixer, Mute and Solo.</li>
+    </ul>
+    <h3>Saving</h3>
+    <ul>
+      <li><b>SAVE</b> (on the Looper's SETUP page, on SAMPLR and on DRONE-8) writes the Looper's options, DRONE-8's settings and Trigger2MIDI's settings to the card with your project.</li>
+      <li>Not saved: the loops you record, and SAMPLR's own settings.</li>
+    </ul>
+    <h3>Processing power (CPU)</h3>
+    <ul>
+      <li>The Blackbox has a fixed amount of audio processing power, and each machine takes a share on top of what the Blackbox already uses. Many ringing pad voices with Fidelity and Saturation, DRONE-8, and Looper tracks with effects all add up.</li>
+      <li><b>Grain sounds are among the hungriest:</b> the Looper's GRAIN and SMOOTH pitch settings, and SAMPLR's Grain mode (the more fingers, the more grains).</li>
+      <li>When the load gets high, nothing is cut off suddenly: parts fade out slowly. Looper tracks fade out and are muted (the page shows it), SAMPLR tracks drop out, and DRONE-8 gives up its delay lines first. They come back by themselves when there is room again, or straight away when you open that page.</li>
+      <li>The machine whose page you opened last is the last to give way.</li>
+      <li>DRONE-8's MIX page shows the audio load at the top while you aren't turning anything. Opening big folders or samples on the SD card lowers the limits for a moment.</li>
+      <li>If the sound starts to drop out: use fewer Looper tracks with effects, less Grain, or fewer ringing pad voices.</li>
+    </ul>
+    <h3>Memory</h3>
+    <ul>
+      <li>Looper tracks hold about 15 seconds each (four tracks). The Looper takes about a third of the memory the Blackbox uses for samples and recordings, so very big projects may have less room.</li>
+    </ul>
+    <h3>Looking after your Blackbox</h3>
+    <ul>
+      <li>Keep your stock <code>BLACKBOX.bin</code> and back up your SD card before updating. Use at your own risk.</li>
+    </ul>
+  </div>
+
   <div class="box">
-    <h2>Parts</h2><p class="dim" style="margin:0 0 6px">SONG steps through the pages you pick in this order: Looper, SAMPLR, Trigger2MIDI, DRONE-8, MCL, then the normal song screen. BACK steps back. Settings are saved with your project (SAVE on the Looper's SETUP page, SAMPLR and DRONE-8).</p><div id="parts"></div>
+    <h2>Parts</h2><div id="parts"></div>
     <details id="mclnotice" hidden><summary class="dim">MCL licence notice</summary><p class="fine" style="white-space:pre-line">MCL is © Justin Mammarella, Yatao Li and Manuel Odendahl (fork: viktorakos95/MCL), used under this licence:\n\nCopyright 2020, Justin Mammarella &lt;jmamma@gmail.com>
                 Yatao Li &lt;yatao.li@live.com>
                 Manuel Odendahl &lt;wesen@ruinwesen.com>
@@ -115,7 +151,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</p></details>
 </main>
 <dialog id="manual" aria-label="Manual">
   <div id="mhead"><h2 id="mtitle"></h2><button id="mclose" type="button">Close</button></div>
-  <div id="mbody"><p class="dim" id="mintro" style="margin:0 0 4px"></p><div id="mtabs"></div><div class="mfig" id="mfig"></div><p class="dim" style="margin:8px 0 0;font-size:.8rem">Tap a number or a line to highlight it; tap it again to show everything. The pictures are renders of the screen, with test sounds.</p><ol id="mlist"></ol></div>
+  <div id="mbody">
+    <div id="mleft"><div class="mfig" id="mfig"></div><div id="mtabs"></div></div>
+    <div id="mright"><p class="dim" id="mintro" style="margin:0 0 4px"></p><p class="dim" style="margin:0 0 6px;font-size:.8rem">Tap a number or a line to highlight it; tap it again to show everything. The pictures are renders of the screen with test sounds.</p><ol id="mlist"></ol></div>
+  </div>
 </dialog>
 <script src="apply.js"></script>
 <script>
@@ -161,16 +200,19 @@ async function openManual(id) {
   $("manual").scrollTop = 0;
 }
 function showSheet(m, i) {
-  const sh = m.sheets[i], [W, H] = sh.size; let sel = -1;
+  const sh = m.sheets[i], [W, H] = sh.size; let sel = 0;
   const NS = "http://www.w3.org/2000/svg";
   function draw() {
     const f = $("mfig"); f.innerHTML = `<img src="img/manual/${sh.id}.png" alt="${sh.title}">`;
     const svg = document.createElementNS(NS, "svg"); svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio", "none");
-    const acc = getComputedStyle(document.documentElement).getPropertyValue("--acc").trim() || "#e2b043";
+    const acc = getComputedStyle(document.documentElement).getPropertyValue("--mf").trim() || "#2f8cff";
     let h = "";
     if (sel >= 0) {
-      h += `<defs><mask id="mk"><rect width="${W}" height="${H}" fill="#fff"/>${sh.items[sel].boxes.map(b => `<rect x="${b[0]}" y="${b[1]}" width="${b[2]}" height="${b[3]}" fill="#000"/>`).join("")}</mask></defs><rect width="${W}" height="${H}" fill="rgba(0,0,0,.68)" mask="url(#mk)"/>`;
+      h += `<defs><mask id="mk"><rect width="${W}" height="${H}" fill="#fff"/>${sh.items[sel].boxes.map(b => `<rect x="${b[0]}" y="${b[1]}" width="${b[2]}" height="${b[3]}" fill="#000"/>`).join("")}</mask></defs><rect width="${W}" height="${H}" fill="rgba(0,0,0,.5)" mask="url(#mk)"/>`;
     }
+    sh.items.forEach((it, k) => it.boxes.forEach(b => {
+      if (k === sel) h += `<rect x="${b[0]}" y="${b[1]}" width="${b[2]}" height="${b[3]}" fill="none" stroke="#fff" stroke-width="6" vector-effect="non-scaling-stroke"/>`;
+    }));
     sh.items.forEach((it, k) => it.boxes.forEach(b => {
       const on = k === sel;
       h += `<rect data-k="${k}" x="${b[0]}" y="${b[1]}" width="${b[2]}" height="${b[3]}" fill="${on ? "none" : "transparent"}" stroke="${acc}" stroke-width="${on ? 3 : 1.5}" stroke-opacity="${sel < 0 || on ? 1 : .3}" stroke-dasharray="${on ? "" : "5 3"}" vector-effect="non-scaling-stroke" style="cursor:pointer"/>`;
