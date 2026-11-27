@@ -49,10 +49,10 @@ LOOPER_FX = fxgrid(["FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB", "REV", "HALF"]
     "Resonance of the filter.",
     "Crunch: bit and sample-rate reduction.",
     "Drive: pushes the track into saturation.",
-    "Send into the looper's own delay.",
-    "Send into the looper's own reverb.",
+    "Send into the Blackbox's own delay. Its type, time and return are set on the Blackbox's FX page.",
+    "Send into the Blackbox's own reverb. Its type, size and return are set on the Blackbox's FX page.",
     "Plays the track backwards.",
-    "Half speed.",
+    "Plays at half speed, an octave down. A half-speed track can't be recorded over.",
 ], PINK)
 LOOPER_FX2 = fxgrid(["STAB", "RPT", "SPEED", "WOB", "POS", "STUT", "SCRM", "PTCH"], [
     "Tape instability: wow, flutter, a little noise and dulling.",
@@ -74,7 +74,7 @@ LOOPER_SETUP = [
     it("SPEED PITCH", "How speed and pitch changes are made: TAPE (like a tape machine), GRAIN (granular) or SMOOTH (smoother, uses more CPU).", (172, 250, 310, 26)),
     it("LOOPER OUT", "Which output the looper plays to: OUT 1, 2 or 3.", (172, 280, 310, 26)),
     it("CLEAR ALL", "Clears every track. It asks once: press it again to confirm.", (174, 310, 222, 26)),
-    it("SAVE", "Saves the looper's options with the project.", (414, 310, 220, 26)),
+    it("SAVE", "Saves the mod's settings with the project: the Looper's options, DRONE-8 and Trigger2MIDI. The loops you recorded are not saved.", (414, 310, 220, 26)),
     it("LOOP GAIN", "The loops' level (knob 1).", (16, 350, 300, 92)),
     it("MONITOR", "How much of the live input you hear while looping (knob 4).", (324, 350, 300, 92)),
 ]
@@ -89,7 +89,7 @@ SM_STRIP = [
     it("Waveform", "The sample with its slice markers. Touch it to play (up to four fingers); how high you touch sets volume (or pitch, with YP).", (20, 134, 602, 248)),
     it("Encoder corners", "The four knobs: ATK attack (top-left), REL release (top-right), SLICES number of slices (bottom-left), VOL volume (bottom-right).", (24, 140, 50, 18), (556, 140, 50, 18), (24, 356, 70, 18), (556, 356, 50, 18)),
     it("Sheet tabs", "PLAY (the mode's switches), REC (the take), FX, SMPL (the sample and the mode).", (12, 453, 490, 26)),
-    it("SAVE", "Saves SAMPLR's settings with the project.", (500, 452, 126, 26)),
+    it("SAVE", "Saves the mod's settings with the project: the Looper's options, DRONE-8 and Trigger2MIDI. SAMPLR's own settings are not saved yet.", (500, 452, 126, 26)),
 ]
 SAMPLR_PLAY = SM_STRIP + [
     it("Q", "Starts slices on the grid: off, 1/4, 1/8 or 1/16. Tap to cycle.", (14, 390, 100, 56)),
@@ -110,8 +110,8 @@ SAMPLR_REC = SM_STRIP + [
 SAMPLR_FX = SM_STRIP + [
     it("FILT", "Filter, as on the pads: low-pass to the left, high-pass to the right, off at the centre.", (12, 390, 100, 56)),
     it("RES", "Resonance of the filter.", (114, 390, 100, 56)),
-    it("REV", "Reverb send.", (216, 390, 100, 56)),
-    it("DLY", "Delay send.", (318, 390, 100, 56)),
+    it("REV", "Send into the Blackbox's own reverb.", (216, 390, 100, 56)),
+    it("DLY", "Send into the Blackbox's own delay.", (318, 390, 100, 56)),
     it("A", "Attack time of the sample's volume envelope.", (420, 390, 100, 56)),
     it("R", "Release time of the volume envelope.", (522, 390, 100, 56)),
 ]
@@ -121,11 +121,11 @@ SAMPLR_SMPL = SM_STRIP[:2] + [
     it("Sample picker", "< and > choose the previous or next sample; the name in the middle is the current one.", (12, 390, 372, 56)),
     it("HIGHQ", "The interpolation quality used when the sample is played at another pitch.", (386, 390, 110, 56)),
     it("Sheet tabs", "PLAY, REC, FX and SMPL.", (12, 453, 490, 26)),
-    it("SAVE", "Saves SAMPLR's settings with the project.", (500, 452, 126, 26)),
+    it("SAVE", "Saves the mod's settings with the project: the Looper's options, DRONE-8 and Trigger2MIDI. SAMPLR's own settings are not saved yet.", (500, 452, 126, 26)),
 ]
 
-D_TOP = it("Top bar", "Six switches. BTN: the eight round buttons are the voice plates (off: they are the normal Blackbox buttons). REC: the gesture recorder. STEP/FREE: an encoder click moves a note at a time, or in fine steps. X:IN / X:MIX / X:ALL: the audio source on the external input. TRI/SINE: the oscillator wave. LATCH/HOLD: a plate toggles, or only sounds while held.", (214, 34, 410, 26))
-D_PLATES = it("Voice plates 1-8", "Tap to switch a voice on or off (or hold it, with HOLD). The eight round buttons do the same.", (14, 376, 612, 64))
+D_TOP = it("Top bar", "Six switches. BTN: the eight hardware buttons work as the voice plates (off: they are the normal Blackbox buttons again). REC: the gesture recorder. STEP/FREE: an encoder click moves a note at a time, or in fine steps. X:IN / X:MIX / X:ALL: what the synth's external input listens to: the audio input, the Blackbox's own mix (without this synth), or both. TRI/SINE: the oscillator wave. LATCH/HOLD: a plate toggles, or only sounds while held.", (214, 34, 410, 26))
+D_PLATES = it("Voice plates 1-8", "Tap to switch a voice on or off (or hold it, with HOLD). The eight hardware buttons do the same while BTN is on.", (14, 376, 612, 64))
 D_STRIP = it("Level and tune knobs", "Each pair of voices has two small LEVEL knobs above its two TUNE knobs. The four encoders turn the four knobs of the orange-framed group.", (18, 250, 600, 118))
 D_FOOT = it("Page tabs", "VOICES, SOUND, CHORD, MIX and CTRL are the pages; SAVE stores the settings with the project.", (14, 453, 612, 26))
 DRONE_VOICES = [D_TOP,
@@ -142,14 +142,14 @@ DRONE_SOUND = [D_TOP,
     D_STRIP, D_PLATES, D_FOOT]
 DRONE_CHORD = [D_TOP,
     it("TONAL SPACE", "Pick a chord or scale (SPACE), its root (KEY), the lowest octave (OCT) and how far the notes spread (SPAN).", (18, 64, 148, 178)),
-    it("VOICING", "CHORD ON: the eight voices play notes of that space. SHUFL deals the notes to the voices again. QUANT snaps the voices to the nearest real note once. CYCLE rotates the notes between voices.", (172, 64, 148, 178)),
+    it("VOICING", "CHORD ON: the eight voices play notes of that space. SHUFL makes a new voicing of the same space. QUANT snaps the voices to the nearest real note once. CYCLE rotates the notes: every voice takes its neighbour's note.", (172, 64, 148, 178)),
     it("Notes of voices 1-4 and 5-8", "The note each voice plays now. The knobs below can move them by hand.", (324, 64, 300, 178)),
     D_STRIP, D_PLATES, D_FOOT]
 DRONE_MIX = [D_TOP,
     it("OUTPUT", "DRIVE and DIST: two kinds of distortion. VOL: master volume. EXT: level of the external input.", (18, 64, 148, 178)),
     it("PITCH", "P 1-4 and P 5-8 move the pitch of the two groups of voices. VIB switches the vibrato. TUNE: EQUAL or JUST tuning.", (172, 64, 148, 178)),
     it("GESTURE", "The gesture recorder: REC, LEN (how many bars), UNDO the last layer, LOOP stops or starts the loop.", (324, 64, 148, 178)),
-    it("FEEL", "SPREAD: the stereo width (0 = mono). DRIFT: slow random pitch wander. VERB: reverb. POWER: switches the engine on or off.", (476, 64, 148, 178)),
+    it("FEEL", "SPREAD: the stereo width (0 = mono). DRIFT: slow random pitch wander. VERB: send into the Blackbox's own reverb (its type and size are on the Blackbox's FX page). POWER: switches the engine on or off.", (476, 64, 148, 178)),
     D_STRIP, D_PLATES, D_FOOT]
 DRONE_CTRL = [D_TOP,
     it("FAST", "The fast envelope: attack time and release factor.", (18, 64, 148, 178)),

@@ -1,6 +1,6 @@
 {
  "name": "blackbox-mod patcher",
- "version": "1.6",
+ "version": "1.7",
  "machines": {
   "looper": {
    "title": "Looper",
@@ -24,6 +24,12 @@
   }
  },
  "changes": [
+  {
+   "date": "2026-11-27",
+   "component": "patcher",
+   "version": "1.7",
+   "text": "Manual: page buttons under the picture, blue highlights, starts on item 1, picture and text side by side on wide screens; wording fixed (the Looper's sends go to the Blackbox's own delay and reverb; the eight buttons are not round; DRONE-8 X:, CYCLE and VERB; SAMPLR saves nothing of its own yet). New Good to know section: CPU, grains, memory, saving."
+  },
   {
    "date": "2026-11-27",
    "component": "patcher",
@@ -91,5 +97,5 @@
    "text": "Drum triggers to MIDI."
   }
  ],
- "code_hash": "0a1108044e3999e9"
+ "code_hash": "97877a713a45ea18"
 }
