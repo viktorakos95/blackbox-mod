@@ -96,9 +96,9 @@
    "title": "Everything except MCL"
   },
   "all+mcl": {
-   "cave_bytes": 157260,
+   "cave_bytes": 157436,
    "cave_limit": 188808,
-   "cave_sha256": "26e18ba79a53c38973dcfb19a19077e2acce9cd10cd89034cfea63535e86c8c1",
+   "cave_sha256": "cf9e17c6de597df011325508db8f269176082feccd7cd4d5922df2dc332bde76",
    "experimental": true,
    "hook_blind_tests": [
     "test_clkout.py",
@@ -121,8 +121,8 @@
    ],
    "host_tests": "pass",
    "id": "all+mcl",
-   "image_bytes": 1701240,
-   "image_sha256": "e0c2604725087a21216b80be66bb1b17d0bd38645f872e40d9c0d315c29bb56b",
+   "image_bytes": 1701520,
+   "image_sha256": "514b584f0bdcd4c8ab72e9f9ed916182f405e9ab041e8ff97127272359c92584",
    "n_a": [],
    "scope": "full",
    "sets": [
@@ -150,7 +150,7 @@
     "mclblob",
     "mclsd"
    ],
-   "source_rev": "608ffe6",
+   "source_rev": "f408736",
    "status": "pass",
    "tested_at": "2026-11-27",
    "tests": {
