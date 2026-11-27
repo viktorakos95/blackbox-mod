@@ -367,9 +367,11 @@ seq, quiet = [], True
 for _ in range(1000):
     o = play()[0]
     nz = [i for i, x in enumerate(o) if abs(x) > 1e-6]
-    if nz and quiet:
-        v = o[nz[0]]
-        seq.append("A" if v < 0.3 else "B" if 0.4 < v < 0.6 else "AB")
+    if nz and quiet:                                            # an onset: the level of the slice over this block and the next two (A is 0.17 up the ramp, B 0.5, both 0.67)
+        v = max(abs(x) for x in o)
+        for _ in range(2):
+            v = max(v, max(abs(x) for x in play()[0]))
+        seq.append("A" if v < 0.3 else "B" if v < 0.6 else "AB")
     quiet = not nz or abs(o[-1]) < 1e-6
 check("slices on a 1/16 grid with LOOP take turns: A B A B ... (never both on one line)", len(seq) >= 8 and "AB" not in seq and all(seq[i] != seq[i + 1] for i in range(len(seq) - 1)), seq[:12])
 touch(2, 0, 0, 0)
