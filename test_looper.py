@@ -15,6 +15,9 @@ import unicorn.arm_const as A
 from emu import STACK, Emu
 
 e = Emu("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+cave/BLACKBOX.bin", "out/cave.elf")
+MCL_IMG = e.r32(0x08120000) == 0x424C434D           # an image with the MCL program
+if MCL_IMG:                                     # (its MIDI / clock hooks check their ready flag in its SDRAM; zero = not ready)
+    e.uc.mem_map(0xC3F80000, 0x80000)
 e.uc.mem_map(0x38800000, 0x1000)                     # backup SRAM
 e.uc.mem_map(0x58024000, 0x1000)                     # RCC / PWR
 e.uc.mem_map(0xE0001000, 0x1000)                     # DWT cycle counter
@@ -1342,7 +1345,10 @@ e.call("looper_page_tab")
 check("SONG again: the DRONE-8 page (tab 7)", screens == [] and e.uc.reg_read(A.UC_ARM_REG_R0) == 7, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
 e.call("solo_song_pressed", APP, 0, 0, 0)
 e.call("looper_page_tab")
-check("SONG again: without the MCL blob there is no MCL page: the stock song screen (0x2d)", screens == [0x2D], screens)
+if MCL_IMG:
+    check("SONG again: the image has the MCL program: the MCL page (tab 8), no screen change", screens == [] and e.uc.reg_read(A.UC_ARM_REG_R0) == 8, (screens, e.uc.reg_read(A.UC_ARM_REG_R0)))
+else:
+    check("SONG again: without the MCL blob there is no MCL page: the stock song screen (0x2d)", screens == [0x2D], screens)
 e.call("looper_page_goto", VIEW, 0)                                         # (the stub changed no screen: back on the Looper to go round again)
 screens.clear()
 for _ in range(3):

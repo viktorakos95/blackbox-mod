@@ -45,6 +45,8 @@ SZ, STSZ, ISZ, O_RESET, O_MHZ, O_BMIN, O_BMAX = map(int, subprocess.run(["out/cl
 check("the interrupt block fits its backup SRAM window (0x38800988..0x38800a00)", ISZ <= 0x78, ISZ)
 
 e = Emu(IMG, "out/cave.elf")
+if e.r32(0x08120000) == 0x424C434D:                 # (an image with the MCL program: its MIDI / clock hooks check their ready flag in its SDRAM; zero = not ready)
+    e.uc.mem_map(0xC3F80000, 0x80000)
 e.uc.mem_map(0x38800000, 0x1000)
 e.uc.mem_map(0x58024000, 0x1000)
 e.uc.mem_map(0xE0001000, 0x1000)
