@@ -1,6 +1,6 @@
 {
  "name": "blackbox-mod patcher",
- "version": "1.5",
+ "version": "1.6",
  "machines": {
   "looper": {
    "title": "Looper",
@@ -24,6 +24,12 @@
   }
  },
  "changes": [
+  {
+   "date": "2026-11-27",
+   "component": "patcher",
+   "version": "1.6",
+   "text": "A Manual pop-up for Looper, SAMPLR, DRONE-8 and Trigger2MIDI: a picture of every page with the controls numbered and highlighted, and what each does. Version numbers are larger."
+  },
   {
    "date": "2026-11-27",
    "component": "patcher",
@@ -85,5 +91,5 @@
    "text": "Drum triggers to MIDI."
   }
  ],
- "code_hash": "a312103c61fc8918"
+ "code_hash": "0a1108044e3999e9"
 }

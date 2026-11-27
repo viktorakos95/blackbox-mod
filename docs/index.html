@@ -25,7 +25,28 @@
   #status { margin-top: 10px; white-space: pre-wrap; }
   a.btn { display: inline-block; margin-top: 10px; padding: 10px 16px; background: var(--acc); color: var(--bg); border-radius: 6px; text-decoration: none; font-weight: 600; }
   h1 small { font-size: .9rem; font-weight: 400; color: var(--dim); }
-  .ver { color: var(--dim); font-size: .8rem; }
+  .ver { display: inline-block; background: color-mix(in srgb, var(--acc) 22%, transparent); color: var(--acc); padding: 0 8px; border-radius: 999px; font-size: .85rem; font-weight: 700; vertical-align: 1px; }
+  h1 small.ver { font-size: 1rem; vertical-align: 3px; margin-left: 6px; }
+  .mbtn { margin: 0 0 10px 28px; padding: 4px 12px; border: 1px solid var(--acc); border-radius: 999px; background: transparent; color: var(--acc); font-weight: 600; font-size: .85rem; cursor: pointer; }
+  dialog#manual { width: min(96vw, 780px); max-height: 94vh; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); }
+  dialog#manual::backdrop { background: rgba(0,0,0,.6); }
+  #mhead { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 3; }
+  #mhead h2 { margin: 0; flex: 1; font-size: 1.1rem; }
+  #mclose { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 1rem; }
+  #mbody { padding: 12px 16px 18px; }
+  #mtabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  #mtabs button { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: .85rem; }
+  #mtabs button[aria-pressed=true] { border-color: var(--acc); color: var(--acc); font-weight: 700; }
+  .mfig { position: sticky; top: 56px; z-index: 2; width: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: #000; line-height: 0; }
+  .mfig img { width: 100%; height: auto; display: block; image-rendering: pixelated; }
+  .mfig svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .mpin { position: absolute; transform: translate(-30%, -30%); min-width: 20px; height: 20px; border-radius: 999px; background: var(--acc); color: #111; font: 700 12px/20px system-ui, sans-serif; text-align: center; pointer-events: none; padding: 0 3px; box-sizing: border-box; }
+  .mpin.dim { opacity: .35; }
+  ol#mlist { margin: 10px 0 0; padding: 0; list-style: none; counter-reset: m; }
+  ol#mlist li { display: flex; gap: 10px; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: .9rem; border: 1px solid transparent; }
+  ol#mlist li b.n { flex: none; min-width: 22px; height: 22px; border-radius: 999px; background: var(--acc); color: #111; text-align: center; line-height: 22px; font-size: .8rem; }
+  ol#mlist li.on { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 12%, transparent); }
+  ol#mlist li span.t { font-weight: 700; }
   details { margin: 6px 0; }
   summary { cursor: pointer; }
   ul.log { margin: 6px 0 0; padding-left: 18px; font-size: .85rem; color: var(--dim); }
@@ -92,6 +113,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</p></details>
   <p class="fine">Install: copy it to the card root as <code>BLACKBOX.bin</code> and update as usual (BACK + INFO at power-on). Keep the stock file to go back.</p>
   <p class="fine">Not affiliated with or supported by 1010music; "1010music" and "Blackbox" are their trademarks. This page contains none of their firmware and only accepts your stock 3.1.9. Use at your own risk; it may affect your warranty. MIT-licensed, with third-party parts (<a href="https://github.com/viktorakos95/blackbox-mod/blob/main/THIRD_PARTY.md">notices</a>).</p>
 </main>
+<dialog id="manual" aria-label="Manual">
+  <div id="mhead"><h2 id="mtitle"></h2><button id="mclose" type="button">Close</button></div>
+  <div id="mbody"><p class="dim" id="mintro" style="margin:0 0 4px"></p><div id="mtabs"></div><div class="mfig" id="mfig"></div><p class="dim" style="margin:8px 0 0;font-size:.8rem">Tap a number or a line to highlight it; tap it again to show everything. The pictures are renders of the screen, with test sounds.</p><ol id="mlist"></ol></div>
+</dialog>
 <script src="apply.js"></script>
 <script>
 const $ = id => document.getElementById(id);
@@ -118,7 +143,57 @@ const DESC = {
   mcl_open: "Open with SONG, after DRONE-8.",
 };
 
-let VER = {};
+let VER = {}, MAN = null;
+async function openManual(id) {
+  if (!MAN) { try { MAN = await (await fetch("manual.json")).json(); } catch (e) { return; } }
+  const m = MAN[id]; if (!m) return;
+  const v = VER.machines && VER.machines[id] ? ` <span class="ver">v${VER.machines[id].version}</span>` : "";
+  $("mtitle").innerHTML = `${m.title} manual${v}`;
+  $("mintro").textContent = m.intro;
+  $("mtabs").innerHTML = "";
+  m.sheets.forEach((sh, i) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = sh.tab; b.setAttribute("aria-pressed", i === 0);
+    b.addEventListener("click", () => { for (const x of $("mtabs").children) x.setAttribute("aria-pressed", x === b); showSheet(m, i); });
+    $("mtabs").appendChild(b);
+  });
+  showSheet(m, 0);
+  $("manual").showModal();
+  $("manual").scrollTop = 0;
+}
+function showSheet(m, i) {
+  const sh = m.sheets[i], [W, H] = sh.size; let sel = -1;
+  const NS = "http://www.w3.org/2000/svg";
+  function draw() {
+    const f = $("mfig"); f.innerHTML = `<img src="img/manual/${sh.id}.png" alt="${sh.title}">`;
+    const svg = document.createElementNS(NS, "svg"); svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio", "none");
+    const acc = getComputedStyle(document.documentElement).getPropertyValue("--acc").trim() || "#e2b043";
+    let h = "";
+    if (sel >= 0) {
+      h += `<defs><mask id="mk"><rect width="${W}" height="${H}" fill="#fff"/>${sh.items[sel].boxes.map(b => `<rect x="${b[0]}" y="${b[1]}" width="${b[2]}" height="${b[3]}" fill="#000"/>`).join("")}</mask></defs><rect width="${W}" height="${H}" fill="rgba(0,0,0,.68)" mask="url(#mk)"/>`;
+    }
+    sh.items.forEach((it, k) => it.boxes.forEach(b => {
+      const on = k === sel;
+      h += `<rect data-k="${k}" x="${b[0]}" y="${b[1]}" width="${b[2]}" height="${b[3]}" fill="${on ? "none" : "transparent"}" stroke="${acc}" stroke-width="${on ? 3 : 1.5}" stroke-opacity="${sel < 0 || on ? 1 : .3}" stroke-dasharray="${on ? "" : "5 3"}" vector-effect="non-scaling-stroke" style="cursor:pointer"/>`;
+    }));
+    svg.innerHTML = h; f.appendChild(svg);
+    sh.items.forEach((it, k) => it.boxes.forEach(b => {
+      const p = document.createElement("div"); p.className = "mpin" + (sel >= 0 && k !== sel ? " dim" : ""); p.textContent = k + 1;
+      p.style.left = (100 * b[0] / W) + "%"; p.style.top = (100 * b[1] / H) + "%"; f.appendChild(p);
+    }));
+    svg.querySelectorAll("rect[data-k]").forEach(r => r.addEventListener("click", () => pick(+r.dataset.k)));
+    const ol = $("mlist"); ol.innerHTML = "";
+    sh.items.forEach((it, k) => {
+      const li = document.createElement("li"); if (k === sel) li.className = "on";
+      li.innerHTML = `<b class="n">${k + 1}</b><div><span class="t"></span> <span class="x"></span></div>`;
+      li.querySelector(".t").textContent = it.title + "."; li.querySelector(".x").textContent = it.text;
+      li.addEventListener("click", () => pick(k)); ol.appendChild(li);
+    });
+  }
+  function pick(k) { sel = sel === k ? -1 : k; draw(); }
+  draw();
+}
+$("mclose").addEventListener("click", () => $("manual").close());
+$("manual").addEventListener("click", e => { if (e.target === $("manual")) $("manual").close(); });
 function box(parent, id) {
   const [title, note] = LABEL[id];
   const v = VER.machines && VER.machines[id] ? ` <span class="ver">v${VER.machines[id].version}</span>` : "";
@@ -130,6 +205,10 @@ function box(parent, id) {
     const d = document.createElement("p");
     d.className = "desc"; d.textContent = DESC[id] + " " + DESC[id + "_open"];
     parent.appendChild(d);
+    if (id !== "mcl") {
+      const mb = document.createElement("button"); mb.type = "button"; mb.className = "mbtn"; mb.textContent = "Manual";
+      mb.addEventListener("click", () => openManual(id)); parent.appendChild(mb);
+    }
     const im = document.createElement("img");
     im.className = "shot"; im.src = "img/" + id + ".png"; im.loading = "lazy"; im.alt = title + " page";
     parent.appendChild(im);
@@ -181,8 +260,8 @@ fetch("versions.json").then(r => r.json()).catch(() => ({})).then(v => VER = v).
   data = d;
   if (VER.name) {
     document.title = VER.name;
-    $("title").innerHTML = `${VER.name} <small>v${VER.version}</small>`;
-    $("log").innerHTML = (VER.changes || []).slice(0, 12).map(c => `<li>${c.date} · ${c.component === "patcher" ? "Patcher" : (VER.machines[c.component] || {}).title} ${c.version}: ${c.text}</li>`).join("");
+    $("title").innerHTML = `${VER.name} <small class="ver">v${VER.version}</small>`;
+    $("log").innerHTML = (VER.changes || []).slice(0, 12).map(c => `<li>${c.date} · <b>${c.component === "patcher" ? "Patcher" : (VER.machines[c.component] || {}).title} <span class="ver">v${c.version}</span></b> ${c.text}</li>`).join("");
     $("whatsnew").hidden = !(VER.changes || []).length;
   }
   for (const p of ORDER) if (d.parts[p]) box($("parts"), p);

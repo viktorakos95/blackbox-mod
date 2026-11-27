@@ -27,7 +27,7 @@ OWNED = {
               "src/lira/", "patches/lira.py", "patches/lirarec.py"],
 }
 MCL = ("src/mcl_bb/", "tools/mcl/", "patches/mcl", "test_mcl", "test_mclpad.py")      # not versioned here
-PATCHER_ROOTS = ["src/", "patches/", "docs/index.html", "docs/apply.js", "build.sh", "tools/patchsets.py", "tools/combo.py", "tools/export_web.py"]
+PATCHER_ROOTS = ["src/", "patches/", "docs/index.html", "docs/apply.js", "docs/manual.json", "tools/manual_build.py", "build.sh", "tools/patchsets.py", "tools/combo.py", "tools/export_web.py"]
 IGNORE = ("__pycache__", ".pyc")
 
 
