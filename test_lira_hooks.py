@@ -46,7 +46,6 @@ if os.path.exists("out/mcl.elf"):
     img2 = build(["mclblob", "mclsd"])
     check("with the MCL blob and mclsd: the same three calls stay the cave's", all(img2[a - BASE:a - BASE + 4] == bl(a, csym[f]) for a, f in ((0x080743E8, "lira_sd_top"), (0x0807443E, "lira_sd_inner"), (0x080744D8, "lira_file_poll"))))
     check("... and the 'next' pointers are MCL's hooks (mcl_sd_pump, mcl_sd_inner)", word(img2, csym["lira_sd_next_top"]) == (bsym["mcl_sd_pump"] | 1) and word(img2, csym["lira_sd_next_inner"]) == (bsym["mcl_sd_inner"] | 1), (hex(word(img2, csym["lira_sd_next_top"])), hex(bsym["mcl_sd_pump"])))
-img3 = build(["mclblob", "mclsd"])
 
 # the hooks, called with the stock functions stubbed
 IMG = "out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+lira+cave/BLACKBOX.bin"

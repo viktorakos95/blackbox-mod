@@ -1,10 +1,11 @@
 # Third-party work
 
-The patch (source and the compiled bytes in `docs/blackbox-mod-*.json`) includes or derives from the following.
+This project is a fork of Justin Joe's blackbox-mod and includes or derives from the following.
 All of it is MIT-licensed except LIRA-8, which is under its author's BSD-style license; the notices travel with every copy.
 
 | Component | Copyright | License | Where |
 |---|---|---|---|
+| blackbox-mod 3.1.n ([j3threejay/blackbox-mod](https://github.com/j3threejay/blackbox-mod)): Solo, slicer knobs, ducker, chords, note conditions, Fidelity and filter, saturation, compressor models, reverb / delay types, sequencer fix, CPU meter; and from its later builds the filter switch fix, the Keys / Pads notes restore (`src/seqmode.c`) and the streamed project save (`src/savexml.c`) | © 2026 Justin Joe | MIT | `src/` (the files named), `LICENSE` |
 | Munchi Delay ([charlesvestal/schwung-munchi-delay](https://github.com/charlesvestal/schwung-munchi-delay)) | © 2026 Charles Vestal | MIT | `src/munchi/` (`LICENSE`, `THIRD_PARTY.md` beside it) |
 | CHOMPI TEMPO 1.0 firmware (granular delay, compressor, crossfades) | © CHOMPI Club | MIT | `src/munchi/tempo/` |
 | `reverb.h`, `fx_engine.h` | © Émilie Gillet (Mutable Instruments) | MIT | `src/munchi/tempo/`, notices in the files |
@@ -12,7 +13,7 @@ All of it is MIT-licensed except LIRA-8, which is under its author's BSD-style l
 | LIRA-8 ([MikeMorenoDSP/LIRA-8](https://github.com/MikeMorenoDSP/LIRA-8), emulation of the SOMA Lab Lyra-8) | © Miguel Moreno | "Standard Improved BSD" (3 clauses) | signal flow ported to C in `src/lira.c`; license in `src/lira/LICENSE` |
 | State-variable filter, after stmlib `dsp/filter.h` (`Svf`) | © 2014 Émilie Gillet | MIT | reimplemented in `src/filter.c` |
 | Classic 5x7 font of Adafruit_GFX (`glcdfont`) | © 2012 Adafruit Industries | BSD | `src/mcl_bb/glcdfont.h`, license in `src/mcl_bb/ADAFRUIT_GFX_LICENSE.txt` |
-| MCL desktop platform files (oled, GUI / LED hardware, MidiUart, global objects, SdFat.h, Arduino.h, ...), vendored and adapted for the Blackbox port | © Justin Mammarella, Yatao Li, Manuel Odendahl (MCL, fork by viktorakos95) | BSD 3-clause | `src/mcl_bb/platform/common/`, license in `src/mcl_bb/platform/common/LICENSE-MCL` |
+| MCL (MegaCommand): the core, compiled into the MCL blob that the patcher can add (built from the fork viktorakos95/MCL, branch `claude/md-machine-names-chromatic-b2oaz9`, with the patches in `tools/mcl/fork-patches`), and its desktop platform files (oled, GUI / LED hardware, MidiUart, global objects, SdFat.h, Arduino.h, ...), vendored and adapted for the Blackbox port | © Justin Mammarella, Yatao Li, Manuel Odendahl (fork by viktorakos95) | BSD 3-clause | `src/mcl_bb/platform/common/` (license in `LICENSE-MCL` there); the patcher page shows the notice when MCL is picked |
 
 ## Not included
 

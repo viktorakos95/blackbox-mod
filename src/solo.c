@@ -32,6 +32,8 @@ void looper_page_want(int tab);
 int looper_page_tab(void);
 int looper_page_last(void);
 void looper_page_goto(uint8_t *view, int tab);
+int looper_page_on(int tab);
+int looper_page_next(int tab);
 
 #define FN(addr) ((addr) | 1u)
 
@@ -267,7 +269,8 @@ void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
     (void)computed;
     ensure();
     int cur = app[APP_SCREEN], next = SCREEN_MIXER;
-    if (cur == SCREEN_MUTE && S->looper && S->view && looper_page_tab() >= 5) {
+    int lp = looper_ready() && looper_page_on(0);       /* the image has the Looper page (it can be left out: patches/hide_looper.py) */
+    if (cur == SCREEN_MUTE && S->looper && S->view && looper_page_tab() >= 5 && lp) {
         looper_page_goto(S->view, 0);                  /* from the SMPLR, TRIG or LIRA page MIX goes to the Looper's own first page */
         return;
     }
@@ -276,11 +279,11 @@ void solo_mix_pressed(uint8_t *app, int computed, int a, int b)
     } else if (cur == SCREEN_MUTE && !S->active && !S->looper) {
         S->pending = 1;
         next = SCREEN_MUTE;
-    } else if (cur == SCREEN_MUTE && S->active && looper_ready()) {
+    } else if (cur == SCREEN_MUTE && S->active && lp) {
         S->looper_pending = 1;
         looper_page_want(0);
         next = SCREEN_MUTE;
-    } else if (cur != SCREEN_MUTE && looper_ready()) {
+    } else if (cur != SCREEN_MUTE && lp) {
         S->looper_pending = 1;
         looper_page_want(0);
         next = SCREEN_MUTE;
@@ -305,17 +308,18 @@ void solo_song_pressed(uint8_t *app, int computed, int a, int b)
     (void)computed;
     ensure();
     int cur = app[APP_SCREEN];
-    if (!looper_ready()) {
+    if (!looper_ready() || looper_page_next(-1) < 0) {           /* no page in this image: the stock SONG button */
         fw_set_screen(app, 0x2d, a, b);
     } else if (cur == SCREEN_MUTE && S->looper && S->view) {
         int tab = looper_page_tab();                   /* 0..3 the Looper's tabs, 5 SAMPLR, 6 TRIG, 7 DRONE-8, 8 MCL */
-        if (tab == 8)
-            fw_set_screen(app, 0x2d, a, b);            /* MCL -> the stock song screen */
+        int nx = tab >= 1 && tab <= 3 ? 0 : looper_page_next(tab);   /* from the Looper's FX / SETUP / MORE: back to MAIN first; else the next page the image has, none left: the stock song screen */
+        if (nx < 0)
+            fw_set_screen(app, 0x2d, a, b);
         else
-            looper_page_goto(S->view, tab == 7 ? 8 : tab == 6 ? 7 : tab == 5 ? 6 : tab == 0 ? 5 : 0);
+            looper_page_goto(S->view, nx);
     } else {
         S->looper_pending = 1;
-        looper_page_want(cur == 0x2d ? 0 : looper_page_last());   /* from the stock song screen the round goes on (the Looper); from anywhere else: the page opened last */
+        looper_page_want(cur == 0x2d ? looper_page_next(-1) : looper_page_last());   /* from the stock song screen the round goes on (the first page); from anywhere else: the page opened last */
         fw_set_screen(app, SCREEN_MUTE, a, b);
     }
 }

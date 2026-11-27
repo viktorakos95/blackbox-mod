@@ -33,6 +33,10 @@ def boot():
     e.uc.mem_map(0x38800000, 0x1000)
     e.uc.mem_map(0x58024000, 0x1000)
     e.uc.mem_map(0xE0000000, 0x10000)
+    e.uc.mem_map(0x52007000, 0x1000)                                   # SDMMC1: the crash set's wrapped card read (crash.c) reads its status after a failed read ...
+    e.stub(0x08087BE8)                                                 # ... and drains the SD queue / waits for the HAL to be idle first (as test_crash.py does); never reached without `crash`
+    e.stub(0x08087A5C, value=1000)
+    e.uc.mem_write(0x24009BFC + 0x30, bytes([1]))                      # the HAL's SD state READY, so the wrapper's wait ends
     e.stub(0x0808C0D8)
     e.stub(0x0808C12C)
     e.stub(0x0804436C, value=0xC0000000)
