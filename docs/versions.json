@@ -1,6 +1,6 @@
 {
  "name": "blackbox-mod patcher",
- "version": "1.4",
+ "version": "1.5",
  "machines": {
   "looper": {
    "title": "Looper",
@@ -24,6 +24,12 @@
   }
  },
  "changes": [
+  {
+   "date": "2026-11-27",
+   "component": "patcher",
+   "version": "1.5",
+   "text": "The install help section is removed."
+  },
   {
    "date": "2026-11-27",
    "component": "patcher",
@@ -79,5 +85,5 @@
    "text": "Drum triggers to MIDI."
   }
  ],
- "code_hash": "12858cc7dd485df2"
+ "code_hash": "a312103c61fc8918"
 }
