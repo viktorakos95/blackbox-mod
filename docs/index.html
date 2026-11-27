@@ -91,9 +91,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</p></details>
 
   <details class="fine" open><summary>Blackbox says "unable to verify" or "firmware not found"?</summary>
     <ul class="log"><li>The file on the card must be named <code>BLACKBOX.bin</code>, in the card's root folder, and be exactly the size shown above. A shorter file means the copy went wrong: copy it again, ideally with a different card reader or card.</li>
-    <li>If it still fails, put your stock file back, then copy the details below and send them to whoever gave you this link, with your Blackbox's firmware version before the update, the type of card, and the exact message you got.</li></ul>
-    <textarea id="info" readonly rows="8" style="width:100%;margin-top:8px;font:12px/1.4 ui-monospace,monospace;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px;box-sizing:border-box"></textarea>
-    <button id="copy" type="button" style="margin-top:6px;padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);cursor:pointer">Copy details</button> <span id="copied" class="dim"></span>
+    <li>If it still fails, put your stock file back and tell whoever gave you this link: what you ticked, your Blackbox's firmware version before the update, the type of card, and the exact message.</li></ul>
   </details>
   <p class="fine">Install: copy it to the card root as <code>BLACKBOX.bin</code> and update as usual (BACK + INFO at power-on). Keep the stock file to go back.</p>
   <p class="fine">Not affiliated with or supported by 1010music; "1010music" and "Blackbox" are their trademarks. This page contains none of their firmware and only accepts your stock 3.1.9. Use at your own risk; it may affect your warranty. MIT-licensed, with third-party parts (<a href="https://github.com/viktorakos95/blackbox-mod/blob/main/THIRD_PARTY.md">notices</a>).</p>
@@ -144,12 +142,6 @@ function box(parent, id) {
 }
 const ids = () => ({ parts: ID_ORDER.filter(p => $(p) && $(p).checked), addons: Object.keys(data.addons).filter(a => $(a).checked) });
 
-function info(extra) {
-  const sel = ids();
-  const names = [...sel.parts, ...sel.addons].map(k => (LABEL[k] || [k])[0] + (VER.machines && VER.machines[k] ? " " + VER.machines[k].version : "")).join(", ") || "none";
-  return [`${VER.name || "blackbox-mod patcher"} ${VER.version || ""}`.trim(), `Picked: ${names}`, ...(extra || ["File: not made yet (choose your stock file first)"]),
-          "Blackbox firmware before the update: ", "Card (type, size, how it was copied): ", "Message on the Blackbox: "].join("\n");
-}
 function refresh() {
   const sel = ids();
   $("clkmon").disabled = !sel.parts.length;
@@ -158,7 +150,7 @@ function refresh() {
   $("mclnotice").hidden = !($("mcl") && $("mcl").checked);
   const sets = BBApply.resolve(data, sel.parts, sel.addons), pr = BBApply.problems(data, sets);
   $("state").innerHTML = pr.length ? `<span class="err">${pr.join("; ")}</span>` : "";
-  if (stock) run(); else $("info").value = info();
+  if (stock) run();
 }
 
 async function run() {
@@ -173,7 +165,6 @@ async function run() {
   a.textContent = "Download patched BLACKBOX.bin";
   $("dl").appendChild(a);
   const built = [VER.name ? `${VER.name} ${VER.version}` : "", ...sel.parts.filter(p => VER.machines && VER.machines[p]).map(p => `${VER.machines[p].title} ${VER.machines[p].version}`), ...(sel.parts.includes("mcl") ? ["MCL"] : [])].filter(Boolean).join(", ");
-  $("info").value = info([`File: ${out.length.toLocaleString()} bytes`, `SHA-256: ${await BBApply.sha256(out)}`]);
   say(`Stock ${data.stock_version} confirmed. Built with ${built}.\nFile: ${out.length.toLocaleString()} bytes, SHA-256 ${await BBApply.sha256(out)}\nChange the boxes above and it is made again.`, "ok");
 }
 
@@ -190,11 +181,6 @@ $("f").addEventListener("change", async e => {
   } catch (err) { say("Something went wrong: " + err.message, "err"); }
 });
 
-$("copy").addEventListener("click", async () => {
-  const t = $("info"); t.select();
-  try { await navigator.clipboard.writeText(t.value); } catch (e) { document.execCommand("copy"); }
-  $("copied").textContent = "Copied";
-});
 fetch("versions.json").then(r => r.json()).catch(() => ({})).then(v => VER = v).then(() => fetch("data.json")).then(r => r.json()).then(d => {
   data = d;
   if (VER.name) {
