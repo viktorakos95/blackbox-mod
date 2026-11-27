@@ -856,3 +856,10 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
 - Guard, less cautious: the in-block cap's base 93 % (was 88 %; +2 % per engine below it, always bounded by the room the tail of the block needs
   lately, which is the real limit); a leader that is held out lowers the marks of the engines below it by half the share it wants (was all of it,
   floor 760, was 600: opening SAMPLR's page cut the drone at once); the drone stays out at most ~1 s after repeated spikes (was ~2 s).
+
+## SAMPLR 1.1 (slices on the Q grid: groups take turns)
+
+- Slicer with Q on and LOOP (slices that repeat on the grid): slices pressed together (they start on the same grid line) are one group and sound together on
+  every line; slices pressed at different times start on their own lines and then take turns, one group on each line, cycling (with N groups each fires on
+  every N-th line, in the order they started). `slice_turn` and `smvoice.lk` in samplr.c, `looper_grid_index` (the number of the grid line in the block) in looper.c.
+- test_samplr.py: together = AB on every line; different times = A B A B and never both on a line (checked to fail with the turn-taking switched off).

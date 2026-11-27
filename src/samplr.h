@@ -41,6 +41,7 @@ struct smvoice {
     volatile uint32_t cmd, seen;            /* trigger sequence: the GUI task bumps cmd after writing the c_ fields */
     int32_t c_pos, c_start, c_end;
     float c_rate, c_gain, c_q;              /* c_q: start on the next grid line of this many beats (0 = at once) */
+    int32_t lk;                             /* the grid line a repeating slice started on: slices that started on the same line are one group (they sound together) */
     float c_rep, rep;                       /* rep: restart the slice on every grid line of this many beats while held (0 = no) */
     uint8_t c_loop, c_gate, held, rel;
     uint8_t on, loop, slice, vmode, c_mode, owner, _w[2];   /* vmode: the mode that played it; c_mode: ... that triggered it; owner: for a latched loop, 0 = played live, else the gesture layer + 1 */

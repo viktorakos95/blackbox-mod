@@ -1682,6 +1682,39 @@ static inline int grid(struct sm *s, float beats, int n)
     return looper_grid_exact(beats, s->sph, n);
 }
 
+int looper_grid_index(float beats, float sph, int n);
+
+/* Slices that repeat on the grid (Q on, LOOP) and were pressed at different times take turns: the slices that started on the same grid line (pressed
+ * together) are one group and sound together, every line; with N groups held each group fires on every N-th line, in the order they started, so a
+ * 1/16 grid plays one group on each 16th and cycles through them. 1 when it is this voice's turn on the line that falls in this block (or there is
+ * one group). */
+static int slice_turn(struct sm *s, struct smvoice *v, float beats, int n)
+{
+    int32_t keys[SM_NV];
+    int nk = 0, anchor = v->lk, k = looper_grid_index(beats, s->sph, n);
+    if (k < 0)
+        return 1;
+    for (int f = 0; f < SM_NV; f++) {
+        struct smvoice *o = &s->v[f];
+        int pending = o->seen != o->cmd && o->c_rep > 0.f && o->held;
+        if (o->vmode != SM_SLICER || !(o->rep > 0.f || pending))
+            continue;
+        int32_t key = pending ? k : o->lk;                        /* (a slice still waiting for its first line starts on this one: pressed together = the same group) */
+        int dup = 0;
+        for (int i = 0; i < nk; i++)
+            dup |= keys[i] == key;
+        if (!dup)
+            keys[nk++] = key;
+        anchor = key < anchor ? key : anchor;
+    }
+    if (nk < 2)
+        return 1;
+    int rank = 0;
+    for (int i = 0; i < nk; i++)
+        rank += keys[i] < v->lk;
+    return (((k - anchor) % nk) + nk) % nk == rank;
+}
+
 static uint32_t rnd(struct sm *s)
 {
     uint32_t x = s->rnd;
@@ -2101,6 +2134,8 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     if (v->seen != v->cmd) {
         int off = v->c_q > 0.f ? grid(s, v->c_q, n) : v->c_wait;
         if (off >= 0) {                                           /* (else the note waits for its grid line) */
+            if (v->c_q > 0.f && v->c_rep > 0.f)
+                v->lk = looper_grid_index(v->c_q, s->sph, n);     /* (the group it belongs to: the line it starts on) */
             v->seen = v->cmd;
             v->c_wait = 0;
             if (v->held || !v->c_gate || lat_of(s, v->c_mode)) {
@@ -2136,7 +2171,9 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     v->wait = 0;
     int roff = -1;
     if (v->rep > 0.f && !started)
-        roff = grid(s, v->rep, n);                                /* a repeating slice starts over on every grid line */
+        roff = grid(s, v->rep, n);                                /* a repeating slice starts over on every grid line (every N-th when N groups are held) */
+    if (roff >= 0 && !slice_turn(s, v, v->rep, n))
+        roff = -1;
     int fi = 0;
     for (int guard = 0; i < n && guard < 8; guard++) {
         if (roff >= 0 && roff <= i) {
