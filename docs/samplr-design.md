@@ -856,3 +856,11 @@ Build 82: looper.c keeps the task's peaks (looper_load_peak): the lowest of the 
 - Guard, less cautious: the in-block cap's base 93 % (was 88 %; +2 % per engine below it, always bounded by the room the tail of the block needs
   lately, which is the real limit); a leader that is held out lowers the marks of the engines below it by half the share it wants (was all of it,
   floor 760, was 600: opening SAMPLR's page cut the drone at once); the drone stays out at most ~1 s after repeated spikes (was ~2 s).
+
+## Build 108 (source only, not built or run: slices on the grid take turns)
+
+- SAMPLR slicer with Q on and LOOP (slices repeating on the grid): with N slices held, each fires on every N-th grid line, in the order of the voices,
+  so 1/16 plays one slice on each 16th and cycles through them (they used to all fire on every line). `slice_turn` in samplr.c, and
+  `looper_grid_index` (the number of the grid line that falls in the block) in looper.c. A slice that waits for its first line waits for its own turn.
+- NOT run: this container had no stock firmware (firmware/BLACKBOX-3.1.9.bin is never committed), so no image was built and the emulator tests
+  (including the new one in test_samplr.py, "take turns: A B A B") were not run. It compiles (`sh build.sh`, ITCM 63,216 of 65,024).

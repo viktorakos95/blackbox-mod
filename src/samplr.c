@@ -1682,6 +1682,28 @@ static inline int grid(struct sm *s, float beats, int n)
     return looper_grid_exact(beats, s->sph, n);
 }
 
+int looper_grid_index(float beats, float sph, int n);
+
+/* Slices that repeat on the grid (Q on, LOOP) take turns: with N of them held, each one fires on every N-th grid line, in the order of the voices, so
+ * a 1/16 grid plays one slice on each 16th and cycles through them (they used to all fire on every line). 1 when it is this voice's turn on the line
+ * that falls in this block (or it is alone). A voice that waits for its first line counts too. */
+static int slice_turn(struct sm *s, struct smvoice *v, float beats, int n)
+{
+    int cnt = 0, rank = 0;
+    for (int f = 0; f < SM_NV; f++) {
+        struct smvoice *o = &s->v[f];
+        if (o == v) {
+            rank = cnt++;
+        } else if (o->vmode == SM_SLICER && (o->rep > 0.f || (o->seen != o->cmd && o->c_rep > 0.f && o->held))) {
+            cnt++;
+        }
+    }
+    if (cnt < 2)
+        return 1;
+    int k = looper_grid_index(beats, s->sph, n);
+    return k < 0 || (unsigned)k % (unsigned)cnt == (unsigned)rank;
+}
+
 static uint32_t rnd(struct sm *s)
 {
     uint32_t x = s->rnd;
@@ -2100,6 +2122,8 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     int idle = !v->on && v->env <= .0005f, started = 0;
     if (v->seen != v->cmd) {
         int off = v->c_q > 0.f ? grid(s, v->c_q, n) : v->c_wait;
+        if (off >= 0 && v->c_q > 0.f && v->c_rep > 0.f && !slice_turn(s, v, v->c_q, n))
+            off = -1;                                             /* (a repeating slice waits for its own line: they take turns) */
         if (off >= 0) {                                           /* (else the note waits for its grid line) */
             v->seen = v->cmd;
             v->c_wait = 0;
@@ -2136,7 +2160,9 @@ static void render(struct sm *s, struct smvoice *v, float *bl, float *br, int n)
     v->wait = 0;
     int roff = -1;
     if (v->rep > 0.f && !started)
-        roff = grid(s, v->rep, n);                                /* a repeating slice starts over on every grid line */
+        roff = grid(s, v->rep, n);                                /* a repeating slice starts over on its lines (every N-th when N of them are held) */
+    if (roff >= 0 && !slice_turn(s, v, v->rep, n))
+        roff = -1;
     int fi = 0;
     for (int guard = 0; i < n && guard < 8; guard++) {
         if (roff >= 0 && roff <= i) {

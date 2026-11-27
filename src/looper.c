@@ -2553,6 +2553,26 @@ int looper_grid_exact(float beats, float sph, int n)
     return fr < (double)n ? (int)fr : -1;
 }
 
+/* The number of that grid line (the one looper_grid_exact finds: counted from 0 at the clock's start, or from the free-running phase's), or -1 when no line
+ * falls in this block. SAMPLR uses it to let held slices take turns on the lines (a slice on every N-th line). */
+int looper_grid_index(float beats, float sph, int n)
+{
+    if (S->magic != MAGIC)
+        return -1;
+    if (looper_grid_exact(beats, sph, n) < 0)
+        return -1;
+    if (!S->cur_ok) {
+        float gf = beat_frames() * beats, q = sph / gf - 1e-5f;
+        int k = (int)q;
+        if ((float)k < q)
+            k++;
+        return k;
+    }
+    double g = SEQ_TPB * (double)beats, now = seqfix_now(), ph = dmod(now, g);
+    double next = ph < 1e-6 ? now : now + (g - ph);
+    return (int)(next / g + 0.5);
+}
+
 /* The clock position of this block (the snapshot), or -1 without a clock. */
 double looper_clock_now(void)
 {
