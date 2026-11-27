@@ -60,6 +60,8 @@ python3 tools/combo.py build parts=samplr,trig     # -> out/combos/<id>/BLACKBOX
 python3 tools/combo.py test parts=samplr,trig      # build it and run the emulator tests that apply
 python3 tools/export_web.py                        # data for the patcher page (docs/data.json)
 python3 tools/verify_web.py                        # the page's logic == patch.py, for every combination
+python3 tools/versions.py check                   # a machine's code changed without a new version?
+python3 tools/versions.py bump looper "what changed"   # new version + a line in the page's What's new
 ```
 
 How it works: the stock image is left as it is. All the new code (`src/`) is compiled into one block and appended after
