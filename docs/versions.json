@@ -1,0 +1,65 @@
+{
+ "name": "blackbox-mod patcher",
+ "version": "1.1",
+ "machines": {
+  "looper": {
+   "title": "Looper",
+   "version": "1.0",
+   "code_hash": "a233bde73e2eb580"
+  },
+  "samplr": {
+   "title": "SAMPLR",
+   "version": "1.0",
+   "code_hash": "d8cf4ffe19b151b3"
+  },
+  "drone": {
+   "title": "DRONE-8",
+   "version": "1.0",
+   "code_hash": "4562510ef7511ceb"
+  },
+  "trig": {
+   "title": "Trigger2MIDI",
+   "version": "1.0",
+   "code_hash": "307bbdab73d31c06"
+  }
+ },
+ "changes": [
+  {
+   "date": "2026-11-27",
+   "component": "patcher",
+   "version": "1.1",
+   "text": "Version numbers for the patcher and each machine, a What's new list, a build summary with the file's size and checksum, install help; MCL moved to 5.10+."
+  },
+  {
+   "date": "2026-11",
+   "component": "patcher",
+   "version": "1.0",
+   "text": "First public version: pick any parts and add-ons, patch your own stock 3.1.9 in the browser."
+  },
+  {
+   "date": "2026-11",
+   "component": "looper",
+   "version": "1.0",
+   "text": "Four-track looper."
+  },
+  {
+   "date": "2026-11",
+   "component": "samplr",
+   "version": "1.0",
+   "text": "Slice, Tape, Arp, Grain and Loop modes."
+  },
+  {
+   "date": "2026-11",
+   "component": "drone",
+   "version": "1.0",
+   "text": "Eight-voice drone synth."
+  },
+  {
+   "date": "2026-11",
+   "component": "trig",
+   "version": "1.0",
+   "text": "Drum triggers to MIDI."
+  }
+ ],
+ "code_hash": "c44e5631829c1e56"
+}
