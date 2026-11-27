@@ -4,13 +4,13 @@
  "machines": {
   "looper": {
    "title": "Looper",
-   "version": "1.0",
-   "code_hash": "a233bde73e2eb580"
+   "version": "1.1",
+   "code_hash": "89ecc533d7e88baf"
   },
   "samplr": {
    "title": "SAMPLR",
-   "version": "1.0",
-   "code_hash": "d8cf4ffe19b151b3"
+   "version": "1.1",
+   "code_hash": "45c8ecd28e0b1b4d"
   },
   "drone": {
    "title": "DRONE-8",
@@ -24,6 +24,18 @@
   }
  },
  "changes": [
+  {
+   "date": "2026-11-27",
+   "component": "looper",
+   "version": "1.1",
+   "text": "Grid line numbers for SAMPLR's slice turns (no change in the Looper itself)"
+  },
+  {
+   "date": "2026-11-27",
+   "component": "samplr",
+   "version": "1.1",
+   "text": "Slicer with Q and LOOP: slices pressed together sound together on every grid line; slices pressed at different times start on their own lines and then take turns, one on each line, cycling"
+  },
   {
    "date": "2026-11-27",
    "component": "patcher",

@@ -359,7 +359,48 @@ nxt = math.ceil(t0 / GF - 1e-5) * GF - t0
 check("quantize: the slice starts at the next 1/16 line, not at the touch", found is not None and k > 0 and abs(found[1] - nxt) <= 2, (found, nxt, k))
 touch(2, 0, 0, 0)
 play(3)
+# Q + LOOP: slices pressed together (the same grid line) are one group: they sound together on every line. Slices pressed at different times
+# start on their own lines and then take turns, one group on each line, cycling.
+ph0 = sph() % 24000                                            # (the arp checks after this depend on where in the beat they start: this test puts the beat back where it was)
+setb(OFF["loopm"], 1)
+
+
+def onsets(blocks):
+    """The slice that starts at each onset: A (0.17 up the ramp), B (0.5) or AB (both together), from the peak over the onset block and the next two."""
+    seq, quiet = [], True
+    for _ in range(blocks):
+        o = play()[0]
+        nz = [i for i, x in enumerate(o) if abs(x) > 1e-6]
+        if nz and quiet:
+            v = max(abs(x) for x in o)
+            for _ in range(2):
+                v = max(v, max(abs(x) for x in play()[0]))
+            seq.append("A" if v < 0.3 else "B" if v < 0.6 else "AB")
+        quiet = not nz or abs(o[-1]) < 1e-6
+    return seq
+
+
+touch(0, 0, 3 * 64 + 10, 100)
+touch(0, 1, 9 * 64 + 10, 100)                                 # (no block between the touches: pressed together)
+seq = onsets(500)
+check("Q + LOOP, two slices pressed together: they sound together on every line (no cycling)", len(seq) >= 8 and set(seq) == {"AB"}, seq[:12])
+touch(2, 0, 0, 0)
+touch(2, 1, 0, 0)
+play(3)
+touch(0, 0, 3 * 64 + 10, 100)
+play(60)                                                       # A runs alone for a few lines
+touch(0, 1, 9 * 64 + 10, 100)                                  # B comes in later
+seq = onsets(700)
+check("Q + LOOP, pressed at different times: they take turns (A B A B ..., never both on one line)", len(seq) >= 8 and "AB" not in seq[-8:] and all(seq[i] != seq[i + 1] for i in range(len(seq) - 8, len(seq) - 1)), seq[-12:])
+touch(2, 0, 0, 0)
+touch(2, 1, 0, 0)
+play(3)
+setb(OFF["loopm"], 0)
 setb(OFF["qi"], 0)
+for _ in range(200):
+    if abs((sph() - ph0 + 12000) % 24000 - 12000) <= 128:
+        break
+    play()
 
 # arpeggiator: two spots (fingers 0 and 1), 1/8 steps (12000 frames), UP: the spots alternate
 e.call("samplr_set_mode", 2)
