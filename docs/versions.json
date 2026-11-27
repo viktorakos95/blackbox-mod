@@ -1,6 +1,6 @@
 {
  "name": "blackbox-mod patcher",
- "version": "1.7",
+ "version": "1.8",
  "machines": {
   "looper": {
    "title": "Looper",
@@ -24,6 +24,12 @@
   }
  },
  "changes": [
+  {
+   "date": "2026-11-27",
+   "component": "patcher",
+   "version": "1.8",
+   "text": "Good to know is a dropdown (closed by default)."
+  },
   {
    "date": "2026-11-27",
    "component": "patcher",
@@ -97,5 +103,5 @@
    "text": "Drum triggers to MIDI."
   }
  ],
- "code_hash": "97877a713a45ea18"
+ "code_hash": "e945a34ddf8f375a"
 }

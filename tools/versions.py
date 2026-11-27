@@ -4,6 +4,7 @@
   python3 tools/versions.py show
   python3 tools/versions.py check                      fails if a machine's (or the patcher's) code changed since its version was set
   python3 tools/versions.py bump <component> "what changed"     1.0 -> 1.1 (add --major for 2.0), records the code hash, adds the line to the list
+  python3 tools/versions.py rehash <component>         records the code hash again WITHOUT a new version (for a fix inside a version that is not released yet)
 
 Components: patcher, looper, samplr, trig, drone. MCL has no version here (its own project versions it).
 A machine's version covers ITS files (below). The patcher's covers the page, the shared code (the Looper page host `looper_page.c`, which draws every page,
@@ -104,6 +105,10 @@ if __name__ == "__main__":
         cmd_show(d)
     elif a[0] == "check":
         sys.exit(cmd_check(d))
+    elif a[0] == "rehash" and len(a) >= 2:
+        comp(d, a[1])["code_hash"] = code_hash(a[1])
+        save(d)
+        print(a[1], "hash recorded, version", comp(d, a[1])["version"])
     elif a[0] == "bump" and len(a) >= 3:
         cmd_bump(d, a[1], a[2], "--major" in a)
     else:
