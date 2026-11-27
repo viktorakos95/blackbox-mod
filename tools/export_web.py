@@ -22,11 +22,20 @@ BASE = 0x08040000
 stock = open(os.path.join(ROOT, "firmware", "BLACKBOX-3.1.9.bin"), "rb").read()
 sys.argv = ["patch.py"]                                  # cave.py reads the set list: none here (the page sets the flag bytes itself)
 
+def enc(a, new):
+    return {"o": a - BASE, "b64": base64.b64encode(new).decode()} if len(new) > 4096 else {"o": a - BASE, "hex": new.hex()}
+
+
 sets = {}
+have_mcl = os.path.exists(os.path.join(ROOT, "out", "mcl.elf"))
 for s in PS.CANON:
-    if PS.SETS[s].get("mcl") or s == "cave":
+    if s == "cave" or (PS.SETS[s].get("mcl") and not have_mcl):
         continue
-    sets[s] = [{"o": a - BASE, "hex": new.hex()} for a, old, new in importlib.import_module(s).PATCHES]
+    if s == "mclsd":
+        sys.argv = ["patch.py", "lirasave"]                  # the form that runs with `lirasave` (every part has it): its pointers are cave variables
+        importlib.invalidate_caches()
+    sets[s] = [enc(a, new) for a, old, new in importlib.import_module(s).PATCHES]
+sys.argv = ["patch.py"]
 
 cave = importlib.import_module("cave")
 ver = [p for p in cave.PATCHES if p[1] and p[0] < cave.STOCK_END]            # the version string
@@ -54,7 +63,7 @@ out = {
     "canon": [s for s in PS.CANON if s in sets or s == "cave"],
     "requires": {s: PS.SETS[s]["requires"] for s in PS.CANON if s in sets or s == "cave"},
     "core": PS.CORE,
-    "parts": {k: {"title": d["title"], "sets": d["sets"], "hide": d["hide"], "available": True} for k, d in PS.FEATURES.items() if k != "mcl"},   # (MCL is not offered)
+    "parts": {k: {"title": d["title"], "sets": d["sets"], "hide": d["hide"], "available": True} for k, d in PS.FEATURES.items() if k != "mcl" or have_mcl},
     "addons": {k: {"title": d["title"], "sets": d["sets"], "group": d.get("group", "addons")} for k, d in PS.ADDONS.items()},
     "always": ["looper", "lirasave"],
     "sets": sets, "cave": data_cave,

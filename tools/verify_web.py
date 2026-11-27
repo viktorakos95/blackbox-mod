@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 import combo as C  # noqa: E402
 import patchsets as PS  # noqa: E402
 
-parts_all = [p for p in PS.FEATURES if p != "mcl"]
+parts_all = [p for p in PS.FEATURES if p != "mcl" or C.blob_ok()[0]]
 addons_all = list(PS.ADDONS)
 cases = []
 for r in range(len(parts_all) + 1):

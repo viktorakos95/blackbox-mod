@@ -62,7 +62,7 @@ static uint8_t smp_len_enc;                                      /* the record's
 static uint8_t slice_want;
 static volatile uint8_t smp_opening;
 static uint8_t smp_trk;                                          /* the record's track: 0 = 15 (RAM page A, RAM 1), 1 = 16 (RAM page B, RAM 2) */
-static uint8_t smp_mon = 3;                                      /* LISTEN's monitor (the R machine's CUE1): 0 off, 1..3 low / mid / high */
+static uint8_t smp_mon = 2;                                      /* LISTEN's monitor (the R machine's CUE1): 0 off, 1..3 low / mid / high */
 static uint8_t smp_out;                                          /* the player's output / the record's input, as the RAM machines choose it: 0 input A (default), 1 input B, 2 A + B (the file as it is; the machine's input balance in the middle takes both) */
 #define ST (14 + smp_trk)                                        /* the record's track */
 #define NT 1
@@ -846,7 +846,7 @@ static int smp_md_listen(int browsing)
     }
     smp_listen_ask = 0;
     own_param = 1;
-    static const uint8_t cue[4] = {0, 64, 100, 127};
+    static const uint8_t cue[4] = {0, 72, 90, 108};
     for (int k = 0; k < NT; k++) {                               /* (as the RAM machines take their input: stereo R1 left / R2 right, mono A left, B right; input level as RECORD records at) */
         uint8_t t = ST + k, bal = smp_out == 1 ? 127 : smp_out == 0 ? 0 : 64;
         MD.setTrackParam(t, RAM_R_MLEV, 0);
@@ -1016,7 +1016,7 @@ static void smp_apply(void)
         }
         break;
     case 12:                                                     /* MONITOR: LISTEN's cue level on the R machine, off / low / mid / high */
-        smp_mon = (uint8_t)((smp_mon + 1u) & 3u);
+        smp_mon = (uint8_t)((smp_mon + 1u) & 3u);              /* (OFF -> LOW -> MID -> HIGH -> OFF) */
         break;
     case 4:                                                      /* the view opened: straight into the browser while nothing is chosen */
         smp_view = 1;
@@ -1040,9 +1040,10 @@ static void smp_apply(void)
         bb_cable_listen = 0;
         if (!cable_armed)
             bb_player_stop();
-        if (now == SAMPLE_BROWSER && bb_cable_mode) {
+        if (bb_cable_mode) {                                     /* (closed from the browser by BANK / GROUP: MCL is on its page selection already, the browser's cable mode ends too) */
             bb_cable_mode = 0;
-            mcl.setPage(smp_back);
+            if (now == SAMPLE_BROWSER)
+                mcl.setPage(smp_back);
         }
         break;
     case 6:                                                      /* listening while browsing on / off (on: the Machinedrum set up as for LISTEN, asked first if track 15 / 16 is something else) */
@@ -1059,8 +1060,17 @@ static void smp_apply(void)
 extern "C" bool __real__Z26platform_panel_handleEventP11gui_event_s(gui_event_t *ev);
 extern "C" bool __wrap__Z26platform_panel_handleEventP11gui_event_s(gui_event_t *ev)
 {
-    if (smp_view && EVENT_CMD(ev) && ev->source == MDX_KEY_BANKGROUP && ev->mask == EVENT_BUTTON_PRESSED)
-        smp_close_req = 1;                                       /* (BANK / GROUP, as holding MCL's PAGE: the page selection; the view closes and MCL gets the key) */
+    static uint8_t bg_keep;                                      /* BANK / GROUP from the view: MCL's page selection stays open after the key is let go (pick with the trigs, BANK / GROUP again opens it) */
+    if (EVENT_CMD(ev) && ev->source == MDX_KEY_BANKGROUP) {
+        if (ev->mask == EVENT_BUTTON_PRESSED && smp_view) {
+            smp_close_req = 1;                                   /* (the view closes and MCL gets the key: its page selection) */
+            bg_keep = 1;
+        } else if (ev->mask == EVENT_BUTTON_RELEASED && bg_keep) {
+            bg_keep = 0;
+            if (mcl.currentPage() == PAGE_SELECT_PAGE)
+                return true;
+        }
+    }
     if (smp_view && EVENT_CMD(ev) && ev->source == MDX_KEY_NO && mcl.currentPage() != SAMPLE_BROWSER) {
         if (ev->mask == EVENT_BUTTON_PRESSED) {
             if (cable_armed || smp_recording)
@@ -1089,11 +1099,20 @@ HOOK uint32_t bb_mcl_rec_stat(int which)                            /* (tests) *
     case 8: return grid_page.active_slots[15];
     case 9: return NT;
     case 10: return ST;
+    case 11: return mcl.currentPage();
     default: return (uint32_t)smp_recording | (uint32_t)smp_recorded << 1 | (uint32_t)cable_armed << 2;
     }
 }
 
 HOOK void bb_mcl_rec_slot(uint32_t v) { grid_page.active_slots[ST] = (uint8_t)v; }   /* (tests: what GridTask does once the Machinedrum has the machine) */
+HOOK uint32_t bb_mcl_md_clock(uint32_t set, uint32_t ci, uint32_t co)   /* (tests: the Machinedrum's clock in / out as MCL holds them; set: write them first) */
+{
+    if (set) {
+        MD.global.clockIn = ci != 0;
+        MD.global.clockOut = co != 0;
+    }
+    return (MD.global.clockIn ? 1u : 0u) | (MD.global.clockOut ? 2u : 0u);
+}
 
 HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
 {
@@ -1113,6 +1132,8 @@ HOOK uint32_t bb_mcl_sample(struct bb_sample *s)
     s->nd2 = nd_cnt[1];
     s->_r2 = (uint8_t)(smp_trk | (smp_mon & 3u) << 1 | (smp_opening ? 8u : 0u) | (smp_out & 3u) << 4);    /* track (16 if set), monitor level, the browser opening */
     s->slices = smp_recorded && RP.encoders[2]->cur > 0 ? (uint8_t)(1u << RP.encoders[2]->cur) : 0;
+    if (smp_view && mcl.currentPage() == PAGE_SELECT_PAGE)
+        smp_close_req = 1;                                       /* (MCL's page selection, however it was reached: the view gives way) */
     if (smp_close_req)
         s->state = BB_SMP_CLOSE;
     else if (!smp_loaded)

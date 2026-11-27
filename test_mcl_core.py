@@ -437,7 +437,7 @@ for _ in range(10):
 # ---- a Machinedrum that MCL set to send clock (its default clock source is the MD): set back to follow the Blackbox's clock
 MDO = c.b["MD"]
 c.e.uc.mem_write(MDO + 4, b"\x01")                             # connected
-c.e.uc.mem_write(MDO + 0xB9BD, b"\x00\x01")                   # global.clockIn = 0, clockOut = 1 (what MD.setup() writes with clock source port 1)
+c.call("bb_mcl_md_clock", 1, 0, 1)                             # global.clockIn = 0, clockOut = 1 (what MD.setup() writes with clock source port 1)
 sent0 = len(rg.sent)
 for _ in range(5):
     c.step(2_000_000)
@@ -445,7 +445,8 @@ for _ in range(5):
 c.irq("bb_swirq2_isr")
 c.side(rg.pump)
 out = bytes(rg.sent[sent0:])
-ci, co = bytes(c.e.uc.mem_read(MDO + 0xB9BD, 2))
+mc = c.call("bb_mcl_md_clock", 0, 0, 0)
+ci, co = mc & 1, mc >> 1 & 1
 k = out.find(b"\x4d")
 check("MD connected with clock out: MCL's loop sets it to clock in / no clock out and sends the sync setting (0x4D, bit 0 set, bit 5 clear)",
       ci == 1 and co == 0 and k > 0 and out[k + 1] & 1 and not out[k + 1] & 0x20 and out.startswith(b"\xf0"), (ci, co, out.hex()))
@@ -567,10 +568,11 @@ sample_in_p(9)
 check("... NO takes it back", rec(6) >> 2 & 1 == 0 and rec(0) == 255, (rec(6), rec(0)))
 sample_in_p(16)
 sample_in_p(13)
-for _ in range(260):                                                   # (the sample manager's page 2 asks the Machinedrum for its slots and waits up to 1 s for the answer: the rig's clock has to run for that)
+for _ in range(150):                                                   # (the sample manager's page 2 asks the Machinedrum for its slots and waits up to 1 s for the answer: MCL's millisecond clock (the base timer) has to run for that)
     c.step(3_000_000)
+    t = ticks(t, 8)
     c.tick(5)
-check("SEND MD: MCL's sample manager opens on its second page (the browser page, not in cable mode), the view is asked to close", c.call("bb_mcl_shortcut_now") == 5 and c.uc.mem_read(c.b["bb_cable_mode"], 1)[0] == 0, (c.call("bb_mcl_shortcut_now"), c.uc.mem_read(c.b["bb_cable_mode"], 1)[0]))
+check("SEND MD: MCL's sample manager opens (the browser page, not in cable mode: no shortcut shows), the view is asked to close", rec(11) == 11 and c.call("bb_mcl_shortcut_now") == 255 and c.uc.mem_read(c.b["bb_cable_mode"], 1)[0] == 0, (rec(11), c.call("bb_mcl_shortcut_now"), c.uc.mem_read(c.b["bb_cable_mode"], 1)[0]))
 pa = c.uc.mem_read(c.b["sample_browser"] + 0, 1)[0] if "sample_browser" in c.b else 0
 sample_in_p(5)
 c.call("bb_mcl_page_req", 0)
@@ -606,6 +608,32 @@ ask3, pl3 = smp_listen(), rec(4)
 check("LISTEN with the P machine on the track: asks once, then plays on every press (no endless question)", ask2 == 2 and ask3 != 2 and pl3 == 1 and rec(0) == 255, (ask2, ask3, pl3, rec(0)))
 c.call("bb_player_stop")
 c.e.uc.mem_write(MDO + 4, b"\x00")
+# ---- the Machinedrum's BANK / GROUP key (its key sysex F0 7F 0D 1E F7 from the jack) with the view open: MCL's page selection, the view asked to close
+def md_key(k):
+    for byte in (0xF0, 0x7F, 0x0D, k, 0xF7):
+        c.side(rg.rx, byte)
+    c.irq("bb_swirq2_isr")
+    for _ in range(8):
+        c.step(20_000_000)
+        c.tick(5)
+
+
+sample_in_p(4)
+md_key(0x1E)
+pg_bg, st_bg = rec(11), sview()[0]
+md_key(0x1E + 0x40)
+pg_rel = rec(11)
+check("BANK / GROUP on the Machinedrum with the view open: MCL's page selection (1), the view asked to close (state 5), still open after the key is let go",
+      pg_bg == 1 and st_bg == 5 and pg_rel == 1, (pg_bg, st_bg, pg_rel))
+sample_in_p(5)
+md_key(0x1E)
+md_key(0x1E + 0x40)
+check("... BANK / GROUP again: MCL's own way (the selection taken, page selection closed)", rec(11) != 1, rec(11))
+sample_in_p(5)
+c.call("bb_mcl_page_req", 0)
+for _ in range(20):
+    c.step(20_000_000)
+    c.tick(5)
 used = c.call("bb_mcl_isr_stack_used")
 print("     soft-interrupt stack used: %d of 6144 bytes" % used)
 check("the soft interrupts' own stack (6 KB) was used less than 2/3 over MIDI, the clock, the panel", 0 < used < 4096, used)

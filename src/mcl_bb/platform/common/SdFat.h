@@ -105,6 +105,8 @@ public:
     bool truncate(uint32_t length);
     bool remove();
     bool preAllocate(uint32_t length);
+    // No cluster chain to check here (MCL 5.10 asks the grid file).
+    bool contiguousRange(uint32_t *, uint32_t *) { return true; }
 
     explicit operator bool() const { return open_; }
 

@@ -7,6 +7,7 @@ NOT checked: that the DWT counter runs on the unit, the label redraw, and which 
 import struct
 import sys
 
+import re
 from emu import Emu
 
 e = Emu("out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+cave/BLACKBOX.bin", "out/cave.elf")
@@ -15,6 +16,14 @@ V = e.cstr(0x080CF290)                          # "3.1.x" of this build
 e.uc.mem_map(0xE0000000, 0x100000)
 e.uc.mem_map(0x38800000, 0x1000)               # backup SRAM: the looper's state (its status joins the label)
 e.uc.mem_map(0x58024000, 0x1000)               # RCC / PWR
+MCL = e.r32(0x08120000) == 0x424C434D             # an image with the MCL program: its status text ends every label (mcl_rt.cpp mcl_status_text)
+if MCL:
+    e.uc.mem_map(0xC3F80000, 0x80000)          # (its SDRAM, which that text may read)
+
+
+def no_mcl(t):
+    """the label without MCL's status word at its end (' Mok', ' M2', ...): these tests are about the readout before it"""
+    return re.sub(r" M\S*$", "", t) if MCL else t
 CYC, STATE = 0xE0001004, 0x2405FFD0
 TEXT = [0x24060000, 0x24061000, 0x24062000]
 clock = {"busy": 0, "idle": 0, "got": 1}
@@ -46,7 +55,7 @@ def block(busy, idle):
 
 
 def text(i):
-    return e.cstr(TEXT[i] + 0x31)
+    return no_mcl(e.cstr(TEXT[i] + 0x31))
 
 
 def labels(init=None):
@@ -132,9 +141,9 @@ e.w32(APP + 0xE988, 12 * 1024 * 1024)           # memory figure the stock code f
 e.w32(APP + 0xE98C, 0)
 e.stub(0x080C89F4, lambda: e.calls.append(("fmt", e.arg(0))))
 c = e.call(0x0809AD74, APP, ADDR, INFO)
-check("global cell info (stock function, patched copy): name reads version + load", e.cstr(INFO) == V + " 50/50%" + MB, e.cstr(INFO))
+check("global cell info (stock function, patched copy): name reads version + load", no_mcl(e.cstr(INFO)) == V + " 50/50%" + MB, no_mcl(e.cstr(INFO)))
 check("...and the stock code still formats its size field after it (at +0x40)", ("fmt", INFO + 0x40) in c, c)
-check("name text stays well inside its 64 bytes", len(e.cstr(INFO)) < 24, e.cstr(INFO))   # (two-character builds: 3.1.AA)
+check("name text stays well inside its 64 bytes", len(no_mcl(e.cstr(INFO))) < 24, no_mcl(e.cstr(INFO)))   # (two-character builds: 3.1.AA)
 
 e.uc.mem_write(STATE, b"\xa5" * 36)            # fresh boot
 e.w32(CYC, 777)
@@ -142,7 +151,7 @@ clock["idle"] = 0
 for i in range(376):
     e.call("cpu_wait", 0x24001F00, 0x24001F80, 2000, 0)  # cycle counter never moves
 e.call(0x0809AD74, APP, ADDR, INFO)
-check("cycle counter dead: shows '--%' instead of nothing", e.cstr(INFO) == V + " --%" + MB, e.cstr(INFO))
+check("cycle counter dead: shows '--%' instead of nothing", no_mcl(e.cstr(INFO)) == V + " --%" + MB, no_mcl(e.cstr(INFO)))
 e.uc.mem_write(STATE, b"\xa5" * 36)
 e.call(0x0809AD74, APP, ADDR, INFO)
 e.w32(EXT_FLOOR, 0xC4000000 - 3 * 1024 * 1024)
@@ -151,10 +160,10 @@ e.w32(CYC, 777)
 for i in range(376):
     e.call("cpu_wait", 0x24001F00, 0x24001F80, 2000, 0)
 e.call(0x0809AD74, APP, ADDR, INFO)
-check("free SDRAM is read live from the stock allocator (3M after an allocation)", e.cstr(INFO) == V + " --% 3M L-", e.cstr(INFO))
+check("free SDRAM is read live from the stock allocator (3M after an allocation)", no_mcl(e.cstr(INFO)) == V + " --% 3M L-", no_mcl(e.cstr(INFO)))
 e.uc.mem_write(STATE, b"\xa5" * 36)
 e.call(0x0809AD74, APP, ADDR, INFO)
-check("before anything is measured: version + free SDRAM + looper status", e.cstr(INFO) == V + " 3M L-", e.cstr(INFO))
+check("before anything is measured: version + free SDRAM + looper status", no_mcl(e.cstr(INFO)) == V + " 3M L-", no_mcl(e.cstr(INFO)))
 
 # --- every boot (a watchdog or software reset keeps the RAM): main()'s FIRST call clears the magic, so start() runs once per boot, at the first
 #     label constructor (the app object's constructor, still in main, builds the screens: 0x0808be4c -> 0x080ae8f0 / 0x080c70b8).
