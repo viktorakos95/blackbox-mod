@@ -1,6 +1,6 @@
 {
  "name": "blackbox-mod patcher",
- "version": "1.1",
+ "version": "1.2",
  "machines": {
   "looper": {
    "title": "Looper",
@@ -24,6 +24,12 @@
   }
  },
  "changes": [
+  {
+   "date": "2026-11-27",
+   "component": "patcher",
+   "version": "1.2",
+   "text": "Install help: details to copy and send (no GitHub needed); the page shows what it built with."
+  },
   {
    "date": "2026-11-27",
    "component": "patcher",
@@ -61,5 +67,5 @@
    "text": "Drum triggers to MIDI."
   }
  ],
- "code_hash": "c44e5631829c1e56"
+ "code_hash": "97e6c054c1e84101"
 }
