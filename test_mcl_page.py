@@ -657,6 +657,24 @@ preview("out/mcl_menu.png", MENU_PREVIEW)
 preview("out/mcl_slotmenu.png", PANEL_PREVIEW)
 preview("out/mcl_sample.png", SMP_PREVIEW)
 
+# --- the page as the firmware shows it (the sharp redraws are off in the image): MCL's own screen, its real grid page as test_mcl_core.py captured it
+# (out/mcl-core-grid.png, 4x). This is the patcher page's screenshot (docs/img/mcl.png, scaled to 640 wide).
+if os.path.exists("out/mcl-core-grid.png"):
+    from PIL import Image
+    g = Image.open("out/mcl-core-grid.png").convert("1").resize((128, 64))
+    fbr = bytearray(1024)
+    for y in range(64):
+        for x in range(128):
+            if g.getpixel((x, y)):
+                fbr[y * 16 + (x >> 3)] |= 0x80 >> (x & 7)
+    u.mem_write(FB, bytes(fbr))
+    e.w32(e.sym["mcl_hires"], 0)
+    state["page"] = 4                              # (the GRID shortcut lit: the grid page shows)
+    state["sig"] += 1
+    preview("out/mcl_page_real.png", draw())
+    state["page"] = 255
+    u.mem_write(FB, bytes(fbb))
+
 # --- an older blob (abi 4): the same panel, no shortcuts, no clock: the footer says what the knobs are
 entry(4)
 c = draw()
