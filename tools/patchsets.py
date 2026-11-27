@@ -60,7 +60,7 @@ SETS = {
     "crash":    dict(feature="diag", title="Restart record (fault vectors, watchdog stamps)", requires=[], evidence="doc"),
     "cave":     dict(feature="base", title="The compiled code (all of it) + the 3.1.<letter> version string", requires=[], evidence="doc"),
     # ---- MCL -----------------------------------------------------------------------------------------------------------------------------------------
-    "mclblob":  dict(feature="mcl", title="MCL program (separate block, ~386 KB) + its MIDI / clock hooks", requires=["looper", "cpu"], mcl=True, evidence="doc+code",
+    "mclblob":  dict(feature="mcl", title="MCL 5.10+ program (separate block, ~402 KB) + its MIDI / clock hooks", requires=["looper", "cpu"], mcl=True, evidence="doc+code",
                      note="Needs `looper` (the MCL page is a tab of it) and `cpu` (cpu_boot starts the blob). Must be applied after `cave`."),
     "mclsd":    dict(feature="mcl", title="SD card access for MCL", requires=["mclblob"], mcl=True, evidence="doc",
                      note="TWO forms: with `lirasave` in the image it writes cave variables (the chain above), without it it hooks the card task itself. The form is chosen by "
@@ -84,7 +84,7 @@ PRESETS = {
 }
 
 CAVE_LIMIT = 0x2E188         # bytes, src/cave.ld CAVE
-MCL_BLOB_RANGE = (300_000, 450_000)   # the real MCL program is ~386,000 bytes; the SD test build is ~19,000
+MCL_BLOB_RANGE = (300_000, 450_000)   # the real MCL program is ~402,000 bytes (5.10+; 5.02+ was ~386,000); the SD test build is ~19,000
 
 # A page that is NOT hidden needs these sets too (the page is useless or unsafe without its engine). Checked by tools/combo.py problems().
 PAGE_NEEDS = {"drone": ["lira"]}          # no `hide_drone` -> `lira`
