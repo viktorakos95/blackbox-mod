@@ -25,7 +25,6 @@ LOOPER_MAIN = [
     it("Record box", "The track's record button. Red = recording, yellow = overdubbing, green = playing, grey = empty. Hold to record while held, double-tap to latch recording on, tap to keep the take. The first take sets the loop length.", (14, 70, 142, 82)),
     it("SELECT", "Makes this track the one the hardware REC and BACK buttons act on.", (14, 158, 144, 24)),
     it("Level fader", "Drag it, or turn the track's knob. The white dot is the level; the coloured line is the track's colour.", (66, 186, 38, 134)),
-    it("Level readout", "The track's level in dB.", (40, 320, 90, 18)),
     it("UNDO", "Says what the next press does: UNDO PASS takes the last recorded pass off (yellow), DELETE LOOP clears the track (red).", (12, 345, 148, 26)),
     it("PAN", "The track's pan. Tap it and the track's knob turns the pan instead of the level; tap again to give the knob back.", (12, 377, 70, 70)),
     it("REV", "Plays the loop backwards.", (84, 378, 72, 28)),
@@ -40,8 +39,6 @@ def fxgrid(names, texts, pink):
         c, r = i % 2, i // 2
         y = [152, 216, 282, 346][r]
         out.append(it(n, t, (12 + 72 * c, y, 72, 62)))
-    out.append(it("MUTE", "Mutes the track.", (12, 408, 72, 36)))
-    out.append(it("UNDO / DEL", "Takes the last pass off, or deletes the loop (the label says which).", (84, 408, 72, 36)))
     return out
 PINK = "The four controls in the pink square are the four knobs of the Blackbox: knob 1 bottom-left, 2 top-left, 3 top-right, 4 bottom-right (the small numbers show it). Tap a dial to move the square; INFO moves it on."
 LOOPER_FX = fxgrid(["FILT", "RES", "CRSH", "DRIVE", "DLY", "RVB", "REV", "HALF"], [
@@ -100,14 +97,14 @@ SAMPLR_PLAY = SM_STRIP + [
     it("SEQ", "Plays the slices one after another from the one you press. SEQ NAT lets each slice play to its end; SEQ GRID plays one slice per grid step.", (460, 390, 84, 56)),
     it("Pattern", "The order of that sequence: up, down, up-down or random.", (548, 390, 74, 56)),
 ]
-SAMPLR_REC = SM_STRIP + [
+SAMPLR_REC = [
     it("UNDO", "Takes the last gesture layer off.", (14, 390, 92, 56)),
     it("CLR", "Clears the whole take.", (108, 390, 80, 56)),
     it("Length", "How many bars the take lasts. Tap to change.", (192, 390, 114, 56)),
     it("L1 L2 L3", "The three layers. Grey = empty, cyan = recorded, red = recording.", (316, 390, 224, 56)),
     it("PANIC", "Stops every sound at once. Tap it twice.", (548, 390, 74, 56)),
 ]
-SAMPLR_FX = SM_STRIP + [
+SAMPLR_FX = [
     it("FILT", "Filter, as on the pads: low-pass to the left, high-pass to the right, off at the centre.", (12, 390, 100, 56)),
     it("RES", "Resonance of the filter.", (114, 390, 100, 56)),
     it("REV", "Send into the Blackbox's own reverb.", (216, 390, 100, 56)),
@@ -115,13 +112,10 @@ SAMPLR_FX = SM_STRIP + [
     it("A", "Attack time of the sample's volume envelope.", (420, 390, 100, 56)),
     it("R", "Release time of the volume envelope.", (522, 390, 100, 56)),
 ]
-SAMPLR_SMPL = SM_STRIP[:2] + [
+SAMPLR_SMPL = [
     it("Modes", "The five ways to play the sample. SLICE: cut into slices you play with your fingers. TAPE: scrub it like a tape. ARP: step through it as an arpeggiator. GRAIN: a granular cloud. LOOP: loop a section.", (228, 66, 396, 54)),
-    it("Waveform", "The sample with its slice markers.", (20, 134, 602, 248)),
     it("Sample picker", "< and > choose the previous or next sample; the name in the middle is the current one.", (12, 390, 372, 56)),
     it("HIGHQ", "The interpolation quality used when the sample is played at another pitch.", (386, 390, 110, 56)),
-    it("Sheet tabs", "PLAY, REC, FX and SMPL.", (12, 453, 490, 26)),
-    it("SAVE", "Saves the mod's settings with the project: the Looper's options, DRONE-8 and Trigger2MIDI. SAMPLR's own settings are not saved yet.", (500, 452, 126, 26)),
 ]
 
 D_TOP = it("Top bar", "Six switches. BTN: the eight hardware buttons work as the voice plates (off: they are the normal Blackbox buttons again). REC: the gesture recorder. STEP/FREE: an encoder click moves a note at a time, or in fine steps. X:IN / X:MIX / X:ALL: what the synth's external input listens to: the audio input, the Blackbox's own mix (without this synth), or both. TRI/SINE: the oscillator wave. LATCH/HOLD: a plate toggles, or only sounds while held.", (214, 34, 410, 26))
@@ -134,29 +128,29 @@ DRONE_VOICES = [D_TOP,
     it("FM source", "What modulates the pair: SELF, OFF, the LFO, EXT (the audio input), another pair (P1-2 ... P7-8) or OUT (the master output). Tap to cycle; double-tap to reset.", (20, 168, 76, 66), (172, 168, 76, 66), (324, 168, 76, 66), (476, 168, 76, 66)),
     it("TOUCH", "How the plate opens the voices: SLOW or FAST envelope, or EXT (the external input opens them).", (96, 168, 76, 66), (248, 168, 76, 66), (400, 168, 76, 66), (552, 168, 76, 66)),
     D_STRIP, D_PLATES, D_FOOT]
-DRONE_SOUND = [D_TOP,
+DRONE_SOUND = [
     it("DELAY", "The two delay lines: TIME 1 and TIME 2, feedback (FDBK) and the wet/dry MIX.", (18, 64, 148, 178)),
     it("DLY MOD / SYNC", "MOD 1 and 2 wobble the delay times; SYNC 1 and 2 lock the delay times to the Blackbox tempo (a division, or OFF).", (172, 64, 148, 178)),
     it("LFO + SYNC", "The two LFOs: their speeds (LFO A, LFO B) and their tempo sync (SYNCA, SYNCB).", (324, 64, 148, 178)),
     it("LFO SHAPE", "SHAPE: triangle or square. COMB: how the two LFOs combine, AND or OR. LINK: ties A to B. DLYMD: what modulates the delay (SELF, OFF or LFO).", (476, 64, 148, 178)),
-    D_STRIP, D_PLATES, D_FOOT]
-DRONE_CHORD = [D_TOP,
+]
+DRONE_CHORD = [
     it("TONAL SPACE", "Pick a chord or scale (SPACE), its root (KEY), the lowest octave (OCT) and how far the notes spread (SPAN).", (18, 64, 148, 178)),
     it("VOICING", "CHORD ON: the eight voices play notes of that space. SHUFL makes a new voicing of the same space. QUANT snaps the voices to the nearest real note once. CYCLE rotates the notes: every voice takes its neighbour's note.", (172, 64, 148, 178)),
     it("Notes of voices 1-4 and 5-8", "The note each voice plays now. The knobs below can move them by hand.", (324, 64, 300, 178)),
-    D_STRIP, D_PLATES, D_FOOT]
-DRONE_MIX = [D_TOP,
+]
+DRONE_MIX = [
     it("OUTPUT", "DRIVE and DIST: two kinds of distortion. VOL: master volume. EXT: level of the external input.", (18, 64, 148, 178)),
     it("PITCH", "P 1-4 and P 5-8 move the pitch of the two groups of voices. VIB switches the vibrato. TUNE: EQUAL or JUST tuning.", (172, 64, 148, 178)),
     it("GESTURE", "The gesture recorder: REC, LEN (how many bars), UNDO the last layer, LOOP stops or starts the loop.", (324, 64, 148, 178)),
     it("FEEL", "SPREAD: the stereo width (0 = mono). DRIFT: slow random pitch wander. VERB: send into the Blackbox's own reverb (its type and size are on the Blackbox's FX page). POWER: switches the engine on or off.", (476, 64, 148, 178)),
-    D_STRIP, D_PLATES, D_FOOT]
-DRONE_CTRL = [D_TOP,
+]
+DRONE_CTRL = [
     it("FAST", "The fast envelope: attack time and release factor.", (18, 64, 148, 178)),
     it("SLOW", "The slow envelope: attack time and release factor.", (172, 64, 148, 178)),
     it("VELOCITY", "Where plate velocity comes from (STEADY, TOUCH, SLIDE or MIDI) and how much it matters (AMT).", (324, 64, 148, 178)),
     it("MIDI LEARN", "LEARN, then touch a knob or button and move a controller or play a note to bind them. FORGET LAST and CLEAR remove bindings. The counters show messages from the jack, USB and raw USB.", (476, 64, 148, 178)),
-    D_STRIP, D_PLATES, D_FOOT]
+]
 
 T_TOP = it("Top bar", "Hit counts and the last velocity of each input (L and R).", (10, 6, 930, 40))
 T_ROW = [
@@ -179,7 +173,7 @@ def tgrid(names, hints):
         c, r = i % 4, i // 4
         out.append(it(n, h, (22 + 228 * c, 162 + 90 * r, 220, 78)))
     return out
-TRIG_DETECT = [T_TOP] + T_ROW + tgrid(
+TRIG_DETECT = tgrid(
     ["SENSITIVITY", "THRESHOLD", "RING GUARD", "DEAD TIME", "PEAK WINDOW", "SHARPNESS", "REACTION", "TOUCH CURVE"],
     ["Input gain before detection. Raise for soft pads, lower for loud ones.", "How loud a hit must be to count. Raise it to ignore bleed from other drums.",
      "After a hit, the level to beat fades slowly. Higher = ringing and echoes are ignored longer.", "After a hit everything is ignored this long. Shorter = faster rolls, more double hits.",
@@ -188,17 +182,15 @@ TRIG_DETECT = [T_TOP] + T_ROW + tgrid(
     it("BLEED GUARD", "Rejects hits that ring on one pitch (bleed from other drums, resonance). OFF = never rejects.", (22, 352, 220, 78)),
     it("GUARD REACH", "How far above the threshold the bleed guard still checks a hit.", (250, 352, 220, 78)),
     it("NOISE FLOOR", "The quietest background a hit may start from. Lower lets tiny clicks in.", (22, 442, 220, 78)),
-    it("PRESETS", "Starting points: DEFAULT, FAST, KICK, BLEED, ROLLS, SOFT. Tap one, then adjust.", (480, 350, 452, 172)),
-    T_FOOT]
-TRIG_OUT = [T_TOP] + T_ROW + [
+    it("PRESETS", "Starting points: DEFAULT, FAST, KICK, BLEED, ROLLS, SOFT. Tap one, then adjust.", (480, 350, 452, 172))]
+TRIG_OUT = [
     it("NOTE", "The MIDI note sent for each hit. OFF = no note (hits still show on the page).", (22, 122, 220, 78)),
     it("VELOCITY", "DYN = follows how hard you hit. A number = every hit sends that velocity.", (250, 122, 220, 78)),
     it("CC NUMBER", "Also send this controller number with every hit. OFF = none.", (480, 122, 220, 78)),
     it("CC VALUE", "DYN = the value follows how hard you hit. A number = always that value.", (708, 122, 220, 78)),
     it("NOTE LENGTH", "DYN = the note ends when the hit has died away. A number = it ends after that many milliseconds.", (22, 212, 220, 78)),
     it("CHANNEL", "The MIDI channel of the notes and controllers.", (250, 212, 220, 78)),
-    it("Where it goes", "TRS = MIDI jack, USB, INT = the Blackbox itself. The counter shows what was sent into the Blackbox.", (26, 424, 900, 136)),
-    T_FOOT]
+    it("Where it goes", "TRS = MIDI jack, USB, INT = the Blackbox itself. The counter shows what was sent into the Blackbox.", (26, 424, 900, 136))]
 
 MANUAL = {
     "looper": {"title": "Looper", "intro": "Press MIX (after Mixer, Mute and Solo) or SONG to open it. Tap or touch the highlighted parts; every track column works the same.", "sheets": [
