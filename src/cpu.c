@@ -279,8 +279,24 @@ static void report(void)
 /* Replaces main()'s first call (bl 0x080778d4 @0x0804418c, HAL init): once per boot, before anything of ours runs, whatever the reset. M survives
  * a reset that is not a power cycle (watchdog, software, the updater's), so start() keyed on M->magic alone would not run again and MCL would not
  * be booted. Clearing the magic here lets the first caller (a label constructor, still in main) run start() exactly once. */
+extern uint32_t __itcm_start[], __itcm_end[], __itcm_load[];
+
+/* The audio code that runs every sample (filter_process, od_process, comp_process, crunch, the Room / Munchi reverb ...) is linked to run from ITCM (src/cave.ld) and has
+ * to be copied in from its image in flash. Only looper_boot (the `looper` set) did that, so an image without the Looper's hooks (no machines picked) ran the master
+ * compressor stage out of empty ITCM on its first audio block and restarted in a loop. This is in every image (`cpu` is in the core), before any of that code can run. */
+static void itcm_load(void)
+{
+    volatile uint32_t *d = __itcm_start;
+    const uint32_t *s = __itcm_load;
+    __asm volatile("" : "+r"(d));                 /* (ITCM is near address 0: no null pointer reasoning) */
+    for (uint32_t n = (uint32_t)(__itcm_end - __itcm_start); n; n--)
+        *d++ = *s++;
+    __asm volatile("dsb\n isb" ::: "memory");
+}
+
 void cpu_boot(void)
 {
+    itcm_load();
     M->magic = 0;
     ((void (*)(void))0x080778d5u)();
 }

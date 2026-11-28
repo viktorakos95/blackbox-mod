@@ -183,6 +183,17 @@ e.stub(0x080778D4, lambda: called.append(1))
 e.w32(0x2405FFD0, 0x43505532)
 e.call("cpu_boot")
 check("cpu_boot clears the state's magic and calls the stock function", e.r32(0x2405FFD0) == 0 and called == [1], (hex(e.r32(0x2405FFD0)), called))
+# the audio code linked to run from ITCM (filter_process, od_process, comp_process ...) is copied in by cpu_boot, which every image has: an image without the Looper's hooks
+# (no machines picked) has no other copier, and ran the compressor stage out of empty ITCM on its first audio block (a restart loop on the unit). The emulator's own helper
+# fills ITCM when it is built, so empty it first.
+ia, ib, il = e.sym["__itcm_start"], e.sym["__itcm_end"], e.sym["__itcm_load"]
+want = bytes(e.uc.mem_read(il, ib - ia))
+e.uc.mem_write(ia, bytes(ib - ia))
+check("(ITCM is empty before cpu_boot)", bytes(e.uc.mem_read(ia, ib - ia)) != want)
+called.clear()
+e.call("cpu_boot")
+got = bytes(e.uc.mem_read(ia, ib - ia))
+check("cpu_boot copies the ITCM code in from flash (%d bytes), so no image depends on the Looper's hooks for it" % (ib - ia), got == want and len(want) > 1000, (len(got), len(want)))
 TEXTP = 0x24060000
 e.uc.mem_write(TEXTP, bytes(0x60))
 starts = []
