@@ -27,12 +27,8 @@ cave = open(os.path.join(ROOT, "out", "cave.bin"), "rb").read()
 blob = open(os.path.join(ROOT, "out", "mcl.bin"), "rb").read()
 csym = symbols(os.path.join(ROOT, "out", "cave.elf"))
 bsym = symbols(os.path.join(ROOT, "out", "mcl.elf"))
-end = STOCK_END + len(cave)
-assert end <= BLOB_ORG, f"main cave ends at {end:#x}, past the blob start {BLOB_ORG:#x}"
 assert bsym["mcl_entry_table"] == BLOB_ORG
-ITCM_LOAD = 0x081D0000                                                  # patches/cave.py: the ITCM image, when out/itcm.bin exists
-assert BLOB_ORG + len(blob) <= ITCM_LOAD, "blob runs into the ITCM image (proven flash window: 0x081E0000)"
-itcm = os.path.exists(os.path.join(ROOT, "out", "itcm.bin"))           # cave.py has then already filled 0xFF up to ITCM_LOAD: the blob goes over that fill
+assert BLOB_ORG + len(blob) <= 0x081C0000, "blob runs past the sectors the bank 2 loader may write (src/b2.h)"
 
 PATCHES = [
     (0x080F1E08, (0xC4000000).to_bytes(4, "little"), RAM_ORG.to_bytes(4, "little")),
@@ -41,7 +37,7 @@ PATCHES = [
     (0x08044DFC, bytes.fromhex("012801d9"), b_w(0x08044DFC, bsym["mcl_tx_hook"])),            # cmp r0,#1 ; bls (port check, redone in the hook)
     (0x0804015C, struct.pack("<I", 0x080462E5), struct.pack("<I", bsym["mcl_usart6_isr"] | 1)),
     (0x08040118, struct.pack("<I", 0x08040315), struct.pack("<I", bsym["mcl_tim6_isr"] | 1)),      # vector 70 = IRQ 54 (TIM6): was a `b .` stub
-    (BLOB_ORG, b"\xff" * len(blob), blob) if itcm else (end, b"", b"\xff" * (BLOB_ORG - end) + blob),
+    (BLOB_ORG, b"\xff" * len(blob), blob),        # into the payload (patches/cave.py leaves room: 0xFF from the code's end to BLOB_ORG and the blob's length)
 ]
 if "mcl_softq_take" in bsym:                                           # the stock software MIDI-in queue (USB host, Trigger2MIDI INT): copied for MCL's port 2
     PATCHES.append((0x080449C4, bl(0x080449C4, 0x08040BAC), bl(0x080449C4, bsym["mcl_softq_take"])))

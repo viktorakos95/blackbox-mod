@@ -6,6 +6,7 @@ All of it is MIT-licensed except LIRA-8, which is under its author's BSD-style l
 | Component | Copyright | License | Where |
 |---|---|---|---|
 | blackbox-mod 3.1.n ([j3threejay/blackbox-mod](https://github.com/j3threejay/blackbox-mod)): Solo, slicer knobs, ducker, chords, note conditions, Fidelity and filter, saturation, compressor models, reverb / delay types, sequencer fix, CPU meter; and from its later builds the filter switch fix, the Keys / Pads notes restore (`src/seqmode.c`) and the streamed project save (`src/savexml.c`) | © 2026 Justin Joe | MIT | `src/` (the files named), `LICENSE` |
+| Flash bank 2 loader and pairing check (the card loader that programs flash bank 2 from `BBEXTRA.BIN`, the pairing sum and ECC scan, the backup-SRAM marks): design and the flash recipe from blackbox-mod's `src/b2load.c` / `src/cpu.c` / `src/b2head.c` ([j3threejay/blackbox-mod](https://github.com/j3threejay/blackbox-mod)), rewritten here for a payload of code (`src/b2.c`, `src/b2load.c`, `src/b2load_thunk.S`) | © 2026 Justin Joe | MIT | `src/b2*.{c,h,S}`, `LICENSE` |
 | Munchi Delay ([charlesvestal/schwung-munchi-delay](https://github.com/charlesvestal/schwung-munchi-delay)) | © 2026 Charles Vestal | MIT | `src/munchi/` (`LICENSE`, `THIRD_PARTY.md` beside it) |
 | CHOMPI TEMPO 1.0 firmware (granular delay, compressor, crossfades) | © CHOMPI Club | MIT | `src/munchi/tempo/` |
 | `reverb.h`, `fx_engine.h` | © Émilie Gillet (Mutable Instruments) | MIT | `src/munchi/tempo/`, notices in the files |

@@ -137,7 +137,7 @@ def ensure_cave():
     """out/cave.elf / cave.bin / itcm.bin from src/ (build.sh), unless they are newer than every source."""
     elf = os.path.join(OUT, "cave.elf")
     srcs = [os.path.join(dp, f) for dp, _, fs in os.walk(os.path.join(ROOT, "src")) for f in fs if not dp.startswith(os.path.join(ROOT, "src", "mcl_bb"))]
-    srcs.append(os.path.join(ROOT, "build.sh"))
+    srcs += [os.path.join(ROOT, "build.sh"), os.path.join(ROOT, "tools", "b2link.py")]
     if not os.path.exists(elf) or os.path.getmtime(elf) < max(os.path.getmtime(s) for s in srcs):
         print("building the cave (build.sh) ...", flush=True)
         r = sh(["sh", "build.sh"])
@@ -194,7 +194,8 @@ def build(sets):
     r = sh([sys.executable, "patch.py"] + sets)
     if r.returncode:
         raise SystemExit("patch.py failed:\n" + (r.stderr or r.stdout)[-2000:])
-    src = os.path.join(OUT, "+".join(sets), "BLACKBOX.bin")
+    d = os.path.join(OUT, "+".join(sets))
+    src = os.path.join(d, "FULL.bin")
     data = open(src, "rb").read()
     return src, hashlib.sha256(data).hexdigest(), len(data)
 
@@ -245,7 +246,7 @@ def make_sandbox(cid, image, sets, test):
     for e in os.listdir(ROOT):
         if e not in ("out", ".git"):
             os.symlink(os.path.join(ROOT, e), os.path.join(sb, e))
-    for f in ("cave.bin", "cave.elf", "itcm.bin", "munchi.o"):
+    for f in ("cave.bin", "cave.elf", "b2code.bin", "itcm2.bin", "munchi.o"):
         if os.path.exists(os.path.join(OUT, f)):
             shutil.copy2(os.path.join(OUT, f), os.path.join(sb, "out", f))
     if needs_mcl(sets):
@@ -254,7 +255,7 @@ def make_sandbox(cid, image, sets, test):
     for im in test_info(test)["images"]:
         n = "+".join(im)
         os.makedirs(os.path.join(sb, "out", n), exist_ok=True)
-        shutil.copyfile(image, os.path.join(sb, "out", n, "BLACKBOX.bin"))
+        shutil.copyfile(image, os.path.join(sb, "out", n, "BLACKBOX.bin"))      # (image = FULL.bin: bank 1 and the payload where the unit sees them)
     return sb
 
 
@@ -294,6 +295,10 @@ def wiring_check(image, sets):
     old_argv = sys.argv
     sys.argv = ["patch.py"] + list(sets)            # cave.py and mclsd.py read the set list (bb_host / bb_hide, the lirasave form)
     base, faults = 0x08040000, []
+    import b2guard
+    image = bytearray(image)
+    csym = b2guard.symbols(os.path.join(ROOT, "out", "cave.elf"))
+    image[csym["b2_expect_sum"] - base:csym["b2_expect_sum"] - base + 4] = b"\xff" * 4     # (filled in by patch.py after every set is applied)
     stock = open(os.path.join(ROOT, "firmware", "BLACKBOX-3.1.9.bin"), "rb").read()
     have = set(sets)
     for s in PS.CANON:
@@ -304,17 +309,20 @@ def wiring_check(image, sets):
         mod = importlib.import_module(s)
         if s == "cave":
             mod = importlib.reload(mod)
-        for addr, old, new in mod.PATCHES:
+        for addr, old, new in b2guard.transform(mod.PATCHES):
+            if addr >= 0x08100000:
+                continue                                          # the payload (bank 2) is checked in `payload` below
             o = addr - base
             if s in have:
                 exp = bytearray(new)
                 if s == "cave":                                   # the MCL sets write into the cave's own bytes (its entry pointer, the card-task pointers): expect their bytes there
-                    for m in ("mclblob", "mclsd"):
-                        if m in have and not (PS.SETS[m].get("mcl") and not blob_ok()[0]):
-                            for a2, _o2, n2 in importlib.import_module(m).PATCHES:
-                                lo, hi = max(addr, a2), min(addr + len(new), a2 + len(n2))
-                                if lo < hi:
-                                    exp[lo - addr:hi - addr] = n2[lo - a2:hi - a2]
+                    for m in have - {"cave"}:                   # the other sets that write into the cave: guard stubs, the MCL pointers
+                        if PS.SETS[m].get("mcl") and not blob_ok()[0]:
+                            continue
+                        for a2, _o2, n2 in b2guard.transform(importlib.import_module(m).PATCHES):
+                            lo, hi = max(addr, a2), min(addr + len(new), a2 + len(n2))
+                            if lo < hi:
+                                exp[lo - addr:hi - addr] = n2[lo - a2:hi - a2]
                 if image[o:o + len(exp)] != bytes(exp):
                     faults.append(f"{s}: hook at {addr:#x} missing")
             elif old:

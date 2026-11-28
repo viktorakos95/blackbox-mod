@@ -1257,7 +1257,7 @@ touch("down", 255, 27)                                           # REC again can
 touch("up", 255, 27)
 # n16: the top-right status of the SAMPLR page while the gesture loop plays reads PLAYING (it read LOOP). Only the string is checked (the drawing path
 # of the status was not reachable from this harness's page state); the code is `else if (s->g_run) st = "PLAYING"`, in draw_sm_top beside REC / ARMED / CLK.
-check("SAMPLR top right: the loop-playing status text is PLAYING (in the image's code)", b"PLAYING\0" in open("out/cave.bin", "rb").read())
+check("SAMPLR top right: the loop-playing status text is PLAYING (in the image's code)", b"PLAYING\0" in open("out/b2code.bin", "rb").read())
 # SAVE TO PROJECT on the SAMPLR page: the end of the footer, right of the four sheets
 saves = []
 e.stub(e.sym["lira_ui_save"] & ~1, lambda: saves.append(e.arg(0)))

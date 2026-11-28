@@ -33,7 +33,10 @@ for parts, addons in cases:
     assert r.returncode == 0, r.stderr[-400:]
     import hashlib
     d = os.path.join(ROOT, "out", "+".join(sets))
-    out.append(dict(parts=parts, addons=addons, sets=sets, sha=hashlib.sha256(open(os.path.join(d, "BLACKBOX.bin"), "rb").read()).hexdigest()))
+    sha = hashlib.sha256(open(os.path.join(d, "BLACKBOX.bin"), "rb").read()).hexdigest()
+    if os.path.exists(os.path.join(d, "BBEXTRA.BIN")):
+        sha += "+" + hashlib.sha256(open(os.path.join(d, "BBEXTRA.BIN"), "rb").read()).hexdigest()
+    out.append(dict(parts=parts, addons=addons, sets=sets, sha=sha))
     shutil.rmtree(d)
 os.makedirs(os.path.join(ROOT, "out"), exist_ok=True)
 json.dump(out, open(os.path.join(ROOT, "out", "web_cases.json"), "w"))

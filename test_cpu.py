@@ -30,7 +30,8 @@ clock = {"busy": 0, "idle": 0, "got": 1}
 EXT_TOP, EXT_FLOOR = 0x24000088, 0x2400008C     # SDRAM allocator: free = top - floor (stock FUN_080443f0)
 e.w32(EXT_TOP, 0xC4000000)
 e.w32(EXT_FLOOR, 0xC4000000 - 41 * 1024 * 1024 - 5000)
-MB = " 41M L-"                                  # free SDRAM, then the looper status (never ran here)
+LS = " L-" if e.r32(0x08100000) == 0x21324242 else " "
+MB = " 41M L-" if e.r32(0x08100000) == 0x21324242 else " 41M "   # (without a bank 2 payload the looper adds nothing to the label)                                  # free SDRAM, then the looper status (never ran here)
 
 
 def cyc():
@@ -160,10 +161,10 @@ e.w32(CYC, 777)
 for i in range(376):
     e.call("cpu_wait", 0x24001F00, 0x24001F80, 2000, 0)
 e.call(0x0809AD74, APP, ADDR, INFO)
-check("free SDRAM is read live from the stock allocator (3M after an allocation)", no_mcl(e.cstr(INFO)) == V + " --% 3M L-", no_mcl(e.cstr(INFO)))
+check("free SDRAM is read live from the stock allocator (3M after an allocation)", no_mcl(e.cstr(INFO)) == V + " --% 3M" + LS, no_mcl(e.cstr(INFO)))
 e.uc.mem_write(STATE, b"\xa5" * 36)
 e.call(0x0809AD74, APP, ADDR, INFO)
-check("before anything is measured: version + free SDRAM + looper status", no_mcl(e.cstr(INFO)) == V + " 3M L-", no_mcl(e.cstr(INFO)))
+check("before anything is measured: version + free SDRAM + looper status", no_mcl(e.cstr(INFO)) == V + " 3M" + LS, no_mcl(e.cstr(INFO)))
 
 # --- every boot (a watchdog or software reset keeps the RAM): main()'s FIRST call clears the magic, so start() runs once per boot, at the first
 #     label constructor (the app object's constructor, still in main, builds the screens: 0x0808be4c -> 0x080ae8f0 / 0x080c70b8).

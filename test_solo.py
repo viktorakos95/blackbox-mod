@@ -19,8 +19,17 @@ VIEW, APP, PT, STACK, RET = 0x24070000, 0x24060000, 0x24078000, 0x2407F000, 0x08
 STATE = 0x2405FF60
 
 uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
+from unicorn.arm_const import UC_CPU_ARM_MAX, UC_ARM_REG_C1_C0_2, UC_ARM_REG_FPEXC
+uc.ctl_set_cpu_model(UC_CPU_ARM_MAX)       # the bank 2 guard stubs save the FPU registers (src/b2.c)
+uc.reg_write(UC_ARM_REG_C1_C0_2, 0xF << 20)
+uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
+uc.mem_map(0x00000000, 0x10000)            # ITCM: the pairing verdict is kept in it (src/b2.h)
 uc.mem_map(0x08000000, 0x200000)
 uc.mem_write(BASE, IMG)
+if struct.unpack("<I", IMG[0xC0000:0xC0004])[0] == 0x21324242:      # an image with the machines' payload in bank 2: what the pairing check does (src/b2.c)
+    h = struct.unpack("<8I", IMG[0xC0000:0xC0020])
+    uc.mem_write(h[6], IMG[0xC0000 + h[4]:0xC0000 + h[4] + h[5]])
+    uc.mem_write(0x100, struct.pack("<I", 0x42325041))            # B2_VERDICT = B2_PAIRED
 uc.mem_map(0x24000000, 0x80000)
 uc.mem_map(0x38800000, 0x1000)       # backup SRAM: the looper's state (MIX asks whether Looper mode is available)
 uc.mem_map(0x58024000, 0x1000)       # RCC / PWR

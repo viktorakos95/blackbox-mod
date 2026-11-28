@@ -17,6 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, os.path.join(ROOT, "patches"))
 import patchsets as PS  # noqa: E402
+import b2guard  # noqa: E402
 
 BASE = 0x08040000
 stock = open(os.path.join(ROOT, "firmware", "BLACKBOX-3.1.9.bin"), "rb").read()
@@ -34,26 +35,32 @@ for s in PS.CANON:
     if s == "mclsd":
         sys.argv = ["patch.py", "lirasave"]                  # the form that runs with `lirasave` (every part has it): its pointers are cave variables
         importlib.invalidate_caches()
-    sets[s] = [enc(a, new) for a, old, new in importlib.import_module(s).PATCHES]
+    sets[s] = [enc(a, new) for a, old, new in b2guard.transform(importlib.import_module(s).PATCHES)]      # (hooks into bank 2 point at their guard stubs; the stubs are patches too)
 sys.argv = ["patch.py"]
 
 cave = importlib.import_module("cave")
 ver = [p for p in cave.PATCHES if p[1] and p[0] < cave.STOCK_END]            # the version string
-app = [p for p in cave.PATCHES if not p[1]]                                    # appended: the code, then 0xFF fill + the ITCM image
-assert len(ver) == 1 and len(app) == 2 and app[0][0] == cave.STOCK_END == BASE + len(stock)
+app = [p for p in cave.PATCHES if not p[1] and p[0] == cave.STOCK_END]       # appended: the core (flash bank 1)
+assert len(ver) == 1 and len(app) == 1 and app[0][0] == cave.STOCK_END == BASE + len(stock)
 code = app[0][2]
-tail = app[1][2]
-itcm_at = cave.ITCM_LOAD
-fill = itcm_at - (cave.STOCK_END + len(code))
-assert tail[:fill] == b"\xff" * fill
-sym = cave.symbols(os.path.join(ROOT, "out", "cave.elf")) if hasattr(cave, "symbols") else None
+sym = cave.symbols(os.path.join(ROOT, "out", "cave.elf"))
+# the payload of flash bank 2 (the machines): cave.py makes it when a set of cave.B2_SETS is in the list; its header and the sum bank 1 expects are finished by apply.js
+sys.argv = ["patch.py", "looper"]
+import importlib as _il
+cave = _il.reload(cave)
+pay = [p for p in cave.PATCHES if p[0] == cave.B2_BASE]
+assert len(pay) == 1 and cave.B2_LAYOUT
+L = cave.B2_LAYOUT
+sys.argv = ["patch.py"]
 data_cave = {
     "version": {"o": ver[0][0] - BASE, "hex": ver[0][2].hex()},
     "code_o": cave.STOCK_END - BASE, "code": base64.b64encode(code).decode(),
-    "fill_o": cave.STOCK_END - BASE + len(code), "fill_len": fill,
-    "itcm_o": itcm_at - BASE, "itcm": base64.b64encode(tail[fill:]).decode(),
     "host_o": sym["bb_host"] - cave.STOCK_END,                                  # offsets inside `code` of the page flags (patches/cave.py)
     "hide_o": sym["bb_hide"] - cave.STOCK_END,
+    "b2_sets": list(cave.B2_SETS),                                              # a set list with one of these has a payload (BBEXTRA.BIN)
+    "b2_o": cave.B2_BASE - BASE, "b2": base64.b64encode(pay[0][2]).decode(),    # the payload, header still 0xFF
+    "b2_itcm_off": L["itcm_off"], "b2_itcm_len": L["itcm_len"], "b2_itcm_dst": L["itcm_dst"],
+    "sum_o": sym["b2_expect_sum"] - BASE,                                       # where bank 1 keeps the sum of the payload it expects
 }
 reg = json.load(open(os.path.join(ROOT, "docs", "combos.json")))
 tested = {k: {"status": e["status"], "scope": e.get("scope", "full"), "tests": len(e.get("tests", {})), "date": e["tested_at"], "rev": e["source_rev"]}
@@ -72,4 +79,4 @@ out = {
 os.makedirs(os.path.join(ROOT, "docs"), exist_ok=True)
 path = os.path.join(ROOT, "docs", "data.json")
 json.dump(out, open(path, "w"), separators=(",", ":"))
-print(f"wrote {path}: {os.path.getsize(path):,} bytes, {len(sets)} sets, {sum(len(v) for v in sets.values())} hooks, cave {len(code):,}, itcm {len(tail) - fill:,}, {len(tested)} tested combinations")
+print(f"wrote {path}: {os.path.getsize(path):,} bytes, {len(sets)} sets, {sum(len(v) for v in sets.values())} hooks, bank 1 cave {len(code):,}, bank 2 payload {len(pay[0][2]):,}, {len(tested)} tested combinations")

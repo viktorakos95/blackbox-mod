@@ -2127,8 +2127,8 @@ void looper_page_enter(uint8_t *view)
  * to 1 to take a page out of the SONG round, BACK, MIX and the recording choices. Every byte 0 = every page there (what all the earlier images are).
  * bb_host is set by patches/looper.py: without the hooks of `looper` there is no page at all. Pages, by tab: 0 Looper (MAIN, FX, SETUP, MORE), 5 SAMPLR,
  * 6 TRIG, 7 DRONE-8, 8 MCL (present when the blob is). The round goes in that order and ends on the stock song screen (-1). */
-const volatile uint8_t bb_host = 0;
-const volatile uint8_t bb_hide[4] = {0, 0, 0, 0};
+extern const volatile uint8_t bb_host;                 /* src/b2.c (bank 1) */
+extern const volatile uint8_t bb_hide[4];
 
 int looper_page_on(int tab)
 {

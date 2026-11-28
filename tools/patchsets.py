@@ -16,7 +16,7 @@ Fields:
 # The order patch.py was always given (and the order the web patcher applies). Measured: the order of the non-MCL sets does not change a byte of the
 # image (tools/combo.py verify-order: 20 sets, 7 permutations, identical SHA-256). Only `cave` -> `mclblob` -> `mclsd` is a hard order: mclblob overwrites
 # bytes the cave set writes (the 0xFF fill, `mcl_entry`), mclsd's pointers are cave variables.
-CANON = ("solo slice duck chord cond filter cpu od comp tools seqfix savexml fx2 munchi looper hide_looper hide_samplr hide_trig hide_drone clkmon lira lirarec lirasave crash cave "
+CANON = ("solo slice duck chord cond filter cpu od comp tools seqfix savexml fx2 munchi b2 looper hide_looper hide_samplr hide_trig hide_drone clkmon lira lirarec lirasave crash cave "
          "mclblob mclsd").split()
 
 SETS = {
@@ -38,8 +38,10 @@ SETS = {
     "tools":    dict(feature="tools", title="Tools settings: Mono Input, DRONE-8 / SAMPLR Out, Machine Filters, Clock Out 2, Clock Level",
                      requires=["comp"], evidence="doc",
                      note="comp registers the settings, tools only shows them. Without a machine the settings do nothing useful."),
+    "b2":       dict(feature="bank2", title="Flash bank 2: the card loader for BBEXTRA.BIN (the machines' code), which every machine needs", requires=[], evidence="code",
+                     note="On some units the stock installer writes flash bank 1 only, so the machines are a second file the unit programs into bank 2 itself (src/b2.h). Hooks the disk task's file loop."),
     "looper":   dict(feature="looper", title="Looper, and the doorway to the SAMPLR, TRIG (Trigger2MIDI), DRONE-8 and MCL pages",
-                     requires=["solo"], evidence="doc+code",
+                     requires=["solo", "b2"], evidence="doc+code",
                      note="The SONG button cycles Looper -> SAMPLR -> TRIG -> DRONE-8 -> (MCL) -> stock song screen (solo.c solo_song_pressed). All those pages are tabs of "
                           "the Looper page (looper_page.c), so SAMPLR, Trigger2MIDI and the DRONE-8 page cannot be left out while `looper` is in, nor offered without it."),
     # The pages the `looper` hooks host. Without any of these sets every page is there; each one takes its page out of the SONG round, BACK, MIX and the pad
@@ -50,12 +52,12 @@ SETS = {
     "hide_drone":  dict(feature="pages", title="Leave out the DRONE-8 page", requires=["looper"], evidence="code",
                         note="Without `hide_drone` the DRONE-8 page is in the round, and it needs the engine: `lira` (see PAGE_NEEDS)."),
     "clkmon":   dict(feature="diag", title="MIDI clock monitor (diagnostics)", requires=["looper"], evidence="doc"),
-    "lira":     dict(feature="drone", title="DRONE-8 engine: Fidelity LIRA on Sample pads, MIDI learn", requires=["filter"], evidence="doc",
+    "lira":     dict(feature="drone", title="DRONE-8 engine: Fidelity LIRA on Sample pads, MIDI learn", requires=["filter", "b2"], evidence="doc",
                      note="The DRONE-8 page itself is part of `looper`; without `looper` the engine is only the pad mode."),
-    "lirarec":  dict(feature="drone", title="Record DRONE-8 / Looper / SAMPLR onto a pad (Rec Input)", requires=[], evidence="test",
+    "lirarec":  dict(feature="drone", title="Record DRONE-8 / Looper / SAMPLR onto a pad (Rec Input)", requires=["b2"], evidence="test",
                      note="Does not need `lira`: test_lira_rec passes on an image without it (checked). The list only offers the machines whose page is in the image."),
     "lirasave": dict(feature="save", title="Save DRONE-8 / Looper / SAMPLR / Trigger2MIDI settings with the project (bbmod.bin, bbgen.bin) and the SAVE buttons",
-                     requires=[], evidence="test",
+                     requires=["b2"], evidence="test",
                      note="Comes with every part (tools/combo.py from_parts). Does not need `lira`: the state is allocated by a `filter` hook, and test_lira_save / test_lira_roundtrip pass on an image with `lirasave` and no `lira` (checked). Shares two hook points in the card task (0x080743E8, 0x0807443E) with `mclsd`: with both in the image the cave's hook runs first and calls MCL's."),
     "crash":    dict(feature="diag", title="Restart record (fault vectors, watchdog stamps)", requires=[], evidence="doc"),
     "cave":     dict(feature="base", title="The compiled code (all of it) + the 3.1.<letter> version string", requires=[], evidence="doc"),
@@ -83,7 +85,7 @@ PRESETS = {
                         experimental=True),
 }
 
-CAVE_LIMIT = 0x2E188         # bytes, src/cave.ld CAVE
+CAVE_LIMIT = 0xE188          # bytes, src/cave.ld.in CAVE (the core: ends at the end of flash bank 1)
 MCL_BLOB_RANGE = (300_000, 450_000)   # the real MCL program is ~402,000 bytes (5.10+; 5.02+ was ~386,000); the SD test build is ~19,000
 
 # A page that is NOT hidden needs these sets too (the page is useless or unsafe without its engine). Checked by tools/combo.py problems().

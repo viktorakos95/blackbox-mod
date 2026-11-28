@@ -19,6 +19,7 @@
 #include "crash.h"
 #include "mcl_bb/bb_grid.h"
 #include "looper.h"
+#include "b2.h"
 #include "tools.h"
 
 void samplr_block_done(uint32_t now);      /* samplr.c: the MAX readout's rest of the block (a no-op until the looper's memory is up) */
@@ -115,7 +116,9 @@ const volatile uint32_t mcl_entry = 0;
 static const struct mcl_entry *mcl_image(void)       /* the blob, whether or not it runs */
 {
     const struct mcl_entry *e = (const struct mcl_entry *)mcl_entry;
-    return e && e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 9 ? e : 0;
+    if (!e || !b2_gate())                                 /* the blob lives in bank 2: only when that is this image's payload */
+        return 0;
+    return e->magic == 0x424c434du && e->abi >= 3 && e->abi <= 9 ? e : 0;
 }
 static const struct mcl_entry *mcl_blob(void) { return mcl_image(); }
 int mcl_page_present(void) { return mcl_image() != 0; }     /* the MCL blob is in the image (looper_page.c: BACK from the stock song screen) */
@@ -297,6 +300,7 @@ static void itcm_load(void)
 void cpu_boot(void)
 {
     itcm_load();
+    b2_boot();
     M->magic = 0;
     ((void (*)(void))0x080778d5u)();
 }

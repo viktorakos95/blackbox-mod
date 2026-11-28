@@ -68,7 +68,7 @@
 <main>
   <h1 id="title">blackbox-mod patcher</h1>
   <p>Unofficial mod for the original 1010music Blackbox, firmware 3.1.9. Pick what you want, choose your own stock <code>BLACKBOX.bin</code>, and the patched file is made in your browser. Nothing is uploaded.</p>
-  <p class="warn">Experimental, little tested on real units. The patched file is about 1.7 MB (stock is 0.7 MB) and some installers may refuse it ("unable to verify" or "firmware not found"): copy it to the card again, and if it still fails, install your stock file.</p>
+  <p class="warn">Experimental, little tested on real units. With the machines (Looper, SAMPLR, Trigger2MIDI, DRONE-8, MCL) you get <b>one zip with two files</b> in it: the patched <code>BLACKBOX.bin</code>, which any unit installs because it is only a little bigger than stock, and <code>BBEXTRA.BIN</code>, which the Blackbox copies into its own spare memory the first time it starts with the card in (it restarts once). Without <code>BBEXTRA.BIN</code> the machines simply stay out of sight and the rest works. If you get "unable to verify" or "firmware not found", copy the file to the card again, and if it still fails, install your stock file.</p>
 
   <details id="whatsnew" hidden><summary class="dim">What's new</summary><ul class="log" id="log"></ul></details>
 
@@ -151,7 +151,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</p></details>
     <div id="dl"></div>
   </div>
 
-  <p class="fine">Install: copy it to the card root as <code>BLACKBOX.bin</code> and update as usual (BACK + INFO at power-on). Keep the stock file to go back.</p>
+  <p class="fine">Install: unzip (if you got a zip) and copy the file(s) to the card root and update as usual (BACK + INFO at power-on). The first start afterwards with <code>BBEXTRA.BIN</code> on the card takes a few seconds longer and the Blackbox restarts once; leave the card in until the machines show up. Keep the stock file to go back.</p>
   <p class="fine">Not affiliated with or supported by 1010music; "1010music" and "Blackbox" are their trademarks. This page contains none of their firmware and only accepts your stock 3.1.9. Use at your own risk; it may affect your warranty. MIT-licensed, with third-party parts (<a href="https://github.com/viktorakos95/blackbox-mod/blob/main/THIRD_PARTY.md">notices</a>).</p>
 </main>
 <dialog id="manual" aria-label="Manual">
@@ -279,15 +279,28 @@ async function run() {
   $("dl").innerHTML = "";
   const sel = ids(), sets = BBApply.resolve(data, sel.parts, sel.addons);
   if (BBApply.problems(data, sets).length) return say("This combination is not allowed.", "err");
-  const out = BBApply.apply(stock, data, sets);
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([out], { type: "application/octet-stream" }));
-  a.download = "BLACKBOX.bin";
-  a.className = "btn";
-  a.textContent = "Download patched BLACKBOX.bin";
-  $("dl").appendChild(a);
+  const res = BBApply.apply(stock, data, sets), out = res.main;
+  if (res.extra) {                                  // one download: both files in a zip, to unzip onto the card
+    const z = document.createElement("a");
+    z.href = URL.createObjectURL(new Blob([BBApply.zip({ "BLACKBOX.bin": res.main, "BBEXTRA.BIN": res.extra })], { type: "application/zip" }));
+    z.download = "blackbox-mod.zip";
+    z.className = "btn";
+    z.style.marginRight = "8px";
+    z.textContent = "Download blackbox-mod.zip (both files)";
+    $("dl").appendChild(z);
+  }
+  for (const [file, bytes] of [["BLACKBOX.bin", res.main], ["BBEXTRA.BIN", res.extra]]) {
+    if (!bytes || res.extra) continue;               // (with the extra file the zip is the download; the two files are inside it)
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+    a.download = file;
+    a.className = "btn";
+    a.style.marginRight = "8px";
+    a.textContent = "Download " + (file === "BLACKBOX.bin" ? "patched " : "") + file;
+    $("dl").appendChild(a);
+  }
   const built = [VER.name ? `${VER.name} ${VER.version}` : "", ...sel.parts.filter(p => VER.machines && VER.machines[p]).map(p => `${VER.machines[p].title} ${VER.machines[p].version}`), ...(sel.parts.includes("mcl") ? ["MCL"] : [])].filter(Boolean).join(", ");
-  say(`Stock ${data.stock_version} confirmed. Built with ${built}.\nFile: ${out.length.toLocaleString()} bytes, SHA-256 ${await BBApply.sha256(out)}\nChange the boxes above and it is made again.`, "ok");
+  say(`Stock ${data.stock_version} confirmed. Built with ${built}.\nBLACKBOX.bin: ${out.length.toLocaleString()} bytes, SHA-256 ${await BBApply.sha256(out)}\n${res.extra ? `BBEXTRA.BIN: ${res.extra.length.toLocaleString()} bytes, SHA-256 ${await BBApply.sha256(res.extra)}\nUnzip it and copy BOTH files to the card root.\n` : ""}Change the boxes above and it is made again.`, "ok");
 }
 
 $("f").addEventListener("change", async e => {
