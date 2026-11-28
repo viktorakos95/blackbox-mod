@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firmware size test</title>
+<style>
+  :root { --bg: #14161a; --panel: #1b1e24; --line: #343840; --text: #e8e6e1; --dim: #9a9ea8; --acc: #e2b043; --ok: #7fd18b; --err: #ef7b6f; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f4ef; --panel: #fff; --line: #d6d2c8; --text: #1d1f23; --dim: #5d616b; --acc: #8a5a00; --ok: #1f7a33; --err: #b3261e; }
+  }
+  body { font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px 16px; }
+  main { max-width: 640px; margin: 0 auto; }
+  .box { border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin: 16px 0; background: var(--panel); }
+  .dim { color: var(--dim); font-size: .9rem; } .ok { color: var(--ok); } .err { color: var(--err); }
+  a.btn { display: inline-block; margin: 6px 0; padding: 10px 16px; background: var(--acc); color: var(--bg); border-radius: 6px; text-decoration: none; font-weight: 600; }
+  ol li { margin: 6px 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>Firmware size test</h1>
+<p>This checks whether your Blackbox refuses firmware files above a certain size. All three files are the
+<b>unchanged stock 3.1.9</b> with empty bytes added at the end, which the firmware never reads. Only the size differs.</p>
+
+<div class="box">
+  <p><b>1.</b> Choose your stock 3.1.9 <code>BLACKBOX.bin</code> (from 1010music):</p>
+  <input type="file" id="f">
+  <p id="st" class="dim"></p>
+  <div id="out"></div>
+</div>
+
+<div class="box">
+  <p><b>2.</b> For each file, A, then B, then C:</p>
+  <ol>
+    <li>Copy it to the root of the card and rename it to <code>BLACKBOX.bin</code>.</li>
+    <li>Install it the usual way (hold BACK + INFO while powering on).</li>
+    <li>Write down if it installs or says "unable to verify".</li>
+  </ol>
+  <p class="dim">Each one is stock 3.1.9, so your unit works normally whichever one installs. When you are done, install your
+  normal stock file again.</p>
+</div>
+</main>
+<script>
+const STOCK_SHA = "281ae303d32e5eb52adca7817a648a34e4bd3848017f26673dd9df3905f1341d";
+const TESTS = [   // the first flash bank ends 786,432 bytes into the file
+  ["A", 786000, "just under the first-bank limit (like JOEBOX)"],
+  ["B", 790000, "just over it"],
+  ["C", 1701240, "the size of the patched file (1.7 MB)"],
+];
+const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
+const st = document.getElementById("st"), out = document.getElementById("out");
+document.getElementById("f").onchange = async e => {
+  out.innerHTML = ""; st.className = "dim"; st.textContent = "Checking ...";
+  const file = e.target.files[0]; if (!file) return;
+  const buf = new Uint8Array(await file.arrayBuffer());
+  if (hex(await crypto.subtle.digest("SHA-256", buf)) !== STOCK_SHA) {
+    st.className = "err"; st.textContent = "This is not the stock 3.1.9 BLACKBOX.bin."; return;
+  }
+  st.className = "ok"; st.textContent = "Stock 3.1.9 found. Download the three files:";
+  for (const [name, size, what] of TESTS) {
+    const img = new Uint8Array(size);            // zero padding: the installer has to really write it
+    img.set(buf);
+    const a = document.createElement("a");
+    a.className = "btn"; a.download = `test-${name}.bin`;
+    a.href = URL.createObjectURL(new Blob([img], { type: "application/octet-stream" }));
+    a.textContent = `test-${name}.bin`;
+    const p = document.createElement("p");
+    p.append(a, document.createElement("br"));
+    p.append(`${size.toLocaleString("en")} bytes: ${what}`);
+    out.append(p);
+  }
+};
+</script>
+</body>
+</html>
