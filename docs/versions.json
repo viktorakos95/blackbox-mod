@@ -1,6 +1,6 @@
 {
  "name": "blackbox-mod patcher",
- "version": "1.8",
+ "version": "1.9",
  "machines": {
   "looper": {
    "title": "Looper",
@@ -24,6 +24,12 @@
   }
  },
  "changes": [
+  {
+   "date": "2026-11-28",
+   "component": "patcher",
+   "version": "1.9",
+   "text": "Fix: a build with no machines picked restarted in a loop (the fast-memory code the filter, saturation and compressor run from was only copied in by the Looper's hooks); every build now copies it at boot."
+  },
   {
    "date": "2026-11-27",
    "component": "looper",
@@ -115,5 +121,5 @@
    "text": "Drum triggers to MIDI."
   }
  ],
- "code_hash": "fa00dcb1dd1e14ad"
+ "code_hash": "458b61e1c4c40103"
 }
