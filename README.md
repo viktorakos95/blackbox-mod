@@ -38,13 +38,15 @@ sometimes still silent; chords need the pad out of Mono Poly Mode.
    that file. The patched file is made in your browser; nothing is uploaded. The page only accepts the stock 3.1.9
    (SHA-256 `281ae303d32e5eb52adca7817a648a34e4bd3848017f26673dd9df3905f1341d`).
 3. Keep the stock `BLACKBOX.bin` somewhere safe. That file is your way back.
-4. Copy the patched `BLACKBOX.bin` to the root of the Blackbox's microSD card and install it the way you install any
+4. Copy the patched `BLACKBOX.bin` (and `BBEXTRA.BIN`, if the page made one) to the root of the Blackbox's microSD card and install it the way you install any
    1010music firmware update (hold BACK + INFO while powering on).
 
-**The patched file is bigger than stock** (about 1.7 MB, stock is 0.7 MB). The unit this was developed on accepted images that
-size, but the stock installer on another unit is reported to refuse an image that runs past the first flash bank ("unable to
-verify"). If yours shows "unable to verify" or "firmware not found", copy the file to the card again; if it still fails, install
-the stock file to go back.
+**Two files when you pick a machine.** On some units the stock installer only writes the first half of the flash chip, so the patched `BLACKBOX.bin` stays small
+(about 0.78 MB, stock is 0.73 MB) and holds the core features. The machines (Looper, SAMPLR, Trigger2MIDI, DRONE-8, MCL) are a second file, `BBEXTRA.BIN`: copy it
+to the card root beside `BLACKBOX.bin`. The first time the Blackbox starts with both on the card it copies `BBEXTRA.BIN` into the second half of its flash itself
+(a few seconds, then one restart; leave the card in). Without `BBEXTRA.BIN`, or with one from another build, the machines stay out of sight and the rest works as usual.
+The unit only ever writes that second half, and only when it is empty or holds an earlier install of this mod; anything else it finds there it leaves alone.
+Design, loader and pairing check: from [j3threejay/blackbox-mod](https://github.com/j3threejay/blackbox-mod) (MIT, `THIRD_PARTY.md`), see `src/b2.h`.
 
 **To go back to stock:** put the stock `BLACKBOX.bin` on the card and install it the same way.
 

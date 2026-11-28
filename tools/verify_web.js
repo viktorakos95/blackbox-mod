@@ -13,7 +13,8 @@ const cases = JSON.parse(fs.readFileSync(process.argv[2]));
     const sets = A.resolve(data, c.parts, c.addons);
     const same = JSON.stringify(sets) === JSON.stringify(c.sets);
     const pr = A.problems(data, sets);
-    const sha = await A.sha256(A.apply(stock, data, sets));
+    const r = A.apply(stock, data, sets);
+    const sha = (await A.sha256(r.main)) + (r.extra ? "+" + (await A.sha256(r.extra)) : "");
     const ok = same && sha === c.sha && pr.length === 0;
     if (!ok) { bad++; console.log("MISMATCH", JSON.stringify({ parts: c.parts, addons: c.addons }), same ? "" : "sets differ: " + sets.join(" "), sha === c.sha ? "" : "sha differs", pr.join("; ")); }
   }

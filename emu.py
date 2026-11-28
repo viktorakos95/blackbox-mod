@@ -37,6 +37,7 @@ class Emu:
         uc.mem_map(0x24000000, 0x80000)
         uc.mem_map(0x00000000, 0x10000)               # ITCM: the audio code that runs every sample (src/cave.ld)
         uc.mem_map(0x52001000, 0x1000)               # DMA2D: the pages write their colours into its CLUT
+        uc.mem_map(0x52002000, 0x1000)               # flash bank 2's registers (src/b2.c reads the ECC flags)
         uc.mem_write(RET, b"\x00\xbf\x00\xbf")
         uc.reg_write(UC_ARM_REG_C1_C0_2, 0xF << 20)   # FPU on
         uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
@@ -44,6 +45,11 @@ class Emu:
         if "__itcm_start" in self.sym:                # the code that runs from ITCM: looper_boot copies it in on the unit
             a, n = self.sym["__itcm_start"], self.sym["__itcm_end"] - self.sym["__itcm_start"]
             uc.mem_write(a, bytes(uc.mem_read(self.sym["__itcm_load"], n)))
+        if "__itcm2_start" in self.sym and struct.unpack("<I", bytes(uc.mem_read(0x08100000, 4)))[0] == 0x21324242:
+            # the machines' ITCM code lives in bank 2 and the pairing check copies it in (src/b2.c): do that here and call the bank paired (the image under test is FULL.bin)
+            h = struct.unpack("<8I", bytes(uc.mem_read(0x08100000, 32)))
+            uc.mem_write(h[6], bytes(uc.mem_read(0x08100000 + h[4], h[5])))
+            uc.mem_write(0x100, struct.pack("<I", 0x42325041))      # B2_VERDICT = B2_PAIRED
         for name in ("crash_irq_off", "crash_irq_on"):  # PRIMASK: not in unicorn's ARM model
             if name in self.sym:
                 self.stub(self.sym[name], value=0)

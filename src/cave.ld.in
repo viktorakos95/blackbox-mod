@@ -1,0 +1,39 @@
+/* Code cave. Bank 1 part: appended directly after the stock image (which ends at 0x080F1E78) and up to the end of flash bank 1, 0x08100000: the stock
+ * installer of some units refuses an image that runs past it ("unable to verify"), so the linker enforces it (0xE188 = 57,736 bytes).
+ * Bank 2 part (src/b2.h): the machines' code, from 0x08100020 (the header is built by patch.py) up to 0x08120000, where the MCL program starts
+ * (src/mcl_bb/mcl_blob.ld). Their ITCM image is stored wherever patch.py puts it in the payload (the header says where).
+ *
+ * ITCM: the core's 64 KB of zero-wait code memory at 0x00000000. The stock firmware never uses it, so the audio code that runs every sample is linked to run
+ * there. The core's part (.itcm: Munchi's reverb, the filter, saturation and compressor stages) is stored in bank 1 and copied in by cpu_boot (src/cpu.c); the
+ * machines' part (.itcm2) follows it, is stored in bank 2 and copied in by the first b2_gate() that finds the payload good (src/b2.c).
+ * The first 512 bytes stay empty: 0x100 / 0x104 hold the pairing verdict and state (src/b2.h), and a call through a null pointer lands in nothing of ours. */
+MEMORY {
+  CAVE  (rx)  : ORIGIN = 0x080F1E78, LENGTH = 0xE188
+  BANK2 (rx)  : ORIGIN = 0x08100020, LENGTH = 0x1FFE0
+  ITCM2L (rx) : ORIGIN = 0x20000000, LENGTH = 0x10000      /* (virtual: patch.py moves this image into the payload) */
+  ITCM  (rwx) : ORIGIN = 0x00000200, LENGTH = 0xFE00
+}
+SECTIONS {
+  .itcm : {
+    __itcm_start = .;
+@ITCM_CORE@
+    . = ALIGN(4);
+    __itcm_end = .;
+  } > ITCM AT> CAVE                                     /* (the core's ITCM image is stored first in the cave region, the code follows it) */
+  __itcm_load = LOADADDR(.itcm);
+  .itcm2 : {
+    __itcm2_start = .;
+@ITCM_MACH@
+    . = ALIGN(32);
+    __itcm2_end = .;
+  } > ITCM AT> ITCM2L
+  __itcm2_load = LOADADDR(.itcm2);
+  .cave : {
+@CAVE_OBJS@
+    . = ALIGN(4);
+  } > CAVE
+  .bank2 : {
+@B2_OBJS@
+  } > BANK2
+  /DISCARD/ : { *(.data .data.* .bss .bss.* COMMON .ARM.exidx* .comment) }
+}

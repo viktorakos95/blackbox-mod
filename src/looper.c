@@ -297,22 +297,9 @@ static inline struct dsp *DSP(void)
 static const float opt_defaults[LOOPER_OPTS] = {0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, .33f, 0.f, 1.f, 0.f, 0.f, 1.f};   /* (the own delay / reverb options are gone: their slots stay, unused, except RSIZE / RRET = the clock pulse's PPQ / level, off / 100 %; SPEED PITCH starts on GRAIN; SYNC starts ON and QUANT on 1 BAR) */
 
 /* Replaces the sample pool init call (bl @0x0804c20e): once per boot, after the pool has its memory. */
-/* The audio code that runs every sample is linked to run from ITCM (src/cave.ld): copy it in from its image in flash. First thing at boot,
- * before any engine is set up (none of it runs before then). */
-extern uint32_t __itcm_start[], __itcm_end[], __itcm_load[];
-static void itcm_load(void)
-{
-    volatile uint32_t *d = __itcm_start;
-    const uint32_t *s = __itcm_load;
-    __asm volatile("" : "+r"(d));                 /* (ITCM is near address 0: no null pointer reasoning) */
-    for (uint32_t n = (uint32_t)(__itcm_end - __itcm_start); n; n--)
-        *d++ = *s++;
-    __asm volatile("dsb\n isb" ::: "memory");
-}
-
+/* (the core's ITCM code is copied in by cpu_boot, the machines' own by the first b2_gate() that finds bank 2 good: src/b2.c) */
 void looper_boot(void *engine)
 {
-    itcm_load();
     fw_pool_init(engine);
     bkp_enable();
     crash_boot();                                 /* why the last run ended (src/crash.c), before anything else of ours runs */

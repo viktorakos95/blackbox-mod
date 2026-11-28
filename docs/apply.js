@@ -43,21 +43,34 @@
     return out;
   }
 
+  /* The patched files: {main, extra}. main = BLACKBOX.bin (the stock image + the core: it ends before 0x08100000, the end of flash bank 1, so the stock installer of any unit takes it);
+     extra = BBEXTRA.BIN (the machines' code for flash bank 2, which the unit programs into itself from the card) or null when no set needs it. Mirrors patch.py. */
   function apply(stock, data, sets) {
-    const c = data.cave, itcm = unb64(c.itcm);
-    const out = new Uint8Array(c.itcm_o + itcm.length).fill(0xff);
+    const c = data.cave, code = unb64(c.code);
+    const hasB2 = sets.some(s => c.b2_sets.includes(s));
+    const pay = hasB2 ? unb64(c.b2) : null;
+    const mainLen = c.code_o + code.length;
+    const out = new Uint8Array(hasB2 ? c.b2_o + pay.length : mainLen).fill(0xff);
     out.set(stock);
     out.set(unhex(c.version.hex), c.version.o);
-    const code = unb64(c.code);
     if (sets.includes("looper")) code[c.host_o] = 1;
     PAGES.forEach((p, i) => { if (sets.includes("hide_" + p)) code[c.hide_o + i] = 1; });
-    out.set(code, c.code_o);                           // the cave first: the MCL sets write into its variables and the 0xFF fill behind it
-    out.set(itcm, c.itcm_o);
+    out.set(code, c.code_o);                           // the cave first: the other sets write into it (guard stubs, the MCL pointers)
+    if (hasB2) out.set(pay, c.b2_o);
     for (const s of sets) {
       if (s === "cave") continue;
       for (const w of data.sets[s]) out.set(w.b64 ? unb64(w.b64) : unhex(w.hex), w.o);
     }
-    return out;
+    let extra = null;
+    if (hasB2) {                                       // the header (one flash word) and the sum of the payload that bank 1 expects
+      extra = out.slice(c.b2_o);
+      const dv = new DataView(extra.buffer);
+      let sum = 0;
+      for (let i = 32; i < extra.length; i += 4) sum = (sum + dv.getUint32(i, true)) >>> 0;
+      [0x21324242, 1, extra.length, sum, c.b2_itcm_off, c.b2_itcm_len, c.b2_itcm_dst, 0].forEach((w, i) => dv.setUint32(4 * i, w, true));
+      new DataView(out.buffer).setUint32(c.sum_o, sum, true);
+    }
+    return { main: out.slice(0, mainLen), extra };
   }
 
   return { resolve, problems, apply, sha256, hex, PAGES };

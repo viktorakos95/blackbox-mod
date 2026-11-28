@@ -1,4 +1,6 @@
-"""The compiled code cave (./build.sh), appended after the stock image, plus the build letter in the version string."""
+"""The compiled code cave (./build.sh): the core, appended after the stock image (bank 1, it must end before 0x08100000), and the payload for flash bank 2 (src/b2.h: the machines' code, their
+ITCM image, the MCL blob when `mclblob` is in the set list), plus the build letter in the version string. The payload's header and the sum bank 1 expects of it are filled in
+after every set has been applied (patch.py / docs/apply.js `b2_finish`)."""
 import os
 import sys
 
@@ -7,8 +9,10 @@ from thumb import ROOT, symbols
 STOCK_END = 0x080F1E78
 BUILD = b"AO"  # Tools screen shows 3.1.<BUILD> (one or two characters: the string has two bytes of padding after it); S = solo, T = + slice knobs, U = + ducking (crashed: heap), V = U with state moved off the heap, W = duck shapes EXP1/EXP2/PUMP/LINR, X = + slicer Zoom knob, Y = + Keys screen chords, Z = chord label shortened to fit the button, a = six more chord shapes (Opn Shl Qrt + parallel m7 m9 Mj7), b = + sequence note conditions A:B, PLAY list reordered around ALWAYS, c = + pad crunch, 24 dB SVF with resonance drive, CPU meter on the version label, d = crunch rates moved down (16k..2k), CPU meter in the global cell name, new pad overdrive, Interp / crunch on Slicer and Clip pads, compressor models, e = sequencer edits play this pass, f = Comp Thresh, Tools order, Saturation label, lenient solo check, g = crunch reads the app's Interp, Interp under Saturation, sequencer grace, h = Interp label -> Fidelity, i = reverb Type selector + Room, j = Room v2 (8 lines, diffusion, modulation), k = Munchi Delay in FX1, l = Fidelity machine modes (SP1200, SP-12, S950, MPC60), m = solo fix, FX pages rebuild on Type, Munchi Clock/Width/Duck, Room Size/Mod/Early/Width, n = SP Raw + Saturation as SP input drive, o = LIRA-8 on Sample pads (Fidelity LIRA), p = LIRA before Level / ADSR, defaults for pads without LIRA settings, q = analog LIRA engine (Schmitt oscillators, RC envelopes, PT2399 delay), r = LIRA from the SOMA DIY docs (5.87 V thresholds, additive FM, RC time constants, BOM vibrato rates), s = LIRA pages on a real Sample pad (store type 3), the 25 values kept in the LIRA pool behind the store getter / setter, t = LIRA on the three reachable pad pages, u = less delay hiss, v = eight entries per LIRA page, w = plugin FM law (relative), x = LIRA Ext In (audio input), y = Ext as FM source and Touch Follow, z = FM Source picks a pair, FM Depth d^2, A = stronger Touch Follow, B = LIRA in the pad-mode list, C = LIRA page (PAD button twice), D = plugin layout, two Holds, slow envelope, encoder groups, E = the eight hardware buttons are the plates, F = four LIRA pages, BACK flips the voices, encoders match the knobs, G = eight voices always visible, H = rotary knobs, panel look, I = quiet colours, tidy TONE grid, J = grid of panels of four, CHORD tab, sine wave, K = own colour theme, flats in flat keys, L = DRONE-8 names, Ext source IN / MIX, rec DRONE / LOOPER, saving, LEDs, M = midnight theme, N = int16 delay memory, free-RAM guard, recording and saving hooks as separate patchsets, O = LEDs follow the voices only while the page shows, P = voice levels (MIX tab), LFO panel, double tap resets, chord notes by hand and encoder, stepped encoders slower, Touch Ext keeps the engine running, load governor, equal tune defaults, LED 1-2 swapped, Q = level knobs above the tune knobs, double tap window fixed, chord pitch free (drag, FREE encoders) or STEP, flight recorder, faster governor, R = gesture recorder, tempo sync, chord off keeps knobs, full oscillator range in FREE, FM bus before the level, STATUS panel, S = hardware REC = gesture recorder synced to the bar (SAMPLR-style), BTN switch, tempo sync clearly labelled, LFO phase uses 960 ticks a beat, T = merged the clock agent fixes (looper on the musical time, analog sync stamps), U = idle oscillators and voices are not computed (about a fifth cheaper with a few voices), gesture STOP/PLAY and no repaint storm, progress marker, PLAY/STOP buttons pass to the stock transport on the DRONE page, LFO phase also locks to the free grid, V = hardware STOP / PLAY on the DRONE page only stop / start the gesture loop, W = SINE no longer takes a logarithm and a division per oscillator per sample (the linear-time triangle is integrated), X = ENGINE on/off switch (MIX tab), STATUS CPU shows cpu.c average/peak like the SAMPLR debug line, Y = STOP/PLAY of the gesture loop wait for the bar line (NEXT), plates held when an overdub layer starts are recorded, Z = flight recorder keeps the whole audio task's worst block (W), AA = engine about 30 % fewer instructions (FM weights and gains once per control block, branchless clamps, only the triangle in use kept), governor also watches the whole audio task's load, AB = INFO (SHIFT) is not needed to leave the DRONE page (BTN off, PAD), INFO on the DRONE page moves the encoders on (panels / levels 1-4 5-8 / tunes 1-4 5-8) instead of SHIFT, the frame flashes, AC = SHARP squares the wave off gradually (soft clipper) instead of adding a square, stereo output (pairs and delay lines spread), TONE tab: WIDTH / DRIFT / DETUNE / BODY, AD = HARM: the bass band's own 2nd harmonic (LOW END panel of the TONE tab), AE = no TONE tab: WIDTH (0 = mono, the cheap path) and DRIFT in the MIX tab's SPACE panel, the bass harmonic and lift are fixed parts of the sound, no detune, CPU readout in the top bar, readable button values, AF = WIDTH is PAN: every oscillator has its own random place left or right, AG = air: a quiet 3-10 kHz noise that follows the output's level, AH = air removed again, PAN under 3 % is exactly mono, AI = closed voices silent (no bleed), HARM removed, voice encoders BL BR TL TR, the delay tap glides instead of jumping (no tick at LFO square edges, no zipper on modulation), AJ = VIB switch (vibrato, on by default) in the SPACE panel, FM Source OUT (the master output as a modulator, the old total feedback), AK = Hold knobs replaced by DRIFT and VIB (SOUND tab), QUANT switch (SPACE panel; the strip shows real note names while it is on), PAN / ENGINE / QUANT in SPACE, AL = tempo sync beside the LFO and delay knobs (SOUND), PITCH panel (P 1-4, P 5-8, QUANT, VIB) and FEEL panel (PAN, DRIFT, ENGINE) on MIX, voice rows turned top left / top right / bottom left / bottom right, AM = QUANT is a one-shot snap, voice knobs follow STEP / FREE outside chord mode, knob labels show the note or the MIDI number with a tenth, labels fit their boxes (POWER, SYNC1), AN = DRIFT also wobbles the delay clock of lines that are not tempo-synced, AO = Hyper LFO AND is a logical AND of 0/1 squares (OR the sum, the delay's square the AND), the drive stage's gain falls with frequency more as DRIVE rises (more bass, less top), EQ stage bass lift and 5 Hz coupling before the distortion, biased clipper
 
-ITCM_LOAD = 0x081D0000  # the ITCM image as stored in flash (src/cave.ld): looper_boot copies it to 0x00000200 (the MCL blob, patches/mclblob.py, goes into the 0xFF before it)
+B2_BASE = 0x08100000
+BLOB_ORG = 0x08120000                  # the MCL blob's place in the payload (src/mcl_bb/mcl_blob.ld)
 CAVE = bytearray(open(os.path.join(ROOT, "out", "cave.bin"), "rb").read())
+assert STOCK_END + len(CAVE) <= B2_BASE, "the core does not fit in flash bank 1"
 
 # Which pages the image has (src/looper_page.c): bb_host = 1 when the hooks of `looper` are in the set list (without them there is no page), bb_hide[i] = 1 for each of
 # hide_looper / hide_samplr / hide_trig / hide_drone in it (patches/hide_*.py are only the names; the bytes are set here, so the order of the sets stays free).
@@ -20,11 +24,30 @@ for _i, _n in enumerate(("hide_looper", "hide_samplr", "hide_trig", "hide_drone"
     if _n in _args:
         CAVE[_sym["bb_hide"] - STOCK_END + _i] = 1
 CAVE = bytes(CAVE)
-PATCHES = [
-    (0x080CF290, b"3.1.9\0\0\0", (b"3.1." + BUILD + b"\0").ljust(8, b"\0")),
-    (STOCK_END, b"", CAVE),
-]
-if os.path.exists(os.path.join(ROOT, "out", "itcm.bin")):
-    _end = STOCK_END + len(CAVE)
-    assert _end <= ITCM_LOAD
-    PATCHES.append((_end, b"", b"\xff" * (ITCM_LOAD - _end) + open(os.path.join(ROOT, "out", "itcm.bin"), "rb").read()))
+
+# The payload of bank 2: every set whose hooks jump into the machines needs it; the core-only image has none.
+B2_SETS = ("looper", "lira", "lirarec", "lirasave", "clkmon", "mclblob", "mclsd")
+HAS_B2 = any(n in _args for n in B2_SETS)
+B2_LAYOUT = None
+PATCHES = [(0x080CF290, b"3.1.9\0\0\0", (b"3.1." + BUILD + b"\0").ljust(8, b"\0")), (STOCK_END, b"", CAVE)]
+if HAS_B2:
+    _code = open(os.path.join(ROOT, "out", "b2code.bin"), "rb").read()
+    _itcm = open(os.path.join(ROOT, "out", "itcm2.bin"), "rb").read()
+    _blob = os.path.join(ROOT, "out", "mcl.bin")
+    _top = BLOB_ORG - B2_BASE + ((os.path.getsize(_blob) + 31) & ~31) if "mclblob" in _args else (32 + len(_code) + 31) & ~31
+    assert 32 + len(_code) <= BLOB_ORG - B2_BASE, "the machines' code runs into the MCL blob's place"
+    _pay = bytearray(b"\xff" * ((_top + len(_itcm) + 31) & ~31))
+    _pay[32:32 + len(_code)] = _code
+    _pay[_top:_top + len(_itcm)] = _itcm
+    B2_LAYOUT = dict(itcm_off=_top, itcm_len=len(_itcm), itcm_dst=_sym["__itcm2_start"], length=len(_pay), expect_sum_at=_sym["b2_expect_sum"])
+    PATCHES.append((B2_BASE, b"", bytes(_pay)))
+
+
+def b2_header(pay):
+    """The header word and the sum over the payload (everything after the header), as the patcher finishes them. Returns (header bytes, sum)."""
+    import struct
+    L = B2_LAYOUT
+    assert len(pay) == L["length"] and L["length"] % 32 == 0 and L["length"] <= 0xC0000
+    sm = sum(struct.unpack("<%dI" % ((len(pay) - 32) // 4), bytes(pay[32:]))) & 0xFFFFFFFF
+    assert sm != 0xFFFFFFFF
+    return struct.pack("<8I", 0x21324242, 1, len(pay), sm, L["itcm_off"], L["itcm_len"], L["itcm_dst"], 0), sm
