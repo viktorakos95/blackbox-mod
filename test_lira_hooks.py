@@ -30,7 +30,17 @@ SOLO = "solo slice duck chord cond filter cpu od comp tools seqfix fx2 munchi lo
 def build(extra):
     names = SOLO + extra
     subprocess.run(["python3", "patch.py"] + names, check=True, capture_output=True)
-    return open("out/" + "+".join(names) + "/BLACKBOX.bin", "rb").read()
+    return open("out/" + "+".join(names) + "/FULL.bin", "rb").read()
+
+
+import sys as _s
+_s.path.insert(0, 'patches')
+_s.argv = ['x']
+
+
+def STUBS():
+    import b2guard
+    return b2guard.stubs()
 
 
 def word(img, a):
@@ -39,18 +49,18 @@ def word(img, a):
 
 img = build([])
 for site, stock, fn in ((0x080743E8, 0x08088756, "lira_sd_top"), (0x0807443E, 0x08092F5C, "lira_sd_inner"), (0x080744D8, 0x08092F5C, "lira_file_poll")):
-    check(f"without MCL: the call at {site:#x} goes to the cave's {fn}", img[site - BASE:site - BASE + 4] == bl(site, csym[fn]))
+    check(f"without MCL: the call at {site:#x} goes to the cave's {fn}", img[site - BASE:site - BASE + 4] == bl(site, STUBS()[site][0]))  # (through the bank 2 guard stub, patches/b2guard.py)
 check("... and the cave's 'next' pointers are the stock functions", word(img, csym["lira_sd_next_top"]) == 0x08088757 and word(img, csym["lira_sd_next_inner"]) == 0x08092F5D)
 if os.path.exists("out/mcl.elf"):
     bsym = symbols("out/mcl.elf")
     img2 = build(["mclblob", "mclsd"])
-    check("with the MCL blob and mclsd: the same three calls stay the cave's", all(img2[a - BASE:a - BASE + 4] == bl(a, csym[f]) for a, f in ((0x080743E8, "lira_sd_top"), (0x0807443E, "lira_sd_inner"), (0x080744D8, "lira_file_poll"))))
+    check("with the MCL blob and mclsd: the same three calls stay the cave's", all(img2[a - BASE:a - BASE + 4] == bl(a, STUBS()[a][0]) for a, f in ((0x080743E8, "lira_sd_top"), (0x0807443E, "lira_sd_inner"), (0x080744D8, "lira_file_poll"))))
     check("... and the 'next' pointers are MCL's hooks (mcl_sd_pump, mcl_sd_inner)", word(img2, csym["lira_sd_next_top"]) == (bsym["mcl_sd_pump"] | 1) and word(img2, csym["lira_sd_next_inner"]) == (bsym["mcl_sd_inner"] | 1), (hex(word(img2, csym["lira_sd_next_top"])), hex(bsym["mcl_sd_pump"])))
 
 # the hooks, called with the stock functions stubbed
 IMG = "out/solo+slice+duck+chord+cond+filter+cpu+od+comp+seqfix+fx2+munchi+looper+lira+cave/BLACKBOX.bin"
 subprocess.run(["python3", "patch.py", "solo", "slice", "duck", "chord", "cond", "filter", "cpu", "od", "comp", "seqfix", "fx2", "munchi", "looper", "lira", "cave"], check=True, capture_output=True)
-e = Emu(IMG, "out/cave.elf")
+e = Emu(IMG.replace("BLACKBOX.bin", "FULL.bin"), "out/cave.elf")      # (FULL.bin: bank 1 and the payload where the unit sees them)
 e.uc.mem_map(0xC0000000, 0x400000)
 e.uc.mem_map(0x38800000, 0x1000)
 e.uc.mem_map(0x58024000, 0x1000)
